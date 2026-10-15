@@ -1,0 +1,24 @@
+{
+  "name": "pi-bot-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "pi-bot server: 手机 App 背后的 pi agent 常驻服务",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^1.2.0",
+    "cheerio": "^1.2.0",
+    "mammoth": "^1.13.0",
+    "pdf-parse": "^2.4.5",
+    "qrcode": "^1.5.4",
+    "ws": "^8.18.0",
+    "xlsx": "^0.18.5"
+  }
+}
