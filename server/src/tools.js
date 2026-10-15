@@ -135,8 +135,9 @@ export function buildCommonTools({ runner, roomId, botId }) {
       name: 'message_bot',
       label: '私信某个 bot',
       description:
-        '直接给某个 bot 发一条私信，让它独立干一件事并把结果回给你。' +
-        '适合「这件事只有它懂、不需要开会」的情况；要在部门里公开协作就用 @名字。',
+        '直接给某个 bot 发一条私信，让它独立干一件事并把结果回给你。\n' +
+        '★ 在部门里派活请**直接用 @名字**（用户要看得到谁领了什么活），不要用这个。\n' +
+        '这个工具只用于：跨部门找人、或者确实不该让用户看到的内部确认。',
       parameters: Type.Object({
         botId: Type.String({ description: '对方的 bot id（先 list_bots）' }),
         task: Type.String({ description: '完整、自包含的任务描述。对方看不到你的上下文，必须写全' }),
