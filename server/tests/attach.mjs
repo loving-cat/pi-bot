@@ -8,9 +8,9 @@ import WebSocket from 'ws';
 import * as XLSX from 'xlsx';
 
 const base = process.argv[2] || 'http://127.0.0.1:8787';
-const token = process.argv[3] || 'test-token';
+const token = process.argv[3] ?? '';
 const roomName = process.argv[4] || 'Pi';
-const auth = { authorization: `Bearer ${token}` };
+const auth = token ? { authorization: (token ? `Bearer ${token}` : '') } : {};
 
 // 造一个 xlsx
 const dir = 'D:/pi-bot/server/data';

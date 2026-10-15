@@ -30,7 +30,7 @@ import { store } from './store.js';
 import { loadExtraProviders, settingsDefaultModel } from './providers.js';
 import { ModelHealth } from './model-health.js';
 import { buildChiefTools, buildCommonTools } from './tools.js';
-import { defaultMenuSlug, logMenu, resolveMenu } from './model-menu.js';
+import { MODEL_MENU, defaultMenuSlug, logMenu, resolveMenu } from './model-menu.js';
 import { attachmentBlock } from './extract.js';
 import { inboxPath, metaFor, readForModel, saveFromPath } from './attachments.js';
 import { parseMentions, rosterLine } from './mentions.js';
@@ -172,6 +172,12 @@ export class PiRunner {
     // 后台探活：结果缓存 24h，菜单按它自动切到活着的线路
     this.health.runAll({ concurrency: 6 }).catch((err) => log('模型探活出错：', err?.message || err));
 
+    // 白名单模型的「档位矩阵」：找出会静默返回空的组合（比如 glm-5.3-oc @ medium）
+    const menuSlugs = MODEL_MENU.flatMap((m) => m.slugs);
+    this.health
+      .runLevelMatrix(menuSlugs)
+      .catch((err) => log('档位矩阵出错：', err?.message || err));
+
     return this;
   }
 
@@ -247,7 +253,11 @@ export class PiRunner {
       const botModel = bot.model ? this.resolveModel(bot.model) : null;
       if (botModel) options.model = botModel;
       else if (this.model) options.model = this.model;
-      if (bot.thinking) options.thinkingLevel = bot.thinking;
+      if (bot.thinking) {
+        // 已知这个模型在这个档位会返回空 → 自动换一个能用的
+        const modelSlug = botModel ? `${botModel.provider}/${botModel.id}` : this.modelLabel();
+        options.thinkingLevel = this.health.safeLevel(modelSlug, bot.thinking) ?? bot.thinking;
+      }
 
       const { session, modelFallbackMessage } = await createAgentSession(options);
       if (modelFallbackMessage) log(`[${bot.name}] 模型回退：${modelFallbackMessage}`);
@@ -815,8 +825,88 @@ export class PiRunner {
         await runPromise;
       }
 
-      const finalText = render().trim() || (stepCapHit ? '（在群里动手步数到上限，先收住）' : '(没有返回文本)');
+      let finalText = render().trim();
+      let emptyRecovered = false;
+
+      // ★ 空回复兜底。两种失败模式：
+      //   a) 完全没输出（实测某些「模型 × 思考等级」组合会静默吐空）
+      //   b) 工具调了一堆但没说结论（assistant 最后一条是空的）
+      //   两种都不能让用户看到空白。
+      const toolNames = [...new Set(steps.map((s) => s.tool))];
+      if (!finalText && !stepCapHit) {
+        log(`[${bot.name}] ${steps.length ? `${steps.length} 步操作后没给结论` : '空回复'}，催一次…`);
+        const nudge = steps.length
+          ? `你刚才调用了工具（${toolNames.join('、')}）但没有给出结论。请用一两句话说明：你做了什么、结果是什么。不要调用工具。`
+          : '你上一条没有输出任何内容。请直接用文字回答刚才的问题，不要调用工具。';
+        try {
+          await entry.session.prompt(nudge);
+          finalText = render().trim();
+          if (finalText) emptyRecovered = true;
+        } catch (err) {
+          log(`[${bot.name}] 催一次失败：`, err?.message || err);
+        }
+      }
+
+      // 还是空 → 用最稳的模型直接补一段（不带工具，纯文字）
+      if (!finalText && !stepCapHit) {
+        log(`[${bot.name}] 仍然空，切默认模型兜底…`);
+        try {
+          const stepDigest = steps.length
+            ? `\n\n你刚才实际执行了这些操作：\n${steps.map((s) => `- ${s.tool} ${s.detail ?? ''}`.slice(0, 160)).join('\n')}`
+            : '';
+          const reply = await this.modelRuntime.completeSimple(
+            this.model,
+            {
+              systemPrompt: `${bot.persona ?? ''}\n\n你是「${bot.name}」。直接给结论，不要客套。`,
+              messages: [
+                {
+                  role: 'user',
+                  content: `下面是你（另一个模型）接到的任务：\n\n${prompt.slice(0, 6000)}${stepDigest}\n\n请用几句话给出结论。`,
+                  timestamp: Date.now(),
+                },
+              ],
+            },
+            { maxTokens: 2048, reasoning: 'low' },
+          );
+          const fallbackText = textOf(reply).trim();
+          if (fallbackText) {
+            finalText = fallbackText;
+            emptyRecovered = true;
+          }
+        } catch (err) {
+          log(`[${bot.name}] 兜底也失败：`, err?.message || err);
+        }
+      }
+
       const produced = beforeImages ? this.#newImagesSince(beforeImages) : [];
+
+      // 两次都救不回来 → 退而给一份操作摘要（总比一片空白好），并标成错误
+      if (!finalText && !stepCapHit) {
+        const digest = steps.length
+          ? `（${bot.name} 执行了 ${steps.length} 步但没有给出说明）\n\n${steps
+              .map((s) => `- \`${s.tool}\` ${s.detail ?? ''}`)
+              .join('\n')}`
+          : '';
+        const msg = store.updateMessage(
+          roomId,
+          botMsg.id,
+          {
+            text: digest,
+            status: 'error',
+            error: `${bot.name} 没有给出内容（已自动重试两次）。可能是当前模型在 thinking ${bot.thinking} 档下不稳定，试试换个思考等级或换模型。`,
+            steps,
+            usage,
+            attachments: produced,
+          },
+          { silent: true },
+        );
+        bus.emit('event', { t: 'msg.error', roomId, msgId: botMsg.id, error: msg.error, msg });
+        return { ok: false, text: '', ms: Date.now() - started, error: msg.error, messageId: botMsg.id };
+      }
+
+      if (!finalText) finalText = '（在群里动手步数到上限，先收住）';
+      if (emptyRecovered) finalText = `${finalText}\n\n_（原模型首次没出内容，已自动重试）_`;
+
       const msg = store.updateMessage(
         roomId,
         botMsg.id,

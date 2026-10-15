@@ -5,10 +5,10 @@
 import WebSocket from 'ws';
 
 const base = process.argv[2] || 'http://127.0.0.1:8787';
-const token = process.argv[3] || 'test-token';
+const token = process.argv[3] ?? '';
 const roomName = process.argv[4] || 'Pi';
 
-const state = await (await fetch(`${base}/api/state`, { headers: { authorization: `Bearer ${token}` } })).json();
+const state = await (await fetch(`${base}/api/state`, { headers: { authorization: (token ? `Bearer ${token}` : '') } })).json();
 const room = state.rooms.find((r) => r.name === roomName) ?? state.rooms[0];
 console.log(`会话：${room.name} (${room.id})`);
 

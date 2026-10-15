@@ -12,6 +12,14 @@ function escapeRe(text) {
 }
 
 /**
+ * 匹配 "@名字"，允许 @ 和名字之间夹 emoji / 空白 / 零宽字符。
+ * bot 很爱写 `@🎨UI设计师`、`@ UI设计师` 这种。
+ */
+function mentionPattern(name) {
+  return new RegExp(`@[\\s\\p{Extended_Pictographic}\\uFE0F\\u200D\\u20E3]*${escapeRe(name)}`, 'gu');
+}
+
+/**
  * @param {string} text
  * @param {Array<{id:string,name:string}>} members
  * @param {{selfId?:string|null}} options
@@ -31,11 +39,11 @@ export function parseMentions(text, members, { selfId = null } = {}) {
 
   let rest = body;
   for (const member of sorted) {
-    const re = new RegExp(`@\\s*${escapeRe(member.name)}`, 'g');
+    const re = mentionPattern(member.name);
     if (re.test(rest)) {
       found.add(member.id);
       // 把已匹配的部分抹掉，防止短名字再匹配到同一处
-      rest = rest.replace(re, '\u0000');
+      rest = rest.replace(mentionPattern(member.name), '\u0000');
     }
   }
 

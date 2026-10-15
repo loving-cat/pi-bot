@@ -63,6 +63,97 @@ export class ModelHealth {
     return r;
   }
 
+  // ---------- 「模型 × 思考等级」组合探活 ----------
+  // 有些组合会静默返回空内容（实测 ctyun/glm-5.3-oc @ medium 必空），
+  // 所以除了探模型活不活，还要探每个档位出不出话。
+
+  static levelKey(slug, level) {
+    return `${slug}@${level}`;
+  }
+
+  /** 这个组合是不是已知会空 */
+  isLevelBad(slug, level) {
+    if (!slug || !level) return false;
+    const r = this.get(ModelHealth.levelKey(slug, level));
+    return Boolean(r && !r.ok);
+  }
+
+  /** 已知会空就换一个能用的档位；都没测过就原样返回 */
+  safeLevel(slug, wanted) {
+    if (!wanted || !this.isLevelBad(slug, wanted)) return wanted;
+    const order = ['medium', 'low', 'high', 'off'];
+    for (const l of order) {
+      if (l === wanted) continue;
+      const r = this.get(ModelHealth.levelKey(slug, l));
+      if (r?.ok) {
+        log(`⚠️  ${slug} 在 ${wanted} 档实测不出话，自动降到 ${l}`);
+        return l;
+      }
+    }
+    return wanted;
+  }
+
+  async probeLevel(slug, level, timeoutMs = 30_000) {
+    const model = this.runner.resolveModel(slug);
+    if (!model) return { ok: false, note: '模型不存在' };
+    const started = Date.now();
+    let timer = null;
+    try {
+      const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`超时 ${timeoutMs}ms`)), timeoutMs);
+      });
+      const reply = await Promise.race([
+        this.runner.modelRuntime.completeSimple(
+          model,
+          { messages: [{ role: 'user', content: '用一句话说明什么是均线。', timestamp: Date.now() }] },
+          { maxTokens: 1024, reasoning: level === 'off' ? undefined : level },
+        ),
+        timeout,
+      ]);
+      const text = textOf(reply).trim();
+      const r = {
+        ok: Boolean(text) && !reply?.errorMessage,
+        ms: Date.now() - started,
+        chars: text.length,
+        error: text ? null : (reply?.errorMessage ?? '空回复'),
+        at: Date.now(),
+      };
+      this.results[ModelHealth.levelKey(slug, level)] = r;
+      return r;
+    } catch (err) {
+      const r = { ok: false, ms: Date.now() - started, error: String(err?.message || err).slice(0, 120), at: Date.now() };
+      this.results[ModelHealth.levelKey(slug, level)] = r;
+      return r;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  /** 只给白名单模型跑档位矩阵（便宜，几秒到几十秒） */
+  async runLevelMatrix(slugs, levels = ['off', 'low', 'medium', 'high'], { force = false } = {}) {
+    const queue = [];
+    for (const slug of slugs) {
+      for (const level of levels) {
+        if (!force && this.get(ModelHealth.levelKey(slug, level))) continue;
+        queue.push([slug, level]);
+      }
+    }
+    if (!queue.length) return { skipped: true };
+    log(`档位矩阵探活：${queue.length} 个组合`);
+    let cursor = 0;
+    const workers = Array.from({ length: Math.min(4, queue.length) }, async () => {
+      while (cursor < queue.length) {
+        const [slug, level] = queue[cursor++];
+        await this.probeLevel(slug, level);
+      }
+    });
+    await Promise.all(workers);
+    this.save();
+    const bad = queue.filter(([s, l]) => this.isLevelBad(s, l)).length;
+    log(`档位矩阵完成：${queue.length - bad}/${queue.length} 可用`);
+    return { total: queue.length, bad };
+  }
+
   isKnownDead(slug) {
     const r = this.get(slug);
     return Boolean(r && !r.ok);

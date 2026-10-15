@@ -14,14 +14,14 @@ export const MODEL_MENU = [
     label: 'Kimi K3',
     use: '长文档、写作、复杂推理、方案',
     tier: 'strong',
-    slugs: ['ctyun/kimi-k3-oc', 'kimi-coding/k3'],
+    slugs: ['ctyun/kimi-k3-oc'],
   },
   {
     alias: 'glm-5.3',
     label: 'GLM 5.3',
     use: '通用主力，中文表达好，性价比高',
     tier: 'strong',
-    slugs: ['ctyun/glm-5.3-oc', 'glm/glm-5.3-flash'],
+    slugs: ['ctyun/glm-5.3-oc'],
   },
   {
     alias: 'glm-5.3-flash',
