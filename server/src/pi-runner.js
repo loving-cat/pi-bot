@@ -878,33 +878,41 @@ export class PiRunner {
       }
 
       // 还是空 → 用最稳的模型直接补一段（不带工具，纯文字）
+      //   串多个线路：单模型兜底也可能吐空，多试一个成功率明显更高
       if (!finalText && !stepCapHit) {
-        log(`[${bot.name}] 仍然空，切默认模型兜底…`);
-        try {
-          const stepDigest = steps.length
-            ? `\n\n你刚才实际执行了这些操作：\n${steps.map((s) => `- ${s.tool} ${s.detail ?? ''}`.slice(0, 160)).join('\n')}`
-            : '';
-          const reply = await this.modelRuntime.completeSimple(
-            this.model,
-            {
-              systemPrompt: `${bot.persona ?? ''}\n\n你是「${bot.name}」。直接给结论，不要客套。`,
-              messages: [
-                {
-                  role: 'user',
-                  content: `下面是你（另一个模型）接到的任务：\n\n${prompt.slice(0, 6000)}${stepDigest}\n\n请用几句话给出结论。`,
-                  timestamp: Date.now(),
-                },
-              ],
-            },
-            { maxTokens: 2048, reasoning: 'low' },
-          );
-          const fallbackText = textOf(reply).trim();
-          if (fallbackText) {
-            finalText = fallbackText;
-            emptyRecovered = true;
+        log(`[${bot.name}] 仍然空，切兜底模型…`);
+        const stepDigest = steps.length
+          ? `\n\n你刚才实际执行了这些操作：\n${steps.map((s) => `- ${s.tool} ${s.detail ?? ''}`.slice(0, 160)).join('\n')}`
+          : '';
+        const userContent = `下面是你（另一个模型）接到的任务：\n\n${prompt.slice(0, 6000)}${stepDigest}\n\n请用几句话给出结论。`;
+        const chain = [
+          this.model,
+          this.resolveModel('selfhost/wbi-deepseek-v4.1-flash'),
+          this.resolveModel('selfhost/wb-glm-5.3-flash'),
+        ]
+          .filter(Boolean)
+          .filter((m, i, arr) => arr.findIndex((x) => `${x.provider}/${x.id}` === `${m.provider}/${m.id}`) === i);
+
+        for (const fallbackModel of chain) {
+          try {
+            const reply = await this.modelRuntime.completeSimple(
+              fallbackModel,
+              {
+                systemPrompt: `${bot.persona ?? ''}\n\n你是「${bot.name}」。直接给结论，不要客套。`,
+                messages: [{ role: 'user', content: userContent, timestamp: Date.now() }],
+              },
+              { maxTokens: 2048, reasoning: 'low' },
+            );
+            const fallbackText = textOf(reply).trim();
+            if (fallbackText) {
+              finalText = fallbackText;
+              emptyRecovered = true;
+              log(`[${bot.name}] 兜底成功（${fallbackModel.provider}/${fallbackModel.id}）`);
+              break;
+            }
+          } catch (err) {
+            log(`[${bot.name}] 兜底 ${fallbackModel.id} 失败：`, err?.message || err);
           }
-        } catch (err) {
-          log(`[${bot.name}] 兜底也失败：`, err?.message || err);
         }
       }
 
