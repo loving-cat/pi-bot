@@ -17,6 +17,7 @@ dependencies:
   image_picker: ^1.1.2
   file_picker: ^8.1.2
   mobile_scanner: ^6.0.2
+  lucide_icons_flutter: ^3.1.25
 
 dev_dependencies:
   flutter_test:

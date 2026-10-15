@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../platform.dart';
 import '../scope.dart';
 import '../theme.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 /// 设置页。
 ///
@@ -62,7 +63,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               state.refresh();
               setState(() => _qrStamp = DateTime.now().millisecondsSinceEpoch);
             },
-            icon: const Icon(Icons.refresh, size: 20),
+            icon: const Icon(LucideIcons.refreshCw, size: 20),
           ),
           const SizedBox(width: 8),
         ],
@@ -74,7 +75,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             padding: const EdgeInsets.fromLTRB(14, 6, 14, 40),
             children: [
               _SectionTitle(
-                icon: Icons.phonelink_lock_outlined,
+                icon: LucideIcons.smartphone,
                 title: '远程连接',
                 subtitle: isHostPlatform
                     ? '手机扫下面的码就能连上这台电脑'
@@ -126,7 +127,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 ),
                               );
                             },
-                            child: const Icon(Icons.copy_rounded, size: 15, color: PB.textQuaternary),
+                            child: const Icon(LucideIcons.copy, size: 15, color: PB.textQuaternary),
                           ),
                         ],
                       ),
@@ -158,7 +159,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           padding: const EdgeInsets.only(bottom: 6),
                           child: Row(
                             children: [
-                              const Icon(Icons.lan_outlined, size: 14, color: PB.textQuaternary),
+                              const Icon(LucideIcons.network, size: 14, color: PB.textQuaternary),
                               const SizedBox(width: 8),
                               Expanded(
                                 child: SelectableText(
@@ -186,7 +187,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
 
               const SizedBox(height: 22),
-              const _SectionTitle(icon: Icons.devices_outlined, title: '已连接的设备'),
+              const _SectionTitle(icon: LucideIcons.monitorSmartphone, title: '已连接的设备'),
               _Card(
                 child: state.devices.isEmpty
                     ? const _Hint('还没有手机配对过')
@@ -197,7 +198,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               padding: const EdgeInsets.symmetric(vertical: 4),
                               child: Row(
                                 children: [
-                                  const Icon(Icons.smartphone, size: 16, color: PB.textTertiary),
+                                  const Icon(LucideIcons.smartphone, size: 16, color: PB.textTertiary),
                                   const SizedBox(width: 10),
                                   Expanded(
                                     child: Column(
@@ -226,7 +227,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
 
               const SizedBox(height: 22),
-              const _SectionTitle(icon: Icons.dns_outlined, title: '服务端'),
+              const _SectionTitle(icon: LucideIcons.server, title: '服务端'),
               _Card(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -244,14 +245,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
 
               const SizedBox(height: 22),
-              const _SectionTitle(icon: Icons.tune_outlined, title: '操作'),
+              const _SectionTitle(icon: LucideIcons.slidersHorizontal, title: '操作'),
               _Card(
                 child: Column(
                   children: [
                     if (isHostPlatform)
                       ListTile(
                         contentPadding: EdgeInsets.zero,
-                        leading: const Icon(Icons.home_outlined, size: 20),
+                        leading: const Icon(LucideIcons.house, size: 20),
                         title: const Text('回到本机直连', style: TextStyle(fontSize: PB.fsSm)),
                         subtitle: const Text(
                           '重新连 127.0.0.1:8787（桌面端就是宿主）',
@@ -262,7 +263,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ListTile(
                       contentPadding: EdgeInsets.zero,
                       leading: Icon(
-                        isHostPlatform ? Icons.link_off : Icons.swap_horiz,
+                        isHostPlatform ? LucideIcons.unlink : LucideIcons.arrowLeftRight,
                         size: 20,
                         color: PB.danger,
                       ),

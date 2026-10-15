@@ -3,6 +3,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../models.dart';
 import '../theme.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 /// 消息里的附件：图片直接画出来，其它显示成文件卡片。
 class AttachmentList extends StatelessWidget {
@@ -90,7 +91,7 @@ class _Thumb extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     const Icon(
-                      Icons.broken_image_outlined,
+                      LucideIcons.imageOff,
                       size: 18,
                       color: PB.textQuaternary,
                     ),
@@ -126,17 +127,17 @@ class _FileChip extends StatelessWidget {
 
   static IconData _iconFor(String name) {
     final lower = name.toLowerCase();
-    if (lower.endsWith('.pdf')) return Icons.picture_as_pdf_outlined;
+    if (lower.endsWith('.pdf')) return LucideIcons.fileText;
     if (lower.endsWith('.xlsx') ||
         lower.endsWith('.xls') ||
         lower.endsWith('.csv')) {
-      return Icons.table_chart_outlined;
+      return LucideIcons.table;
     }
     if (lower.endsWith('.docx') || lower.endsWith('.doc'))
-      return Icons.description_outlined;
+      return LucideIcons.fileText;
     if (lower.endsWith('.zip') || lower.endsWith('.rar'))
-      return Icons.folder_zip_outlined;
-    return Icons.insert_drive_file_outlined;
+      return LucideIcons.fileArchive;
+    return LucideIcons.file;
   }
 
   @override
@@ -193,7 +194,7 @@ class _FileChip extends StatelessWidget {
             ),
             const SizedBox(width: 6),
             Icon(
-              Icons.open_in_new,
+              LucideIcons.externalLink,
               size: 13,
               color: isUser ? Colors.white70 : PB.textQuaternary,
             ),
@@ -271,7 +272,7 @@ class _ImageViewer extends StatelessWidget {
                 ),
                 IconButton(
                   onPressed: () => Navigator.pop(context),
-                  icon: const Icon(Icons.close, color: Colors.white70),
+                  icon: const Icon(LucideIcons.x, color: Colors.white70),
                 ),
               ],
             ),
