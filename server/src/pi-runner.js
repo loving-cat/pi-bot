@@ -272,12 +272,39 @@ export class PiRunner {
     this.sessions.set(key, { session: null, busy: false, pending: promise, unsubscribe: null });
     try {
       const entry = await promise;
+      entry.lastUsed = Date.now();
       this.sessions.set(key, entry);
+      this.#evictSessions();
       return entry;
     } catch (err) {
       this.sessions.delete(key);
       throw err;
     }
+  }
+
+  /**
+   * 会话 LRU：每个 (房间, bot) 一个 AgentSession，各自带着完整上下文和工具，
+   * 房间一多内存会一直涨。超过上限就释放最久没用且不忙的那些。
+   */
+  #evictSessions() {
+    const cap = config.maxSessions;
+    if (this.sessions.size <= cap) return;
+    const idle = [...this.sessions.entries()]
+      .filter(([, e]) => e.session && !e.busy)
+      .sort((a, b) => (a[1].lastUsed ?? 0) - (b[1].lastUsed ?? 0));
+    let released = 0;
+    while (this.sessions.size > cap && idle.length) {
+      const [key, entry] = idle.shift();
+      try {
+        entry.unsubscribe?.();
+        entry.session?.dispose();
+      } catch {
+        /* ignore */
+      }
+      this.sessions.delete(key);
+      released++;
+    }
+    if (released) log(`会话 LRU 释放 ${released} 个（当前 ${this.sessions.size}）`);
   }
 
   isBusy(roomId, botId) {
@@ -702,6 +729,7 @@ export class PiRunner {
       return { ok: false, text: '', ms: Date.now() - started, error: message, messageId: '' };
     }
 
+    entry.lastUsed = Date.now();
     const bot = entry.bot;
     const botMsg = store.appendMessage({
       roomId,
@@ -813,12 +841,14 @@ export class PiRunner {
       const runPromise = images.length
         ? entry.session.prompt(prompt, { images })
         : entry.session.prompt(prompt);
-      if (timeoutMs > 0) {
+      // 部门里的单轮有额外时间预算：不能一个成员把整个部门卡住
+      const effectiveTimeout = groupTurn ? Math.min(timeoutMs || config.groupTurnMaxMs, config.groupTurnMaxMs) : timeoutMs;
+      if (effectiveTimeout > 0) {
         const timeout = new Promise((_, reject) => {
           timeoutHandle = setTimeout(() => {
             entry.session.abort().catch(() => {});
-            reject(new Error(`超过 ${Math.round(timeoutMs / 1000)}s 未完成，已中断`));
-          }, timeoutMs);
+            reject(new Error(`超过 ${Math.round(effectiveTimeout / 1000)}s 未完成，已中断`));
+          }, effectiveTimeout);
         });
         await Promise.race([runPromise, timeout]);
       } else {

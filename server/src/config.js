@@ -50,11 +50,15 @@ export const config = {
   /** bot 跑完一轮后，自动把工作目录里新生成的图片附到消息上 */
   autoAttachImages: process.env.PI_BOT_AUTO_ATTACH !== '0',
   /** 部门里单次最多动手几步（超过就收住，防止一个成员把部门拖住） */
-  groupTurnMaxSteps: Number(process.env.PI_BOT_GROUP_MAX_STEPS || 12),
+  groupTurnMaxSteps: Number(process.env.PI_BOT_GROUP_MAX_STEPS || 30),
+  /** 部门里单轮最长跑多久（毫秒），到点收住交给下一个人 */
+  groupTurnMaxMs: Number(process.env.PI_BOT_GROUP_TURN_MAX_MS || 300_000),
   /** 部门老大每次发言最多能跑几轮 */
   groupTurnsLead: Number(process.env.PI_BOT_GROUP_TURNS_LEAD || 4),
   /** 普通成员每次发言最多能跑几轮 */
   groupTurnsMember: Number(process.env.PI_BOT_GROUP_TURNS_MEMBER || 2),
+  /** 同时驻留的 agent 会话上限（每个 房间×bot 一个，各自占内存），超出按 LRU 释放 */
+  maxSessions: Number(process.env.PI_BOT_MAX_SESSIONS || 40),
   /** 一条用户消息最多触发几次 bot 运行（防部门内部无限互吹） */
   groupMaxRuns: Number(process.env.PI_BOT_GROUP_MAX_RUNS || 10),
   /** 主控只有只读文件工具 —— 它是调度者，不是干活的人 */
