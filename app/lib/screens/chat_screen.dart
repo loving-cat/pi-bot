@@ -14,6 +14,7 @@ import '../widgets/attachment_view.dart';
 import '../widgets/blob_avatar.dart';
 import '../widgets/md_text.dart';
 import '../widgets/message_actions.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({
@@ -252,7 +253,7 @@ class _ChatScreenState extends State<ChatScreen> {
               child: _StopButton(onTap: () => state.abort(room.id)),
             ),
           PopupMenuButton<String>(
-            icon: const Icon(Icons.more_horiz, size: 20),
+            icon: const Icon(LucideIcons.ellipsis, size: 20),
             onSelected: (value) async {
               switch (value) {
                 case 'abort':
@@ -360,7 +361,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                 width: 36,
                                 height: 36,
                                 child: Icon(
-                                  Icons.arrow_downward,
+                                  LucideIcons.arrowDown,
                                   size: 18,
                                   color: PB.textSecondary,
                                 ),
@@ -407,7 +408,7 @@ class _StopButton extends StatelessWidget {
         child: const SizedBox(
           width: 34,
           height: 34,
-          child: Icon(Icons.stop_rounded, size: 18, color: Colors.white),
+          child: Icon(LucideIcons.square, size: 18, color: Colors.white),
         ),
       ),
     );
@@ -594,7 +595,7 @@ class _ComposerState extends State<_Composer> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.bolt_rounded, size: 12, color: PB.accent),
+                    const Icon(LucideIcons.zap, size: 12, color: PB.accent),
                     const SizedBox(width: 5),
                     Text(
                       queuedCount > 0
@@ -655,13 +656,13 @@ class _ComposerState extends State<_Composer> {
                                           '',
                                       fit: BoxFit.cover,
                                       errorBuilder: (c, e, s) => const Icon(
-                                        Icons.image_outlined,
+                                        LucideIcons.image,
                                         size: 18,
                                         color: PB.textQuaternary,
                                       ),
                                     )
                                   : const Icon(
-                                      Icons.description_outlined,
+                                      LucideIcons.fileText,
                                       size: 18,
                                       color: PB.textSecondary,
                                     ),
@@ -678,7 +679,7 @@ class _ComposerState extends State<_Composer> {
                                     shape: BoxShape.circle,
                                   ),
                                   child: const Icon(
-                                    Icons.close,
+                                    LucideIcons.x,
                                     size: 12,
                                     color: PB.textSecondary,
                                   ),
@@ -698,7 +699,7 @@ class _ComposerState extends State<_Composer> {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 _RoundButton(
-                  icon: Icons.add,
+                  icon: LucideIcons.plus,
                   color: PB.bgActive,
                   iconColor: PB.textSecondary,
                   tooltip: '加附件',
@@ -780,7 +781,7 @@ class _ComposerState extends State<_Composer> {
                 const SizedBox(width: 8),
                 if (busy) ...[
                   _RoundButton(
-                    icon: Icons.stop_rounded,
+                    icon: LucideIcons.square,
                     color: PB.bgActive,
                     iconColor: PB.textSecondary,
                     tooltip: '打断这一轮',
@@ -789,7 +790,7 @@ class _ComposerState extends State<_Composer> {
                   const SizedBox(width: 6),
                 ],
                 _RoundButton(
-                  icon: busy ? Icons.bolt_rounded : Icons.arrow_upward_rounded,
+                  icon: busy ? LucideIcons.zap : LucideIcons.arrowUp,
                   color: hasText ? PB.accent : PB.bgActive,
                   iconColor: hasText ? Colors.white : PB.textQuaternary,
                   tooltip: busy ? '插话引导 (Enter)' : '发送 (Enter)',
@@ -842,7 +843,7 @@ Future<void> _showAttachSheet(
             ),
           ),
           ListTile(
-            leading: const Icon(Icons.image_outlined, size: 20),
+            leading: const Icon(LucideIcons.image, size: 20),
             title: const Text('照片', style: TextStyle(fontSize: PB.fsSm)),
             subtitle: const Text(
               '支持多选',
@@ -854,7 +855,7 @@ Future<void> _showAttachSheet(
             },
           ),
           ListTile(
-            leading: const Icon(Icons.upload_file_outlined, size: 20),
+            leading: const Icon(LucideIcons.fileUp, size: 20),
             title: const Text('文件', style: TextStyle(fontSize: PB.fsSm)),
             subtitle: const Text(
               'PDF / Excel / Word / CSV / MD / HTML …会解析出正文给 bot',
@@ -1038,7 +1039,7 @@ class _MessageRow extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       const Icon(
-                        Icons.bolt_rounded,
+                        LucideIcons.zap,
                         size: 11,
                         color: PB.accent,
                       ),
@@ -1227,8 +1228,8 @@ class _Steps extends StatelessWidget {
                 children: [
                   Icon(
                     running
-                        ? Icons.autorenew_rounded
-                        : Icons.check_circle_outline,
+                        ? LucideIcons.loader
+                        : LucideIcons.circleCheck,
                     size: 11,
                     color: running ? PB.accent : PB.textQuaternary,
                   ),
@@ -1271,8 +1272,8 @@ class _Steps extends StatelessWidget {
                             )
                           : Icon(
                               step.status == 'error'
-                                  ? Icons.close
-                                  : Icons.check,
+                                  ? LucideIcons.x
+                                  : LucideIcons.check,
                               size: 12,
                               color: step.status == 'error'
                                   ? PB.danger

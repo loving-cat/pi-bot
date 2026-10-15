@@ -8,6 +8,7 @@ import 'scan_screen.dart';
 import '../api.dart';
 import '../scope.dart';
 import '../theme.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 class PairScreen extends StatefulWidget {
   const PairScreen({super.key});
@@ -225,7 +226,7 @@ class _PairScreenState extends State<PairScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           const Icon(
-                            Icons.error_outline,
+                            LucideIcons.circleAlert,
                             size: 16,
                             color: PB.danger,
                           ),
@@ -258,7 +259,7 @@ class _PairScreenState extends State<PairScreen> {
                         const Row(
                           children: [
                             Icon(
-                              Icons.bolt_outlined,
+                              LucideIcons.zap,
                               size: 15,
                               color: PB.textTertiary,
                             ),
@@ -335,7 +336,7 @@ class _ScanButton extends StatelessWidget {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Icon(Icons.qr_code_scanner_rounded, size: 21, color: Colors.white),
+                const Icon(LucideIcons.scanLine, size: 21, color: Colors.white),
                 const SizedBox(width: 10),
                 const Text(
                   '扫码配对',

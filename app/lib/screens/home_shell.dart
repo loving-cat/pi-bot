@@ -5,6 +5,7 @@ import '../scope.dart';
 import '../theme.dart';
 import 'chat_screen.dart';
 import 'rooms_screen.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 /// 外层容器：宽屏左右分栏（左边会话列表 + 右边对话），窄屏走原来的单页导航。
 /// 微信 PC 端 / 同类客户端 就是这个形态，切换会话不用来回返回。
@@ -80,7 +81,7 @@ class _NoSelection extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.forum_outlined, size: 40, color: PB.textQuaternary),
+          Icon(LucideIcons.messagesSquare, size: 40, color: PB.textQuaternary),
           const SizedBox(height: 14),
           const Text(
             '左边选一个会话',

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../theme.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 /// 扫出来的配对信息
 class PairPayload {
   const PairPayload({this.url, this.code});
@@ -162,7 +163,7 @@ class _ScanScreenState extends State<ScanScreen> {
                             style: TextStyle(color: PB.textQuaternary, fontSize: PB.fsXs),
                           ),
                         ] else ...[
-                          const Icon(Icons.no_photography_outlined, size: 38, color: PB.textTertiary),
+                          const Icon(LucideIcons.cameraOff, size: 38, color: PB.textTertiary),
                           const SizedBox(height: 18),
                           Text(
                             switch (error.errorCode) {
@@ -177,7 +178,7 @@ class _ScanScreenState extends State<ScanScreen> {
                           const SizedBox(height: 22),
                           FilledButton.icon(
                             onPressed: _retry,
-                            icon: const Icon(Icons.refresh, size: 18),
+                            icon: const Icon(LucideIcons.refreshCw, size: 18),
                             label: const Text('重试'),
                           ),
                         ],
@@ -196,7 +197,7 @@ class _ScanScreenState extends State<ScanScreen> {
                 children: [
                   IconButton(
                     onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close, color: Colors.white, size: 22),
+                    icon: const Icon(LucideIcons.x, color: Colors.white, size: 22),
                   ),
                   const Spacer(),
                   if (ready)
@@ -206,7 +207,7 @@ class _ScanScreenState extends State<ScanScreen> {
                         setState(() => _torch = !_torch);
                       },
                       icon: Icon(
-                        _torch ? Icons.flashlight_on : Icons.flashlight_off,
+                        _torch ? LucideIcons.flashlight : LucideIcons.flashlightOff,
                         color: _torch ? PB.accentBright : Colors.white,
                         size: 22,
                       ),

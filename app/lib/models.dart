@@ -130,6 +130,8 @@ class Room {
     required this.botIds,
     this.botNames = const [],
     this.leadBotId,
+    this.leadName,
+    this.leadEmoji,
     this.topic = '',
     this.lastMessageAt = 0,
     this.lastMessage,
@@ -142,6 +144,10 @@ class Room {
   final List<String> botIds;
   final List<String> botNames;
   final String? leadBotId;
+
+  /// 部门老大（群才有）
+  final String? leadName;
+  final String? leadEmoji;
   final String topic;
   int lastMessageAt;
   Msg? lastMessage;
@@ -160,6 +166,8 @@ class Room {
         .whereType<String>()
         .toList(),
     leadBotId: json['leadBotId'] as String?,
+    leadName: json['leadName'] as String?,
+    leadEmoji: json['leadEmoji'] as String?,
     topic: json['topic'] as String? ?? '',
     lastMessageAt: _asInt(json['lastMessageAt']),
     lastMessage: json['lastMessage'] is Map<String, dynamic>

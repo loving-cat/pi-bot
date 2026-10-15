@@ -9,6 +9,7 @@ import '../widgets/skeleton.dart';
 import 'bots_screen.dart';
 import 'chat_screen.dart';
 import 'settings_screen.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 class RoomsScreen extends StatefulWidget {
   const RoomsScreen({
@@ -120,7 +121,7 @@ class _RoomsScreenState extends State<RoomsScreen> {
               ),
         actions: [
           _CircleIcon(
-            icon: _searching ? Icons.close : Icons.search,
+            icon: _searching ? LucideIcons.x : LucideIcons.search,
             onTap: () => setState(() {
               if (_searching) {
                 _searching = false;
@@ -133,13 +134,13 @@ class _RoomsScreenState extends State<RoomsScreen> {
           ),
           const SizedBox(width: 10),
           _CircleIcon(
-            icon: Icons.add,
+            icon: LucideIcons.plus,
             filled: true,
             onTap: () => _showCreateSheet(context),
           ),
           const SizedBox(width: 10),
           _CircleIcon(
-            icon: Icons.settings_outlined,
+            icon: LucideIcons.settings,
             onTap: () => Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => const SettingsScreen()),
@@ -165,8 +166,8 @@ class _RoomsScreenState extends State<RoomsScreen> {
                         ? '正在连接服务端…'
                         : '连不上服务端，会自动重试',
                     icon: state.link == LinkState.connecting
-                        ? Icons.sync
-                        : Icons.cloud_off,
+                        ? LucideIcons.refreshCw
+                        : LucideIcons.cloudOff,
                   ),
                 if (rooms.isEmpty &&
                     _query.isEmpty &&
@@ -186,7 +187,7 @@ class _RoomsScreenState extends State<RoomsScreen> {
                             border: Border.all(color: PB.borderTertiary),
                           ),
                           child: const Icon(
-                            Icons.bubble_chart_outlined,
+                            LucideIcons.sparkles,
                             size: 26,
                             color: PB.textQuaternary,
                           ),
@@ -279,7 +280,7 @@ class _RoomsScreenState extends State<RoomsScreen> {
               ),
               const SizedBox(height: 6),
               _SheetRow(
-                icon: Icons.groups_2_outlined,
+                icon: LucideIcons.users,
                 title: '让主控建一个团队',
                 subtitle: '一句话说清要干什么，主控会造好几个有分工的 bot 并建群',
                 highlight: true,
@@ -289,7 +290,7 @@ class _RoomsScreenState extends State<RoomsScreen> {
                 },
               ),
               _SheetRow(
-                icon: Icons.forum_outlined,
+                icon: LucideIcons.messagesSquare,
                 title: '新建空群',
                 subtitle: '先建群，之后再把 bot 拉进来',
                 onTap: () {
@@ -298,7 +299,7 @@ class _RoomsScreenState extends State<RoomsScreen> {
                 },
               ),
               _SheetRow(
-                icon: Icons.smart_toy_outlined,
+                icon: LucideIcons.bot,
                 title: '花名册',
                 subtitle: '${state.bots.length} 个 bot：看人设 / 换模型 / 调思考等级',
                 onTap: () {
@@ -636,7 +637,9 @@ class _RoomRowState extends State<_RoomRow> {
               ? room.topic
               : (!room.isGroup && bot != null
                     ? '${bot.model ?? '默认模型'} · thinking ${bot.thinking ?? '-'}'
-                    : '还没有消息'))
+                    : (room.isGroup && room.leadName != null
+                          ? '老大 ${room.leadName} · ${room.botIds.length} 人'
+                          : '还没有消息')))
         : '${last.isUser ? '我' : last.authorName}：${shortText(last.text, 46)}';
 
     return Padding(
@@ -804,7 +807,7 @@ class _RoomRowState extends State<_RoomRow> {
               ),
             ),
             ListTile(
-              leading: const Icon(Icons.chat_bubble_outline, size: 20),
+              leading: const Icon(LucideIcons.messageSquare, size: 20),
               title: Text(room.name, style: const TextStyle(fontSize: PB.fsSm)),
               subtitle: Text(
                 room.isGroup ? '群 · ${room.botIds.length} 个 bot' : '私聊',
@@ -818,7 +821,7 @@ class _RoomRowState extends State<_RoomRow> {
             if (room.isGroup)
               ListTile(
                 leading: const Icon(
-                  Icons.delete_outline,
+                  LucideIcons.trash2,
                   size: 20,
                   color: PB.danger,
                 ),

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../models.dart';
 import '../theme.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 /// 长按消息 → 底部操作面板
 Future<void> showMessageActions(BuildContext context, Msg msg) async {
@@ -27,7 +28,7 @@ Future<void> showMessageActions(BuildContext context, Msg msg) async {
           ),
           const SizedBox(height: 6),
           ListTile(
-            leading: const Icon(Icons.copy_all_outlined, size: 20),
+            leading: const Icon(LucideIcons.clipboardCopy, size: 20),
             title: const Text('复制内容', style: TextStyle(fontSize: PB.fsSm)),
             onTap: () {
               Clipboard.setData(ClipboardData(text: msg.text));
@@ -35,7 +36,7 @@ Future<void> showMessageActions(BuildContext context, Msg msg) async {
             },
           ),
           ListTile(
-            leading: const Icon(Icons.tag, size: 20),
+            leading: const Icon(LucideIcons.hash, size: 20),
             title: const Text('复制消息 id', style: TextStyle(fontSize: PB.fsSm)),
             onTap: () {
               Clipboard.setData(ClipboardData(text: msg.id));

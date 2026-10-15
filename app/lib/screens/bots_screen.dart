@@ -5,6 +5,7 @@ import '../scope.dart';
 import '../theme.dart';
 import '../widgets/blob_avatar.dart';
 import 'chat_screen.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 const _thinkingLevels = ['off', 'low', 'medium', 'high', 'max'];
 
@@ -23,7 +24,7 @@ class BotsScreen extends StatelessWidget {
           IconButton(
             tooltip: '新建 bot',
             onPressed: () => _createBot(context),
-            icon: const Icon(Icons.add, size: 20),
+            icon: const Icon(LucideIcons.plus, size: 20),
           ),
           const SizedBox(width: 8),
         ],
@@ -139,7 +140,7 @@ class _BotRow extends StatelessWidget {
                   animate: false,
                   badge: bot.isMain
                       ? const Icon(
-                          Icons.verified_user,
+                          LucideIcons.shieldCheck,
                           size: 12,
                           color: PB.accent,
                         )
@@ -218,7 +219,7 @@ class _BotRow extends StatelessWidget {
                       );
                     }
                   },
-                  icon: const Icon(Icons.chat_bubble_outline, size: 18),
+                  icon: const Icon(LucideIcons.messageSquare, size: 18),
                 ),
               ],
             ),
