@@ -28,6 +28,10 @@ class AppState extends ChangeNotifier {
 
   /// 每个会话里排队/插话中的用户消息条数
   final Map<String, int> queued = {};
+
+  /// 流式输出的高频更新走这个，不走 notifyListeners。
+  /// 否则每 80ms 一次 delta 会把整个界面（含左侧会话列表）重建一遍。
+  final ValueNotifier<int> streamTick = ValueNotifier<int>(0);
   LinkState link = LinkState.offline;
   String? lastError;
   bool ready = false;
@@ -459,6 +463,8 @@ class AppState extends ChangeNotifier {
         if (msg != null) {
           msg.text = ev['text'] as String? ?? msg.text;
           msg.status = 'streaming';
+          streamTick.value++;
+          return; // 不走 notifyListeners
         }
         break;
 
@@ -469,6 +475,8 @@ class AppState extends ChangeNotifier {
               .whereType<Map<String, dynamic>>()
               .map(ToolStep.fromJson)
               .toList();
+          streamTick.value++;
+          return; // 不走 notifyListeners
         }
         break;
 
@@ -678,6 +686,7 @@ class AppState extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     disconnect();
+    streamTick.dispose();
     super.dispose();
   }
 }

@@ -72,6 +72,8 @@ export class Store {
       this.messages.set(room.id, this.#loadRoomMessages(room.id));
     }
     this.saveTimer = null;
+    /** 有变更的房间 id —— 落盘时只写这些，不要全量重写 */
+    this.dirtyRooms = new Set();
   }
 
   #seed() {
@@ -124,9 +126,12 @@ export class Store {
 
   saveNow() {
     writeJsonAtomic(STATE_FILE, this.state);
-    for (const [roomId, list] of this.messages) {
-      writeJsonAtomic(path.join(ROOMS_DIR, `${roomId}.json`), list);
+    // 只写有变更的房间：之前是每次变更都把全部房间重写一遍，
+    // 房间一多（每个群 500 条消息）就是纯浪费。
+    for (const roomId of this.dirtyRooms) {
+      writeJsonAtomic(path.join(ROOMS_DIR, `${roomId}.json`), this.messages.get(roomId) ?? []);
     }
+    this.dirtyRooms.clear();
   }
 
   // ---------- 设备 ----------
@@ -294,6 +299,7 @@ export class Store {
     };
     this.state.rooms[room.id] = room;
     this.messages.set(room.id, []);
+    this.dirtyRooms.add(room.id);
     this.scheduleSave();
     bus.emit('event', { t: 'room.created', room: this.roomSummary(room) });
     return room;
@@ -377,7 +383,9 @@ export class Store {
   // ---------- 消息 ----------
 
   listMessages(roomId, { limit = 100 } = {}) {
-    return (this.messages.get(roomId) ?? []).slice(-limit);
+    const list = this.messages.get(roomId);
+    if (!list || list.length === 0) return [];
+    return list.length <= limit ? list.slice() : list.slice(-limit);
   }
 
   getMessage(roomId, messageId) {
@@ -407,6 +415,7 @@ export class Store {
     const list = this.messages.get(roomId);
     list.push(msg);
     if (list.length > config.maxMessagesPerRoom) list.splice(0, list.length - config.maxMessagesPerRoom);
+    this.dirtyRooms.add(roomId);
     const room = this.state.rooms[roomId];
     if (room) room.lastMessageAt = msg.createdAt;
     this.scheduleSave();
@@ -418,6 +427,7 @@ export class Store {
     const msg = this.getMessage(roomId, messageId);
     if (!msg) return null;
     Object.assign(msg, patch, { updatedAt: now() });
+    this.dirtyRooms.add(roomId);
     this.scheduleSave();
     if (!silent) bus.emit('event', { t: 'msg.updated', msg });
     return msg;
@@ -431,6 +441,7 @@ export class Store {
           msg.status = msg.text ? 'done' : 'error';
           if (!msg.text) msg.error = '服务端重启，本轮中断';
           msg.updatedAt = now();
+          this.dirtyRooms.add(roomId);
           n++;
         }
       }
@@ -440,15 +451,16 @@ export class Store {
   }
 
   roomSummary(room) {
-    const messages = this.listMessages(room.id, { limit: 1 });
+    // 直接读数组尾部/长度，避免两次 slice(-1)/(-500)
+    const list = this.messages.get(room.id) ?? [];
     const lead = this.state.bots[room.leadBotId];
     return {
       ...room,
       leadName: lead?.name ?? null,
       leadEmoji: lead?.emoji ?? null,
       botNames: room.botIds.map((id) => this.state.bots[id]?.name).filter(Boolean),
-      lastMessage: messages[0] ?? null,
-      messageCount: (this.messages.get(room.id) ?? []).length,
+      lastMessage: list.length ? list[list.length - 1] : null,
+      messageCount: list.length,
     };
   }
 
@@ -473,6 +485,7 @@ export class Store {
     const idx = list.findIndex((m) => m.id === messageId);
     if (idx < 0) return false;
     list.splice(idx, 1);
+    this.dirtyRooms.add(roomId);
     this.scheduleSave();
     bus.emit('event', { t: 'msg.deleted', roomId, msgId: messageId });
     return true;
