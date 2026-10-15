@@ -5,14 +5,14 @@
 import WebSocket from 'ws';
 
 const base = process.argv[2] || 'http://127.0.0.1:8787';
-const token = process.argv[3] || 'test-token';
+const token = process.argv[3] ?? '';
 const text = process.argv[4] || '用一句话介绍你自己，然后用 ls 看一眼当前目录有什么文件。';
 const roomSelector = process.argv[5] || '';
 
 const health = await (await fetch(`${base}/health`)).json();
 console.log('health:', JSON.stringify(health));
 
-const state = await (await fetch(`${base}/api/state`, { headers: { authorization: `Bearer ${token}` } })).json();
+const state = await (await fetch(`${base}/api/state`, { headers: { authorization: (token ? `Bearer ${token}` : '') } })).json();
 console.log('state: rooms =', state.rooms.map((r) => `${r.name}(${r.id})`).join(', '));
 console.log('       bots  =', state.bots.map((b) => b.name).join(', '));
 console.log('       model =', state.server.model);
