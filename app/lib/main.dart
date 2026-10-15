@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'app_state.dart';
+import 'notify.dart';
 import 'scope.dart';
 import 'screens/pair_screen.dart';
 import 'screens/home_shell.dart';
@@ -23,12 +24,20 @@ class PiBotApp extends StatefulWidget {
   State<PiBotApp> createState() => _PiBotAppState();
 }
 
-class _PiBotAppState extends State<PiBotApp> {
+class _PiBotAppState extends State<PiBotApp> with WidgetsBindingObserver {
   final AppState _state = AppState();
+  final GlobalKey<NavigatorState> _navKey = GlobalKey<NavigatorState>();
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    Notifier.init();
+    // 点通知 → 直接进那个会话
+    Notifier.onTap = (roomId) {
+      if (roomId == null) return;
+      _state.openRoom(roomId);
+    };
     _state.bootstrap().then((_) {
       if (_devUrl.isNotEmpty && _devToken.isNotEmpty && !_state.paired) {
         _state.useToken(_devUrl, _devToken, device: 'dev-shell');
@@ -37,7 +46,14 @@ class _PiBotAppState extends State<PiBotApp> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 不在前台才弹通知
+    _state.foreground = state == AppLifecycleState.resumed;
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _state.dispose();
     super.dispose();
   }
@@ -47,6 +63,7 @@ class _PiBotAppState extends State<PiBotApp> {
     return AppScope(
       state: _state,
       child: MaterialApp(
+        navigatorKey: _navKey,
         title: 'pi-bot',
         debugShowCheckedModeBanner: false,
         themeMode: ThemeMode.dark,

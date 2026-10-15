@@ -7,6 +7,8 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'api.dart';
 import 'models.dart';
+import 'native.dart';
+import 'notify.dart';
 import 'platform.dart';
 
 /// 全局状态：连接、房间、消息、流式输出。
@@ -28,6 +30,9 @@ class AppState extends ChangeNotifier {
 
   /// 每个会话里排队/插话中的用户消息条数
   final Map<String, int> queued = {};
+
+  /// App 是不是在前台（不在前台才弹通知）
+  bool foreground = true;
 
   /// 流式输出的高频更新走这个，不走 notifyListeners。
   /// 否则每 80ms 一次 delta 会把整个界面（含左侧会话列表）重建一遍。
@@ -116,6 +121,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> signOut() async {
     disconnect();
+    await Native.stopService();
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_kUrl);
     await prefs.remove(_kToken);
@@ -434,6 +440,7 @@ class AppState extends ChangeNotifier {
     switch (ev['t'] as String?) {
       case 'hello':
         link = LinkState.online;
+        unawaited(Native.startService());
         _attempt = 0;
         lastError = null;
         serverInfo = ServerInfo.fromJson(
@@ -481,9 +488,12 @@ class AppState extends ChangeNotifier {
         break;
 
       case 'msg.updated':
-      case 'msg.done':
+      case 'msg.done': {
+        final msg = Msg.fromJson((ev['msg'] as Map).cast<String, dynamic>());
         _replace((ev['msg'] as Map).cast<String, dynamic>());
+        _maybeNotify(msg);
         break;
+      }
 
       case 'msg.error':
         final roomId = ev['roomId'] as String?;
@@ -578,6 +588,20 @@ class AppState extends ChangeNotifier {
         return;
     }
     _notify();
+  }
+
+  /// 不在前台、或不是当前打开的房间 → 弹本地通知
+  void _maybeNotify(Msg msg) {
+    if (msg.authorType != 'bot') return;
+    final text = msg.text.trim();
+    if (text.isEmpty) return;
+    if (foreground && _openRoomId == msg.roomId) return;
+    final room = rooms.where((r) => r.id == msg.roomId).firstOrNull;
+    Notifier.show(
+      title: room?.isGroup == true ? '${room!.name} · ${msg.authorName}' : msg.authorName,
+      body: text,
+      roomId: msg.roomId,
+    );
   }
 
   void _touchRoom(String roomId, Msg msg) {

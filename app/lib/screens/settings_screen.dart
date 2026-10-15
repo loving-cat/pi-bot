@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../platform.dart';
+import '../native.dart';
+import '../notify.dart';
 import '../scope.dart';
 import '../theme.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
@@ -240,6 +242,54 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     _InfoRow('工作目录', info?.workspace ?? '-'),
                     _InfoRow('版本', info?.version ?? '-'),
                     _InfoRow('设备名', state.deviceName),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 22),
+              const _SectionTitle(
+                icon: LucideIcons.bellRing,
+                title: '后台通知',
+                subtitle: '锁屏也能收到机器人干完活的消息',
+              ),
+              _Card(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const _Hint(
+                      '不走 FCM。App 会起一个低优先级的常驻通知保住连接，\n'
+                      '机器人干完活时再单独推一条消息通知。',
+                    ),
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: () async {
+                          await Notifier.init();
+                          await Notifier.show(
+                            title: 'pi-bot 通知测试',
+                            body: '看到这条说明通知是通的 ✅',
+                            roomId: null,
+                          );
+                        },
+                        icon: const Icon(LucideIcons.bellRing, size: 16),
+                        label: const Text('发一条测试通知'),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: () => Native.requestIgnoreBatteryOptimizations(),
+                        icon: const Icon(LucideIcons.batteryCharging, size: 16),
+                        label: const Text('加入电池白名单'),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    const Text(
+                      '国产 ROM 不加白名单的话，常驻服务也会被系统清掉，通知就收不到了。',
+                      style: TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary, height: 1.5),
+                    ),
                   ],
                 ),
               ),
