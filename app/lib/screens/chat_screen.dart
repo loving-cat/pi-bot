@@ -16,6 +16,12 @@ import '../widgets/md_text.dart';
 import '../widgets/message_actions.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+/// 用量全是 0 就别显示（很多模型不返回 usage）
+bool _hasUsage(Map<String, dynamic> usage) {
+  final n = (usage['input'] ?? 0) + (usage['output'] ?? 0) + (usage['cacheRead'] ?? 0);
+  return n is num && n > 0;
+}
+
 class ChatScreen extends StatefulWidget {
   const ChatScreen({
     super.key,
@@ -233,7 +239,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     busy
                         ? '正在干活…'
                         : (room.isGroup
-                              ? '${room.botIds.length} 个 bot'
+                              ? '老大 ${room.leadName ?? '-'} · ${room.botIds.length} 人'
                               : '${lead?.model ?? '默认模型'} · ${lead?.thinking ?? ''}'),
                     style: TextStyle(
                       fontSize: PB.fsXxs,
@@ -1168,7 +1174,7 @@ class _MessageRow extends StatelessWidget {
                       ),
                     ),
                   ),
-                if (!streaming && msg.usage != null && showAuthor)
+                if (!streaming && msg.usage != null && showAuthor && _hasUsage(msg.usage!))
                   Padding(
                     padding: const EdgeInsets.only(top: 5, left: 2),
                     child: Text(
