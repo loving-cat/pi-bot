@@ -91,7 +91,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ? '手机扫下面的码就能连上这台电脑'
                     : '这台设备是通过配对连上服务端的',
               ),
-              if (pairing != null) ...[
+              // ★ 二维码只有**宿主端**（跑服务端的那台电脑）才画。
+              //
+              //   以前这里只判 `pairing != null` —— 可手机连上自己的服务端之后
+              //   pairing 也非空，于是手机上也会画出一张"等人来扫"的码：
+              //   用户看到的是"手机端跟电脑端一模一样，也在等待被扫码"。
+              //   手机上该给的是"我连的是哪台 / 重新扫码"。
+              if (isHostPlatform && pairing != null) ...[
                 _Card(
                   child: Column(
                     children: [
@@ -161,7 +167,81 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           color: PB.textQuaternary,
                         ),
                       ),
-                      const SizedBox(height: 14),
+                      // 手机端（远程客户端）：说清楚"我连的是哪台"，再给一个重新扫码
+              if (!isHostPlatform) ...[
+                _Card(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        '已连接的服务端',
+                        style: TextStyle(
+                          fontSize: PB.fsXs,
+                          color: PB.textTertiary,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              state.serverUrl ?? '（未知）',
+                              style: const TextStyle(
+                                fontFamily: PB.monoFamily,
+                                fontFamilyFallback: PB.monoFallback,
+                                fontSize: PB.fsSm,
+                                color: PB.textPrimary,
+                              ),
+                            ),
+                          ),
+                          const Icon(
+                            LucideIcons.smartphone,
+                            size: 16,
+                            color: PB.textQuaternary,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      const Text(
+                        '这台手机上还是这台电脑的码 —— 换一台电脑就连它的二维码、'
+                        '或者手填它的地址。',
+                        style: TextStyle(
+                          fontSize: PB.fsXxs,
+                          color: PB.textQuaternary,
+                          height: 1.6,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
+                _Card(
+                  child: ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(
+                      LucideIcons.qrCode,
+                      size: 20,
+                      color: PB.accent,
+                    ),
+                    title: const Text(
+                      '重新扫码配对',
+                      style: TextStyle(fontSize: PB.fsSm),
+                    ),
+                    subtitle: const Text(
+                      '换电脑、或者配对码失效了就点这里',
+                      style: TextStyle(
+                        fontSize: PB.fsXxs,
+                        color: PB.textQuaternary,
+                      ),
+                    ),
+                    onTap: () async {
+                      await state.signOut();
+                      if (context.mounted) Navigator.pop(context);
+                    },
+                  ),
+                ),
+              ],
+              const SizedBox(height: 14),
                       const _Hint(
                         '手机和电脑要在同一个 WiFi 下。\n'
                         '手机装 pi-bot App → 点「扫码配对」→ 扫上面这个码。',
