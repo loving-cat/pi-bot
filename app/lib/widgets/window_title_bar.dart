@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -8,6 +9,7 @@ import 'package:flutter/scheduler.dart';
 import '../resizing.dart';
 
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:screen_retriever/screen_retriever.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../theme.dart';
@@ -290,6 +292,45 @@ Offset screenDelta({
   required Rect lastBounds,
 }) => viewDelta + (lastBounds.topLeft - startBounds.topLeft);
 
+/// 把窗口矩形夹进显示器的**可用区域**（逻辑坐标，排除任务栏）。
+///
+/// 为什么要夹：窗口一旦跨到"缩放比不同的另一块屏"，Windows 会改这个窗口的 DPI，
+/// 引擎收到新的 devicePixelRatio 就会**整体重缩放** —— 用户看到的是"整个界面
+/// 被放大了"（用户原话："程序内的不可以乱动"）。
+/// 夹在当前屏内就不会跨屏，也就不会触发那套重缩放。
+///
+/// 代价：没法靠拖边框把窗口拖到另一块屏上（要挪窗口请拖标题条）。
+/// 抽成纯函数是为了能单测 —— 这种"手感/边界"逻辑只有测试看得住。
+Rect clampToWorkArea({
+  required Rect rect,
+  required Rect workArea,
+  required Size minSize,
+}) {
+  // 可用区本身可能就比最小尺寸小（小屏 / 任务栏占太多），先取个折中
+  final minW = math.min(minSize.width, workArea.width);
+  final minH = math.min(minSize.height, workArea.height);
+
+  var l = rect.left;
+  var t = rect.top;
+  var r = rect.right;
+  var b = rect.bottom;
+
+  // ① 四条边先夹进可用区
+  if (r > workArea.right) r = workArea.right;
+  if (b > workArea.bottom) b = workArea.bottom;
+  if (l < workArea.left) l = workArea.left;
+  if (t < workArea.top) t = workArea.top;
+
+  // ② 再保证不小于最小尺寸：优先往右下要空间
+  if (r - l < minW) r = math.min(workArea.right, l + minW);
+  if (b - t < minH) b = math.min(workArea.bottom, t + minH);
+  // 右边/下边已经顶到屏幕了 → 那就把左边/上边往回让
+  if (r - l < minW) l = r - minW;
+  if (b - t < minH) t = b - minH;
+
+  return Rect.fromLTRB(l, t, r, b);
+}
+
 /// 无边框窗口的**八向缩放热区**。
 ///
 /// `setAsFrameless()` 去掉了系统标题栏，Windows 的窗口过程就不再给边框做命中
@@ -340,6 +381,10 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
   /// 上一次我们自己设进去的矩形 —— 拿它的左上角当"窗口现在在哪"。
   /// 拖上边/左边时要靠它把窗口自身的位移补偿掉（见 screenDelta）。
   Rect? _lastBounds;
+
+  /// 当前显示器的**可用区域**（逻辑坐标，已排除任务栏）。
+  /// 拖动开始时取一次；拖动中用它把窗口夹住，避免跨屏触发 DPI 重缩放。
+  Rect? _workArea;
 
   // ---- 平滑 ----
   //
@@ -607,6 +652,19 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
     });
   }
 
+  /// 读当前显示器的可用区（拿不到就返回 null —— 那就退回"不夹"的老行为）
+  Future<Rect?> _readWorkArea() async {
+    try {
+      final d = await ScreenRetriever.instance.getPrimaryDisplay();
+      final pos = d.visiblePosition;
+      final size = d.visibleSize ?? d.size;
+      if (pos == null || size.width <= 0 || size.height <= 0) return null;
+      return Rect.fromLTWH(pos.dx, pos.dy, size.width, size.height);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// 松手：清掉间隔闸（让最后落点立刻生效）+ 结束降级渲染
   void _endDrag() {
     _lastSendAt = null;
@@ -628,6 +686,7 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
       // 插值的起点/目标都设成当前值，免得第一帧从 (0,0) 飞过去
       _current = _startBounds;
       _target = _startBounds;
+      _workArea = await _readWorkArea();
     } catch (_) {
       _startBounds = null; // 拿不到就不拖，别乱跳
     }
@@ -638,7 +697,7 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
     final from = _startPointer;
     final edge = _edge;
     if (start == null || from == null || edge == null) return;
-    final next = resizeBy(
+    var next = resizeBy(
       start: start,
       // 用补偿过的位移：窗口自己移动了多少要加回去，否则拖上/左边会抽搐
       delta: screenDelta(
@@ -649,6 +708,16 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
       edge: edge,
       minSize: kWindowMinSize,
     );
+    // ★ 夹在当前屏内：不跨屏就不会触发系统的 DPI 重缩放
+    //   （用户原话："程序内的不可以乱动"）。
+    final area = _workArea;
+    if (area != null) {
+      next = clampToWorkArea(
+        rect: next,
+        workArea: area,
+        minSize: kWindowMinSize,
+      );
+    }
     // ★ 只更新**目标**，不直接 setBounds。
     //   由 Ticker 每帧朝目标插值着走 —— 这样窗口是被"牵引"过去的，
     //   而不是每来一个指针事件就硬跳一次（那才是"波动很大"的来源）。
