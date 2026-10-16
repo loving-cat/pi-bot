@@ -49,7 +49,15 @@ export const config = {
   noExtensions: process.env.PI_BOT_NO_EXTENSIONS === '1',
   /** bot 跑完一轮后，自动把工作目录里新生成的图片附到消息上 */
   autoAttachImages: process.env.PI_BOT_AUTO_ATTACH !== '0',
-  /** 部门里单次最多动手几步（超过就收住，防止一个成员把部门拖住） */
+  /**
+   * 部门里单次最多**来回几轮**（对话轮次，不是工具调用次数）。
+   *
+   * 用户原话："这个步数 不是算工具调用多少次，是每次干完要多次对话，
+   * 步数是对话次数 —— 你这 30 步很多模型活都干不完，对话次数算才行。"
+   *
+   * 一次 assistant 发言 = 一轮（里面可以带好几个工具调用）。
+   * 按工具调用算的话，模型连查带改跑十几个 bash 就把额度烧光了，活才刚开头。
+   */
   groupTurnMaxSteps: Number(process.env.PI_BOT_GROUP_MAX_STEPS || 30),
   /** 部门里单轮最长跑多久（毫秒），到点收住交给下一个人 */
   groupTurnMaxMs: Number(process.env.PI_BOT_GROUP_TURN_MAX_MS || 300_000),
