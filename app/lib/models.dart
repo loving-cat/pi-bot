@@ -109,6 +109,22 @@ class Msg {
 
   /// 上下文压缩的提示条（服务端在压缩成功后写一条 kind='compact'）
   bool get isCompact => kind == 'compact';
+
+  /// "要用户拿个主意"的卡片（服务端 ask_user 工具写的 kind='ask'）
+  bool get isAsk => kind == 'ask';
+
+  /// 卡片上的选项
+  List<AskOption> get askOptions {
+    final raw = meta?['options'];
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map((e) => AskOption.fromJson(e.cast<String, dynamic>()))
+        .toList();
+  }
+
+  /// 要不要同时给一个"我自己说"的输入框
+  bool get askAllowCustom => meta?['allowCustom'] != false;
   bool get wasSteer => meta?['queued'] != null;
 
   factory Msg.fromJson(Map<String, dynamic> json) => Msg(
@@ -292,6 +308,19 @@ class ContextInfo {
     contextWindow: contextWindow,
     percent: percent,
     compacting: compacting ?? this.compacting,
+  );
+}
+
+/// 一张"问用户要选择"的卡片上的一个选项
+class AskOption {
+  AskOption({required this.label, this.detail = ''});
+
+  final String label;
+  final String detail;
+
+  factory AskOption.fromJson(Map<String, dynamic> json) => AskOption(
+    label: json['label'] as String? ?? '',
+    detail: json['detail'] as String? ?? '',
   );
 }
 
