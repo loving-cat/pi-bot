@@ -34,3 +34,5 @@
 [got]  0x6cf0000
 [want] 0x2cf0000
 [got]  0x6cf0000
+[want] 0x2cf0000
+[got]  0x6cf0000
