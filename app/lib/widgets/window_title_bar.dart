@@ -413,6 +413,11 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
   void _send(Rect r) {
     if (_sending) return;
     _sending = true;
+    // ★ 补偿量必须跟着"**真的发出去**的那个矩形"走，不能跟着目标走。
+    //   插值意味着窗口要几帧才走到目标；如果拿目标去补偿，补偿就超前了 ——
+    //   窗口飞过头 → 下一帧误差反向 → **震荡**（用户报的"震荡特别明显"）。
+    //   跳过发送时不更新（那一次窗口根本没动）。
+    _lastBounds = r;
     unawaited(
       windowManager.setBounds(r).whenComplete(() {
         _sending = false;
@@ -554,7 +559,6 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
       edge: edge,
       minSize: kWindowMinSize,
     );
-    _lastBounds = next;
     // ★ 只更新**目标**，不直接 setBounds。
     //   由 Ticker 每帧朝目标插值着走 —— 这样窗口是被"牵引"过去的，
     //   而不是每来一个指针事件就硬跳一次（那才是"波动很大"的来源）。
