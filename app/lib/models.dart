@@ -383,7 +383,7 @@ class BotSkill {
 ///
 /// 用户因此能看到“它把活派给了谁”，点开还能看他们聊了什么。
 class MsgRef {
-  MsgRef({required this.botId, required this.roomId});
+  MsgRef({required this.botId, required this.roomId, this.count});
 
   /// 收信方的 bot id
   final String botId;
@@ -391,9 +391,15 @@ class MsgRef {
   /// 他们俩那个私聊房间的 id（点开看聊天记录用）
   final String roomId;
 
+  /// 他俩那个私聊里现在有多少条消息。
+  /// 界面用它显示「5 条消息往来」—— 用户要的是"进展到哪一步了"，
+  /// 只写"已发送给 X"看不出有多少来回。
+  final int? count;
+
   factory MsgRef.fromJson(Map<String, dynamic> json) => MsgRef(
     botId: json['botId'] as String? ?? '',
     roomId: json['roomId'] as String? ?? '',
+    count: (json['count'] as num?)?.toInt(),
   );
 }
 
