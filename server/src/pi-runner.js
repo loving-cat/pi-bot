@@ -28,6 +28,7 @@ import { config } from './config.js';
 import { bus } from './bus.js';
 import { store } from './store.js';
 import { loadExtraProviders, settingsDefaultModel } from './providers.js';
+import { modelGroups } from './model-groups.js';
 import { ModelHealth } from './model-health.js';
 import { buildChiefTools, buildCommonTools } from './tools.js';
 import { MODEL_MENU, defaultMenuSlug, logMenu, resolveMenu } from './model-menu.js';
@@ -243,6 +244,10 @@ export class PiRunner {
       }
     }
 
+    // 自定义模型组也要注册进来（用户自己加的 baseUrl/key）
+    this.registeredGroups = new Set();
+    this.syncModelGroups();
+
     const candidates = [config.model, settingsDefaultModel()].filter(Boolean);
     for (const slug of candidates) {
       const found = this.resolveModel(slug);
@@ -252,18 +257,7 @@ export class PiRunner {
       }
     }
 
-    try {
-      const available = await this.modelRuntime.getAvailable();
-      this.availableModels = available.map((m) => ({
-        provider: m.provider,
-        id: m.id,
-        contextWindow: m.contextWindow,
-        cost: m.cost ? { input: m.cost.input, output: m.cost.output } : null,
-        reasoning: Boolean(m.reasoning),
-      }));
-    } catch (err) {
-      log('⚠️  取可用模型列表失败：', err?.message || err);
-    }
+    await this.refreshAvailableModels();
 
     this.health = new ModelHealth(this);
 
@@ -328,6 +322,66 @@ export class PiRunner {
       if (u) out[key] = u;
     }
     return out;
+  }
+
+  /** 重新读一遍可用模型（增删模型组之后要调，否则 App 的列表还是旧的） */
+  async refreshAvailableModels() {
+    if (!this.modelRuntime) return;
+    try {
+      const available = await this.modelRuntime.getAvailable();
+      this.availableModels = available.map((m) => ({
+        provider: m.provider,
+        id: m.id,
+        contextWindow: m.contextWindow,
+        cost: m.cost ? { input: m.cost.input, output: m.cost.output } : null,
+        reasoning: Boolean(m.reasoning),
+      }));
+    } catch (err) {
+      log('⚠️  取可用模型列表失败：', err?.message || err);
+    }
+  }
+
+  /**
+   * 把用户自定义的模型组同步到模型运行时。
+   *
+   * pi 的 registerProvider/unregisterProvider 运行时就能调，所以**加完不用重启** ——
+   * 用户填完 baseUrl/key 立刻能在模型列表里选到。
+   *
+   * 删掉的组必须显式注销，否则菜单里会留一个选不动的幽灵项
+   * （选中之后请求发到一个已经没了的 provider，报的错还很难懂）。
+   */
+  syncModelGroups() {
+    if (!this.modelRuntime) return;
+    this.registeredGroups ??= new Set();
+    const wanted = modelGroups.toProviderConfigs();
+
+    for (const id of [...this.registeredGroups]) {
+      if (wanted[id]) continue;
+      try {
+        this.modelRuntime.unregisterProvider(id);
+        log(`🔌 模型组已移除：${id}`);
+      } catch (err) {
+        log(`⚠️  注销模型组 ${id} 失败：`, err?.message || err);
+      }
+      this.registeredGroups.delete(id);
+    }
+
+    for (const [id, cfg] of Object.entries(wanted)) {
+      try {
+        this.modelRuntime.registerProvider(id, cfg);
+        this.registeredGroups.add(id);
+      } catch (err) {
+        log(`⚠️  注册模型组 ${id} 失败：`, err?.message || err);
+      }
+    }
+  }
+
+  /** 改完模型组：重新注册 + 刷新列表，然后广播一声让 App 更新 */
+  async applyModelGroupChange() {
+    this.syncModelGroups();
+    await this.refreshAvailableModels();
+    bus.emit('event', { t: 'models.changed' });
+    return this.availableModels?.length ?? 0;
   }
 
   // ---------------------------------------------------------------- 会话
