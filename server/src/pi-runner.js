@@ -912,7 +912,7 @@ export class PiRunner {
           });
           log(`[${bot.name}] 上下文压缩开始（${event.reason}）`);
           break;
-        case 'compaction_end':
+        case 'compaction_end': {
           bus.emit('event', {
             t: 'bot.compacting',
             roomId,
@@ -922,7 +922,32 @@ export class PiRunner {
             error: event.errorMessage || null,
           });
           log(`[${bot.name}] 上下文压缩结束（${event.reason}）`);
+          // ★ 压缩这件事必须**出现在对话里**，不能只藏在状态里。
+          //   否则用户看到的是"bot 刚才那几轮说的话不见了"，完全不知道发生了什么。
+          //   留一条 kind='compact' 的记录，App 把它画成对话中间的一条小横条。
+          const res = event.result;
+          if (res && !event.aborted && !event.errorMessage) {
+            const saved = res.tokensBefore
+              ? Math.max(0, res.tokensBefore - (res.estimatedTokensAfter ?? 0))
+              : null;
+            store.appendMessage({
+              roomId,
+              authorType: 'system',
+              authorId: bot.id,
+              authorName: bot.name,
+              kind: 'compact',
+              text: '',
+              status: 'done',
+              meta: {
+                reason: event.reason,
+                tokensBefore: res.tokensBefore ?? null,
+                tokensAfter: res.estimatedTokensAfter ?? null,
+                saved,
+              },
+            });
+          }
           break;
+        }
         case 'message_start':
           if (event.message?.role === 'assistant') buffer = '';
           break;
