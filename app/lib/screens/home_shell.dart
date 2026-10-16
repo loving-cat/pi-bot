@@ -96,13 +96,19 @@ class _HomeShellState extends State<HomeShell> {
               Expanded(
                 child: Row(
                   children: [
-                    SizedBox(
-                      width: _leftWidth,
-                      child: RoomsScreen(
-                        embedded: true,
-                        selectedId: selected?.id,
-                        onSelect: (room) =>
-                            setState(() => _selectedId = room.id),
+                    // ★ 包一层 RepaintBoundary：这两栏的宽度是**固定**的，
+                    //   窗口缩放时它们只是平移、形状不变 —— 于是光栅结果可以复用。
+                    //   不包的话，每一帧整棵树（三个栏）都要重光栅一遍，
+                    //   开着右侧面板时尤其明显（用户报的"打开新组件后拖动非常卡"）。
+                    RepaintBoundary(
+                      child: SizedBox(
+                        width: _leftWidth,
+                        child: RoomsScreen(
+                          embedded: true,
+                          selectedId: selected?.id,
+                          onSelect: (room) =>
+                              setState(() => _selectedId = room.id),
+                        ),
                       ),
                     ),
                     _DragHandle(
@@ -164,7 +170,9 @@ class _HomeShellState extends State<HomeShell> {
                             ),
                           ),
                         ),
-                        child: RoomPanel(room: selected),
+                        child: RepaintBoundary(
+                          child: RoomPanel(room: selected),
+                        ),
                       ),
                   ],
                 ),
