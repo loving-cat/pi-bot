@@ -13,6 +13,28 @@ import { config } from './config.js';
 import { pairingCode } from './util.js';
 
 /** 本机所有可用的局域网地址 */
+/**
+ * 本机所有非回环 IPv4，**按"手机连得上"的可能性排序**。
+ *
+ * 为什么必须排序（真事）：开着 VPN 时机器上会多出一张 TUN 网卡
+ * （Mihomo / Clash 的 198.18.0.1，属于 benchmark 保留段），
+ * 而它往往排在真网卡前面 —— 于是终端打印的二维码和地址是
+ * `http://198.18.0.1:8787`，**手机根本连不上**，用户只会觉得"连不上"。
+ *
+ * 规则：真局域网段优先（192.168 / 10 / 172.16-31），
+ * TUN / 保留段排后面（198.18-19、100.64-127 的 CGNAT、169.254 link-local）。
+ */
+function rank(address) {
+  const [a, b] = address.split('.').map(Number);
+  if (a === 192 && b === 168) return 0; // 家用/公司局域网，最常见
+  if (a === 10) return 1; // 大型内网
+  if (a === 172 && b >= 16 && b <= 31) return 2; // 内网
+  if (a === 198 && (b === 18 || b === 19)) return 90; // VPN TUN（benchmark 段）
+  if (a === 100 && b >= 64 && b <= 127) return 91; // CGNAT（有些 VPN 用）
+  if (a === 169 && b === 254) return 92; // link-local，连不上
+  return 50; // 其他，放中间
+}
+
 export function lanAddresses() {
   const out = [];
   for (const [name, infos] of Object.entries(os.networkInterfaces())) {
@@ -20,7 +42,7 @@ export function lanAddresses() {
       if (info.family === 'IPv4' && !info.internal) out.push({ name, address: info.address });
     }
   }
-  return out;
+  return out.sort((x, y) => rank(x.address) - rank(y.address));
 }
 
 /** 手机该填哪个地址：优先局域网 IP，没有就 127.0.0.1 */
