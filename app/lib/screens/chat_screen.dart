@@ -843,8 +843,17 @@ class _ComposerState extends State<_Composer> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          // ★ 这个 key 是**必须的**，不是为了好看。
+          //
+          //   不加的话：busy 一变，这个孩子就凭空插到 Column 最前面，
+          //   Flutter 按位置配对 → 后面的输入框整棵被**重建** →
+          //   新的 EditableText 拿着一个"已经聚焦"的 FocusNode 初始化，
+          //   于是它**永远不会打开文本输入连接**。表现就是用户报的：
+          //   发完第一条，光标在闪、打字没反应、点一下也没用（点它没有状态变化，
+          //   引擎不会重连）。有 key 之后 Flutter 按 key 配对，输入框原地不动。
           if (busy)
             Padding(
+              key: const ValueKey('composer-busy-hint'),
               padding: const EdgeInsets.only(bottom: 6),
               child: Container(
                 padding: const EdgeInsets.symmetric(
@@ -876,8 +885,10 @@ class _ComposerState extends State<_Composer> {
                 ),
               ),
             ),
+          //   同上：这一行出现/消失也会挤掉输入框，必须给 key
           if (pending.isNotEmpty || widget.uploading)
             Padding(
+              key: const ValueKey('composer-pending'),
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
               child: SizedBox(
                 height: 56,
@@ -960,6 +971,9 @@ class _ComposerState extends State<_Composer> {
               ),
             ),
           Padding(
+            // 输入行：整个 composer 里**唯一有状态**的东西（TextField 的
+            // EditableText）。给它一个稳定的 key，任何兄弟的增删都不会碰到它。
+            key: const ValueKey('composer-input-row'),
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
