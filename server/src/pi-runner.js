@@ -1029,6 +1029,37 @@ export class PiRunner {
           }
         }
         log(`【${room.name}】${bot.name} 还在忙 → 等它空下来再派（${item.reason}）`);
+        // ★ 同级同事 @ 它：不打断，但**消息必须送到**。
+        //
+        //   这是学 ds-bot 的做法（`groups.js` 那句 "the call waits in its inbox →
+        //   and is answered after that"）：忙就不等，把话投进它的 inbox，
+        //   它手上的活做完自己会看到。比"死等两分钟"快，也不会等到一半就丢掉。
+        if (entry?.session?.followUp) {
+          try {
+            await entry.session.followUp(
+              `【${item.fromName || '同事'} 找你】${item.fromName || '同事'} 刚在群里说：\n` +
+                `${(item.fromText || '').slice(0, 1200) || '（看群里的最新消息）'}\n\n` +
+                '你手上那件做完之后再处理这条（不急，但也别忘了）。',
+            );
+            log(`【${room.name}】把话投进 ${bot.name} 的 inbox（它在忙，忙完自己看）`);
+            store.appendMessage(
+              {
+                roomId,
+                authorType: 'system',
+                authorId: bot.id,
+                authorName: '投递回执',
+                text: `${bot.name} 正在忙：这句已经放进它的待办，忙完会看到。`,
+                status: 'done',
+                meta: { via: 'queued_for_busy', fromId: item.fromId ?? null },
+              },
+              { beforeStreaming: true },
+            );
+            continue;
+          } catch (err) {
+            log(`投递给 ${bot.name} 失败：${err?.message || err}`);
+          }
+        }
+        // 投递也失败 → 退回等待，再不行就上报（绝不静默丢掉）
         const deadline = Date.now() + config.groupBusyWaitMs;
         while (this.isBusy(roomId, bot.id) && Date.now() < deadline) {
           await new Promise((r) => setTimeout(r, 2000));
