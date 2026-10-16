@@ -24,6 +24,7 @@ class BlobAvatar extends StatefulWidget {
     this.mood = AvatarMood.idle,
     this.interactive = false,
     this.followPointer = true,
+    this.hovered = false,
   });
 
   final String seed;
@@ -38,6 +39,13 @@ class BlobAvatar extends StatefulWidget {
 
   /// 心情：闲 / 干活中（干活中视线略抬，而且不会"睡着"）
   final AvatarMood mood;
+
+  /// 外面告诉我们"鼠标停在**这一行**上"（不只是头像那 46px 的框）。
+  ///
+  /// 为什么要这个：用户的心智是"我进到这条会话上，它就该看着我"——
+  /// 而头像本身只有 46px，鼠标停在名字/预览文字上时它还是呆的，看着像坏了。
+  /// 所以由行来驱动（见 RoomsScreen 的 _RoomRow）。
+  final bool hovered;
 
   /// 眼睛要不要跟着鼠标看。
   /// 群头像（几个 blob 叠在一起）关掉 —— 一堆眼睛同时转过去很怪。
@@ -160,8 +168,13 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
     _wake();
   }
 
-  /// 鼠标进来才开始跟随（整个头像框都算命中区）
-  void _onEnter(PointerEnterEvent _) {
+  /// 鼠标进来（或外面说"这一行被悬停了"）才开始跟随
+  void _onEnter(PointerEnterEvent _) => _startFollow();
+
+  /// 鼠标离开：停掉跟随，视线回正（否则它会一直斜着眼看别处）
+  void _onExit(PointerExitEvent _) => _stopFollow();
+
+  void _startFollow() {
     if (_following) return;
     if (!BlobAvatar.animationsEnabled || !widget.followPointer) return;
     AvatarLife.pointer.addListener(_followPointer);
@@ -169,12 +182,20 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
     _wake(); // 顺便眨个眼/动一下，像注意到你了
   }
 
-  /// 鼠标离开：停掉跟随，视线回正（否则它会一直斜着眼看别处）
-  void _onExit(PointerExitEvent _) {
+  void _stopFollow() {
     if (!_following) return;
     AvatarLife.pointer.removeListener(_followPointer);
     _following = false;
     if (_gaze.value != Offset.zero) _gaze.value = Offset.zero;
+  }
+
+  @override
+  void didUpdateWidget(BlobAvatar old) {
+    super.didUpdateWidget(old);
+    // 行悬停的变化 —— 比头像自己那 46px 大得多（用户要的"进到这一行就跟随"）
+    if (widget.hovered != old.hovered) {
+      widget.hovered ? _startFollow() : _stopFollow();
+    }
   }
 
   void _onPoke() {
@@ -215,6 +236,7 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
     // 调用方自己给的 badge 优先（比如主控的星标）
     final cornerBadge = widget.badge ?? _emojiBadge();
     return MouseRegion(
+      // 头像自己的悬停照旧算（鼠标正好压在头像上但外面没报时也不至于失效）
       onEnter: _onEnter,
       onExit: _onExit,
       child: SizedBox(

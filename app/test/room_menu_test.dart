@@ -438,4 +438,45 @@ void main() {
     final inBody = nameRects.where((r) => r.top > 100).toList();
     expect(inBody, isEmpty, reason: '正文里不该再出现作者名字（顶部胶囊之外）');
   });
+
+  testWidgets('★ 输入框不会"发完就丢焦点"（没人的时候要自己拿回来）', (tester) async {
+    // 用户："我发送第一条后，第二条就没有聚焦在输入框了，这样体感会很差，
+    // 什么时候都要聚焦在输入框"。回车提交时框架会先把焦点收走，
+    // 如果没人接管，就得靠这个兜底拿回来。
+    tester.view.physicalSize = const Size(1200, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final state = _stateWith(
+      [Room(id: 'r1', name: '甲', kind: 'dm', botIds: ['b1'])],
+      bots: [Bot(id: 'b1', name: '甲')],
+    );
+    addTearDown(state.dispose);
+    await tester.pumpWidget(
+      AppScope(
+        state: state,
+        child: MaterialApp(home: ChatScreen(room: state.rooms.first)),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(); // 让帧后回调跑一轮
+
+    final field = find.byType(TextField);
+    expect(field, findsWidgets, reason: '要有输入框');
+    // 进来就该是聚焦的（autofocus + 兜底）
+    expect(
+      tester.widget<TextField>(field.first).focusNode?.hasFocus,
+      isTrue,
+      reason: '进会话就该能直接打字',
+    );
+
+    // 模拟"没人持有焦点"（就是发完消息后的状态），再走一帧
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.pump();
+    await tester.pump();
+    expect(
+      tester.widget<TextField>(field.first).focusNode?.hasFocus,
+      isTrue,
+      reason: '★ 焦点落在空处时要自己拿回来 —— 用户不该"发一句、再点一下"',
+    );
+  });
 }
