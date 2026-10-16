@@ -1064,9 +1064,12 @@ class _MessageRow extends StatelessWidget {
     // 同一串消息里如果有的行有缩进、有的没有，气泡就不在同一列上（错位）。
     final reserveAvatarColumn = isGroup;
     final avatar = showAvatar && reserveAvatarColumn;
-    // 群聊里主控（总经理）不标名字：它是"你这边的人"，标出来只是噪音。
-    // 头像还留着 —— 一眼能看出"这条是它说的"。
-    final showName = showAuthor && !(isGroup && bot?.isMain == true);
+    // 名字/职位**只在群里标**：
+    //   · 私聊里一条条都是同一个人，顶上那个胶囊已经写着是谁了 ——
+    //     每条气泡上再挂一遍名字，纯属重复（用户："只要有胶囊让我知道他是谁就行了"）
+    //   · 群里主控（总经理）也不标：它是"你这边的人"，标出来只是噪音。
+    //     头像还留着 —— 一眼能看出"这条是它说的"。
+    final showName = isGroup && showAuthor && bot?.isMain != true;
     // 气泡最宽：屏幕 78%，桌面端最多 620，避免一行铺到大半个屏
     // 气泡最宽：屏幕的 82%，桌面端最多 760（以前 620，用户嫌窄）
     final maxBubble = math.min(MediaQuery.sizeOf(context).width * 0.82, 760.0);
