@@ -64,7 +64,7 @@ export class ModelHealth {
   }
 
   // ---------- 「模型 × 思考等级」组合探活 ----------
-  // 有些组合会静默返回空内容（实测 ctyun/glm-5.3-oc @ medium 必空），
+  // 有些组合会静默返回空内容（推理内容把额度用光、正文就是空的），
   // 所以除了探模型活不活，还要探每个档位出不出话。
 
   static levelKey(slug, level) {
@@ -183,7 +183,7 @@ export class ModelHealth {
           { messages: [{ role: 'user', content: '回复两个字：你好', timestamp: Date.now() }] },
           // maxTokens 要给够：推理型模型的思考内容会先把小额度吃掉，
           // 剩下的正文就是空 → 会被误判成「模型挂了」。
-          // reasoning 用 low：有些模型（如 glm-5.3）不允许关闭思考，传 off 直接 400。
+          // reasoning 用 low：有些推理模型不允许关闭思考，传 off 直接 400。
           { maxTokens: 512, reasoning: 'low' },
         ),
         timeout,
