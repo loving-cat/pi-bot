@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../text_utils.dart';
 import '../theme.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
@@ -20,6 +21,7 @@ class MdText extends StatefulWidget {
     this.selectable = true,
     this.compact = false,
     this.mentions = const [],
+    this.onMentionTap,
   });
 
   final String text;
@@ -30,6 +32,10 @@ class MdText extends StatefulWidget {
 
   /// 要高亮的名字（不含 @）—— 部门成员。agent 之间用 @ 派活，高亮后一眼看得出谁被点名了。
   final List<String> mentions;
+
+  /// 点 @提及 时回调（参数是去掉 @ 和 emoji 的纯名字）。
+  /// 传了就把提及变成可点链接（跳到那个 bot 的私聊），不传则只是高亮。
+  final void Function(String name)? onMentionTap;
 
   @override
   State<MdText> createState() => _MdTextState();
@@ -43,11 +49,28 @@ class _MdTextState extends State<MdText> {
     for (final h in _links.values) {
       h.dispose();
     }
+    for (final h in _mentionTaps.values) {
+      h.dispose();
+    }
     super.dispose();
   }
 
   TapGestureRecognizerHandle _recognizer(String url) {
     return _links.putIfAbsent(url, () => TapGestureRecognizerHandle(url));
+  }
+
+  /// @提及 的点击通道。按名字缓存，避免每帧新建 recognizer。
+  final Map<String, TapGestureRecognizerHandle> _mentionTaps = {};
+
+  TapGestureRecognizerHandle? _mentionRecognizer(String rawToken) {
+    final onTap = widget.onMentionTap;
+    if (onTap == null) return null;
+    final name = cleanMentionName(rawToken);
+    if (name.isEmpty) return null;
+    return _mentionTaps.putIfAbsent(
+      name,
+      () => TapGestureRecognizerHandle.custom(() => onTap(name)),
+    );
   }
 
   @override
@@ -230,14 +253,20 @@ class _MdTextState extends State<MdText> {
           recognizer: _recognizer(url).value,
         ));
       } else if (token.startsWith('@')) {
-        // @提及：让“谁被点名了”一眼可见
+        // @提及：让“谁被点名了”一眼可见；传了 onMentionTap 就直接可点
+        // （点了跳到那个 bot 的私聊 —— agent 之间 @ 派活时用户能跟过去看）
         spans.add(TextSpan(
           text: token,
           style: base.copyWith(
             color: PB.accentBright,
             fontWeight: FontWeight.w600,
             backgroundColor: PB.accentSoft,
+            decoration: widget.onMentionTap != null
+                ? TextDecoration.underline
+                : null,
+            decorationColor: PB.accentBright.withValues(alpha: 0.5),
           ),
+          recognizer: _mentionRecognizer(token)?.value,
         ));
       } else {
         final inner = token.substring(1, token.length - 1);
@@ -251,7 +280,10 @@ class _MdTextState extends State<MdText> {
 }
 
 /// 链接点击：包一层，避免在 build 里到处 new recognizer
+/// 点击手势的封装：把 recognizer 的创建/释放收在一起，
+/// 避免在 build 里到处 new（每次 rebuild 都 new 一个不释放 = 内存泄漏）。
 class TapGestureRecognizerHandle {
+  /// 打开外部链接（失败就复制到剪贴板）
   TapGestureRecognizerHandle(String url)
     : value = (TapGestureRecognizer()
         ..onTap = () async {
@@ -263,6 +295,10 @@ class TapGestureRecognizerHandle {
             await Clipboard.setData(ClipboardData(text: url));
           }
         });
+
+  /// 任意回调（@提及 跳私聊、点引用气泡等都用这个）
+  TapGestureRecognizerHandle.custom(VoidCallback onTap)
+    : value = (TapGestureRecognizer()..onTap = onTap);
 
   final TapGestureRecognizer value;
 
@@ -541,6 +577,12 @@ class _TableView extends StatelessWidget {
   final TextStyle base;
   final Widget Function(String, TextStyle, TextStyle) renderInline;
 
+  static const double _padH = 10;
+  static const double _padV = 7;
+
+  /// 单列能压到的最窄宽度（再窄就没法读了）
+  static const double _minCol = 54;
+
   @override
   Widget build(BuildContext context) {
     // 列数按表头来；数据行多出来的空单元格直接丢掉，不要在右边留一空列
@@ -552,65 +594,128 @@ class _TableView extends StatelessWidget {
       }
       if (n > columns) columns = n;
     }
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Container(
-        decoration: BoxDecoration(
-          border: Border.all(color: PB.borderTertiary),
-          borderRadius: BorderRadius.circular(PB.rLg),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              color: PB.bgActive.withValues(alpha: 0.5),
-              child: Row(
-                children: [
-                  for (var c = 0; c < columns; c++)
-                    _cell(
-                      c < header.length ? header[c] : '',
-                      base.copyWith(
-                        fontWeight: FontWeight.w600,
-                        fontSize: PB.fsXs,
-                      ),
-                    ),
-                ],
+    if (columns == 0) return const SizedBox.shrink();
+
+    final headStyle = base.copyWith(
+      fontWeight: FontWeight.w600,
+      fontSize: PB.fsXs,
+    );
+    final bodyStyle = base.copyWith(fontSize: PB.fsXs);
+
+    // 先量出每列的“自然宽度”（取该列最长那格，不换行时的宽度）
+    final natural = List<double>.filled(columns, _minCol);
+    for (var c = 0; c < columns; c++) {
+      for (var r = -1; r < rows.length; r++) {
+        final t = r < 0
+            ? (c < header.length ? header[c] : '')
+            : (c < rows[r].length ? rows[r][c] : '');
+        if (t.trim().isEmpty) continue;
+        final tp = TextPainter(
+          text: TextSpan(text: t, style: r < 0 ? headStyle : bodyStyle),
+          textDirection: TextDirection.ltr,
+          maxLines: 1,
+        )..layout();
+        final w = tp.width + _padH * 2;
+        if (w > natural[c]) natural[c] = w;
+      }
+    }
+
+    return LayoutBuilder(
+      builder: (context, c) {
+        final avail = c.maxWidth.isFinite ? c.maxWidth : 600.0;
+
+        // 列太多（比如 6 列 x 84px），气泡里怎么分都读不了 → 才允许横向滚
+        final minReadable = columns * 84.0;
+        if (minReadable > avail) {
+          final w = minReadable / columns;
+          return SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SizedBox(
+              width: minReadable,
+              child: _build(
+                columns,
+                {for (var i = 0; i < columns; i++) i: FixedColumnWidth(w)},
+                headStyle,
+                bodyStyle,
               ),
             ),
-            for (var r = 0; r < rows.length; r++)
-              Container(
-                decoration: BoxDecoration(
-                  border: const Border(
-                    top: BorderSide(color: PB.borderTertiary),
-                  ),
-                  color: r.isEven
-                      ? Colors.transparent
-                      : PB.bgActive.withValues(alpha: 0.25),
-                ),
-                child: Row(
-                  children: [
-                    for (var c = 0; c < columns; c++)
-                      _cell(
-                        c < rows[r].length ? rows[r][c] : '',
-                        base.copyWith(fontSize: PB.fsXs),
-                      ),
-                  ],
-                ),
-              ),
-          ],
+          );
+        }
+
+        // ★ 弹性布局：按各列“自然宽度”的比例分配整个可用宽度。
+        //   FlexColumnWidth 的总和永远等于可用宽度，所以表格一定撑满气泡；
+        //   短列（“项”“序号”）按内容窄，长列（“方案”“说明”）拿到剩下的全部宽度。
+        //   单列上限 55%：防止一列超长文本把别的列挤成一条缝。
+        final cap = avail * 0.55;
+        final flex = [
+          for (final w in natural) w.clamp(_minCol, cap < _minCol ? _minCol : cap),
+        ];
+        return _build(
+          columns,
+          {for (var i = 0; i < columns; i++) i: FlexColumnWidth(flex[i])},
+          headStyle,
+          bodyStyle,
+        );
+      },
+    );
+  }
+
+  Widget _build(
+    int columns,
+    Map<int, TableColumnWidth> widths,
+    TextStyle headStyle,
+    TextStyle bodyStyle,
+  ) {
+    return Container(
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        border: Border.all(color: PB.borderTertiary),
+        borderRadius: BorderRadius.circular(PB.rLg),
+      ),
+      child: Table(
+        columnWidths: widths,
+        defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+        border: TableBorder.symmetric(
+          inside: const BorderSide(color: PB.borderTertiary),
         ),
+        children: [
+          TableRow(
+            decoration: BoxDecoration(
+              color: PB.bgActive.withValues(alpha: 0.5),
+            ),
+            children: [
+              for (var c = 0; c < columns; c++)
+                _cell(c < header.length ? header[c] : '', headStyle),
+            ],
+          ),
+          for (var r = 0; r < rows.length; r++)
+            TableRow(
+              decoration: r.isOdd
+                  ? BoxDecoration(color: PB.bgActive.withValues(alpha: 0.22))
+                  : null,
+              children: [
+                for (var c = 0; c < columns; c++)
+                  _cell(c < rows[r].length ? rows[r][c] : '', bodyStyle),
+              ],
+            ),
+        ],
       ),
     );
   }
 
   Widget _cell(String text, TextStyle style) {
-    return Container(
-      constraints: const BoxConstraints(minWidth: 72, maxWidth: 240),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-      // 单元格也要走行内 markdown：模型很爱在单元格里写 **加粗** 和 `代码`
-      child: text.trim().isEmpty
-          ? const SizedBox(height: 18)
-          : renderInline(text, style, style.copyWith(fontFamily: 'monospace', fontSize: style.fontSize)),
+    // 单元格也要走行内 markdown：模型很爱在单元格里写 **加粗** 和 `代码`
+    return TableCell(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: _padH, vertical: _padV),
+        child: text.trim().isEmpty
+            ? const SizedBox(height: 18)
+            : renderInline(
+                text,
+                style,
+                style.copyWith(fontFamily: 'monospace', fontSize: style.fontSize),
+              ),
+      ),
     );
   }
 }
