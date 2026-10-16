@@ -890,7 +890,7 @@ export class PiRunner {
   }
 
   /** 给部门成员看的提示词：我是谁、同事是谁、老大是谁、现在轮到我了 */
-  #composeGroupPrompt(room, bot, fresh, { isLead, reason, members, leadId }) {
+  #composeGroupPrompt(room, bot, fresh, { isLead, reason, members, leadId, order = null }) {
     const lead = members.find((m) => m.id === leadId) ?? null;
     const peers = members.filter((m) => m.id !== bot.id);
 
@@ -898,6 +898,15 @@ export class PiRunner {
       `【部门】${room.name}${room.topic ? ` —— ${room.topic}` : ''}`,
       lead ? `【部门老大】${lead.emoji ?? ''}${lead.name}${lead.id === bot.id ? '（就是你）' : ''}` : '',
       `【同事】${peers.map((m) => rosterLine(m, { isLead: m.id === leadId })).join('、') || '（暂时没有）'}`,
+      '',
+      // ★ 发言顺序与并发（学 ds-bot 的 round.slots / "You are number N of M"）：
+      //   用户要的"可以让组长自行决定先后"—— 被叫的顺序就是组长 @ 的顺序。
+      //   同时说清"你们是并行的"，不然它们会以为要排队等人说完。
+      order
+        ? `你是这一轮**第 ${order.index} 个**被叫到的（顺序由部门老大决定）。`
+        : '',
+      '同一批被叫到的人**同时开干**（各干各的，不用等人）；谁先干完谁先发言。',
+      '你可以 @ 别人接着做 —— 那就是下一波。',
       '',
       '规则：写「@同事名字」就是把发言权交给它（它会接着说话、去干你派的活）；',
       '只写名字不带 @ 就只是提到它，不会触发它发言。',
@@ -987,7 +996,25 @@ export class PiRunner {
     );
 
     let runs = 0;
-    while (queue.length && runs < limits.maxRuns) {
+    // ★ 同一波的人**同时**发出去。
+    //
+    //   用户：“我要的是 群组内有多少人 就要多少个 并发，可以让组长自行决定先后”
+    //   以前是 `await this.run(...)` 一个一个来 —— 组长一次 @ 了六个人，
+    //   实际就是六倍时长，界面上永远是“只有一个在跑，其他 bot 呢？”。
+    //
+    //   这也正是 ds-bot 的做法（groups.js 开头那句）：
+    //     "Work does not hold a round up" —— 谁还在忙就让这一轮往下走，
+    //     它干完自己发。每个成员都被告知自己是第几个（You are number N of M）。
+    //
+    //   做法：能派的人先发出去（不 await），任务进 pending；
+    //   队列空了就等这一波落地 —— 它们回复里 @ 的人会补进队列，
+    //   于是自然形成“一波接一波”，而不是一串排队。
+    const pending = [];
+    while ((queue.length || pending.length) && runs < limits.maxRuns) {
+      if (!queue.length) {
+        await Promise.allSettled(pending.splice(0));
+        continue;
+      }
       // ★ 用户按了终止就立刻收手（不再往下派下一个成员）。
       //   没有这一条的话：当前那个 session 被捣掉之后，循环会把下一个成员
       //   派出去 —— 用户看到的就是"点了终止还在跑"。
@@ -1107,40 +1134,61 @@ export class PiRunner {
         reason: item.reason,
         members,
         leadId,
+        // ★ 组长定的先后（用户：“可以让组长自行决定先后”）：
+        //   把“你是第几个被叫到的”写进它的提示 —— 被叫的顺序就是组长 @ 的顺序。
+        order: { index: runs },
       });
       if (attachmentContext) prompt = `${attachmentContext}\n\n${prompt}`;
 
-      const res = await this.run(roomId, bot.id, prompt, { groupTurn: true, attachments });
-      store.setCursor(roomId, bot.id, this.#lastMessageId(roomId));
+      // ★ 不 await：同一波的人同时开干（群里有几个人就几个并发）
+      pending.push(
+        (async () => {
+          const res = await this.run(roomId, bot.id, prompt, {
+            groupTurn: true,
+            attachments,
+          });
+          store.setCursor(roomId, bot.id, this.#lastMessageId(roomId));
 
-      // 没成也得说一声 —— 不然"叫了它但没动静"没人知道
-      if (!res.ok) {
-        log(`【${room.name}】${bot.name} 这轮没跑成：${res.error ?? '未知原因'}（${item.reason}）`);
-        continue;
-      }
-      const text = res.text.trim();
-      if (/^\[?PASS\]?$/i.test(text)) {
-        store.deleteMessage(roomId, res.messageId);
-        log(`${bot.name} PASS`);
-        continue;
-      }
+          // 没成也得说一声 —— 不然"叫了它但没动静"没人知道
+          if (!res.ok) {
+            log(
+              `【${room.name}】${bot.name} 这轮没跑成：${res.error ?? '未知原因'}（${item.reason}）`,
+            );
+            return;
+          }
+          const text = res.text.trim();
+          if (/^\[?PASS\]?$/i.test(text)) {
+            store.deleteMessage(roomId, res.messageId);
+            log(`${bot.name} PASS`);
+            return;
+          }
 
-      // 它 @ 了谁，谁就接着上
-      const { all, found } = parseMentions(text, members, { selfId: bot.id });
-      const next = all ? members.filter((m) => m.id !== bot.id).map((m) => m.id) : found;
-      const queued = new Set(queue.map((q) => q.botId));
-      for (const id of next) {
-        if (id === bot.id || queued.has(id)) continue;
-        queue.push({
-          botId: id,
-          reason: `${bot.name} 叫了你`,
-          fromId: bot.id,
-          fromName: bot.name,
-          fromText: text,
-        });
-        queued.add(id);
-      }
+          // 它 @ 了谁，谁就接着上（下一波）
+          const { all, found } = parseMentions(text, members, {
+            selfId: bot.id,
+          });
+          const next = all
+              ? members.filter((m) => m.id !== bot.id).map((m) => m.id)
+              : found;
+          const queued = new Set(queue.map((q) => q.botId));
+          for (const id of next) {
+            if (id === bot.id || queued.has(id)) continue;
+            queue.push({
+              botId: id,
+              reason: `${bot.name} 叫了你`,
+              fromId: bot.id,
+              fromName: bot.name,
+              fromText: text,
+            });
+            queued.add(id);
+          }
+        })().catch((err) =>
+          log(`【${room.name}】${bot.name} 这一轮异常：`, err?.message || err),
+        ),
+      );
     }
+    // 收尾：还在跑的人别被丢下（它们的 @ 已经在上面补进队列了）
+    await Promise.allSettled(pending);
 
     // ★ 排到一半被预算掐断，也必须留痕。
     //   用户报过"组长明明 @ 了，怎么只有一个 bot 动起来" —— 以前这类出口
