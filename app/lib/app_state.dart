@@ -41,6 +41,11 @@ class AppState extends ChangeNotifier {
   /// 群聊轮次预算（防止 bot 解不了就互相聊个没完）
   Map<String, int> groupLimits = const {};
 
+  /// 用户自己叫什么。
+  /// bot 的系统提示里会用这个名字称呼你（服务端拼进去的），
+  /// 界面上左上角显示它 —— 显示主机名没意义，那是机器的名字，不是人的。
+  String userName = '';
+
   /// 右侧详情面板开着没（点聊天顶部胶囊开的）。
   ///
   /// 放 AppState 里是因为它**跨了两个层**：胶囊在 ChatScreen 里，
@@ -459,6 +464,17 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// 改"我叫什么"。服务端会把它写进每个 bot 的系统提示（下一轮生效）。
+  Future<void> saveUserName(String name) async {
+    try {
+      await api?.patch('/api/user', {'name': name});
+      await refresh();
+    } catch (err) {
+      lastError = '$err';
+      _notify();
+    }
+  }
+
   /// 改群聊轮次预算。服务端会挡掉非法值（0/负数会被保持原值），
   /// 所以这里不用自己校验，改完拉一次就是真值。
   Future<void> saveGroupLimits(Map<String, dynamic> patch) async {
@@ -682,6 +698,9 @@ class AppState extends ChangeNotifier {
         }
         break;
 
+      case 'user.updated':
+        userName = ((ev['user'] as Map?)?['name'] as String?)?.trim() ?? '';
+        break;
       case 'groupLimits.updated':
         groupLimits = ((ev['limits'] as Map?) ?? const {}).map(
           (k, v) => MapEntry('$k', (v as num?)?.toInt() ?? 0),

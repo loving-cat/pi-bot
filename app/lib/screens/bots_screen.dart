@@ -6,6 +6,7 @@ import '../theme.dart';
 import '../widgets/model_picker_field.dart';
 import '../widgets/blob_avatar.dart';
 import 'chat_screen.dart';
+
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 const _thinkingLevels = ['off', 'low', 'medium', 'high', 'max'];
@@ -201,7 +202,8 @@ class _BotRow extends StatelessWidget {
                         style: const TextStyle(
                           fontSize: PB.fsXxs,
                           color: PB.textQuaternary,
-                          fontFamily: 'monospace',
+                          fontFamily: PB.monoFamily,
+                          fontFamilyFallback: PB.monoFallback,
                         ),
                       ),
                     ],

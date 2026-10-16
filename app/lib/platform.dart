@@ -6,7 +6,8 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 ///
 /// 桌面端 = 宿主（服务端就跑在这台机器上），本机直连，不需要配对。
 /// 手机端 = 远程客户端，必须配对拿 token。
-bool get isHostPlatform => !kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
+bool get isHostPlatform =>
+    !kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
 
 bool get isMobilePlatform => !kIsWeb && (Platform.isAndroid || Platform.isIOS);
 

@@ -44,7 +44,6 @@ class AvatarLife {
     if (last != null && (p - last).distanceSquared < 4) return;
     pointer.value = p;
   }
-
 }
 
 /// 眼睛该往哪偏。

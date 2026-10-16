@@ -124,15 +124,25 @@ class _RoomsScreenState extends State<RoomsScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Text(
-                    state.serverInfo?.hostname.isNotEmpty == true
-                        ? state.serverInfo!.hostname
-                        : (state.serverUrl ?? 'pi-bot'),
-                    style: const TextStyle(
-                      fontSize: PB.fsLg,
-                      fontWeight: FontWeight.w500,
-                    ),
-                    overflow: TextOverflow.ellipsis,
+                  // ★ 显示**用户自己**的名字，不是主机名。
+                  //   以前那行是 serverInfo.hostname（机器的名字）——
+                  //   对用户来说没意义；而 bot 们要称呼的正是这个名字。
+                  //   主机名挪到「设置 → 服务端」里去看。
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          state.userName.isNotEmpty
+                              ? state.userName
+                              : (state.serverUrl ?? 'pi-bot'),
+                          style: const TextStyle(
+                            fontSize: PB.fsLg,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 3),
                   Row(
