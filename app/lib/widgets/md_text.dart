@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../text_utils.dart';
 import '../theme.dart';
+import 'blob_avatar.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 /// Markdown 渲染（面向 agent 输出，流式友好）。
@@ -22,6 +23,7 @@ class MdText extends StatefulWidget {
     this.compact = false,
     this.mentions = const [],
     this.onMentionTap,
+    this.mentionSeedOf,
   });
 
   final String text;
@@ -37,6 +39,11 @@ class MdText extends StatefulWidget {
   /// 传了就把提及变成可点链接（跳到那个 bot 的私聊），不传则只是高亮。
   final void Function(String name)? onMentionTap;
 
+  /// 把 @ 的名字映射成"稳定的种子"（一般是 botId）。
+  /// 头像颜色按种子算 —— 用名字当种子的话，同一个 bot 在花名册里和消息里
+  /// 会长得不一样，那头像就白画了。
+  final String Function(String name)? mentionSeedOf;
+
   @override
   State<MdText> createState() => _MdTextState();
 }
@@ -49,28 +56,11 @@ class _MdTextState extends State<MdText> {
     for (final h in _links.values) {
       h.dispose();
     }
-    for (final h in _mentionTaps.values) {
-      h.dispose();
-    }
     super.dispose();
   }
 
   TapGestureRecognizerHandle _recognizer(String url) {
     return _links.putIfAbsent(url, () => TapGestureRecognizerHandle(url));
-  }
-
-  /// @提及 的点击通道。按名字缓存，避免每帧新建 recognizer。
-  final Map<String, TapGestureRecognizerHandle> _mentionTaps = {};
-
-  TapGestureRecognizerHandle? _mentionRecognizer(String rawToken) {
-    final onTap = widget.onMentionTap;
-    if (onTap == null) return null;
-    final name = cleanMentionName(rawToken);
-    if (name.isEmpty) return null;
-    return _mentionTaps.putIfAbsent(
-      name,
-      () => TapGestureRecognizerHandle.custom(() => onTap(name)),
-    );
   }
 
   @override
@@ -202,9 +192,12 @@ class _MdTextState extends State<MdText> {
 
   Widget _rich(String source, TextStyle base, TextStyle code) {
     final spans = _inline(source, base, code);
-    return widget.selectable
-        ? SelectableText.rich(TextSpan(children: spans, style: base))
-        : Text.rich(TextSpan(children: spans, style: base));
+    final text = Text.rich(TextSpan(children: spans, style: base));
+    if (!widget.selectable) return text;
+    // ★ 为什么不用 SelectableText.rich：它**不支持 WidgetSpan**，
+    //   而 @提及 要画一个小头像 chip。SelectionArea + Text.rich 一样能选中，
+    //   而且支持内联 widget。（焦点问题在外面用 ExcludeFocus 统一挡掉了。）
+    return SelectionArea(child: text);
   }
 
   List<InlineSpan> _inline(String source, TextStyle base, TextStyle code) {
@@ -253,21 +246,22 @@ class _MdTextState extends State<MdText> {
           recognizer: _recognizer(url).value,
         ));
       } else if (token.startsWith('@')) {
-        // @提及：让“谁被点名了”一眼可见；传了 onMentionTap 就直接可点
-        // （点了跳到那个 bot 的私聊 —— agent 之间 @ 派活时用户能跟过去看）
-        spans.add(TextSpan(
-          text: token,
-          style: base.copyWith(
-            color: PB.accentBright,
-            fontWeight: FontWeight.w600,
-            backgroundColor: PB.accentSoft,
-            decoration: widget.onMentionTap != null
-                ? TextDecoration.underline
-                : null,
-            decorationColor: PB.accentBright.withValues(alpha: 0.5),
+        // @提及：画成「小头像 + 名字」的 chip。
+        //
+        // 以前只是一段高亮文字（@名字）。但颜色 + 头像比文字快得多 ——
+        // 群里一串 @ 排在一起时，"这活到底派给谁了"要能扫一眼看出来。
+        final name = cleanMentionName(token);
+        final onTap = widget.onMentionTap;
+        spans.add(
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: _MentionChip(
+              name: name.isEmpty ? token : name,
+              seed: widget.mentionSeedOf?.call(name) ?? name,
+              onTap: onTap == null ? null : () => onTap(name),
+            ),
           ),
-          recognizer: _mentionRecognizer(token)?.value,
-        ));
+        );
       } else {
         final inner = token.substring(1, token.length - 1);
         spans.add(TextSpan(text: inner, style: base.copyWith(fontStyle: FontStyle.italic)));
@@ -716,6 +710,52 @@ class _TableView extends StatelessWidget {
                 style.copyWith(fontFamily: 'monospace', fontSize: style.fontSize),
               ),
       ),
+    );
+  }
+}
+
+
+/// 回复气泡里的「@某人」—— 小头像 + 名字。
+///
+/// 比纯文字高亮多花不了几个像素，但一眼就能认出是谁；
+/// 一串 @ 排在一起时差别很明显。
+class _MentionChip extends StatelessWidget {
+  const _MentionChip({required this.name, required this.seed, this.onTap});
+
+  final String name;
+  final String seed;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = PB.colorFor(seed);
+    final chip = Container(
+      padding: const EdgeInsets.fromLTRB(3, 2, 7, 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.16),
+        borderRadius: BorderRadius.circular(PB.rFull),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          BlobAvatar(seed: seed, color: color, size: 15, animate: false),
+          const SizedBox(width: 5),
+          Text(
+            name,
+            style: const TextStyle(
+              fontSize: PB.fsXs,
+              fontWeight: FontWeight.w600,
+              color: PB.textPrimary,
+              height: 1.1,
+            ),
+          ),
+        ],
+      ),
+    );
+    if (onTap == null) return chip;
+    return GestureDetector(
+      onTap: onTap,
+      child: MouseRegion(cursor: SystemMouseCursors.click, child: chip),
     );
   }
 }
