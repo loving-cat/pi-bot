@@ -264,6 +264,8 @@ export class PiRunner {
     this.roundLocks = new Set();
     /** 用户按了终止的房间 —— 轮次循环看到它就停，不再往下派人 */
     this.aborting = new Set();
+    /** 已经派出去、但异步的 run() 还没把 busy 设上的会话（key = roomId:botId） */
+    this.dispatching = new Set();
     /** roomId -> { text, files }：锁被占时进来的消息，合并到这里等下一轮 */
     this.roundQueue = new Map();
   }
@@ -720,7 +722,17 @@ export class PiRunner {
   }
 
   isBusy(roomId, botId) {
-    return Boolean(this.sessions.get(this.#key(roomId, botId))?.busy);
+    const key = this.#key(roomId, botId);
+    // ★ 同步占位也算忙。
+    //
+    //   群聊改成并行之后，同一个成员可能在同一波里被派两次（比如两个人同时 @ 了它，
+    //   而它这一轮还有额度）。而 run() 是**异步**的 —— 等它把 entry.busy 设上已经晚了，
+    //   两个 prompt() 会同时打到同一个 session，第二个直接抛：
+    //       Agent is already processing. Specify streamingBehavior ('steer' or
+    //       'followUp') to queue the message.
+    //   所以派单那一刻就要**同步**登记，别等异步。
+    if (this.dispatching?.has(key)) return true;
+    return Boolean(this.sessions.get(key)?.busy);
   }
 
   isRoomBusy(roomId) {
@@ -1127,6 +1139,10 @@ export class PiRunner {
       }
       used.set(item.botId, done + 1);
       runs++;
+      // ★ 同步占位：别等异步的 run() 去设 busy（那之间会漏一个窗口，
+      //   同一个人被派两次 → session 报 "Agent is already processing"）
+      const dispatchKey = this.#key(roomId, bot.id);
+      this.dispatching.add(dispatchKey);
 
       const fresh = this.#transcriptFor(roomId, bot.id);
       let prompt = this.#composeGroupPrompt(room, bot, fresh, {
@@ -1143,10 +1159,11 @@ export class PiRunner {
       // ★ 不 await：同一波的人同时开干（群里有几个人就几个并发）
       pending.push(
         (async () => {
-          const res = await this.run(roomId, bot.id, prompt, {
-            groupTurn: true,
-            attachments,
-          });
+          try {
+            const res = await this.run(roomId, bot.id, prompt, {
+              groupTurn: true,
+              attachments,
+            });
           store.setCursor(roomId, bot.id, this.#lastMessageId(roomId));
 
           // 没成也得说一声 —— 不然"叫了它但没动静"没人知道
@@ -1181,6 +1198,10 @@ export class PiRunner {
               fromText: text,
             });
             queued.add(id);
+          }
+          } finally {
+            // 占位要还回去 —— 不然这个人就永远"忙"了，后面再也派不动
+            this.dispatching.delete(dispatchKey);
           }
         })().catch((err) =>
           log(`【${room.name}】${bot.name} 这一轮异常：`, err?.message || err),
@@ -1513,9 +1534,22 @@ export class PiRunner {
 
     let timeoutHandle = null;
     try {
-      const runPromise = images.length
-        ? entry.session.prompt(prompt, { images })
-        : entry.session.prompt(prompt);
+      // ★ 兜底：万一还是撞上"这个会话正在处理"（并发下理论上不该有了，
+      //   但外部/扩展也能直接调 prompt），**别把红字甩给用户** ——
+      //   改成排队投递（followUp），它干完手上的自己会看到。
+      const startTurn = async () => {
+        try {
+          return images.length
+            ? await entry.session.prompt(prompt, { images })
+            : await entry.session.prompt(prompt);
+        } catch (err) {
+          const msg = String(err?.message || err);
+          if (!/already processing/i.test(msg) || !entry.session.followUp) throw err;
+          log(`${bot.name} 那一轮还没完，这条改成排队投递（followUp）`);
+          return entry.session.followUp(prompt);
+        }
+      };
+      const runPromise = startTurn();
       // 部门里的单轮有额外时间预算：不能一个成员把整个部门卡住
       const capMs = store.groupLimits().turnMaxMs;
       const effectiveTimeout = groupTurn ? Math.min(timeoutMs || capMs, capMs) : timeoutMs;
