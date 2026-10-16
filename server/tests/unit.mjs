@@ -1292,6 +1292,88 @@ await test('会话池：全部释放会清空表', () => {
   assert.deepEqual(logs[0].concat(logs[1]).sort(), ['dispose:a', 'dispose:b', 'unsub:a', 'unsub:b'].sort());
 });
 
+
+// ---------------------------------------------------------------------------
+// 心跳看门狗（watchdog.js）：什么时候报心跳、什么时候判死
+// ---------------------------------------------------------------------------
+const { createWatchdog } = await import('../src/watchdog.js');
+
+/** 造一个假会话表 + 记录心跳/中断 */
+function harness(entries, { stallMs = 1000, heartbeatMs = 15_000, nowMs = 10_000 } = {}) {
+  const sessions = new Map(Object.entries(entries).map(([k, v]) => [k, v]));
+  const beats = [];
+  const stalls = [];
+  const wd = createWatchdog({
+    sessions,
+    stallMs,
+    heartbeatMs,
+    now: () => nowMs,
+    emit: (ev) => beats.push(ev),
+    onStall: (info) => stalls.push(info),
+    logger: () => {},
+  });
+  return { sessions, beats, stalls, wd };
+}
+
+await test('★ 看门狗：只关心还在跑的会话（不忙的不报心跳）', () => {
+  const { beats, wd } = harness({
+    'r1:b1': { busy: true, progressAt: 9_900 },
+    'r1:b2': { busy: false, progressAt: 9_900 },
+  });
+  wd.tick();
+  assert.equal(beats.length, 1);
+  assert.equal(beats[0].roomId, 'r1');
+  assert.equal(beats[0].botId, 'b1');
+  assert.equal(beats[0].ageMs, 100, '最后一次动静是 100ms 前');
+});
+
+await test('★ 看门狗：没动静超过上限 → 判中断（带上房间和人）', () => {
+  const { stalls, wd } = harness({ 'r2:b9': { busy: true, progressAt: 10_000 - 5_000 } });
+  wd.tick();
+  assert.equal(stalls.length, 1);
+  assert.equal(stalls[0].roomId, 'r2');
+  assert.equal(stalls[0].botId, 'b9');
+  assert.equal(stalls[0].ageMs, 5_000);
+});
+
+await test('★ 看门狗：判过就不再判（否则每 15 秒报一遍"这单断了"）', () => {
+  const { stalls, wd } = harness({ 'r3:b1': { busy: true, progressAt: 10_000 - 9_000 } });
+  wd.tick();
+  wd.tick();
+  wd.tick();
+  assert.equal(stalls.length, 1, '同一次中断只该上报一次');
+  assert.equal(stalls[0].entry.stallNotified, true, '标记要落在条目上');
+});
+
+await test('看门狗：正好卡在上限上算中断（不能一直赖着）', () => {
+  const { stalls, wd } = harness({ 'r4:b1': { busy: true, progressAt: 10_000 - 1_000 } });
+  wd.tick();
+  assert.equal(stalls.length, 1);
+});
+
+await test('看门狗：没有动静记录时，拿"开始时间"当基准', () => {
+  const { beats, stalls, wd } = harness({ 'r5:b1': { busy: true, startedAt: 10_000 - 2_000 } });
+  wd.tick();
+  assert.equal(beats[0].ageMs, 2_000);
+  assert.equal(stalls.length, 1, '2s > 1s 上限');
+});
+
+await test('看门狗：连开始时间都没有 → 当"刚刚"，绝不白杀一轮', () => {
+  const { beats, stalls, wd } = harness({ 'r6:b1': { busy: true } });
+  wd.tick();
+  assert.equal(beats[0].ageMs, 0);
+  assert.equal(stalls.length, 0, '什么都还不知道的时候不能判它死');
+});
+
+await test('看门狗：start 是幂等的，不会起两个定时器', () => {
+  const { wd } = harness({});
+  assert.equal(wd.start(), true);
+  assert.equal(wd.start(), false, '重复 start 不该再起一个');
+  assert.equal(wd.running, true);
+  wd.stop();
+  assert.equal(wd.running, false);
+});
+
 const passed = results.filter((r) => r.ok).length;
 
 console.log('\n================ 单元测试 ================');
