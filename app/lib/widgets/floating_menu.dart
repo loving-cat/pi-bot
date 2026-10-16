@@ -13,6 +13,7 @@ class FloatingMenuEntry {
     required this.onTap,
     this.hint,
     this.iconColor,
+    this.danger = false,
   });
 
   final IconData icon;
@@ -24,35 +25,103 @@ class FloatingMenuEntry {
 
   /// 图标单独染色（比如"教它做任务"用强调红）
   final Color? iconColor;
+
+  /// 危险操作：图标和文字整体染红（删除那一项，和系统右键菜单一样）
+  final bool danger;
 }
 
-/// 锚定在某个按钮**正上方**的悬浮菜单。
+/// 菜单该摆在哪 —— 纯函数，单独拎出来是为了能单测。
+///
+/// ★ 这个函数存在的理由是踩过的坑：**一律往上开**。在窗口上边右键时，
+///   菜单整个被顶出可视区，前面几项直接看不见。
+///
+/// 规则：
+///   · 水平：左边缘贴锚点；右边放不下就往左推，但永远不越过 8px 边距
+///   · 垂直：先看哪边放得下（高度按项数估），放得下就往下开，否则翻上去；
+///           两边都放不下就挑空间大的那一边（顶多裁掉一点，不会整块看不见）
+///
+/// 返回的 top / bottom 只有一个非空：
+///   top 非空 = 菜单顶边贴锚点下方（往下开）
+///   bottom 非空 = 菜单底边贴锚点上方（往上开）
+({double left, double? top, double? bottom}) menuPlacement({
+  required Offset anchor,
+  required Size screen,
+  required int entryCount,
+  double width = 214,
+  double gap = 10,
+}) {
+  const margin = 8.0;
+  // 每项约 36px + 上下留白。自适应高度在 Positioned 里量不到，只能估；
+  // 估大一点顶多是"本来放得下却翻了边"，比截断好。
+  final estHeight = entryCount * 36.0 + 12;
+
+  final left = anchor.dx.clamp(
+    margin,
+    (screen.width - width - margin).clamp(margin, double.infinity),
+  );
+
+  final roomBelow = screen.height - anchor.dy - gap - margin;
+  final roomAbove = anchor.dy - gap - margin;
+  final openDown =
+      roomBelow >= estHeight ||
+      (roomAbove < estHeight && roomBelow >= roomAbove);
+
+  if (openDown) {
+    return (
+      left: left,
+      top: (anchor.dy + gap).clamp(
+        margin,
+        (screen.height - 80).clamp(margin, double.infinity),
+      ),
+      bottom: null,
+    );
+  }
+  return (
+    left: left,
+    top: null,
+    bottom: (screen.height - anchor.dy + gap).clamp(margin, screen.height - 80),
+  );
+}
+
+/// 锚定在某个按钮**附近**的悬浮菜单（贴着按钮上方或下方，看哪边放得下）。
 ///
 /// 为什么不直接用 `showModalBottomSheet`：底部弹层是移动端手势范式，
 /// 在桌面/宽屏上会从屏幕最底下窜出来，和触发按钮隔着半个屏幕，
-/// 既不好看也不符合"就近反馈"的直觉。同类客户端 用的是贴着按钮浮出来的小卡片，
+/// 既不好看也不符合"就近反馈"的直觉。贴着触发点浮出一张小卡片更自然，
 /// 这里照做 —— 卡片左边缘对齐按钮，垂直方向浮在按钮上方 [gap] 像素。
 ///
 /// 关闭方式：点空白处 / Esc / 选中任意一项。
 Future<void> showFloatingMenu({
   required BuildContext context,
-  required GlobalKey anchorKey,
+  GlobalKey? anchorKey,
+  Offset? at,
   required List<FloatingMenuEntry> entries,
   double gap = 10,
   double width = 214,
 }) async {
-  final box = anchorKey.currentContext?.findRenderObject() as RenderBox?;
-  if (box == null || !box.attached) return;
+  Offset anchor;
+  if (at != null) {
+    // 右键菜单：贴着鼠标弹出，往下开（和系统右键菜单一样的方向）
+    anchor = at;
+  } else {
+    final box = anchorKey?.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null || !box.attached) return;
+    anchor = box.localToGlobal(Offset.zero);
+  }
   final overlay = Overlay.maybeOf(context);
   if (overlay == null) return;
 
-  final anchor = box.localToGlobal(Offset.zero);
   final screen = MediaQuery.sizeOf(context);
-
-  // 水平：默认左边缘贴按钮；右边放不下就往左推
-  final left = anchor.dx.clamp(8.0, (screen.width - width - 8).clamp(8.0, double.infinity));
-  // 垂直：卡片底边浮在按钮上方 gap 处（用 bottom 定位，卡片高度自适应）
-  final bottom = (screen.height - anchor.dy + gap).clamp(8.0, screen.height - 80);
+  final spot = menuPlacement(
+    anchor: anchor,
+    screen: screen,
+    entryCount: entries.length,
+    width: width,
+    gap: gap,
+  );
+  final left = spot.left;
+  final top = spot.top;
+  final bottom = spot.bottom;
 
   final done = <VoidCallback>[];
   late OverlayEntry entry;
@@ -66,6 +135,7 @@ Future<void> showFloatingMenu({
   entry = OverlayEntry(
     builder: (ctx) => _FloatingMenuLayer(
       left: left,
+      top: top,
       bottom: bottom,
       width: width,
       entries: entries,
@@ -79,6 +149,7 @@ Future<void> showFloatingMenu({
 class _FloatingMenuLayer extends StatefulWidget {
   const _FloatingMenuLayer({
     required this.left,
+    required this.top,
     required this.bottom,
     required this.width,
     required this.entries,
@@ -87,7 +158,10 @@ class _FloatingMenuLayer extends StatefulWidget {
   });
 
   final double left;
-  final double bottom;
+
+  /// 往下开时给 top，往上开时给 bottom（两个只有一个非空）
+  final double? top;
+  final double? bottom;
   final double width;
   final List<FloatingMenuEntry> entries;
   final VoidCallback onClose;
@@ -125,6 +199,7 @@ class _FloatingMenuLayerState extends State<_FloatingMenuLayer>
         ),
         Positioned(
           left: widget.left,
+          top: widget.top,
           bottom: widget.bottom,
           width: widget.width,
           child: CallbackShortcuts(
@@ -160,34 +235,46 @@ class _FloatingMenuLayerState extends State<_FloatingMenuLayer>
   }
 
   Widget _card() {
-    return Container(
-      padding: const EdgeInsets.all(5),
-      decoration: BoxDecoration(
-        color: PB.bgElevated,
-        borderRadius: BorderRadius.circular(PB.r2xl),
-        border: Border.all(color: PB.borderSecondary),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.55),
-            blurRadius: 26,
-            offset: const Offset(0, 10),
-          ),
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.30),
-            blurRadius: 4,
-            offset: const Offset(0, 1),
-          ),
-        ],
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          for (var i = 0; i < widget.entries.length; i++)
-            Padding(
-              padding: EdgeInsets.only(top: i == 0 ? 0 : 2),
-              child: _row(widget.entries[i]),
+    // ★ 卡片外面必须套一层 Material。
+    //
+    //   菜单是插进 Overlay 的，而 Overlay **不在 app 的 Material 之下** ——
+    //   没有 Material 祖先时，Flutter 会故意给所有 Text 画上"黄色双下划线"，
+    //   提示你主题没接上（这是它的提示机制，不是渲染 bug）。
+    //   表现就是：菜单每一项文字下面都挂着两条杠，而且颜色不受我们控制。
+    //
+    //   MaterialType.transparency 只借 DefaultTextStyle，不画底色 ——
+    //   卡片的圆角/边框/阴影还是下面这个 Container 自己画。
+    return Material(
+      type: MaterialType.transparency,
+      child: Container(
+        padding: const EdgeInsets.all(5),
+        decoration: BoxDecoration(
+          color: PB.bgElevated,
+          borderRadius: BorderRadius.circular(PB.r2xl),
+          border: Border.all(color: PB.borderSecondary),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.55),
+              blurRadius: 26,
+              offset: const Offset(0, 10),
             ),
-        ],
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.30),
+              blurRadius: 4,
+              offset: const Offset(0, 1),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (var i = 0; i < widget.entries.length; i++)
+              Padding(
+                padding: EdgeInsets.only(top: i == 0 ? 0 : 2),
+                child: _row(widget.entries[i]),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -207,14 +294,18 @@ class _FloatingMenuLayerState extends State<_FloatingMenuLayer>
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
         child: Row(
           children: [
-            Icon(e.icon, size: 17, color: e.iconColor ?? PB.textSecondary),
+            Icon(
+              e.icon,
+              size: 17,
+              color: e.danger ? PB.danger : (e.iconColor ?? PB.textSecondary),
+            ),
             const SizedBox(width: 10),
             Expanded(
               child: Text(
                 e.label,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsSm,
-                  color: PB.textPrimary,
+                  color: e.danger ? PB.danger : PB.textPrimary,
                   height: 1.2,
                 ),
               ),
