@@ -49,7 +49,10 @@ Future<void> _pump(WidgetTester tester, AppState state) async {
   addTearDown(tester.view.reset);
   addTearDown(state.dispose);
   await tester.pumpWidget(
-    AppScope(state: state, child: MaterialApp(home: RoomsScreen())),
+    AppScope(
+      state: state,
+      child: MaterialApp(home: RoomsScreen()),
+    ),
   );
   await tester.pump();
 }
@@ -98,7 +101,10 @@ void main() {
   });
 
   testWidgets('隐藏的会话不进列表，底部留一个入口能翻出来', (tester) async {
-    final state = _stateWith([_room('r1', '甲'), _room('r2', '乙', hidden: true)]);
+    final state = _stateWith([
+      _room('r1', '甲'),
+      _room('r2', '乙', hidden: true),
+    ]);
     await _pump(tester, state);
 
     expect(find.text('甲'), findsOneWidget);
@@ -115,11 +121,7 @@ void main() {
     const anchorMid = Offset(140, 380);
 
     test('空间够就贴着鼠标往下开', () {
-      final p = menuPlacement(
-        anchor: anchorMid,
-        screen: screen,
-        entryCount: 6,
-      );
+      final p = menuPlacement(anchor: anchorMid, screen: screen, entryCount: 6);
       expect(p.top, isNotNull, reason: '往下开用 top 定位');
       expect(p.bottom, isNull);
       expect(p.top, 380 + 10);
@@ -215,7 +217,9 @@ void main() {
     // 「删对话」和「删 bot」是两件事：前者清聊天记录（人还在），
     // 后者把人从花名册除名。用户明确要后者也能在菜单里点到。
     final state = _stateWith(
-      [_room('r1', '甲', botIds: const ['b1'])],
+      [
+        _room('r1', '甲', botIds: const ['b1']),
+      ],
       bots: [Bot(id: 'b1', name: '甲', role: 'member')],
     );
     await _pump(tester, state);
@@ -233,8 +237,11 @@ void main() {
     await tester.pumpAndSettle();
     // 二级确认
     expect(find.text('确认删除'), findsOneWidget);
-    expect(find.textContaining('撤不回来'), findsOneWidget,
-        reason: '要把后果说清楚：学过的东西和记忆都会没');
+    expect(
+      find.textContaining('撤不回来'),
+      findsOneWidget,
+      reason: '要把后果说清楚：学过的东西和记忆都会没',
+    );
     await tester.tap(find.text('取消'));
     await tester.pumpAndSettle();
     expect(state.bots.length, 1, reason: '取消了就不该动数据');
@@ -242,7 +249,9 @@ void main() {
 
   testWidgets('主控不给删（服务端也挡，界面就别给这个选项）', (tester) async {
     final state = _stateWith(
-      [_room('r1', 'Pi', botIds: const ['chief'])],
+      [
+        _room('r1', 'Pi', botIds: const ['chief']),
+      ],
       bots: [Bot(id: 'chief', name: 'Pi', role: 'main')],
     );
     await _pump(tester, state);
@@ -257,9 +266,12 @@ void main() {
   });
 
   testWidgets('群没有"这一个 bot"可删', (tester) async {
-    final state = _stateWith([
-      Room(id: 'g1', name: '开发组', kind: 'group', botIds: ['b1']),
-    ], bots: [Bot(id: 'b1', name: '甲')]);
+    final state = _stateWith(
+      [
+        Room(id: 'g1', name: '开发组', kind: 'group', botIds: ['b1']),
+      ],
+      bots: [Bot(id: 'b1', name: '甲')],
+    );
     await _pump(tester, state);
 
     await tester.tapAt(
@@ -322,12 +334,20 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
     final state = _stateWith(
-      [Room(id: 'g1', name: '开发组', kind: 'group', botIds: ['b1', 'b2'])],
-      bots: [Bot(id: 'b1', name: '甲'), Bot(id: 'b2', name: '乙')],
+      [
+        Room(id: 'g1', name: '开发组', kind: 'group', botIds: ['b1', 'b2']),
+      ],
+      bots: [
+        Bot(id: 'b1', name: '甲'),
+        Bot(id: 'b2', name: '乙'),
+      ],
     );
     addTearDown(state.dispose);
     await tester.pumpWidget(
-      AppScope(state: state, child: const MaterialApp(home: HomeShell())),
+      AppScope(
+        state: state,
+        child: const MaterialApp(home: HomeShell()),
+      ),
     );
     await tester.pump();
 
@@ -370,12 +390,18 @@ void main() {
     tester.view.physicalSize = const Size(500, 900);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
-    final state = _stateWith([
-      Room(id: 'r1', name: '甲', kind: 'dm', botIds: ['b1']),
-    ], bots: [Bot(id: 'b1', name: '甲')]);
+    final state = _stateWith(
+      [
+        Room(id: 'r1', name: '甲', kind: 'dm', botIds: ['b1']),
+      ],
+      bots: [Bot(id: 'b1', name: '甲')],
+    );
     addTearDown(state.dispose);
     await tester.pumpWidget(
-      AppScope(state: state, child: const MaterialApp(home: HomeShell())),
+      AppScope(
+        state: state,
+        child: const MaterialApp(home: HomeShell()),
+      ),
     );
     await tester.pump();
 
@@ -394,7 +420,9 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
     final state = _stateWith(
-      [Room(id: 'r1', name: '甲', kind: 'dm', botIds: ['b1'])],
+      [
+        Room(id: 'r1', name: '甲', kind: 'dm', botIds: ['b1']),
+      ],
       bots: [Bot(id: 'b1', name: '甲')],
     );
     addTearDown(state.dispose);
@@ -449,7 +477,9 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
     final state = _stateWith(
-      [Room(id: 'r1', name: '甲', kind: 'dm', botIds: ['b1'])],
+      [
+        Room(id: 'r1', name: '甲', kind: 'dm', botIds: ['b1']),
+      ],
       bots: [Bot(id: 'b1', name: '甲')],
     );
     addTearDown(state.dispose);
@@ -495,7 +525,9 @@ void main() {
     addTearDown(() => AvatarLife.pointer.value = null);
 
     final state = _stateWith(
-      [Room(id: 'r1', name: '甲', kind: 'dm', botIds: ['b1'])],
+      [
+        Room(id: 'r1', name: '甲', kind: 'dm', botIds: ['b1']),
+      ],
       bots: [Bot(id: 'b1', name: '甲')],
     );
     addTearDown(state.dispose);
@@ -612,10 +644,8 @@ void main() {
     await tester.pumpAndSettle();
 
     // 对话框里只列**还没进来**的（已在群里的运营总监不该出现在列表里）
-    Finder inDialog(Finder f) => find.descendant(
-      of: find.byType(AlertDialog),
-      matching: f,
-    );
+    Finder inDialog(Finder f) =>
+        find.descendant(of: find.byType(AlertDialog), matching: f);
     expect(find.text('往「内容运营组」里加谁'), findsOneWidget);
     expect(inDialog(find.text('文案编辑')), findsOneWidget);
     expect(inDialog(find.text('视觉设计')), findsOneWidget);
@@ -627,10 +657,7 @@ void main() {
 
     // 没选人时"添加"是禁用的
     final btn = tester.widget<FilledButton>(
-      find.ancestor(
-        of: find.text('添加'),
-        matching: find.byType(FilledButton),
-      ),
+      find.ancestor(of: find.text('添加'), matching: find.byType(FilledButton)),
     );
     expect(btn.onPressed, isNull, reason: '一个都没选时不能点添加');
 
@@ -647,8 +674,13 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
     final state = _stateWith(
-      [Room(id: 'r1', name: '甲', kind: 'dm', botIds: const ['b1'])],
-      bots: [Bot(id: 'b1', name: '甲'), Bot(id: 'b2', name: '乙')],
+      [
+        Room(id: 'r1', name: '甲', kind: 'dm', botIds: const ['b1']),
+      ],
+      bots: [
+        Bot(id: 'b1', name: '甲'),
+        Bot(id: 'b2', name: '乙'),
+      ],
     );
     addTearDown(state.dispose);
     await tester.pumpWidget(
@@ -675,7 +707,9 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
     final state = _stateWith(
-      [Room(id: 'r1', name: '甲', kind: 'dm', botIds: const ['b1'])],
+      [
+        Room(id: 'r1', name: '甲', kind: 'dm', botIds: const ['b1']),
+      ],
       bots: [Bot(id: 'b1', name: '甲')],
     );
     addTearDown(state.dispose);
@@ -750,7 +784,9 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
     final state = _stateWith(
-      [Room(id: 'r1', name: '甲', kind: 'dm', botIds: const ['b1'])],
+      [
+        Room(id: 'r1', name: '甲', kind: 'dm', botIds: const ['b1']),
+      ],
       bots: [Bot(id: 'b1', name: '甲')],
     );
     addTearDown(state.dispose);
@@ -792,5 +828,90 @@ void main() {
 
     expect(dropped, isTrue, reason: '★ 再点一下必须真的重开一次连接（先放下再拿起）');
     expect(node.hasFocus, isTrue, reason: '重开完还得聚焦着，别把用户晾在那儿');
+  });
+
+  testWidgets('★★ 发出第一条之后，输入框**不能被重建**（重建＝打字就没反应）', (tester) async {
+    // 这条是真凶，用户报的原始现象："我发送第一条消息、想输入第二条，
+    // 结果没有聚焦到输入框，就算我去点击也不行，直接没法输入。"
+    //
+    // 量出来的链条：
+    //   发出去的一瞬间 → composer 上方多出"它下一步会看到"那条提示（busy 变了）
+    //   → Column 凭空多一个孩子 → Flutter 按位置配对错位
+    //   → 整个输入行被**重建** → 新的 EditableText 拿着一个**已经聚焦**的
+    //     FocusNode 初始化 → 它永远不会打开文本输入连接
+    //   → 表现：光标在闪、打字没反应；而且"再点一下"也没用，
+    //     因为焦点本来就在它身上、没有状态变化，引擎不会重连。
+    //
+    // 修法是给 composer 的几个孩子加 key（Flutter 按 key 配对，
+    // 插入新兄弟不会挤掉别人）。所以这条测试盯的就是"EditableText 还是不是同一个"。
+    tester.view.physicalSize = const Size(900, 700);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final state = _stateWith(
+      [
+        Room(id: 'r1', name: '甲', kind: 'dm', botIds: const ['b1']),
+      ],
+      bots: [Bot(id: 'b1', name: '甲')],
+    );
+    addTearDown(state.dispose);
+    state.messages['r1'] = [];
+    state.typing['r1'] = false;
+
+    await tester.pumpWidget(
+      AppScope(
+        state: state,
+        child: MaterialApp(home: ChatScreen(room: state.rooms.first)),
+      ),
+    );
+    await tester.pump();
+
+    final field = find.byType(TextField);
+    await tester.tap(field);
+    await tester.pump();
+    final node = tester.widget<TextField>(field).focusNode!;
+    final before = tester.state(find.byType(EditableText));
+
+    // 等价于"发出去了"：typing 亮起（composer 上方会多一条提示）+ 消息进列表
+    state.typing['r1'] = true;
+    state.messages['r1'] = [
+      Msg(
+        id: 'm1',
+        roomId: 'r1',
+        authorType: 'user',
+        authorName: '我',
+        text: '第一条',
+        status: 'done',
+        createdAt: 1,
+      ),
+    ];
+    state.notifyListeners();
+    await tester.pump();
+    await tester.pump();
+
+    final after = tester.state(find.byType(EditableText));
+    expect(
+      identical(before, after),
+      isTrue,
+      reason:
+          '★ 输入框被重建 = 新的 EditableText 带着已聚焦的 FocusNode 初始化 → '
+          '文本输入连接不会重新打开 → 打字没反应，点一下也没用',
+    );
+    expect(node.hasFocus, isTrue, reason: '焦点还得在输入框上');
+
+    // 而且真的还能接着打
+    await tester.enterText(field, '第二条');
+    await tester.pump();
+    expect(tester.widget<TextField>(field).controller?.text, '第二条');
+
+    // busy 退掉也不能把它弄丢（提示消失也是同一种结构变化）
+    state.typing['r1'] = false;
+    state.notifyListeners();
+    await tester.pump();
+    await tester.pump();
+    expect(
+      identical(tester.state(find.byType(EditableText)), after),
+      isTrue,
+      reason: '提示消失时同样不能重建输入框',
+    );
   });
 }
