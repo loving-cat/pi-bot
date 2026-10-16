@@ -5,6 +5,7 @@
 // 结果就是点了 @ 什么都不发生（用户报的 bug）。窄屏同样跳不动。
 //
 // 这个坑很隐蔽：回调确实执行了、函数没报错、只是界面不动。所以两种布局都钉住。
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pi_bot/app_state.dart';
@@ -13,14 +14,16 @@ import 'package:pi_bot/scope.dart';
 import 'package:pi_bot/screens/chat_screen.dart';
 import 'package:pi_bot/screens/home_shell.dart';
 import 'package:pi_bot/screens/rooms_screen.dart';
+import 'package:pi_bot/widgets/avatar_life.dart';
 import 'package:pi_bot/widgets/blob_avatar.dart';
 
 Room _room(String id, String name) =>
     Room(id: id, name: name, kind: 'dm', botIds: const []);
 
-AppState _stateWith(List<Room> rooms) {
+AppState _stateWith(List<Room> rooms, {List<Bot> bots = const []}) {
   final s = AppState();
   s.rooms = rooms;
+  s.bots = bots;
   return s;
 }
 
@@ -131,5 +134,66 @@ void main() {
     // 而且缩回去之后左栏不该还赖着 480
     final sidebar = tester.getSize(find.byType(RoomsScreen).first);
     expect(sidebar.width, lessThan(560), reason: '左栏要按可用宽度让出来（不能还赖着 480）');
+  });
+
+  testWidgets('★ 鼠标进到会话行上（不在头像里）就立刻跟随，不用再动一下', (tester) async {
+    // 这条是踩了三轮才找到的：眼睛偏移只在**鼠标移动**时才算，而"鼠标进入
+    // 这一行"那一下不算移动事件 → 必须再动一下才跟随。用户鼠标停在行上不动时
+    // 眼睛就是呆的，表现成"只有鼠标在头像里面时（本来就在动）才跟随"。
+    //
+    // 所以这条测试必须走**完整链路**：真实鼠标事件 → watchPointer → 指针通知
+    // → 头像 → painter 的 gaze。以前只验到"hovered 变 true"，验不到这一层。
+    tester.view.physicalSize = const Size(400, 700);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    BlobAvatar.animationsEnabled = true;
+    addTearDown(() => BlobAvatar.animationsEnabled = true);
+    AvatarLife.pointer.value = null;
+    addTearDown(() => AvatarLife.pointer.value = null);
+
+    final state = _stateWith([
+      Room(id: 'r1', name: '甲', kind: 'dm', botIds: const ['b1']),
+    ], bots: [Bot(id: 'b1', name: '甲')]);
+    addTearDown(state.dispose);
+    await tester.pumpWidget(
+      AppScope(
+        state: state,
+        child: MaterialApp(
+          // 真实 App 里就是它把鼠标位置送进来的
+          home: Scaffold(
+            body: AvatarLife.watchPointer(child: const RoomsScreen()),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    Offset gazeOf() {
+      final cp = tester
+          .widgetList<CustomPaint>(
+            find.descendant(
+              of: find.byType(BlobAvatar),
+              matching: find.byType(CustomPaint),
+            ),
+          )
+          .first;
+      return (cp.painter as dynamic).gaze as Offset;
+    }
+
+    expect(gazeOf(), Offset.zero, reason: '一开始没看着谁');
+
+    final g = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await g.addPointer(location: const Offset(5, 5));
+    await tester.pump();
+    // 移到**行的文字**上 —— 不在头像那 46px 里
+    await g.moveTo(tester.getCenter(find.text('甲').first));
+    await tester.pump();
+    await tester.pump();
+
+    expect(
+      gazeOf().distance,
+      greaterThan(3),
+      reason: '★ 进到行上就该立刻看着鼠标，不该"再动一下才跟"',
+    );
   });
 }
