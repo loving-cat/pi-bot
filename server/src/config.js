@@ -49,6 +49,18 @@ export const config = {
   noExtensions: process.env.PI_BOT_NO_EXTENSIONS === '1',
   /** bot 跑完一轮后，自动把工作目录里新生成的图片附到消息上 */
   autoAttachImages: process.env.PI_BOT_AUTO_ATTACH !== '0',
+  /** 单轮最长多久没动静就算"断了"（毫秒） */
+  heartbeatMs: Number(process.env.PI_BOT_HEARTBEAT_MS || 15_000),
+  /**
+   * 多久没心跳就判为中断（毫秒）。
+   *
+   * 用户要的："做个心跳机制可以给工程师 bot 们，这样如果任务中断了，
+   * 组长 / 部长级别的知晓。"
+   *
+   * 定得比较宽（6 分钟）是因为：推理型模型光"想"就能想好几分钟，
+   * 中间一个字节都不吐 —— 那不算断。真正要抓的是"卡死不动了"。
+   */
+  stallMs: Number(process.env.PI_BOT_STALL_MS || 360_000),
   /**
    * 部门里单次最多**来回几轮**（对话轮次，不是工具调用次数）。
    *
