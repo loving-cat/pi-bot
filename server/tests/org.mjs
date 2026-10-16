@@ -86,6 +86,17 @@ const state0 = await api('/api/state');
 const dm = state0.rooms.find((r) => r.kind === 'dm');
 const before = state0.rooms.filter((r) => r.kind === 'group').length;
 
+// ★ 这个测试假定数据目录是干净的：它靠"最后一个部门就是刚建的那个"来断言。
+//   在脏数据目录（比如日常自用的 data/）下跑，会拿错部门、报一串假失败 ——
+//   看着像代码坏了，其实只是旧数据在捣乱。这里提前说清楚，别让人白查一轮。
+if (before > 0) {
+  console.log(`  ⚠ 数据目录里已经有 ${before} 个部门 —— 本测试需要干净数据目录，否则会误报。`);
+  console.log('     干净跑法：');
+  console.log('       PI_BOT_HOME=<空目录> PI_BOT_PORT=8788 node src/index.js');
+  console.log('       node tests/org.mjs http://127.0.0.1:8788');
+  console.log('     （本次仍继续跑，但「新建了 1 个部门」可能假失败）\n');
+}
+
 ws.send(
   JSON.stringify({
     t: 'send',
@@ -104,7 +115,8 @@ const state1 = await api('/api/state');
 const groups = state1.rooms.filter((r) => r.kind === 'group');
 check('新建了 1 个部门', groups.length === before + 1, `before=${before} after=${groups.length}`);
 
-const dept = groups[groups.length - 1];
+// 按名字找刚建的那个，别赌"它是最后一个"（脏数据目录下会拿错）
+const dept = groups.find((r) => r.name === '内容运营组') ?? groups[groups.length - 1];
 check('部门有 4 个成员', dept.botIds.length === 4, `实际 ${dept.botIds.length}`);
 check('部门有老大', Boolean(dept.leadBotId), `leadBotId=${dept.leadBotId}`);
 check('老大不是总经理', state1.bots.find((b) => b.id === dept.leadBotId)?.role !== 'main');
