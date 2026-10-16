@@ -18,6 +18,7 @@ import '../widgets/context_chip.dart';
 import '../widgets/floating_menu.dart';
 import '../widgets/md_text.dart';
 import '../widgets/msg_ref_chip.dart';
+import '../widgets/room_panel.dart';
 import '../widgets/message_actions.dart';
 import '../widgets/teach_dialog.dart';
 
@@ -200,9 +201,12 @@ class _ChatScreenState extends State<ChatScreen> {
       });
     }
 
-    // 消息列的左右留白：窗口越宽留白越大（内容列最多 940），
+    // 消息列的左右留白：窗口越宽留白越大（内容列最多 1180），
     // 这样一个 2000px 的窗口里气泡也不会贴着两边。
-    final sidePad = math.max(12.0, (MediaQuery.sizeOf(context).width - 940) / 2);
+    final sidePad = math.max(
+      12.0,
+      (MediaQuery.sizeOf(context).width - 1180) / 2,
+    );
 
     return Scaffold(
       backgroundColor: PB.bgPane,
@@ -219,59 +223,63 @@ class _ChatScreenState extends State<ChatScreen> {
         centerTitle: true,
         // 居中的小胶囊：头像 + 会话名（状态只在"干活/压缩"时露出来，
         // 平时保持安静 —— 参考 / ds-bot 那种感觉）
-        title: Container(
-          padding: const EdgeInsets.fromLTRB(6, 5, 14, 5),
-          decoration: BoxDecoration(
-            color: PB.bgElevated,
-            borderRadius: BorderRadius.circular(PB.rFull),
-            border: Border.all(color: PB.borderSecondary),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (room.isGroup)
-                GroupBlobAvatar(seeds: room.botIds, size: 22, animate: busy)
-              else
-                BlobAvatar(
-                  seed: room.botIds.isNotEmpty ? room.botIds.first : room.id,
-                  color: PB.colorFor(
-                    room.botIds.isNotEmpty ? room.botIds.first : room.id,
-                  ),
-                  emoji: lead?.emoji,
-                  size: 22,
-                  animate: true,
-                  mood: busy ? AvatarMood.busy : AvatarMood.idle,
-                ),
-              const SizedBox(width: 8),
-              Text(
-                room.isGroup ? room.name : (lead?.name ?? room.name),
-                style: const TextStyle(
-                  fontSize: PB.fsSm,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              // 状态只在"正在干活 / 正在压缩"时露出来 —— 平时不占地方
-              if (busy || state.compactingIn(room.id)) ...[
-                const SizedBox(width: 8),
-                if (state.compactingIn(room.id))
-                  const Text(
-                    '压缩中',
-                    style: TextStyle(fontSize: PB.fsXxs, color: PB.warn),
-                  )
+        // 点胶囊 → 右边滑出面板（这个会话是谁 / 里面有谁 / 上下文用得怎么样）
+        title: GestureDetector(
+          onTap: () => showRoomPanel(context, room),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(6, 5, 14, 5),
+            decoration: BoxDecoration(
+              color: PB.bgElevated,
+              borderRadius: BorderRadius.circular(PB.rFull),
+              border: Border.all(color: PB.borderSecondary),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (room.isGroup)
+                  GroupBlobAvatar(seeds: room.botIds, size: 22, animate: busy)
                 else
-                  const SizedBox(
-                    width: 11,
-                    height: 11,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 1.8,
-                      color: PB.accent,
+                  BlobAvatar(
+                    seed: room.botIds.isNotEmpty ? room.botIds.first : room.id,
+                    color: PB.colorFor(
+                      room.botIds.isNotEmpty ? room.botIds.first : room.id,
                     ),
+                    emoji: lead?.emoji,
+                    size: 22,
+                    animate: true,
+                    mood: busy ? AvatarMood.busy : AvatarMood.idle,
                   ),
+                const SizedBox(width: 8),
+                Text(
+                  room.isGroup ? room.name : (lead?.name ?? room.name),
+                  style: const TextStyle(
+                    fontSize: PB.fsSm,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                // 状态只在"正在干活 / 正在压缩"时露出来 —— 平时不占地方
+                if (busy || state.compactingIn(room.id)) ...[
+                  const SizedBox(width: 8),
+                  if (state.compactingIn(room.id))
+                    const Text(
+                      '压缩中',
+                      style: TextStyle(fontSize: PB.fsXxs, color: PB.warn),
+                    )
+                  else
+                    const SizedBox(
+                      width: 11,
+                      height: 11,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.8,
+                        color: PB.accent,
+                      ),
+                    ),
+                ],
+                // 上下文占用：平时也就是一个小圆环
+                const SizedBox(width: 6),
+                ContextChip(roomId: room.id),
               ],
-              // 上下文占用：平时也就是一个小圆环
-              const SizedBox(width: 6),
-              ContextChip(roomId: room.id),
-            ],
+            ),
           ),
         ),
         actions: [
@@ -343,7 +351,12 @@ class _ChatScreenState extends State<ChatScreen> {
                           // ★ 居中限宽：窗口拉宽时，左右留白跟着长（最多到 940），
                           //   气泡就不会被吸附到窗口两边 —— 和 bot 的对话始终
                           //   保持在一个容易读的列宽里。
-                          padding: EdgeInsets.fromLTRB(sidePad, 20, sidePad, 20),
+                          padding: EdgeInsets.fromLTRB(
+                            sidePad,
+                            20,
+                            sidePad,
+                            20,
+                          ),
                           itemCount: msgs.length,
                           itemBuilder: (ctx, i) {
                             final msg = msgs[i];
@@ -1055,7 +1068,8 @@ class _MessageRow extends StatelessWidget {
     // 头像还留着 —— 一眼能看出"这条是它说的"。
     final showName = showAuthor && !(isGroup && bot?.isMain == true);
     // 气泡最宽：屏幕 78%，桌面端最多 620，避免一行铺到大半个屏
-    final maxBubble = math.min(MediaQuery.sizeOf(context).width * 0.78, 620.0);
+    // 气泡最宽：屏幕的 82%，桌面端最多 760（以前 620，用户嫌窄）
+    final maxBubble = math.min(MediaQuery.sizeOf(context).width * 0.82, 760.0);
 
     if (isUser) {
       return Padding(
