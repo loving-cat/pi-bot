@@ -1539,6 +1539,57 @@ await test('建会话：没设思考等级就不传（听 pi 的默认）', () =
   assert.equal(r.thinking, null, '没设过就别瞎给');
 });
 
+
+// ---------------------------------------------------------------------------
+// 上报回执（escalation.js）：该带的信息一样不能少
+// ---------------------------------------------------------------------------
+const { buildEscalationNote } = await import('../src/escalation.js');
+
+const noteStore = {
+  getBot: (id) => (id === 'b1' ? { id: 'b1', name: '优化工程师' } : null),
+};
+
+await test('回执：谁断的 / 为什么断 / 请对方怎么做', () => {
+  const n = buildEscalationNote({ store: noteStore, fromBotId: 'b1', reason: '心跳断了：600 秒没动静' });
+  assert.match(n, /优化工程师/, '要写清是谁的活断了');
+  assert.match(n, /心跳断了/);
+  assert.match(n, /请你重新安排/, '要告诉对方该干什么');
+});
+
+await test('回执：重试过就写明试了几次、为什么放弃', () => {
+  const n = buildEscalationNote({
+    store: noteStore,
+    fromBotId: 'b1',
+    reason: '没派出去',
+    attempts: 3,
+    why: '等太久了',
+  });
+  assert.match(n, /试了 3 次/);
+  assert.match(n, /等太久了/);
+});
+
+await test('回执：带原任务（方便对方直接照着重派）', () => {
+  const n = buildEscalationNote({
+    store: noteStore,
+    fromBotId: 'b1',
+    reason: '断了',
+    task: '把 pi-runner 的调度抽出来',
+  });
+  assert.match(n, /原任务：把 pi-runner 的调度抽出来/);
+});
+
+await test('回执：原任务超长会截断，但绝不截掉"请对方做什么"', () => {
+  const n = buildEscalationNote({ store: noteStore, fromBotId: 'b1', reason: '断了', task: 'x'.repeat(5000) });
+  assert.ok(n.length < 1200, '不能把一整段任务原样塞进回执');
+  assert.match(n, /请你重新安排/, '结尾的指令必须在');
+});
+
+await test('回执：查不到 bot 就用 id 兜底（别出现 undefined 的残句）', () => {
+  const n = buildEscalationNote({ store: { getBot: () => null }, fromBotId: 'b_unknown', reason: '断了' });
+  assert.match(n, /b_unknown/);
+  assert.ok(!/undefined/.test(n));
+});
+
 const passed = results.filter((r) => r.ok).length;
 
 console.log('\n================ 单元测试 ================');
