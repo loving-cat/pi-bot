@@ -22,6 +22,7 @@ class BlobAvatar extends StatefulWidget {
     this.ring = false,
     this.mood = AvatarMood.idle,
     this.interactive = false,
+    this.followPointer = true,
   });
 
   final String seed;
@@ -36,6 +37,10 @@ class BlobAvatar extends StatefulWidget {
 
   /// 心情：闲 / 干活中（干活中视线略抬，而且不会"睡着"）
   final AvatarMood mood;
+
+  /// 眼睛要不要跟着鼠标看。
+  /// 群头像（几个 blob 叠在一起）关掉 —— 一堆眼睛同时转过去很怪。
+  final bool followPointer;
 
   /// 可点：戳一下会挤一下。
   /// 默认 false —— 列表里的头像外面本来就有整行的点击，套一层手势会把行点击吃掉。
@@ -75,11 +80,12 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
-    if (!_alive) return;
-    // ★ 眼神跟随和"呼吸"是两件事：
-    //   侧边栏那些头像 animate: false（不呼吸），但也该跟着鼠标看 ——
-    //   跟随只在鼠标动的时候重绘，比常驻动画便宜得多。
-    if (BlobAvatar.animationsEnabled) {
+    // ★ 眼神跟随和"呼吸"是两件事：侧边栏那些头像 animate: false（不呼吸），
+    //   但也该跟着鼠标看。
+    //   ⚠️ 这一句必须在下面那个 `if (!_alive) return` **之前** ——
+    //   上一版写在它后面，于是静态头像永远登记不上监听，
+    //   症状就是"侧边栏的头像不跟随鼠标"。
+    if (BlobAvatar.animationsEnabled && widget.followPointer) {
       AvatarLife.pointer.addListener(_followPointer);
     }
     if (!_alive) return;
@@ -179,6 +185,10 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
   /// 那时候名字就在旁边，不需要它。
   Widget? _emojiBadge() {
     final e = widget.emoji;
+    // ★ 只有主控（ring=true，也就是总经理）才挂角标。
+    //   以前每个 bot 都挂一个（📄⚙️💻🧪…），一列看下去全是小图标碎片，
+    //   反而把"谁是主控"这个真正重要的信息淹了。
+    if (!widget.ring) return null;
     if (e == null || e.trim().isEmpty || widget.size < 40) return null;
     return Text(e, style: TextStyle(fontSize: widget.size * 0.27, height: 1.0));
   }
@@ -612,6 +622,7 @@ class GroupBlobAvatar extends StatelessWidget {
               left: size / 2 + layout[i].dx * size - inner / 2,
               top: size / 2 + layout[i].dy * size - inner / 2,
               child: BlobAvatar(
+                followPointer: false,
                 seed: shown[i],
                 color: PB.colorFor(shown[i]),
                 size: inner,
