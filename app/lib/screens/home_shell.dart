@@ -104,10 +104,33 @@ class _HomeShellState extends State<HomeShell> {
                     ),
                     // ★ 右侧详情面板是**布局里的一栏**（点聊天顶部胶囊开关），
                     //   和左边那栏同级：没有遮罩、不盖住聊天，聊天区自己让出宽度。
-                    if (panelOpen && selected != null) ...[
-                      Container(width: 1, color: PB.borderTertiary),
-                      SizedBox(width: 340, child: RoomPanel(room: selected)),
-                    ],
+                    // ★ 面板要**滑出来**，不是咣当一下出现。
+                    //   做法：动画容器宽度 0 → 340，里面的内容固定 340 宽、
+                    //   用 ClipRect 裁掉超出部分 —— 这样内容不会在动画过程中被挤变形，
+                    //   而是像抽屉一样平移进场。
+                    //   关的时候反过来（宽度收回 0），同样平滑。
+                    // 只在**开着**时才挂载：进场有滑入动画，关闭立即消失。
+                    // 关闭不做退场动画是有意的 —— 关东西就该干脆；
+                    // 而且挂载着（哪怕宽度是 0）会让面板里的内容一直在树里，
+                    // 白占内存、也让"关掉了没"变得说不清。
+                    if (panelOpen && selected != null)
+                      TweenAnimationBuilder<double>(
+                        duration: const Duration(milliseconds: 240),
+                        curve: Curves.easeOutCubic,
+                        tween: Tween(begin: 0, end: 340.0),
+                        builder: (context, w, child) => SizedBox(
+                          width: w,
+                          child: ClipRect(
+                            child: OverflowBox(
+                              alignment: Alignment.centerLeft,
+                              minWidth: 340,
+                              maxWidth: 340,
+                              child: child,
+                            ),
+                          ),
+                        ),
+                        child: RoomPanel(room: selected),
+                      ),
                   ],
                 ),
               ),
