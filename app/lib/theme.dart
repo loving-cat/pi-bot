@@ -65,13 +65,34 @@ class PB {
   static const rFull = 999.0;
 
   // ---- 字号
-  static const fsXxs = 11.0;
-  static const fsXs = 12.0;
-  static const fsSm = 13.0;
-  static const fsBase = 14.0;
-  static const fsLg = 15.0;
-  static const fsXl = 17.0;
-  static const fsXxl = 22.0;
+  // ★ 字号比常规小 1px。
+  //   Inter 的 x/cap 比参考那套字体高一截（0.750 vs 0.731）——
+  //   同一个 font-size 下它的字形实际更大，整页看着"胀"。
+  //   统一收 1px 之后，视觉大小和参考基本对齐（这是量出来的，不是感觉）。
+  static const fsXxs = 10.0;
+  static const fsXs = 11.0;
+  static const fsSm = 12.0;
+  static const fsBase = 13.0;
+  static const fsLg = 14.0;
+  static const fsXl = 16.0;
+  static const fsXxl = 21.0;
+
+  /// 等宽（代码块/终端输出/路径）。
+  /// 优先用装了的现代等宽，退回系统自带 —— 同类客户端那套等宽差异都在噪声范围内，
+  /// 挑顺眼的就行，不值得为它打包字体。
+  static const monoFamily = 'JetBrains Mono';
+  static const monoFallback = <String>[
+    'Geist Mono',
+    'IBM Plex Mono',
+    'Cascadia Mono',
+    'Consolas',
+    'Menlo',
+    'monospace',
+  ];
+
+  /// 正文的等宽样式（md_text 里代码块用）
+  static TextStyle mono(TextStyle base) =>
+      base.copyWith(fontFamily: monoFamily, fontFamilyFallback: monoFallback);
 
   /// Latin 用 Inter，中文回落到系统字体（Inter 没有 CJK 字形）
   static const fontFamily = 'Inter';
