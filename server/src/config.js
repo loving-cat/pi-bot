@@ -63,6 +63,15 @@ export const config = {
   groupMaxRuns: Number(process.env.PI_BOT_GROUP_MAX_RUNS || 10),
   /** 主控只有只读文件工具 —— 它是调度者，不是干活的人 */
   chiefTools: (process.env.PI_BOT_CHIEF_TOOLS || 'read,ls,grep,find').split(',').map((s) => s.trim()).filter(Boolean),
+  /**
+   * 上下文压缩的全局默认（null = 用 pi 自带的默认：reserve 16384 / keepRecent 20000）。
+   * 每个 bot 还能各自覆盖（App 的设置里改），所以这里只是"没单独设过时用多少"。
+   * 触发条件：contextTokens > contextWindow - reserveTokens。
+   */
+  reserveTokens: Number(process.env.PI_BOT_RESERVE_TOKENS || 0) || null,
+  keepRecentTokens: Number(process.env.PI_BOT_KEEP_RECENT_TOKENS || 0) || null,
+  /** 关掉自动压缩（PI_BOT_AUTO_COMPACT=0）。关掉之后长会话会直接撞上下文上限 */
+  autoCompact: process.env.PI_BOT_AUTO_COMPACT !== '0',
   /** 单轮 agent 运行的硬超时（毫秒），0 = 不限 */
   runTimeoutMs: Number(process.env.PI_BOT_RUN_TIMEOUT_MS || 10 * 60 * 1000),
   hostname: os.hostname(),

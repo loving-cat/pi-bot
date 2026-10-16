@@ -159,6 +159,9 @@ export function createHttpServer({ runner, pairing }) {
           device,
           rooms: store.listRooms().map((r) => store.roomSummary(r)),
           bots: store.listBots(),
+          // 每个活着的会话的上下文占用（key 是 '房间:bot'）。
+          // 放这儿而不是单开接口：App 每次刷新状态就顺带拿到了，少一次往返。
+          context: runner.contextUsage(),
           pairing: config.staticToken ? null : pairing.snapshot(),
         });
       }
