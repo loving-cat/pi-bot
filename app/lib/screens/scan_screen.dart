@@ -5,7 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../theme.dart';
+
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+
 /// 扫出来的配对信息
 class PairPayload {
   const PairPayload({this.url, this.code});
@@ -13,7 +15,8 @@ class PairPayload {
   final String? url;
   final String? code;
 
-  bool get isEmpty => (url == null || url!.isEmpty) && (code == null || code!.isEmpty);
+  bool get isEmpty =>
+      (url == null || url!.isEmpty) && (code == null || code!.isEmpty);
 }
 
 /// 解析二维码内容，兼容三种写法：
@@ -38,7 +41,10 @@ PairPayload parsePairPayload(String raw) {
 
   final uri = Uri.tryParse(text);
   if (uri != null && uri.hasAuthority && uri.queryParameters['code'] != null) {
-    return PairPayload(url: '${uri.scheme}://${uri.authority}', code: uri.queryParameters['code']);
+    return PairPayload(
+      url: '${uri.scheme}://${uri.authority}',
+      code: uri.queryParameters['code'],
+    );
   }
 
   if (RegExp(r'^\d{4,8}$').hasMatch(text)) return PairPayload(code: text);
@@ -70,7 +76,8 @@ class _ScanScreenState extends State<ScanScreen> {
     _controller.addListener(_onState);
     // 相机起得慢的时候给个"正在启动"，别让人对着一片黑猜
     _slowTimer = Timer(const Duration(milliseconds: 1200), () {
-      if (mounted && !_controller.value.isInitialized) setState(() => _slow = true);
+      if (mounted && !_controller.value.isInitialized)
+        setState(() => _slow = true);
     });
   }
 
@@ -90,7 +97,8 @@ class _ScanScreenState extends State<ScanScreen> {
     setState(() => _slow = false);
     _slowTimer?.cancel();
     _slowTimer = Timer(const Duration(milliseconds: 1200), () {
-      if (mounted && !_controller.value.isInitialized) setState(() => _slow = true);
+      if (mounted && !_controller.value.isInitialized)
+        setState(() => _slow = true);
     });
     try {
       await _controller.stop();
@@ -134,7 +142,8 @@ class _ScanScreenState extends State<ScanScreen> {
           ),
 
           // 取景框（相机没就绪时先不画，免得挖个洞却什么都看不到）
-          if (ready) Positioned.fill(child: CustomPaint(painter: _ScanOverlayPainter())),
+          if (ready)
+            Positioned.fill(child: CustomPaint(painter: _ScanOverlayPainter())),
 
           if (!ready)
             Positioned.fill(
@@ -150,30 +159,48 @@ class _ScanScreenState extends State<ScanScreen> {
                           const SizedBox(
                             width: 26,
                             height: 26,
-                            child: CircularProgressIndicator(strokeWidth: 2.4, color: PB.accentBright),
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.4,
+                              color: PB.accentBright,
+                            ),
                           ),
                           const SizedBox(height: 20),
                           Text(
                             _slow ? '相机还没起来…' : '正在启动相机…',
-                            style: const TextStyle(color: PB.textSecondary, fontSize: PB.fsBase),
+                            style: const TextStyle(
+                              color: PB.textSecondary,
+                              fontSize: PB.fsBase,
+                            ),
                           ),
                           const SizedBox(height: 8),
                           const Text(
                             '第一次用会弹一个相机权限，点「允许」',
-                            style: TextStyle(color: PB.textQuaternary, fontSize: PB.fsXs),
+                            style: TextStyle(
+                              color: PB.textQuaternary,
+                              fontSize: PB.fsXs,
+                            ),
                           ),
                         ] else ...[
-                          const Icon(LucideIcons.cameraOff, size: 38, color: PB.textTertiary),
+                          const Icon(
+                            LucideIcons.cameraOff,
+                            size: 38,
+                            color: PB.textTertiary,
+                          ),
                           const SizedBox(height: 18),
                           Text(
                             switch (error.errorCode) {
-                              MobileScannerErrorCode.permissionDenied =>
-                                '没拿到相机权限。\n去「系统设置 → 应用 → pi-bot → 权限」里打开相机，再回来点重试。',
-                              MobileScannerErrorCode.unsupported => '这台设备不支持扫码。',
-                              _ => '相机打不开：${error.errorDetails?.message ?? error.errorCode.name}',
+                              MobileScannerErrorCode.permissionDenied => '没拿到相机权限。\n去「系统设置 → 应用 → pi-bot → 权限」里打开相机，再回来点重试。',
+                              MobileScannerErrorCode.unsupported =>
+                                '这台设备不支持扫码。',
+                              _ =>
+                                '相机打不开：${error.errorDetails?.message ?? error.errorCode.name}',
                             },
                             textAlign: TextAlign.center,
-                            style: const TextStyle(color: PB.textSecondary, fontSize: PB.fsSm, height: 1.7),
+                            style: const TextStyle(
+                              color: PB.textSecondary,
+                              fontSize: PB.fsSm,
+                              height: 1.7,
+                            ),
                           ),
                           const SizedBox(height: 22),
                           FilledButton.icon(
@@ -197,7 +224,11 @@ class _ScanScreenState extends State<ScanScreen> {
                 children: [
                   IconButton(
                     onPressed: () => Navigator.pop(context),
-                    icon: const Icon(LucideIcons.x, color: Colors.white, size: 22),
+                    icon: const Icon(
+                      LucideIcons.x,
+                      color: Colors.white,
+                      size: 22,
+                    ),
                   ),
                   const Spacer(),
                   if (ready)
@@ -207,7 +238,9 @@ class _ScanScreenState extends State<ScanScreen> {
                         setState(() => _torch = !_torch);
                       },
                       icon: Icon(
-                        _torch ? LucideIcons.flashlight : LucideIcons.flashlightOff,
+                        _torch
+                            ? LucideIcons.flashlight
+                            : LucideIcons.flashlightOff,
                         color: _torch ? PB.accentBright : Colors.white,
                         size: 22,
                       ),
@@ -226,13 +259,20 @@ class _ScanScreenState extends State<ScanScreen> {
               children: [
                 const Text(
                   '对准电脑终端里那个二维码',
-                  style: TextStyle(color: Colors.white, fontSize: PB.fsLg, fontWeight: FontWeight.w600),
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: PB.fsLg,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
                 const SizedBox(height: 8),
                 Text(
                   '扫不了？在电脑端「设置 → 远程连接」里有配对码，回上一页手动填',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: PB.fsXs),
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.6),
+                    fontSize: PB.fsXs,
+                  ),
                 ),
               ],
             ),
@@ -247,7 +287,11 @@ class _ScanOverlayPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final side = size.shortestSide * 0.66;
-    final rect = Rect.fromCenter(center: size.center(Offset.zero), width: side, height: side);
+    final rect = Rect.fromCenter(
+      center: size.center(Offset.zero),
+      width: side,
+      height: side,
+    );
     final rrect = RRect.fromRectAndRadius(rect, const Radius.circular(20));
 
     // 挖洞
@@ -256,7 +300,10 @@ class _ScanOverlayPainter extends CustomPainter {
       Path()..addRect(Offset.zero & size),
       Path()..addRRect(rrect),
     );
-    canvas.drawPath(overlay, Paint()..color = Colors.black.withValues(alpha: 0.62));
+    canvas.drawPath(
+      overlay,
+      Paint()..color = Colors.black.withValues(alpha: 0.62),
+    );
 
     // 四个角
     const len = 26.0;

@@ -73,9 +73,7 @@ class ContextChip extends StatelessWidget {
               SizedBox(
                 width: 15,
                 height: 15,
-                child: CustomPaint(
-                  painter: _RingPainter(pct / 100, color),
-                ),
+                child: CustomPaint(painter: _RingPainter(pct / 100, color)),
               ),
               const SizedBox(width: 6),
               Text(
@@ -107,10 +105,16 @@ class ContextChip extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _row('已占用', '${k(tokens)} / ${k(window)}  （${(info.percent ?? 0).round()}%）'),
+            _row(
+              '已占用',
+              '${k(tokens)} / ${k(window)}  （${(info.percent ?? 0).round()}%）',
+            ),
             const SizedBox(height: 6),
-            _row('自动压缩', '开 —— 用到接近上限时，pi 会把前面的对话总结掉，'
-                '然后接着干（历史消息还在，只是不再进上下文）'),
+            _row(
+              '自动压缩',
+              '开 —— 用到接近上限时，pi 会把前面的对话总结掉，'
+                  '然后接着干（历史消息还在，只是不再进上下文）',
+            ),
             const SizedBox(height: 10),
             const Text(
               '压缩时头部会显示「压缩中」。想让它装得更多，可以给这个 bot 单独调预算。',

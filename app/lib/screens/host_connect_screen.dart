@@ -115,7 +115,8 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
                   url,
                   textAlign: TextAlign.center,
                   style: const TextStyle(
-                    fontFamily: 'monospace',
+                    fontFamily: PB.monoFamily,
+                    fontFamilyFallback: PB.monoFallback,
                     fontSize: PB.fsXs,
                     color: PB.textTertiary,
                   ),
@@ -163,7 +164,8 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
                         child: const SelectableText(
                           'cd server\nnode src/index.js',
                           style: TextStyle(
-                            fontFamily: 'monospace',
+                            fontFamily: PB.monoFamily,
+                            fontFamilyFallback: PB.monoFallback,
                             fontSize: PB.fsXs,
                             color: PB.textSecondary,
                             height: 1.6,

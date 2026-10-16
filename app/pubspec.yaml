@@ -29,12 +29,10 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   fonts:
+    # ★ Inter.ttf 是**可变字体**（有 fvar 表），所以只登记一次就够了 ——
+    #   Flutter 会按 TextStyle.fontWeight 去走 wght 轴拿到真正的 400/500/600/700。
+    #   以前把同一个文件登记了 4 遍、分别标 400/500/600/700：那等于四份都是默认的
+    #   400，然后 Flutter 再在它上面**合成假粗体**——笔画发虚、字重看着不对。
     - family: Inter
       fonts:
         - asset: assets/fonts/Inter.ttf
-        - asset: assets/fonts/Inter.ttf
-          weight: 500
-        - asset: assets/fonts/Inter.ttf
-          weight: 600
-        - asset: assets/fonts/Inter.ttf
-          weight: 700
