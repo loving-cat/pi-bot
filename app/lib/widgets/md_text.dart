@@ -92,8 +92,12 @@ class _MdTextState extends State<MdText> {
       children: [
         for (var i = 0; i < children.length; i++)
           Padding(
+            // ★ 块之间的呼吸：8 → 14。
+            //   消息里通常是"一句话 + 列表 + 一句话"这种结构，块挤在一起
+            //   读起来像一堵墙；拉开之后每一块才是独立的一段。
+            //   compact 的那档也跟着放宽（4 → 8），但保持明显更紧。
             padding: EdgeInsets.only(
-              top: i == 0 ? 0 : (widget.compact ? 4 : 8),
+              top: i == 0 ? 0 : (widget.compact ? 8 : 14),
             ),
             child: children[i],
           ),
@@ -596,8 +600,10 @@ class _TableView extends StatelessWidget {
   final TextStyle base;
   final Widget Function(String, TextStyle, TextStyle) renderInline;
 
-  static const double _padH = 10;
-  static const double _padV = 7;
+  // ★ 表格以前太挤（横向 10 / 纵向 7），两行字几乎贴在一起。
+  //   放大到 14 / 11 —— 就这一下，密表从"看不动"变成能扫。
+  static const double _padH = 14;
+  static const double _padV = 11;
 
   /// 单列能压到的最窄宽度（再窄就没法读了）
   static const double _minCol = 54;
@@ -729,7 +735,7 @@ class _TableView extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: _padH, vertical: _padV),
         child: text.trim().isEmpty
-            ? const SizedBox(height: 18)
+            ? const SizedBox(height: 22)
             : renderInline(
                 text,
                 style,
