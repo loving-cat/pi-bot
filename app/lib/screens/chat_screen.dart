@@ -1539,11 +1539,16 @@ class _Steps extends StatelessWidget {
                   ),
                   if (steps.length > shown.length) ...[
                     const SizedBox(width: 6),
-                    Text(
-                      '（只显示最近 ${shown.length} 步）',
-                      style: const TextStyle(
-                        fontSize: PB.fsXxs,
-                        color: PB.textQuaternary,
+                    // 同上：窄屏上这句也会撑出去
+                    const Flexible(
+                      child: Text(
+                        '（只显示最近 5 步）',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: PB.fsXxs,
+                          color: PB.textQuaternary,
+                        ),
                       ),
                     ),
                   ],
@@ -1575,22 +1580,28 @@ class _Steps extends StatelessWidget {
                             ),
                     ),
                     const SizedBox(width: 7),
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 280),
-                      child: Text(
-                        '${step.tool}${step.detail.isNotEmpty ? '  ${shortText(step.detail, 62)}' : ''}'
-                        '${step.durationMs != null ? '  ${step.durationMs}ms' : ''}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontFamily: PB.monoFamily,
-                          fontFamilyFallback: PB.monoFallback,
-                          // 这行是**中英混排**（create_bot  name: 平台开发工程师），
-                          // 10 号在 125% 缩放下是 12.5 个物理像素，中文必糊
-                          fontSize: PB.fsTinyCjk,
-                          color: step.status == 'running'
-                              ? PB.accent
-                              : PB.textQuaternary,
+                    // ★ Flexible + 上限 280：桌面端封顶 280 不拉太长，
+                    //   手机端能被压缩到卡片的可用宽度里 ——
+                    //   以前只有 ConstrainedBox(maxWidth: 280)，在窄屏上是个死值，
+                    //   固定 280 比卡片还宽 → 直接撑出框体（用户报的）。
+                    Flexible(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 280),
+                        child: Text(
+                          '${step.tool}${step.detail.isNotEmpty ? '  ${shortText(step.detail, 62)}' : ''}'
+                          '${step.durationMs != null ? '  ${step.durationMs}ms' : ''}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontFamily: PB.monoFamily,
+                            fontFamilyFallback: PB.monoFallback,
+                            // 这行是**中英混排**（create_bot  name: 平台开发工程师），
+                            // 10 号在 125% 缩放下是 12.5 个物理像素，中文必糊
+                            fontSize: PB.fsTinyCjk,
+                            color: step.status == 'running'
+                                ? PB.accent
+                                : PB.textQuaternary,
+                          ),
                         ),
                       ),
                     ),

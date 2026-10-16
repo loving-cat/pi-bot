@@ -131,3 +131,32 @@ export function pickEscalationHost({
   }
   return { role: null, hostId: null };
 }
+
+/**
+ * 叫它的这个人是它的**上级**吗？
+ *
+ * 用户原话："无论多忙 当组长 部长 自己上级@的时候 必须先停下来听最新的要求，
+ * 同时上报目前自己的进度。"
+ *
+ * 所以这里要回答的是：这次 @ 值不值得**打断**它手上的活。
+ *   · 用户  → 最高权威，必须停
+ *   · 组长/部长（这个部门的 lead）→ 它的直接上级，必须停
+ *   · 主控（总经理）→ 全队的上级，必须停
+ *   · 同级的同事 → 不用停，排队等它忙完就行（不然群里会互相打断成一锅粥）
+ *
+ * 抽成纯函数是因为这条规则一旦写反（比如同事也能打断），表现是群里互相掐断，
+ * 排查起来很费劲。
+ */
+export function isSuperiorCall({
+  fromId = null,
+  fromRole = null,
+  leadId = null,
+  chiefId = null,
+  selfId = null,
+} = {}) {
+  if (fromRole === 'user') return true;
+  if (!fromId || fromId === selfId) return false;
+  if (leadId && fromId === leadId) return true;
+  if (chiefId && fromId === chiefId) return true;
+  return false;
+}
