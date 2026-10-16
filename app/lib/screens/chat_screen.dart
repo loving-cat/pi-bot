@@ -259,8 +259,6 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
         actions: [
-          // 右边要让开窗口控制按钮，否则"…"会和关闭叠在一起
-          const WindowControlsSpacer(),
           PopupMenuButton<String>(
             icon: const Icon(LucideIcons.ellipsis, size: 18),
             padding: EdgeInsets.zero,
@@ -302,6 +300,10 @@ class _ChatScreenState extends State<ChatScreen> {
               const PopupMenuItem(value: 'reload', child: Text('重新拉取消息')),
             ],
           ),
+          // ★ 放在 actions **最后**：这里面最后一个才是贴着右边的。
+          //   聊天区右边缘正好在窗口右上角底下（那里是自绘的控制按钮），
+          //   不让位的话"…"会和"关闭"叠在一起。
+          const WindowControlsSpacer(),
           const SizedBox(width: 6),
         ],
       ),
