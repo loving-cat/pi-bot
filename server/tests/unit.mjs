@@ -566,7 +566,13 @@ const prevRef = (over = {}) => ({
 await test('ref: 没有上一条消息 → 新建气泡', () => {
   const p = planRefBubble({ last: undefined, botId: 'b1', targetBotId: 'b2', dmRoomId: 'dm2', at: 1_000_000 });
   assert.equal(p.mode, 'append');
-  assert.deepEqual(p.ref, { botId: 'b2', roomId: 'dm2', at: 1_000_000 });
+  // count 也带上（界面显示「N 条消息往来」用）
+  assert.deepEqual(p.ref, {
+    botId: 'b2',
+    roomId: 'dm2',
+    at: 1_000_000,
+    count: null,
+  });
 });
 
 await test('ref: 同一个 bot 180s 内连着私信 → 合并成一个气泡', () => {
