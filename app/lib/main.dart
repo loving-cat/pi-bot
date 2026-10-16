@@ -3,6 +3,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'app_state.dart';
 import 'frame_log.dart';
+import 'widgets/avatar_life.dart';
 import 'notify.dart';
 import 'scope.dart';
 import 'screens/pair_screen.dart';
@@ -23,7 +24,6 @@ Future<void> main() async {
 
   // 帧耗时采样（只有带了 PI_BOT_FRAME_LOG 环境变量才工作，平时零开销）
   FrameLog.start();
-
 
   // 桌面端：无边框窗口，控制按钮由 App 自己画在右上角
   if (WindowTitleBar.isSupported) {
@@ -113,19 +113,22 @@ class _PiBotAppState extends State<PiBotApp> with WidgetsBindingObserver {
         // 无边框窗口：控制按钮和八向缩放热区铺在最上层。
         // 放根上而不是 HomeShell 里 —— 配对页 / 连不上服务端那页也要能关窗口、能缩放。
         // 顺序要紧：后面的先命中，所以窗口按钮压住缩放热区（右上角那个角别抢"关闭"）。
-        builder: (context, child) => Stack(
-          fit: StackFit.expand,
-          children: [
-            if (child != null) child,
-            if (WindowResizeOverlay.isSupported)
-              const Positioned.fill(child: WindowResizeOverlay()),
-            if (WindowControlsOverlay.isSupported)
-              const Positioned(
-                top: 0,
-                right: 0,
-                child: WindowControlsOverlay(),
-              ),
-          ],
+        // 让所有头像都能知道鼠标在哪（眼睛跟着看）。包在最外层，弹层里也生效。
+        builder: (context, child) => AvatarLife.watchPointer(
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (child != null) child,
+              if (WindowResizeOverlay.isSupported)
+                const Positioned.fill(child: WindowResizeOverlay()),
+              if (WindowControlsOverlay.isSupported)
+                const Positioned(
+                  top: 0,
+                  right: 0,
+                  child: WindowControlsOverlay(),
+                ),
+            ],
+          ),
         ),
         home: const _Root(),
       ),
@@ -143,7 +146,8 @@ class _Root extends StatelessWidget {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
     // 桌面端是宿主：永远不显示手机那套配对界面，连不上就显示「怎么起服务端」
-    if (!state.paired) return isHostPlatform ? const HostConnectScreen() : const PairScreen();
+    if (!state.paired)
+      return isHostPlatform ? const HostConnectScreen() : const PairScreen();
 
     if (_devOpen.isNotEmpty) {
       final match = state.rooms.where(
