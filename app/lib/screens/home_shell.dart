@@ -23,6 +23,19 @@ class HomeShell extends StatefulWidget {
 class _HomeShellState extends State<HomeShell> {
   String? _selectedId;
 
+  // 两栏宽度都是**可拖的**（用户："内部应该可以控制左右侧边栏的宽度，
+  // 而不是固定宽度，整个内部需要是一个弹性布局"）。
+  double _leftWidth = 320;
+  double _rightWidth = 340;
+
+  static const _leftMin = 240.0;
+  static const _leftMax = 480.0;
+  static const _rightMin = 280.0;
+  static const _rightMax = 560.0;
+
+  /// 聊天区最小宽度 —— 再小就没法看了
+  static const _chatMin = 420.0;
+
   @override
   void initState() {
     super.initState();
@@ -84,7 +97,7 @@ class _HomeShellState extends State<HomeShell> {
                 child: Row(
                   children: [
                     SizedBox(
-                      width: 320,
+                      width: _leftWidth,
                       child: RoomsScreen(
                         embedded: true,
                         selectedId: selected?.id,
@@ -92,7 +105,19 @@ class _HomeShellState extends State<HomeShell> {
                             setState(() => _selectedId = room.id),
                       ),
                     ),
-                    Container(width: 1, color: PB.borderTertiary),
+                    _DragHandle(
+                      onDrag: (dx) => setState(() {
+                        final total = MediaQuery.sizeOf(context).width;
+                        final maxByChat =
+                            total -
+                            _chatMin -
+                            (state.panelOpen ? _rightWidth : 0);
+                        _leftWidth = (_leftWidth + dx).clamp(
+                          _leftMin,
+                          _leftMax < maxByChat ? _leftMax : maxByChat,
+                        );
+                      }),
+                    ),
                     Expanded(
                       child: selected == null
                           ? const _NoSelection()
@@ -114,17 +139,27 @@ class _HomeShellState extends State<HomeShell> {
                     // 而且挂载着（哪怕宽度是 0）会让面板里的内容一直在树里，
                     // 白占内存、也让"关掉了没"变得说不清。
                     if (panelOpen && selected != null)
+                      _DragHandle(
+                        // 往左拖 = 面板变宽
+                        onDrag: (dx) => setState(() {
+                          _rightWidth = (_rightWidth - dx).clamp(
+                            _rightMin,
+                            _rightMax,
+                          );
+                        }),
+                      ),
+                    if (panelOpen && selected != null)
                       TweenAnimationBuilder<double>(
                         duration: const Duration(milliseconds: 240),
                         curve: Curves.easeOutCubic,
-                        tween: Tween(begin: 0, end: 340.0),
-                        builder: (context, w, child) => SizedBox(
-                          width: w,
+                        tween: Tween(begin: 0.0, end: 1.0),
+                        builder: (context, t, child) => SizedBox(
+                          width: _rightWidth * t,
                           child: ClipRect(
                             child: OverflowBox(
                               alignment: Alignment.centerLeft,
-                              minWidth: 340,
-                              maxWidth: 340,
+                              minWidth: _rightWidth,
+                              maxWidth: _rightWidth,
                               child: child,
                             ),
                           ),
@@ -162,6 +197,51 @@ class _NoSelection extends StatelessWidget {
             style: TextStyle(fontSize: PB.fsSm, color: PB.textTertiary),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// 两栏之间的分隔条：**可以拖**，鼠标移上去会亮起来。
+///
+/// 为什么值得做成可拖：侧边栏多宽取决于你在干什么 —— 找会话时想宽、
+/// 看聊天时想窄。写死一个值总有人不合适。
+/// 视觉上默认 1px（不抢戏），hover 时加粗成主题色（提示"这儿能拖"）。
+class _DragHandle extends StatefulWidget {
+  const _DragHandle({required this.onDrag});
+
+  /// 水平拖动量（正数 = 往右）
+  final void Function(double dx) onDrag;
+
+  @override
+  State<_DragHandle> createState() => _DragHandleState();
+}
+
+class _DragHandleState extends State<_DragHandle> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeLeftRight,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onHorizontalDragUpdate: (d) => widget.onDrag(d.delta.dx),
+        child: SizedBox(
+          // 命中区 6px（好点中），视觉上只有 1px 的线
+          width: 6,
+          child: Center(
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 120),
+              width: _hover ? 2 : 1,
+              color: _hover
+                  ? PB.accent.withValues(alpha: 0.6)
+                  : PB.borderTertiary,
+            ),
+          ),
+        ),
       ),
     );
   }
