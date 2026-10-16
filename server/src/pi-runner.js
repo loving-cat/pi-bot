@@ -262,6 +262,8 @@ export class PiRunner {
      * 各有一份 maxRuns 预算（限制失效），游标互相踩。
      */
     this.roundLocks = new Set();
+    /** 用户按了终止的房间 —— 轮次循环看到它就停，不再往下派人 */
+    this.aborting = new Set();
     /** roomId -> { text, files }：锁被占时进来的消息，合并到这里等下一轮 */
     this.roundQueue = new Map();
   }
@@ -973,6 +975,14 @@ export class PiRunner {
 
     let runs = 0;
     while (queue.length && runs < limits.maxRuns) {
+      // ★ 用户按了终止就立刻收手（不再往下派下一个成员）。
+      //   没有这一条的话：当前那个 session 被捣掉之后，循环会把下一个成员
+      //   派出去 —— 用户看到的就是"点了终止还在跑"。
+      if (this.aborting.has(roomId)) {
+        log(`【${room.name}】⏹ 已终止，剩下的 ${queue.length} 个人不再派`);
+        queue.length = 0;
+        break;
+      }
       const item = queue.shift();
       const bot = store.getBot(item.botId);
       if (!bot) continue;
@@ -1193,6 +1203,9 @@ export class PiRunner {
       return { userMessage, bot, steered: effective };
     }
 
+    // 新消息 = 新一轮：把上一轮的"已终止"标记清掉，
+    // 否则这个房间会一直停在终止状态，之后发什么都被跳过。
+    this.aborting.delete(roomId);
     const userMessage = store.appendMessage({
       roomId,
       authorType: 'user',
@@ -1421,6 +1434,11 @@ export class PiRunner {
 
     const unsubscribe = entry.session.subscribe(onEvent);
     entry.unsubscribe = unsubscribe;
+    // 已经按了终止的会话：这一轮就别起了（排队里被点掉的那些）
+    if (this.aborting.has(roomId)) {
+      log(`${bot.name} 这一轮已经被用户终止，跳过`);
+      return { ok: false, text: '', ms: 0, error: '已终止', messageId: '' };
+    }
     entry.busy = true;
 
     // 用户带的图 -> 喂给模型（视觉模型能直接看）
@@ -1634,13 +1652,45 @@ export class PiRunner {
   async abort(roomId) {
     // 用户按了停止：排队中的轮次一并清掉，不然它会在当前这轮结束后自己接着跑
     this.roundQueue.delete(roomId);
+    // ★ 还要告诉**正在跑的那轮**别再往下派人了。
+    //
+    //   真事：用户点终止之后"还要等很久"。因为以前只 abort 了当前这个 session ——
+    //   而群聊那一轮是个循环（组长→成员→成员…），当前这个被捣掉之后，
+    //   循环接着把下一个成员派出去。从用户角度看就是"点了没反应"。
+    this.aborting.add(roomId);
     let aborted = false;
+    const live = [];
     for (const [key, entry] of this.sessions) {
       if (key.startsWith(`${roomId}:`) && entry.session && entry.busy) {
-        await entry.session.abort().catch(() => {});
+        live.push({ key, entry });
+        entry.session.abort().catch(() => {});
         aborted = true;
       }
     }
+    // ★ 不等 session 那边慢慢收尾（它可能还卡在一个长命令里）——
+    //   先把界面上的"正在写"当场结掉：用户按了停止，界面必须马上停。
+    const botIds = live.map((x) => x.key.slice(roomId.length + 1));
+    const stamp = Date.now();
+    for (const msg of store.listMessages(roomId, { limit: 200 })) {
+      if (msg.status !== 'streaming') continue;
+      if (!botIds.includes(msg.authorId)) continue;
+      store.updateMessage(
+        roomId,
+        msg.id,
+        {
+          status: 'error',
+          error: '已按你的要求终止',
+          steps: (msg.steps ?? []).map((s) =>
+            s?.status === 'running' ? { ...s, status: 'error', error: '已终止' } : s,
+          ),
+        },
+        { silent: false },
+      );
+    }
+    for (const id of botIds) {
+      bus.emit('event', { t: 'typing', roomId, botId: id, active: false });
+    }
+    log(`⏹ 收到终止：${roomId}（停了 ${live.length} 个在跑的，${stamp ? '' : ''}队列也清了）`);
     return { aborted };
   }
 
