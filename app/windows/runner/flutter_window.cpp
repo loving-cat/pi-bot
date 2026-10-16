@@ -18,6 +18,16 @@ bool FlutterWindow::OnCreate() {
 
   // 深色标题栏（否则会跟着系统强调色走，很容易是一块刺眼的亮色）
   HWND handle = GetHandle();
+
+  // ★ 无边框：Windows 在 CreateWindow 时会把 WS_CAPTION 补回来（实测：
+  //   传进去 0x020f0000，拿回来 0x06cf0000），所以只能在创建之后强制去掉。
+  //   配合 MessageHandler 里的 WM_NCCALCSIZE 返回 0，标题栏和边框彻底消失。
+  LONG style = GetWindowLong(handle, GWL_STYLE);
+  style &= ~(WS_CAPTION | WS_BORDER | WS_DLGFRAME);
+  SetWindowLong(handle, GWL_STYLE, style);
+  SetWindowPos(handle, nullptr, 0, 0, 0, 0,
+               SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
+                   SWP_FRAMECHANGED);
   BOOL dark_mode = TRUE;
   DwmSetWindowAttribute(handle, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */,
                         &dark_mode, sizeof(dark_mode));
@@ -65,6 +75,27 @@ LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
+  // ---- 无边框窗口 ----
+  // ★ 必须放在 Flutter 的 HandleTopLevelWindowProc 之前：
+  //   否则这个消息会被上游吃掉，我们自己的处理永远跑不到。
+  // 返回 0 = 客户区覆盖整个窗口 → 标题栏和边框彻底消失（但样式位还在，
+  // Windows 自已在 CreateWindow 时会补回 WS_CAPTION，改样式没用）。
+  if (message == WM_NCCALCSIZE && wparam == TRUE) {
+    auto* params = reinterpret_cast<NCCALCSIZE_PARAMS*>(lparam);
+    // 最大化时 Windows 会把窗口撑到工作区之外，补回边距，否则内容被任务栏盖住
+    if (IsZoomed(hwnd)) {
+      const int frame_x =
+          GetSystemMetrics(SM_CXSIZEFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
+      const int frame_y =
+          GetSystemMetrics(SM_CYSIZEFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
+      params->rgrc[0].left += frame_x;
+      params->rgrc[0].right -= frame_x;
+      params->rgrc[0].top += frame_y;
+      params->rgrc[0].bottom -= frame_y;
+    }
+    return 0;
+  }
+
   // Give Flutter, including plugins, an opportunity to handle window messages.
   if (flutter_controller_) {
     std::optional<LRESULT> result =

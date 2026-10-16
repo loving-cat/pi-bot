@@ -3,24 +3,21 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:window_manager/window_manager.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../app_state.dart';
 import '../models.dart';
 import '../scope.dart';
+import '../text_utils.dart';
 import '../theme.dart';
 import '../widgets/attachment_view.dart';
 import '../widgets/blob_avatar.dart';
 import '../widgets/md_text.dart';
+import '../widgets/window_title_bar.dart';
 import '../widgets/message_actions.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
-
-/// 用量全是 0 就别显示（很多模型不返回 usage）
-bool _hasUsage(Map<String, dynamic> usage) {
-  final n = (usage['input'] ?? 0) + (usage['output'] ?? 0) + (usage['cacheRead'] ?? 0);
-  return n is num && n > 0;
-}
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({
@@ -239,8 +236,10 @@ class _ChatScreenState extends State<ChatScreen> {
                     busy
                         ? '正在干活…'
                         : (room.isGroup
-                              ? '老大 ${room.leadName ?? '-'} · ${room.botIds.length} 人'
-                              : '${lead?.model ?? '默认模型'} · ${lead?.thinking ?? ''}'),
+                              ? '负责人 ${room.leadName ?? '-'} · ${room.botIds.length} 人'
+                              : (firstLine(lead?.persona ?? '').isNotEmpty
+                                    ? preview(lead!.persona, 34)
+                                    : '在线')),
                     style: TextStyle(
                       fontSize: PB.fsXxs,
                       color: busy ? PB.accent : PB.textQuaternary,
@@ -253,13 +252,43 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
         actions: [
+          // 无边框窗口：自己提供最小化 / 最大化 / 关闭
+          if (WindowTitleBar.isSupported) ...[
+            IconButton(
+              tooltip: '最小化',
+              iconSize: 17,
+              onPressed: () => windowManager.minimize(),
+              icon: const Icon(LucideIcons.minus),
+            ),
+            IconButton(
+              tooltip: '最大化 / 还原',
+              iconSize: 16,
+              onPressed: () async {
+                if (await windowManager.isMaximized()) {
+                  await windowManager.unmaximize();
+                } else {
+                  await windowManager.maximize();
+                }
+              },
+              icon: const Icon(LucideIcons.square),
+            ),
+            IconButton(
+              tooltip: '关闭',
+              iconSize: 17,
+              onPressed: () => windowManager.close(),
+              icon: const Icon(LucideIcons.x),
+            ),
+            const SizedBox(width: 4),
+          ],
           if (busy)
             Padding(
               padding: const EdgeInsets.only(right: 6),
               child: _StopButton(onTap: () => state.abort(room.id)),
             ),
           PopupMenuButton<String>(
-            icon: const Icon(LucideIcons.ellipsis, size: 20),
+            icon: const Icon(LucideIcons.ellipsis, size: 18),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
             onSelected: (value) async {
               switch (value) {
                 case 'abort':
@@ -298,6 +327,9 @@ class _ChatScreenState extends State<ChatScreen> {
             ],
           ),
           const SizedBox(width: 6),
+          // 无边框窗口：最小化 / 最大化 / 关闭放在右上角（这里就是窗口右上角）
+          const WindowControls(),
+          const SizedBox(width: 8),
         ],
       ),
       body: Column(
@@ -326,6 +358,10 @@ class _ChatScreenState extends State<ChatScreen> {
                               msg: msg,
                               showAuthor: newAuthor,
                               bot: state.botById(msg.authorId),
+                              mentions: room.botNames,
+                              isLead: room.isGroup &&
+                                  msg.authorId != null &&
+                                  msg.authorId == room.leadBotId,
                               onLongPress: () =>
                                   showMessageActions(context, msg),
                             ),
@@ -961,12 +997,20 @@ class _MessageRow extends StatelessWidget {
     required this.showAuthor,
     required this.bot,
     required this.onLongPress,
+    this.mentions = const [],
+    this.isLead = false,
   });
 
   final Msg msg;
   final bool showAuthor;
   final Bot? bot;
   final VoidCallback onLongPress;
+
+  /// 部门成员名字，用来高亮 @提及
+  final List<String> mentions;
+
+  /// 这条消息的作者是不是这个部门的负责人
+  final bool isLead;
 
   @override
   Widget build(BuildContext context) {
@@ -1104,14 +1148,14 @@ class _MessageRow extends StatelessWidget {
                             color: accent,
                           ),
                         ),
-                        const SizedBox(width: 8),
-                        if (bot != null && !bot!.isMain)
-                          Flexible(
+                        if (isLead)
+                          const Padding(
+                            padding: EdgeInsets.only(left: 6),
                             child: Text(
-                              '${bot!.model ?? '默认'} · ${bot!.thinking}',
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
+                              '负责人',
+                              style: TextStyle(
                                 fontSize: PB.fsXxs,
+                                fontWeight: FontWeight.w600,
                                 color: PB.textQuaternary,
                               ),
                             ),
@@ -1174,18 +1218,7 @@ class _MessageRow extends StatelessWidget {
                       ),
                     ),
                   ),
-                if (!streaming && msg.usage != null && showAuthor && _hasUsage(msg.usage!))
-                  Padding(
-                    padding: const EdgeInsets.only(top: 5, left: 2),
-                    child: Text(
-                      _usageLine(msg.usage!),
-                      style: const TextStyle(
-                        fontSize: PB.fsXxs,
-                        color: PB.textQuaternary,
-                        fontFamily: 'monospace',
-                      ),
-                    ),
-                  ),
+                // 用量行（↑0 ↓0 ⚡0）不再显示，属于噪音
               ],
             ),
           ),
@@ -1194,16 +1227,7 @@ class _MessageRow extends StatelessWidget {
     );
   }
 
-  static String _usageLine(Map<String, dynamic> usage) {
-    final input = usage['input'] ?? 0;
-    final output = usage['output'] ?? 0;
-    final cache = usage['cacheRead'] ?? 0;
-    final cost = (usage['cost'] is Map) ? (usage['cost']['total'] ?? 0) : 0;
-    final costText = cost is num && cost > 0
-        ? '  \$${cost.toStringAsFixed(5)}'
-        : '';
-    return '↑$input ↓$output ⚡$cache$costText';
-  }
+
 }
 
 class _Steps extends StatelessWidget {

@@ -543,10 +543,15 @@ class _TableView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final columns = [
-      header.length,
-      ...rows.map((r) => r.length),
-    ].reduce((a, b) => a > b ? a : b);
+    // 列数按表头来；数据行多出来的空单元格直接丢掉，不要在右边留一空列
+    var columns = header.length;
+    for (final r in rows) {
+      var n = r.length;
+      while (n > 0 && r[n - 1].trim().isEmpty) {
+        n--;
+      }
+      if (n > columns) columns = n;
+    }
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Container(
@@ -600,9 +605,12 @@ class _TableView extends StatelessWidget {
 
   Widget _cell(String text, TextStyle style) {
     return Container(
-      constraints: const BoxConstraints(minWidth: 70, maxWidth: 220),
+      constraints: const BoxConstraints(minWidth: 72, maxWidth: 240),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-      child: Text(text, style: style, softWrap: true),
+      // 单元格也要走行内 markdown：模型很爱在单元格里写 **加粗** 和 `代码`
+      child: text.trim().isEmpty
+          ? const SizedBox(height: 18)
+          : renderInline(text, style, style.copyWith(fontFamily: 'monospace', fontSize: style.fontSize)),
     );
   }
 }
