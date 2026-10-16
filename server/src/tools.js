@@ -222,6 +222,11 @@ export function buildChiefTools({ runner, health, roomId }) {
         name: Type.String({ description: '名字，2-8 个字，一眼看出职责，如「爬虫工程师」「法务顾问」' }),
         persona: Type.String({ description: '人设/职责：干什么、交付物、输出风格、禁忌。越具体干得越准' }),
         emoji: Type.Optional(Type.String({ description: '头像 emoji，如 🕷️ 📊 ⚖️' })),
+        tagline: Type.String({
+          description:
+            '给用户看的一句话简介，8-16 字，说清它负责什么（如「接口设计与实现」「需求拆解与验收」）。' +
+            '★ 这是直接展示在用户界面上的，不要写成系统提示词那种语气，不要提模型/工具/规则',
+        }),
         model: Type.Optional(Type.String({ description: 'ds-4.1-flash / glm-5.3 / kimi-k3 / glm-5.3-flash' })),
         thinking: Type.Optional(Type.String({ description: THINKING_LEVELS.join(' / ') })),
       }),
@@ -239,6 +244,7 @@ export function buildChiefTools({ runner, health, roomId }) {
           name: params.name,
           persona: params.persona,
           emoji: params.emoji,
+          tagline: params.tagline,
           model: check.resolved ?? null,
           thinking: params.thinking ?? undefined,
           createdBy: 'chief',
@@ -258,6 +264,7 @@ export function buildChiefTools({ runner, health, roomId }) {
         botId: Type.String(),
         name: Type.Optional(Type.String()),
         persona: Type.Optional(Type.String()),
+        tagline: Type.Optional(Type.String()),
         emoji: Type.Optional(Type.String()),
         model: Type.Optional(Type.String({ description: '模型；传空字符串表示回到默认' })),
         thinking: Type.Optional(Type.String({ description: THINKING_LEVELS.join(' / ') })),
@@ -348,6 +355,9 @@ export function buildChiefTools({ runner, health, roomId }) {
         members: Type.Array(
           Type.Object({
             name: Type.String({ description: '成员名字，体现职责，如「后端工程师」「测试工程师」' }),
+            tagline: Type.String({
+              description: '给用户看的一句话简介，8-16 字，说清他负责什么（如「页面与交互实现」）。不要写成系统提示词语气',
+            }),
             persona: Type.String({ description: '该成员的人设：职责范围、交付物、输出风格、禁忌' }),
             emoji: Type.Optional(Type.String({ description: '头像 emoji' })),
             model: Type.Optional(Type.String({ description: '模型，必须照抄 list_models 的输出' })),
@@ -394,6 +404,7 @@ export function buildChiefTools({ runner, health, roomId }) {
               name: m.name,
               persona: m.persona,
               emoji: m.emoji,
+              tagline: m.tagline,
               model: m.model,
               thinking: m.thinking ?? undefined,
               createdBy: 'chief',
@@ -417,18 +428,20 @@ export function buildChiefTools({ runner, health, roomId }) {
           authorId: me?.id ?? 'chief',
           authorName: me?.name ?? 'Pi',
           authorEmoji: me?.emoji ?? 'π',
-          text:
-            `部门成立：**${room.name}**${params.topic ? `\n职责：${params.topic}` : ''}\n\n` +
-            `**部门老大：${leadBot?.emoji ?? ''}${leadBot?.name ?? params.lead}** —— 用户往这里发指令时由它先接、拆活、派给下面的人。\n\n` +
-            '成员：\n' +
-            created
-              .map(
-                (b) =>
-                  `- ${b.emoji ?? ''} **${b.name}**（${b.model ?? '默认模型'} / thinking ${b.thinking}）` +
-                  `${b.id === leadBot?.id ? ' ← 老大' : ''}`,
-              )
-              .join('\n') +
-            '\n\n把任务发进这个群，老大会分给对应的人。',
+          text: [
+            `「${room.name}」已经建好了。`,
+            '',
+            params.topic ? `负责的事：${params.topic}` : '',
+            `负责人：${leadBot?.emoji ?? ''}${leadBot?.name ?? params.lead}${leadBot?.tagline ? `　${leadBot.tagline}` : ''}`,
+            '成员：',
+            ...created
+              .filter((b) => b.id !== leadBot?.id)
+              .map((b) => `· ${b.emoji ?? ''}${b.name}${b.tagline ? `　${b.tagline}` : ''}`),
+            '',
+            '直接把任务发进这个群就行。',
+          ]
+            .filter((l) => l !== '')
+            .join('\n'),
           status: 'done',
           meta: { via: 'create_department' },
         });

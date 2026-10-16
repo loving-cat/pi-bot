@@ -83,6 +83,7 @@ export class Store {
       emoji: 'π',
       role: 'main',
       persona: MAIN_PERSONA,
+      tagline: 'AI 团队总经理',
       model: null,
       thinking: config.thinking,
       enabled: true,
@@ -197,8 +198,10 @@ export class Store {
       id: newId('b_'),
       name: String(patch.name || '新 Bot').slice(0, 40),
       emoji: patch.emoji || '🤖',
-      role: patch.role === 'main' ? 'member' : 'member',
+      role: 'member',
       persona: String(patch.persona || '').slice(0, 4000),
+      // tagline 是给用户看的一句话简介；persona 是给模型看的系统提示，不能直接展示到界面上
+      tagline: String(patch.tagline || '').slice(0, 60),
       model: patch.model || null,
       thinking: patch.thinking || config.thinking,
       enabled: true,
@@ -220,6 +223,7 @@ export class Store {
     if (patch.name !== undefined) next.name = String(patch.name).slice(0, 40);
     if (patch.emoji !== undefined) next.emoji = String(patch.emoji).slice(0, 8);
     if (patch.persona !== undefined) next.persona = String(patch.persona).slice(0, 4000);
+    if (patch.tagline !== undefined) next.tagline = String(patch.tagline).slice(0, 60);
     if (patch.model !== undefined) next.model = patch.model || null;
     if (patch.thinking !== undefined) next.thinking = patch.thinking || config.thinking;
     if (patch.enabled !== undefined) next.enabled = Boolean(patch.enabled);

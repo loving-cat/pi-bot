@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../app_state.dart';
 import '../models.dart';
 import '../scope.dart';
+import '../text_utils.dart';
 import '../theme.dart';
 import '../widgets/blob_avatar.dart';
 import '../widgets/skeleton.dart';
@@ -345,8 +346,10 @@ class _RoomsScreenState extends State<RoomsScreen> {
                         ),
                         subtitle: Text(
                           bot.isMain
-                              ? '主控（superroot）'
-                              : '${bot.model ?? '默认模型'} · ${bot.thinking}',
+                              ? '总经理'
+                              : (firstLine(bot.persona).isNotEmpty
+                                    ? preview(bot.persona, 34)
+                                    : '成员'),
                           style: const TextStyle(
                             fontSize: PB.fsXs,
                             color: PB.textQuaternary,
@@ -630,17 +633,19 @@ class _RoomRowState extends State<_RoomRow> {
     final last = room.lastMessage;
     final busy = state.typing[room.id] == true;
     final bot = state.botById(room.botIds.isNotEmpty ? room.botIds.first : null);
-    final preview = busy
+    final previewText = busy
         ? '正在干活…'
         : last == null
         ? (room.topic.isNotEmpty
-              ? room.topic
+              ? preview(room.topic, 46)
               : (!room.isGroup && bot != null
-                    ? '${bot.model ?? '默认模型'} · thinking ${bot.thinking ?? '-'}'
+                    ? (firstLine(bot.persona).isNotEmpty
+                          ? preview(bot.persona, 40)
+                          : '还没有消息')
                     : (room.isGroup && room.leadName != null
-                          ? '老大 ${room.leadName} · ${room.botIds.length} 人'
+                          ? '负责人 ${room.leadName} · ${room.botIds.length} 人'
                           : '还没有消息')))
-        : '${last.isUser ? '我' : last.authorName}：${shortText(last.text, 46)}';
+        : '${last.isUser ? '我' : last.authorName}：${preview(last.text, 46)}';
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 1),
@@ -749,7 +754,7 @@ class _RoomRowState extends State<_RoomRow> {
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              preview,
+                              previewText,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
