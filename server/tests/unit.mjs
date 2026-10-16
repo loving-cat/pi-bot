@@ -1211,6 +1211,87 @@ await test('上下文：正数助手 —— 0/负数/非数字都当没设', () 
   assert.equal(positiveOrNull(undefined), null);
 });
 
+
+// ---------------------------------------------------------------------------
+// 会话池收尾（session-pool.js）：怎么释放、释放谁
+// ---------------------------------------------------------------------------
+const { releaseEntry, disposeMatching, evictIdle, disposeAll } = await import('../src/session-pool.js');
+
+function fakeEntry(tag, { busy = false, lastUsed = 0, throwOnDispose = false } = {}) {
+  const log = [];
+  return {
+    log,
+    entry: {
+      busy,
+      lastUsed,
+      unsubscribe: () => log.push('unsub:' + tag),
+      session: {
+        dispose: () => {
+          if (throwOnDispose) throw new Error('dispose 炸了');
+          log.push('dispose:' + tag);
+        },
+      },
+    },
+  };
+}
+const pool = (...items) => {
+  const m = new Map();
+  const logs = [];
+  for (const [key, opt] of items) {
+    const f = fakeEntry(key, opt);
+    m.set(key, f.entry);
+    logs.push(f.log);
+  }
+  return { m, logs };
+};
+
+await test('会话池：释放要先注销订阅再关会话', () => {
+  const f = fakeEntry('a');
+  releaseEntry(f.entry);
+  assert.deepEqual(f.log, ['unsub:a', 'dispose:a']);
+});
+
+await test('★ 会话池：某个 release 抛错，不能连累后面的会话', () => {
+  const { m, logs } = pool(['a', { throwOnDispose: true }], ['b', {}]);
+  disposeMatching(m, () => true);
+  assert.deepEqual(m.size, 0, '两个都要从表里清掉');
+  assert.deepEqual(logs[1], ['unsub:b', 'dispose:b'], '★ 后面的不能被前面带崩');
+});
+
+await test('会话池：按条件作废只动命中的，并回报动了哪些', () => {
+  const { m } = pool(['r1:b1', {}], ['r1:b2', {}], ['r2:b1', {}]);
+  const removed = disposeMatching(m, (key) => key.startsWith('r1:'));
+  assert.deepEqual(removed.sort(), ['r1:b1', 'r1:b2']);
+  assert.deepEqual([...m.keys()], ['r2:b1'], '别的房间的会话不许碰');
+});
+
+await test('会话池：改名重建要能按 bot 匹配（key 结尾）', () => {
+  const { m } = pool(['r1:b1', {}], ['r2:b1', {}], ['r1:b2', {}]);
+  const removed = disposeMatching(m, (key) => key.endsWith(':b1'));
+  assert.equal(removed.length, 2);
+  assert.deepEqual([...m.keys()], ['r1:b2']);
+});
+
+await test('★ 会话池：LRU 只驱逐空闲的，忙的一个都不能动', () => {
+  const { m } = pool(['old', { lastUsed: 1 }], ['busy', { busy: true, lastUsed: 2 }], ['new', { lastUsed: 3 }]);
+  const n = evictIdle(m, 2);
+  assert.equal(n, 1);
+  assert.deepEqual([...m.keys()].sort(), ['busy', 'new'], '★ 忙的那轮还在跑，关掉等于掐了用户的活');
+});
+
+await test('会话池：没到上限就什么都不做', () => {
+  const { m } = pool(['a', {}], ['b', {}]);
+  assert.equal(evictIdle(m, 5), 0);
+  assert.equal(m.size, 2);
+});
+
+await test('会话池：全部释放会清空表', () => {
+  const { m, logs } = pool(['a', {}], ['b', {}]);
+  disposeAll(m);
+  assert.equal(m.size, 0);
+  assert.deepEqual(logs[0].concat(logs[1]).sort(), ['dispose:a', 'dispose:b', 'unsub:a', 'unsub:b'].sort());
+});
+
 const passed = results.filter((r) => r.ok).length;
 
 console.log('\n================ 单元测试 ================');
