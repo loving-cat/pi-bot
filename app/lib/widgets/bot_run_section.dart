@@ -189,8 +189,9 @@ class _BotRunSectionState extends State<BotRunSection> {
                 backgroundColor: PB.bgActive,
                 side: BorderSide(color: PB.borderSecondary),
                 onSelected: (_) {
-                  // 点一下立刻生效（这个不像模型要打字，没什么可"保存"的）
-                  _patch({'thinking': level}, toast: '思考等级：$level（下一轮生效）');
+                  // 点一下立刻生效。**不弹提示** —— chip 自己会变成选中态，
+                  // 用户看得见；底部再弹一条"思考等级：xxx（下一轮生效）"纯属噪音。
+                  _patch({'thinking': level});
                 },
               ),
           ],
