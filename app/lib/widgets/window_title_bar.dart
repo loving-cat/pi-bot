@@ -655,9 +655,30 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
   /// 读当前显示器的可用区（拿不到就返回 null —— 那就退回"不夹"的老行为）
   Future<Rect?> _readWorkArea() async {
     try {
-      final d = await ScreenRetriever.instance.getPrimaryDisplay();
-      final pos = d.visiblePosition;
-      final size = d.visibleSize ?? d.size;
+      // ★ 取"窗口所在的那块屏"，不是主屏。
+      //   以前只取主屏：窗口在副屏时，夹到主屏范围会把窗口**推回主屏**
+      //   （用户报的"还是容易出现分辨率直接导致部分看不到"里有这一种）。
+      final displays = await ScreenRetriever.instance.getAllDisplays();
+      final c = _startBounds?.center;
+      Display? pick;
+      if (c != null) {
+        for (final d in displays) {
+          final pos = d.visiblePosition;
+          final size = d.visibleSize ?? d.size;
+          if (pos == null) continue;
+          if (Rect.fromLTWH(pos.dx, pos.dy, size.width, size.height)
+              .contains(c)) {
+            pick = d;
+            break;
+          }
+        }
+      }
+      // 窗口中心不在任何"可用区"里（比如正压在任务栏上、或副屏坐标口径对不上）
+      // → 退回主屏
+      pick ??= displays.isNotEmpty ? displays.first : null;
+      pick ??= await ScreenRetriever.instance.getPrimaryDisplay();
+      final pos = pick.visiblePosition;
+      final size = pick.visibleSize ?? pick.size;
       if (pos == null || size.width <= 0 || size.height <= 0) return null;
       return Rect.fromLTWH(pos.dx, pos.dy, size.width, size.height);
     } catch (_) {
@@ -711,7 +732,10 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
     // ★ 夹在当前屏内：不跨屏就不会触发系统的 DPI 重缩放
     //   （用户原话："程序内的不可以乱动"）。
     final area = _workArea;
-    if (area != null) {
+    // 窗口中心必须落在我们选中的那块屏里才夹 —— 万一口径对不上（多屏 + 不同
+    // 缩放比时 screen_retriever 的坐标是按各自缩放比折算的），宁可不夹，
+    // 也不能把窗口挪到别的地方去。
+    if (area != null && area.contains(next.center)) {
       next = clampToWorkArea(
         rect: next,
         workArea: area,

@@ -7,6 +7,7 @@
 // 用组件测试而不是截图：合成鼠标事件要跟 DPI/焦点较劲，而且不防回归。
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:pi_bot/widgets/avatar_life.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pi_bot/app_state.dart';
@@ -477,6 +478,81 @@ void main() {
       tester.widget<TextField>(field.first).focusNode?.hasFocus,
       isTrue,
       reason: '★ 焦点落在空处时要自己拿回来 —— 用户不该"发一句、再点一下"',
+    );
+  });
+
+  testWidgets('★ 鼠标进到胶囊里（不在头像上）头像就跟随', (tester) async {
+    // 用户点名要的："头像要在自己负责这个范围跟随鼠标，例如胶囊内的 bot 头像，
+    // 当鼠标挪动到胶囊内时跟随。"
+    // 胶囊里除了头像还有会话名 —— 鼠标落在**名字**上也算"在胶囊里"。
+    tester.view.physicalSize = const Size(900, 700);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    BlobAvatar.animationsEnabled = true;
+    addTearDown(() => BlobAvatar.animationsEnabled = true);
+    AvatarLife.pointer.value = null;
+    addTearDown(() => AvatarLife.pointer.value = null);
+
+    final state = _stateWith(
+      [Room(id: 'r1', name: '甲', kind: 'dm', botIds: ['b1'])],
+      bots: [Bot(id: 'b1', name: '甲')],
+    );
+    addTearDown(state.dispose);
+    state.messages['r1'] = [];
+
+    await tester.pumpWidget(
+      AppScope(
+        state: state,
+        child: MaterialApp(
+          // watchPointer 是真实 App 里把鼠标位置送进来的那层
+          home: Scaffold(
+            body: AvatarLife.watchPointer(
+              child: ChatScreen(room: state.rooms.first),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    // ★ 只量**胶囊里**那个头像 —— 空会话中间还有一个 64px 的大头像，
+    //   find.byType(BlobAvatar).first 会拿到它（我第一版就量错了对象）。
+    Offset gazeOf() {
+      final cp = tester
+          .widgetList<CustomPaint>(
+            find.descendant(
+              of: find.descendant(
+                of: find.byType(AvatarHoverScope),
+                matching: find.byType(BlobAvatar),
+              ),
+              matching: find.byType(CustomPaint),
+            ),
+          )
+          .first;
+      return (cp.painter as dynamic).gaze as Offset;
+    }
+
+    expect(gazeOf(), Offset.zero);
+
+    final g = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await g.addPointer(location: const Offset(5, 5));
+    await tester.pump();
+    // 移到胶囊里的**名字**上（不是头像）
+    await g.moveTo(
+      tester.getCenter(
+        find.descendant(
+          of: find.byType(AvatarHoverScope),
+          matching: find.text('甲'),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(
+      gazeOf().distance,
+      greaterThan(3),
+      reason: '★ 鼠标进到胶囊里（哪怕落在名字上）头像就该跟随',
     );
   });
 }
