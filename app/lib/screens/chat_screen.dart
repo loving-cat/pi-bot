@@ -481,54 +481,6 @@ class _ChatScreenState extends State<ChatScreen> {
                           ),
                         ),
                       ),
-                      // 「回到底部」：往上翻聊天记录时浮出来，点一下回到最新。
-                      // 下面又来了几条新消息就顺手标出来 —— 只给一个光秃秃的箭头，
-                      // 用户不知道值不值得马上回去看。
-                      if (!_stick)
-                        Positioned(
-                          right: 16,
-                          bottom: 12,
-                          child: Material(
-                            color: PB.bgActive,
-                            shape: const StadiumBorder(),
-                            clipBehavior: Clip.antiAlias,
-                            child: InkWell(
-                              onTap: () {
-                                setState(() {
-                                  _stick = true;
-                                  _unreadWhileUp = 0;
-                                });
-                                unawaited(_toBottom(animate: true));
-                              },
-                              child: Padding(
-                                padding: EdgeInsets.symmetric(
-                                  horizontal: _unreadWhileUp > 0 ? 12 : 9,
-                                  vertical: 9,
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const Icon(
-                                      LucideIcons.arrowDown,
-                                      size: 18,
-                                      color: PB.textSecondary,
-                                    ),
-                                    if (_unreadWhileUp > 0) ...[
-                                      const SizedBox(width: 6),
-                                      Text(
-                                        '$_unreadWhileUp 条新消息',
-                                        style: const TextStyle(
-                                          fontSize: PB.fsXxs,
-                                          color: PB.textSecondary,
-                                        ),
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
                     ],
                   ),
           ),
@@ -547,6 +499,15 @@ class _ChatScreenState extends State<ChatScreen> {
                 setState(() => _pending.removeWhere((a) => a.id == att.id)),
             onSend: _send,
             onStop: () => state.abort(room.id),
+            showJump: !_stick,
+            unread: _unreadWhileUp,
+            onJump: () {
+              setState(() {
+                _stick = true;
+                _unreadWhileUp = 0;
+              });
+              unawaited(_toBottom(animate: true));
+            },
           ),
         ],
       ),
@@ -656,6 +617,9 @@ class _EmptyHint extends StatelessWidget {
 class _Composer extends StatefulWidget {
   const _Composer({
     required this.controller,
+    this.showJump = false,
+    this.unread = 0,
+    this.onJump,
     required this.focus,
     required this.busy,
     required this.queuedCount,
@@ -670,6 +634,13 @@ class _Composer extends StatefulWidget {
   });
 
   final TextEditingController controller;
+
+  /// 要不要显示「回到底部」（往上翻着聊天记录时才显示）
+  final bool showJump;
+
+  /// 往上翻的时候又来了几条新的 —— 标在按钮上
+  final int unread;
+  final VoidCallback? onJump;
   final FocusNode focus;
   final bool busy;
   final int queuedCount;
@@ -955,6 +926,21 @@ class _ComposerState extends State<_Composer> {
                   ),
                 ),
                 const SizedBox(width: 8),
+                // 「回到底部」：和发送键同一行（左侧）——
+                // 这里有自己的位置，**永远不会压住消息气泡**。
+                // 只有往上翻着看历史时才出现，所以平时不占视线。
+                if (widget.showJump) ...[
+                  _RoundButton(
+                    icon: LucideIcons.arrowDown,
+                    color: PB.bgActive,
+                    iconColor: PB.textSecondary,
+                    tooltip: widget.unread > 0
+                        ? '回到最新（下面还有 ${widget.unread} 条）'
+                        : '回到最新',
+                    onTap: widget.onJump ?? () {},
+                  ),
+                  const SizedBox(width: 6),
+                ],
                 if (busy) ...[
                   _RoundButton(
                     icon: LucideIcons.square,
