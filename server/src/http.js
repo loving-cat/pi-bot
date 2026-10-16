@@ -243,7 +243,12 @@ export function createHttpServer({ runner, pairing }) {
       if (pathname === '/api/user' && req.method === 'PATCH') {
         const body = await readBody(req);
         const user = store.updateUserName(body.name);
-        log(`👤 用户改名叫：${user.name}（bot 的系统提示会跟着变）`);
+        // 名字是拼进系统提示的，而提示只在建会话时构造 —— 不重建会话的话
+        // 改名只对以后新开的会话生效，正在用的那些还记着旧名字。
+        // 用户要求"每次修改要通知到全局"，所以这里把内存里的会话全丢掉重建
+        // （reload 而不是 reset：对话历史保留）。
+        const n = runner.reloadAllSessions();
+        log(`👤 用户改名叫：${user.name}（已重建 ${n} 个会话，下一轮起生效）`);
         return send(res, 200, { user });
       }
 
