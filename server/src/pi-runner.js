@@ -38,6 +38,7 @@ import {
 } from './context-budget.js';
 import { disposeAll, disposeMatching, evictIdle } from './session-pool.js';
 import { createWatchdog, stallCleanup } from './watchdog.js';
+import { createEscalator } from './escalation.js';
 import { buildAppendSystemPrompt } from './system-prompt.js';
 import { createSessionBuilder } from './session-factory.js';
 import { createBuildInput } from './prompt-input.js';
@@ -261,44 +262,17 @@ export class PiRunner {
    *               没有组长（私聊）就找主控。
    * prefer='chief'：直接找主控（派活失败时用）。
    */
-  async escalate({ roomId, fromBotId, reason, task = '', attempts = 0, why = '', prefer = 'lead' }) {
-    const room = store.getRoom(roomId);
-    const chief = store.mainBot();
-    const target = pickEscalationHost({
-      roomKind: room?.kind,
-      leadBotId: room?.leadBotId ?? null,
-      fromBotId,
-      chiefId: chief?.id ?? null,
-      prefer,
+  /**
+   * 出事了往上抬。实现在 escalation.js —— 那边能单测"该抬给谁"和"回执里写什么"，
+   * 这里只把 store 和 run 接上去。
+   */
+  escalate(args) {
+    this.__escalator ??= createEscalator({
+      store,
+      run: (roomId, botId, text, opts) => this.run(roomId, botId, text, opts),
+      onError: (what, err) => log(`${what}：`, err?.message || err),
     });
-    if (!target.hostId) return null;
-    const host = store.getBot(target.hostId);
-    if (!host) return null;
-    // 组长：就在群里说（用户也看得见“这单断了”）；主控：在它的私聊里说
-    const inRoom = target.role === 'lead' ? roomId : store.ensureDm(host.id)?.id ?? null;
-    if (!inRoom) return null;
-
-    const from = store.getBot(fromBotId);
-    const note =
-      `[这单断了] ${from?.name ?? fromBotId}：${reason}` +
-      (attempts ? `（试了 ${attempts} 次，${why}）` : '') +
-      (task ? `\n\n原任务：${task.slice(0, 600)}` : '') +
-      `\n\n请你重新安排：换个人，或者再派一次。`;
-    store.appendMessage({
-      roomId: inRoom,
-      authorType: 'system',
-      authorId: host.id,
-      authorName: '中断回执',
-      text: note,
-      status: 'done',
-      meta: { via: 'escalate', aboutBotId: fromBotId },
-    });
-    // 光留一条消息它不会自己动 —— 顺手叫醒它，让它当场重新安排
-    this.run(inRoom, host.id, `【系统】${note}`, {
-      skipUserMessage: true,
-      timeoutMs: 300_000,
-    }).catch((err) => log('叫醒失败：', err?.message || err));
-    return { hostId: host.id, roomId: inRoom };
+    return this.__escalator(args);
   }
 
   async init() {
