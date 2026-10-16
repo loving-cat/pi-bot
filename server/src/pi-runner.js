@@ -741,7 +741,9 @@ export class PiRunner {
     const opening = this.#openingSpeakers(room, { text: openerText, openerBotId, kickoff });
     if (!opening.length) return;
 
-    const budget = (botId) => (botId === leadId ? config.groupTurnsLead : config.groupTurnsMember);
+    // 轮次预算从 store 读（用户可在设置里改），config 只是默认值
+    const limits = store.groupLimits();
+    const budget = (botId) => (botId === leadId ? limits.leadTurns : limits.memberTurns);
     const used = new Map();
     const queue = opening.map((botId) => ({
       botId,
@@ -755,7 +757,7 @@ export class PiRunner {
     );
 
     let runs = 0;
-    while (queue.length && runs < config.groupMaxRuns) {
+    while (queue.length && runs < limits.maxRuns) {
       const item = queue.shift();
       const bot = store.getBot(item.botId);
       if (!bot) continue;
@@ -950,7 +952,7 @@ export class PiRunner {
     };
 
     let stepCapHit = false;
-    const stepCap = groupTurn ? config.groupTurnMaxSteps : 0;
+    const stepCap = groupTurn ? store.groupLimits().maxSteps : 0;
 
     const onEvent = (event) => {
       switch (event.type) {
@@ -1078,7 +1080,8 @@ export class PiRunner {
         ? entry.session.prompt(prompt, { images })
         : entry.session.prompt(prompt);
       // 部门里的单轮有额外时间预算：不能一个成员把整个部门卡住
-      const effectiveTimeout = groupTurn ? Math.min(timeoutMs || config.groupTurnMaxMs, config.groupTurnMaxMs) : timeoutMs;
+      const capMs = store.groupLimits().turnMaxMs;
+      const effectiveTimeout = groupTurn ? Math.min(timeoutMs || capMs, capMs) : timeoutMs;
       if (effectiveTimeout > 0) {
         const timeout = new Promise((_, reject) => {
           timeoutHandle = setTimeout(() => {
