@@ -169,11 +169,10 @@ class _RoomsScreenState extends State<RoomsScreen> {
                 ],
               ),
         actions: [
-          // 注意：**不在这里放 WindowControlsSpacer**。
-          // 宽的窗口控制按钮在「整个窗口」的右上角 —— 也就是右侧聊天区那一侧，
-          // 而侧边栏只有 320px 宽、根本挨不到那儿。放进去只会白占宽度，
-          // 把左边的标题（本机名/bot 数/模型）挤成 0 宽（用户报的"标题消失"）。
-          // 窄屏单页时它会铺满整宽，那时候由 ChatScreen/设置页自己让位。
+          // 这里不需要给窗口控制按钮让位：按钮住在**全局标题条**里
+          // （main.dart 的 Column 第一条），页面全在它下面。
+          // 以前按钮是浮在最上层的，谁挨着窗口顶部谁就得手动避让 ——
+          // 这个侧边栏还因此被撑走 280px，把标题挤成 0 宽过。
           _CircleIcon(
             icon: _searching ? LucideIcons.x : LucideIcons.search,
             onTap: () => setState(() {

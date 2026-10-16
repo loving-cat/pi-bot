@@ -4,7 +4,6 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../models.dart';
 import '../scope.dart';
 import '../theme.dart';
-import '../widgets/window_title_bar.dart';
 import 'chat_screen.dart';
 import 'rooms_screen.dart';
 
@@ -54,9 +53,9 @@ class _HomeShellState extends State<HomeShell> {
           final room = target;
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) {
-              Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => ChatScreen(room: room)),
-              );
+              Navigator.of(
+                context,
+              ).push(MaterialPageRoute(builder: (_) => ChatScreen(room: room)));
             }
           });
         }
@@ -77,8 +76,8 @@ class _HomeShellState extends State<HomeShell> {
         children: [
           Column(
             children: [
-              // 顶部拖拽条（双击 = 最大化 / 还原），本身不画东西
-              const WindowTitleBar(),
+              // 顶部拖拽条不在这儿了 —— 它是**全局**的（main.dart 根布局里），
+              // 这样 push 出来的页面也自动在它下面，不用各自避让窗口按钮。
               Expanded(
                 child: Row(
                   children: [
@@ -87,7 +86,8 @@ class _HomeShellState extends State<HomeShell> {
                       child: RoomsScreen(
                         embedded: true,
                         selectedId: selected?.id,
-                        onSelect: (room) => setState(() => _selectedId = room.id),
+                        onSelect: (room) =>
+                            setState(() => _selectedId = room.id),
                       ),
                     ),
                     Container(width: 1, color: PB.borderTertiary),
@@ -126,7 +126,10 @@ class _NoSelection extends StatelessWidget {
         children: [
           Icon(LucideIcons.messageSquare, size: 36, color: PB.textQuaternary),
           SizedBox(height: 14),
-          Text('左边选一个会话', style: TextStyle(fontSize: PB.fsSm, color: PB.textTertiary)),
+          Text(
+            '左边选一个会话',
+            style: TextStyle(fontSize: PB.fsSm, color: PB.textTertiary),
+          ),
         ],
       ),
     );
