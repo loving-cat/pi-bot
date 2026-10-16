@@ -1,10 +1,13 @@
+import 'dart:io';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../models.dart';
+import '../open_file.dart';
 import '../save_file.dart';
 import '../theme.dart';
 import 'md_text.dart';
@@ -205,6 +208,18 @@ class _FileChip extends StatelessWidget {
               ),
             ),
           ),
+          // 「用系统程序打开」：只在桌面端出现 —— 手机上交给系统的分享/打开
+          // 机制是另一件事，先不给（给了也点不了）。价值在于：**看原样**，
+          // 而不是我们抽出来的文字（PDF 的版式、xlsx 的公式都在原文件里）。
+          if (!kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux))
+            _IconAction(
+              icon: LucideIcons.squareArrowOutUpRight,
+              tip: '用系统程序打开',
+              color: dim,
+              onTap: url == null
+                  ? null
+                  : () => openAttachmentExternally(context, file: file, url: url!),
+            ),
           // 下载按钮就放在卡片上 —— 不用点进去再找
           _IconAction(
             icon: LucideIcons.download,
@@ -257,6 +272,34 @@ class _IconAction extends StatelessWidget {
 /// 下载一个附件到用户选的位置。
 ///
 /// 和"用系统应用打开"是两件事：那个是拿别的程序看，这个是存下来。
+/// 用系统默认程序打开附件（桌面端）。
+///
+/// 和"下载"分开：下载是**存到用户选的位置**（留着），打开是**落到临时文件**
+/// 交给系统（看完就算）——两件事，别混。
+Future<void> openAttachmentExternally(
+  BuildContext context, {
+  required Attachment file,
+  required String url,
+}) async {
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  void say(String text) =>
+      messenger?.showSnackBar(SnackBar(duration: const Duration(seconds: 2), content: Text(text)));
+
+  say('正在打开 ${file.name}…');
+  try {
+    final res = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 120));
+    if (res.statusCode >= 400) throw Exception('HTTP ${res.statusCode}');
+    final err = await openWithSystemApp(
+      name: file.name,
+      bytes: res.bodyBytes,
+      tempDir: attachmentTempDir(),
+    );
+    if (err != null) say(err);
+  } catch (err) {
+    say('打开失败：$err');
+  }
+}
+
 Future<void> downloadAttachment(
   BuildContext context, {
   required Attachment file,
