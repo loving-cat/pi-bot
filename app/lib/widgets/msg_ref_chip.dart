@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../app_state.dart';
 import '../models.dart';
 import '../motion.dart';
 import '../scope.dart';
@@ -29,6 +30,9 @@ class MsgRefChip extends StatelessWidget {
   Widget build(BuildContext context) {
     if (refs.isEmpty) return const SizedBox.shrink();
     final state = AppScope.of(context);
+    // 所有往来的消息条数总和；一个都拿不到就返回 null（退回老文案）
+    final counts = refs.map((r) => r.count).whereType<int>().toList();
+    final totals = counts.isEmpty ? null : counts.reduce((a, b) => a + b);
 
     return Align(
       alignment: alignEnd ? Alignment.centerRight : Alignment.centerLeft,
@@ -51,38 +55,76 @@ class MsgRefChip extends StatelessWidget {
               children: [
                 const Icon(LucideIcons.send, size: 13, color: PB.textTertiary),
                 const SizedBox(width: 7),
-                Flexible(
-                  child: Text.rich(
-                    TextSpan(
-                      children: [
-                        const TextSpan(text: '已发送消息给 '),
-                        for (var i = 0; i < refs.length; i++) ...[
-                          if (i > 0)
-                            TextSpan(text: i == refs.length - 1 ? ' 和 ' : '、'),
-                          TextSpan(
-                            text:
-                                '@${state.botById(refs[i].botId)?.name ?? 'bot'}',
-                            style: const TextStyle(
-                              color: PB.accentBright,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: PB.fsXs,
-                      color: PB.textTertiary,
-                    ),
-                  ),
-                ),
+                Flexible(child: _label(state, totals)),
               ],
             ),
           ),
         ),
       ),
+    );
+  }
+
+  /// 文案两种：
+  ///   · 有往来条数 → 「5 条消息往来 [头像堆] 2 个 Bot」
+  ///     用户要的是"进展到哪一步了"，只写"已发送给 X"看不出已经来回几轮。
+  ///   · 拿不到条数（老数据）→ 退回「已发送消息给 @X 和 @Y」
+  Widget _label(AppState state, int? totals) {
+    if (totals == null) {
+      return Text.rich(
+        TextSpan(
+          children: [
+            const TextSpan(text: '已发送消息给 '),
+            for (var i = 0; i < refs.length; i++) ...[
+              if (i > 0) TextSpan(text: i == refs.length - 1 ? ' 和 ' : '、'),
+              TextSpan(
+                text: '@${state.botById(refs[i].botId)?.name ?? 'bot'}',
+                style: const TextStyle(
+                  color: PB.accentBright,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ],
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+      );
+    }
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          '$totals 条消息往来',
+          style: const TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+        ),
+        const SizedBox(width: 8),
+        // 头像堆：一眼看出跟哪几个同事过的招（最多摆 4 个，再多就折成 +N）
+        for (final r in refs.take(4))
+          Padding(
+            padding: const EdgeInsets.only(right: 2),
+            child: BlobAvatar(
+              seed: r.botId,
+              color: PB.colorFor(r.botId),
+              size: 16,
+              animate: false,
+            ),
+          ),
+        if (refs.length > 4)
+          Text(
+            '+${refs.length - 4}',
+            style: const TextStyle(
+              fontSize: PB.fsXxs,
+              color: PB.textQuaternary,
+            ),
+          ),
+        const SizedBox(width: 6),
+        Text(
+          '${refs.length} 个 Bot',
+          style: const TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
+        ),
+      ],
     );
   }
 }
