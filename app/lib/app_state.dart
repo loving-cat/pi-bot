@@ -657,6 +657,21 @@ class AppState extends ChangeNotifier {
         unawaited(Native.startService());
         _attempt = 0;
         lastError = null;
+        // ★ 重连（或服务端重启）之后，"谁在干活"要重新算。
+        //
+        //   以前不清：服务端中途重启（或者连接断过一次），正在跑的那一轮
+        //   就永远不会再发"干完了"，于是侧边栏永远是"正在干活…"、群里永远
+        //   停在"正在调用工具…"，圈一直在转但什么也没发生。
+        //   用户原话："怎么一直转 但是没开始操作"。
+        //   一份全新的快照进来了，这些临时状态就该归零。
+        typing.clear();
+        queued.clear();
+        for (final k in contexts.keys.toList()) {
+          final c = contexts[k];
+          if (c != null && c.compacting) {
+            contexts[k] = c.copyWith(compacting: false);
+          }
+        }
         serverInfo = ServerInfo.fromJson(
           (ev['server'] as Map?)?.cast<String, dynamic>() ?? const {},
         );
