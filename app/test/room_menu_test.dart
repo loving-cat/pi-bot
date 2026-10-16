@@ -18,6 +18,7 @@ import 'package:pi_bot/screens/home_shell.dart';
 import 'package:pi_bot/screens/rooms_screen.dart';
 import 'package:pi_bot/widgets/ask_card.dart';
 import 'package:pi_bot/widgets/blob_avatar.dart';
+import 'package:pi_bot/widgets/model_picker_field.dart';
 import 'package:pi_bot/widgets/room_panel.dart';
 import 'package:pi_bot/widgets/md_text.dart';
 import 'package:pi_bot/widgets/floating_menu.dart';
@@ -1029,5 +1030,53 @@ void main() {
       isTrue,
       reason: '动画结束后每一条都该完全不透明：$done',
     );
+  });
+
+  testWidgets('★ 面板「详情」里能就地改运行参数（模型 / 思考等级 / 上下文预算）', (tester) async {
+    // 用户："不是应该在胶囊点击后的右侧侧边栏 有一个可以调模型 上下文窗口
+    // 思考等级之类的吗？" —— 以前这些只能跑去 bot 花名册里改。
+    tester.view.physicalSize = const Size(1200, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final state = _stateWith(
+      [Room(id: 'r1', name: '甲', kind: 'dm', botIds: const ['b1'])],
+      bots: [Bot(id: 'b1', name: '甲', model: 'grp1/flash', thinking: 'medium')],
+    );
+    addTearDown(state.dispose);
+
+    await tester.pumpWidget(
+      AppScope(
+        state: state,
+        child: MaterialApp(
+          home: Scaffold(body: RoomPanel(room: state.rooms.first)),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    // 详情是默认页
+    expect(find.text('运行参数'), findsOneWidget, reason: '面板详情里要有运行参数');
+    expect(find.text('思考等级'), findsOneWidget);
+    expect(find.text('上下文预算'), findsOneWidget);
+    expect(find.text('保存模型'), findsOneWidget);
+    expect(find.text('保存预算'), findsOneWidget);
+
+    // 模型输入框里是当前模型
+    final field = tester.widget<TextField>(
+      find.descendant(
+        of: find.byType(ModelPickerField),
+        matching: find.byType(TextField),
+      ),
+    );
+    expect(field.controller?.text, 'grp1/flash');
+
+    // 五个思考等级都在，且当前那个是选中的
+    for (final lv in ['off', 'low', 'medium', 'high', 'max']) {
+      expect(find.widgetWithText(ChoiceChip, lv), findsOneWidget);
+    }
+    final medium = tester.widget<ChoiceChip>(
+      find.widgetWithText(ChoiceChip, 'medium'),
+    );
+    expect(medium.selected, isTrue, reason: '当前等级要选中');
   });
 }
