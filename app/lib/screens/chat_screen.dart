@@ -343,7 +343,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           // ★ 居中限宽：窗口拉宽时，左右留白跟着长（最多到 940），
                           //   气泡就不会被吸附到窗口两边 —— 和 bot 的对话始终
                           //   保持在一个容易读的列宽里。
-                          padding: EdgeInsets.fromLTRB(sidePad, 16, sidePad, 16),
+                          padding: EdgeInsets.fromLTRB(sidePad, 20, sidePad, 20),
                           itemCount: msgs.length,
                           itemBuilder: (ctx, i) {
                             final msg = msgs[i];
@@ -1059,7 +1059,8 @@ class _MessageRow extends StatelessWidget {
 
     if (isUser) {
       return Padding(
-        padding: const EdgeInsets.only(top: 10),
+        // 我发的消息也一样要喘气（以前 10，比 bot 那侧还挤）
+        padding: const EdgeInsets.only(top: 22),
         child: Align(
           alignment: Alignment.centerRight,
           child: Column(
@@ -1074,7 +1075,7 @@ class _MessageRow extends StatelessWidget {
                       560,
                     ),
                   ),
-                  padding: const EdgeInsets.fromLTRB(14, 11, 14, 11),
+                  padding: const EdgeInsets.fromLTRB(15, 13, 15, 13),
                   decoration: BoxDecoration(
                     gradient: const LinearGradient(
                       begin: Alignment.topLeft,
@@ -1146,7 +1147,9 @@ class _MessageRow extends StatelessWidget {
     }
 
     return Padding(
-      padding: EdgeInsets.only(top: showAuthor ? 16 : 3),
+      // ★ 气泡之间的呼吸（照 参考 那种节奏）：换个人发言 26px，
+      //   同一个人连着说 6px。以前是 16 / 3 —— 谁跟谁说的都黏成一坨。
+      padding: EdgeInsets.only(top: showAuthor ? 26 : 6),
       child: Row(
         // ★ 头像**贴底**，不是贴顶 —— 这样气泡就落在头像的右上方，
         //   同时名字/职位在气泡的左上方。三者的相对位置一眼看清是谁在说。
@@ -1178,7 +1181,7 @@ class _MessageRow extends StatelessWidget {
               children: [
                 if (showName)
                   Padding(
-                    padding: const EdgeInsets.only(bottom: 5),
+                    padding: const EdgeInsets.only(bottom: 7),
                     child: Row(
                       children: [
                         Text(
@@ -1209,7 +1212,7 @@ class _MessageRow extends StatelessWidget {
                   onLongPress: onLongPress,
                   child: Container(
                     constraints: BoxConstraints(maxWidth: maxBubble),
-                    padding: const EdgeInsets.fromLTRB(14, 11, 14, 11),
+                    padding: const EdgeInsets.fromLTRB(15, 13, 15, 13),
                     decoration: BoxDecoration(
                       color: PB.bgBubble,
                       borderRadius: BorderRadius.circular(PB.rBubble),
