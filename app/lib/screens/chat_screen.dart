@@ -262,6 +262,8 @@ class _ChatScreenState extends State<ChatScreen> {
           PopupMenuButton<String>(
             icon: const Icon(LucideIcons.ellipsis, size: 18),
             padding: EdgeInsets.zero,
+            // 紧贴右边的让位块，别在中间再挤出一段空白
+            iconSize: 18,
             constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
             onSelected: (value) async {
               switch (value) {
@@ -303,8 +305,9 @@ class _ChatScreenState extends State<ChatScreen> {
           // ★ 放在 actions **最后**：这里面最后一个才是贴着右边的。
           //   聊天区右边缘正好在窗口右上角底下（那里是自绘的控制按钮），
           //   不让位的话"…"会和"关闭"叠在一起。
+          //   宽度精确等于控制按钮（3×44），**不再额外留 6px** ——
+          //   多那一截看着就像"…"被缩进了。
           const WindowControlsSpacer(),
-          const SizedBox(width: 6),
         ],
       ),
       body: Column(
