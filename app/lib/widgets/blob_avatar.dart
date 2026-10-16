@@ -30,6 +30,14 @@ class BlobAvatar extends StatefulWidget {
   /// 主控那种"高一级"的身份环
   final bool ring;
 
+  /// 单测里关掉动画。
+  ///
+  /// 眨眼是 `Future.delayed` 排的定时器、轮廓是无限循环的 AnimationController ——
+  /// 测试结束时还挂着定时器，`testWidgets` 会直接判失败（pending timers），
+  /// 而且 pumpAndSettle 永远等不到"静止"。生产代码不动它（默认 true）。
+  @visibleForTesting
+  static bool animationsEnabled = true;
+
   @override
   State<BlobAvatar> createState() => _BlobAvatarState();
 }
@@ -43,7 +51,7 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
-    if (widget.animate) {
+    if (widget.animate && BlobAvatar.animationsEnabled) {
       _wobble = AnimationController(
         vsync: this,
         duration: const Duration(seconds: 11),
@@ -75,8 +83,20 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
     super.dispose();
   }
 
+  /// emoji 降级成右上角的小角标。
+  ///
+  /// 只在够大的头像上画：22~32px（消息行、会话列表）放角标就是一团糊，
+  /// 那时候名字就在旁边，不需要它。
+  Widget? _emojiBadge() {
+    final e = widget.emoji;
+    if (e == null || e.trim().isEmpty || widget.size < 40) return null;
+    return Text(e, style: TextStyle(fontSize: widget.size * 0.27, height: 1.0));
+  }
+
   @override
   Widget build(BuildContext context) {
+    // 调用方自己给的 badge 优先（比如主控的星标）
+    final cornerBadge = widget.badge ?? _emojiBadge();
     return SizedBox(
       width: widget.size,
       height: widget.size,
@@ -84,7 +104,7 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
         clipBehavior: Clip.none,
         children: [
           _content(),
-          if (widget.badge != null)
+          if (cornerBadge != null)
             Positioned(
               right: -3,
               bottom: -3,
@@ -94,7 +114,7 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
                   color: Theme.of(context).scaffoldBackgroundColor,
                   shape: BoxShape.circle,
                 ),
-                child: widget.badge,
+                child: cornerBadge,
               ),
             ),
         ],
@@ -110,7 +130,6 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
         color: widget.color,
         phase: phase,
         blink: blink,
-        emoji: widget.emoji,
         ring: widget.ring,
       ),
     );
@@ -135,19 +154,59 @@ class _Harmonic {
   final double speed;
 }
 
-/// 由 id 决定的形状参数：三阶谐波 + 眼睛位置
-class _BlobShape {
-  _BlobShape(this.harmonics, this.eyeY, this.eyeGap, this.eyeTilt);
+/// 头像轮廓的四种形状。
+///
+/// 照 同类客户端 那套：**每只 bot 的形状不一样**（有的圆胖、有的圆角方、有的六边形、
+/// 有的胶囊）。以前全项目只有一种"有机 blob"，一屏十几个头像看过去像同一块橡皮泥
+/// 捏出来的 —— 只靠换颜色区分，越看越廉价。
+enum _ShapeKind {
+  /// 有机 blob（三阶谐波，会缓慢扭动 —— 只有它是"活的"）
+  blob,
 
+  /// 超椭圆（iOS 图标那种圆角方）
+  squircle,
+
+  /// 圆角六边形
+  hexagon,
+
+  /// 胶囊（横向长一点的圆角矩形）
+  pill,
+}
+
+/// 由 id 决定的形状参数：形状种类 + 三阶谐波 + 眼睛位置 + 倾角
+class _BlobShape {
+  _BlobShape(
+    this.kind,
+    this.harmonics,
+    this.eyeY,
+    this.eyeGap,
+    this.eyeTilt,
+    this.tilt,
+  );
+
+  final _ShapeKind kind;
   final List<_Harmonic> harmonics;
   final double eyeY;
   final double eyeGap;
   final double eyeTilt;
 
+  /// 非 blob 形状整体转一点角度，免得看着像对齐的网格
+  final double tilt;
+
   factory _BlobShape.fromSeed(String seed) {
     final rng = math.Random(seed.hashCode & 0x7fffffff);
     double range(double a, double b) => a + rng.nextDouble() * (b - a);
+    // blob 占多数（只有它会扭动，是这套头像的"主调"），另外三种负责变化
+    final roll = rng.nextDouble();
+    final kind = roll < 0.40
+        ? _ShapeKind.blob
+        : roll < 0.63
+        ? _ShapeKind.squircle
+        : roll < 0.84
+        ? _ShapeKind.hexagon
+        : _ShapeKind.pill;
     return _BlobShape(
+      kind,
       [
         _Harmonic(
           2,
@@ -171,6 +230,7 @@ class _BlobShape {
       range(0.40, 0.48),
       range(0.19, 0.235),
       range(-0.16, 0.16),
+      range(-0.22, 0.22),
     );
   }
 }
@@ -181,7 +241,6 @@ class _BlobPainter extends CustomPainter {
     required this.color,
     required this.phase,
     required this.blink,
-    this.emoji,
     this.ring = false,
   });
 
@@ -189,29 +248,101 @@ class _BlobPainter extends CustomPainter {
   final Color color;
   final double phase;
   final double blink;
-  final String? emoji;
   final bool ring;
+
+  /// 按形状种类采样轮廓点（都绕中心一圈，角度递增）。
+  ///
+  /// 只有 blob 用 phase（会扭动）；其余三种是静的 —— 参考 的圆角方/六边形/胶囊
+  /// 也不动，动了反而像果冻，廉价。
+  List<Offset> _outline(Offset center, double baseRadius) {
+    switch (shape.kind) {
+      case _ShapeKind.blob:
+        const steps = 32;
+        return [
+          for (var i = 0; i < steps; i++)
+            () {
+              final theta = i / steps * 2 * math.pi;
+              var r = 1.0;
+              for (final h in shape.harmonics) {
+                r += h.amp * math.sin(h.freq * theta + h.phase + phase * h.speed);
+              }
+              return center +
+                  Offset(
+                    math.cos(theta) * baseRadius * r,
+                    math.sin(theta) * baseRadius * r,
+                  );
+            }(),
+        ];
+
+      case _ShapeKind.squircle:
+        return _superellipse(center, baseRadius, baseRadius, 4.2);
+
+      case _ShapeKind.pill:
+        // 宽一点、扁一点 + 比 squircle 圆得多 → 看着就是颗胶囊
+        return _superellipse(
+          center,
+          baseRadius * 1.10,
+          baseRadius * 0.88,
+          2.9,
+        );
+
+      case _ShapeKind.hexagon:
+        // 正六边形；顶点稍多留一点，平滑那一步会把角磨圆
+        return _rotate(
+          [
+            for (var i = 0; i < 6; i++)
+              () {
+                final t = i / 6 * 2 * math.pi + math.pi / 6;
+                return Offset(
+                  math.cos(t) * baseRadius,
+                  math.sin(t) * baseRadius,
+                );
+              }(),
+          ],
+          center,
+        );
+    }
+  }
+
+  /// 超椭圆 |x/a|^n + |y/b|^n = 1 —— n=2 是椭圆，n=4 出头就是 iOS 那种圆角方
+  List<Offset> _superellipse(
+    Offset center,
+    double a,
+    double b,
+    double n,
+  ) {
+    const steps = 44;
+    final pts = <Offset>[];
+    for (var i = 0; i < steps; i++) {
+      final t = i / steps * 2 * math.pi;
+      final ct = math.cos(t);
+      final st = math.sin(t);
+      pts.add(
+        Offset(
+          ct.sign * math.pow(ct.abs(), 2 / n) * a,
+          st.sign * math.pow(st.abs(), 2 / n) * b,
+        ),
+      );
+    }
+    return _rotate(pts, center);
+  }
+
+  /// 按 shape.tilt 转一点角度再平移到中心
+  List<Offset> _rotate(List<Offset> pts, Offset center) {
+    final c = math.cos(shape.tilt);
+    final s = math.sin(shape.tilt);
+    return [
+      for (final p in pts)
+        center + Offset(p.dx * c - p.dy * s, p.dx * s + p.dy * c),
+    ];
+  }
 
   /// 采样轮廓点，再用二次贝塞尔穿过中点 —— 比直接 lineTo 顺得多
   /// ★ steps 从 48 降到 32：动画时每帧都要重算整条路径，48 段在列表里是纯浪费，
   ///   32 段在 44px 的尺寸下肉眼看不出区别。
   Path _blobPath(Offset center, double baseRadius) {
-    const steps = 32;
-    final points = <Offset>[];
-    for (var i = 0; i < steps; i++) {
-      final theta = i / steps * 2 * math.pi;
-      var r = 1.0;
-      for (final h in shape.harmonics) {
-        r += h.amp * math.sin(h.freq * theta + h.phase + phase * h.speed);
-      }
-      points.add(
-        center +
-            Offset(
-              math.cos(theta) * baseRadius * r,
-              math.sin(theta) * baseRadius * r,
-            ),
-      );
-    }
+    final points = _outline(center, baseRadius);
+    final steps = points.length;
 
     final path = Path();
     Offset mid(Offset a, Offset b) =>
@@ -265,10 +396,13 @@ class _BlobPainter extends CustomPainter {
             LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
+              // ★ 以前是 white 0.30 → 黑 0.26，再叠一层 white 0.26 高光 +
+              //   white 0.30 描边 —— 四层白下来，调色板里的饱和色全被洗成粉彩，
+              //   一屏头像看着发灰。参考 是接近平涂的饱和色，这里只留一点体积感。
               colors: [
-                Color.lerp(color, Colors.white, 0.30)!,
+                Color.lerp(color, Colors.white, 0.12)!,
                 color,
-                Color.lerp(color, Colors.black, 0.26)!,
+                Color.lerp(color, Colors.black, 0.16)!,
               ],
               stops: const [0.0, 0.52, 1.0],
             ).createShader(
@@ -283,7 +417,7 @@ class _BlobPainter extends CustomPainter {
         ..shader = RadialGradient(
           center: const Alignment(-0.5, -0.55),
           radius: 1.0,
-          colors: [Colors.white.withValues(alpha: 0.26), Colors.transparent],
+          colors: [Colors.white.withValues(alpha: 0.10), Colors.transparent],
         ).createShader(Rect.fromCircle(center: center, radius: baseRadius)),
     );
 
@@ -297,8 +431,8 @@ class _BlobPainter extends CustomPainter {
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: [
-            Colors.white.withValues(alpha: 0.30),
-            Colors.white.withValues(alpha: 0.02),
+            Colors.white.withValues(alpha: 0.16),
+            Colors.white.withValues(alpha: 0.0),
           ],
         ).createShader(Rect.fromCircle(center: center, radius: baseRadius)),
     );
@@ -313,18 +447,11 @@ class _BlobPainter extends CustomPainter {
       );
     }
 
-    if (emoji != null && emoji!.isNotEmpty) {
-      final tp = TextPainter(
-        text: TextSpan(
-          text: emoji,
-          style: TextStyle(fontSize: size.shortestSide * 0.44, height: 1.0),
-        ),
-        textDirection: TextDirection.ltr,
-      )..layout();
-      tp.paint(canvas, center - Offset(tp.width / 2, tp.height / 2));
-      return;
-    }
-
+    // ★ 这里以前是「有 emoji 就画 emoji，不画眼睛」。
+    //   结果是每个 bot 都是「一块饱和色 + 一张全彩 emoji 贴纸」——
+    //   emoji 自带的白/橙/紫和 blob 的颜色互相打架，像贴歪了的贴纸。
+    //   同类客户端 的头像就是纯色块 + 两只眼睛，干净得多；emoji 降级成小角标。
+    //
     // 眼睛：两个圆角竖条，眨眼时压扁
     final eyeW = size.shortestSide * 0.112;
     final eyeH = size.shortestSide * 0.195 * (1 - blink * 0.84);
