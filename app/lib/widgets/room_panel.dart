@@ -256,6 +256,9 @@ class _RoomPanelState extends State<RoomPanel> {
 
   Widget _members(BuildContext context, Room room) {
     final state = AppScope.of(context);
+    // 花名册里还没进来的
+    final outsiders =
+        state.bots.where((b) => !room.botIds.contains(b.id)).toList();
     return ListView(
       padding: const EdgeInsets.fromLTRB(10, 8, 10, 24),
       children: [
@@ -267,7 +270,152 @@ class _RoomPanelState extends State<RoomPanel> {
             canRemove: room.botIds.length > 1,
             onRemove: () => _confirmRemove(context, room, state.botById(id)),
           ),
+        if (room.isGroup)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: _AddMemberButton(
+              // 还剩几个能加 —— 按钮上直说，省得点开才发现花名册里没人了
+              remaining: outsiders.length,
+              onTap: outsiders.isEmpty
+                  ? null
+                  : () => _addMembers(context, room, outsiders),
+            ),
+          ),
       ],
+    );
+  }
+
+  /// 打开"加谁进来"：花名册里还没进来的，多选 + 一个添加入口。
+  ///
+  /// 为什么是对话框不是底部弹层：桌面上底部弹层是从屏幕最底下窜出来的，
+  /// 离用户点的那一下太远（这个项目里已经因为这件事把所有弹层换掉过一轮）。
+  Future<void> _addMembers(
+    BuildContext context,
+    Room room,
+    List<Bot> candidates,
+  ) async {
+    final state = AppScope.read(context);
+    final picked = <String>{};
+    final q = TextEditingController();
+    var query = '';
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) {
+          final shown = query.isEmpty
+              ? candidates
+              : candidates
+                    .where(
+                      (b) =>
+                          b.name.toLowerCase().contains(query) ||
+                          b.tagline.toLowerCase().contains(query),
+                    )
+                    .toList();
+          return AlertDialog(
+            backgroundColor: PB.bgElevated,
+            title: Text(
+              '往「${room.name}」里加谁',
+              style: const TextStyle(fontSize: PB.fsLg),
+            ),
+            content: SizedBox(
+              width: 380,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (candidates.length > 6) ...[
+                    TextField(
+                      controller: q,
+                      autofocus: true,
+                      onChanged: (v) =>
+                          setLocal(() => query = v.trim().toLowerCase()),
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        hintText: '按名字 / 职责找',
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  Flexible(
+                    child: shown.isEmpty
+                        ? const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 18),
+                            child: Text(
+                              '没找到符合条件的 bot',
+                              style: TextStyle(
+                                fontSize: PB.fsSm,
+                                color: PB.textTertiary,
+                              ),
+                            ),
+                          )
+                        : ListView(
+                            shrinkWrap: true,
+                            children: [
+                              for (final b in shown)
+                                CheckboxListTile(
+                                  dense: true,
+                                  contentPadding: EdgeInsets.zero,
+                                  value: picked.contains(b.id),
+                                  onChanged: (v) => setLocal(
+                                    () => v == true
+                                        ? picked.add(b.id)
+                                        : picked.remove(b.id),
+                                  ),
+                                  secondary: BlobAvatar(
+                                    seed: b.id,
+                                    color: PB.colorFor(b.id),
+                                    emoji: b.emoji,
+                                    size: 30,
+                                    animate: false,
+                                  ),
+                                  title: Text(
+                                    b.name,
+                                    style: const TextStyle(fontSize: PB.fsSm),
+                                  ),
+                                  subtitle: b.tagline.trim().isEmpty
+                                      ? null
+                                      : Text(
+                                          b.tagline.trim(),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            fontSize: PB.fsXs,
+                                            color: PB.textTertiary,
+                                          ),
+                                        ),
+                                ),
+                            ],
+                          ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('取消'),
+              ),
+              FilledButton(
+                onPressed: picked.isEmpty
+                    ? null
+                    : () => Navigator.pop(ctx, true),
+                child: Text(picked.isEmpty ? '添加' : '添加 ${picked.length} 个'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    q.dispose();
+    if (ok != true || picked.isEmpty) return;
+    await state.addBotsToRoom(room.id, picked.toList());
+    if (!context.mounted) return;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 2),
+        content: Text('已加进「${room.name}」，下次说话它就接得上。'),
+      ),
     );
   }
 
@@ -367,6 +515,62 @@ class _MemberRow extends StatelessWidget {
         ],
       ),
     ));
+  }
+}
+
+/// 「添加成员」：一条虚位以待的按钮 —— 不抢成员行的视觉权重，
+/// 但一眼能看出"这里还能加人"（用户要的：自己加 bot，不用先跟主控说）。
+class _AddMemberButton extends StatefulWidget {
+  const _AddMemberButton({required this.remaining, this.onTap});
+
+  /// 花名册里还剩几个没进来的（0 → 置灰并说明原因）
+  final int remaining;
+  final VoidCallback? onTap;
+
+  @override
+  State<_AddMemberButton> createState() => _AddMemberButtonState();
+}
+
+class _AddMemberButtonState extends State<_AddMemberButton> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = widget.onTap != null;
+    final fg = enabled
+        ? (_hover ? PB.textPrimary : PB.textSecondary)
+        : PB.textQuaternary;
+    return MouseRegion(
+      cursor: enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: Container(
+          height: 40,
+          decoration: BoxDecoration(
+            color: enabled && _hover ? PB.bgHover : Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: enabled && _hover
+                  ? PB.borderSecondary
+                  : PB.borderTertiary,
+            ),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(LucideIcons.plus, size: 15, color: fg),
+              const SizedBox(width: 7),
+              Text(
+                enabled ? '添加成员' : '花名册里的人都在这儿了',
+                style: TextStyle(fontSize: PB.fsSm, color: fg),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
