@@ -369,6 +369,25 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> abort(String roomId) async {
+    // ★ 先当场把界面停下来，再去告诉服务端。
+    //
+    //   用户原话：“这个终止按钮 我点了要立即反应 立即终止，现在都要等很久。”
+    //   以前这里只发了个请求（走 WS），本地什么都不动 —— 于是服务端那边
+    //   真的在收尾，用户看到的却是**转圈照转、消息照流**，自然觉得“没反应”。
+    //   服务端的 session 可能正卡在一个长命令里，几秒到几分钟才真的断。
+    //   所以这里乐观地先改本地状态：说停就停。
+    typing[roomId] = false;
+    queued[roomId] = 0;
+    for (final m in messages[roomId] ?? const <Msg>[]) {
+      if (m.status == 'streaming') {
+        m.status = 'error';
+        m.error = '已按你的要求终止';
+        for (final s in m.steps) {
+          if (s.status == 'running') s.status = 'error';
+        }
+      }
+    }
+    _notify();
     try {
       final channel = _channel;
       if (channel != null && link == LinkState.online) {
