@@ -9,7 +9,6 @@ import 'package:image_picker/image_picker.dart';
 import '../app_state.dart';
 import '../models.dart';
 import '../scope.dart';
-import '../text_utils.dart';
 import '../theme.dart';
 import '../widgets/attachment_view.dart';
 import '../widgets/avatar_life.dart';
@@ -201,69 +200,79 @@ class _ChatScreenState extends State<ChatScreen> {
       });
     }
 
+    // 消息列的左右留白：窗口越宽留白越大（内容列最多 940），
+    // 这样一个 2000px 的窗口里气泡也不会贴着两边。
+    final sidePad = math.max(12.0, (MediaQuery.sizeOf(context).width - 940) / 2);
+
     return Scaffold(
       backgroundColor: PB.bgPane,
+      // ★ 顶部是**浮在上面的小胶囊**（参考 / ds-bot 那种），不是一整条 AppBar：
+      //   透明背景 + 居中的圆角胶囊（头像 + 会话名），左右各留出返回 / 更多。
+      //   整条工具栏是透明的，所以看上去就是"顶上浮了一个小椭圆"。
       appBar: AppBar(
-        backgroundColor: PB.bgPane,
-        toolbarHeight: 60,
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        toolbarHeight: 54,
         automaticallyImplyLeading: !widget.embedded,
-        titleSpacing: widget.embedded ? 14 : 0,
-        title: Row(
-          children: [
-            // ★ 头部这个头像要"活"：bot 在干活时视线抬起来（一眼看出它在想），
-            //   闲着的时候眼睛跟着鼠标看。它是整个会话里最该有生命感的一个。
-            if (room.isGroup)
-              GroupBlobAvatar(seeds: room.botIds, size: 32, animate: busy)
-            else
-              BlobAvatar(
-                seed: room.botIds.isNotEmpty ? room.botIds.first : room.id,
-                color: PB.colorFor(
-                  room.botIds.isNotEmpty ? room.botIds.first : room.id,
+        titleSpacing: 0,
+        centerTitle: true,
+        // 居中的小胶囊：头像 + 会话名（状态只在"干活/压缩"时露出来，
+        // 平时保持安静 —— 参考 / ds-bot 那种感觉）
+        title: Container(
+          padding: const EdgeInsets.fromLTRB(6, 5, 14, 5),
+          decoration: BoxDecoration(
+            color: PB.bgElevated,
+            borderRadius: BorderRadius.circular(PB.rFull),
+            border: Border.all(color: PB.borderSecondary),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (room.isGroup)
+                GroupBlobAvatar(seeds: room.botIds, size: 22, animate: busy)
+              else
+                BlobAvatar(
+                  seed: room.botIds.isNotEmpty ? room.botIds.first : room.id,
+                  color: PB.colorFor(
+                    room.botIds.isNotEmpty ? room.botIds.first : room.id,
+                  ),
+                  emoji: lead?.emoji,
+                  size: 22,
+                  animate: true,
+                  mood: busy ? AvatarMood.busy : AvatarMood.idle,
                 ),
-                emoji: lead?.emoji,
-                size: 32,
-                animate: true,
-                mood: busy ? AvatarMood.busy : AvatarMood.idle,
+              const SizedBox(width: 8),
+              Text(
+                room.isGroup ? room.name : (lead?.name ?? room.name),
+                style: const TextStyle(
+                  fontSize: PB.fsSm,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
-            const SizedBox(width: 11),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    room.name,
-                    style: const TextStyle(
-                      fontSize: PB.fsBase,
-                      fontWeight: FontWeight.w500,
+              // 状态只在"正在干活 / 正在压缩"时露出来 —— 平时不占地方
+              if (busy || state.compactingIn(room.id)) ...[
+                const SizedBox(width: 8),
+                if (state.compactingIn(room.id))
+                  const Text(
+                    '压缩中',
+                    style: TextStyle(fontSize: PB.fsXxs, color: PB.warn),
+                  )
+                else
+                  const SizedBox(
+                    width: 11,
+                    height: 11,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 1.8,
+                      color: PB.accent,
                     ),
-                    overflow: TextOverflow.ellipsis,
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    // 压缩中优先显示 —— 那一会儿 bot 是不动的，不说明白就像卡死了
-                    state.compactingIn(room.id)
-                        ? '正在压缩上下文…'
-                        : busy
-                        ? '正在干活…'
-                        : (room.isGroup
-                              ? '负责人 ${room.leadName ?? '-'} · ${room.botIds.length} 人'
-                              : (lead?.tagline.isNotEmpty == true
-                                    ? preview(lead!.tagline, 34)
-                                    : '在线')),
-                    style: TextStyle(
-                      fontSize: PB.fsXxs,
-                      color: busy ? PB.accent : PB.textQuaternary,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ),
-            ),
-            // 上下文占用：用了多少 / 是不是在压缩，一眼看到（点了有细节）
-            ContextChip(roomId: room.id),
-            const SizedBox(width: 4),
-          ],
+              ],
+              // 上下文占用：平时也就是一个小圆环
+              const SizedBox(width: 6),
+              ContextChip(roomId: room.id),
+            ],
+          ),
         ),
         actions: [
           PopupMenuButton<String>(
@@ -331,7 +340,10 @@ class _ChatScreenState extends State<ChatScreen> {
                       ExcludeFocus(
                         child: ListView.builder(
                           controller: _scroll,
-                          padding: const EdgeInsets.fromLTRB(12, 16, 12, 16),
+                          // ★ 居中限宽：窗口拉宽时，左右留白跟着长（最多到 940），
+                          //   气泡就不会被吸附到窗口两边 —— 和 bot 的对话始终
+                          //   保持在一个容易读的列宽里。
+                          padding: EdgeInsets.fromLTRB(sidePad, 16, sidePad, 16),
                           itemCount: msgs.length,
                           itemBuilder: (ctx, i) {
                             final msg = msgs[i];
