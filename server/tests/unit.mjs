@@ -1045,6 +1045,64 @@ await test('部门规矩：不认识的值不当成 deny（宁可宽松也不误
   assert.deepEqual(toolsForPolicy(all, { dangerous: 'whatever' }), all);
 });
 
+
+// ---------------------------------------------------------------------------
+// 群调度决策（group-round.js）：只回答"该做什么"，不执行任何副作用
+// ---------------------------------------------------------------------------
+const { shouldStopRound, planItem, leftBehind } = await import('../src/group-round.js');
+
+await test('调度决策：队列空了但有人还在跑 → 不能停（他们的 @ 会补进队列）', () => {
+  assert.equal(shouldStopRound({ queueLen: 0, pendingLen: 2, runs: 1, maxRuns: 10 }).stop, false);
+});
+
+await test('调度决策：用户按了终止 → 立刻停，不管还有谁', () => {
+  const r = shouldStopRound({ queueLen: 5, pendingLen: 3, runs: 1, maxRuns: 10, aborting: true });
+  assert.equal(r.stop, true);
+  assert.equal(r.why, '已终止');
+});
+
+await test('调度决策：预算用完 → 停，并说清是预算', () => {
+  const r = shouldStopRound({ queueLen: 3, pendingLen: 0, runs: 10, maxRuns: 10 });
+  assert.equal(r.stop, true);
+  assert.match(r.why, /上限 10/);
+});
+
+await test('调度决策：队列空、也没人在跑 → 自然收工', () => {
+  assert.equal(shouldStopRound({ queueLen: 0, pendingLen: 0, runs: 3, maxRuns: 10 }).stop, true);
+});
+
+await test('★ 调度决策：不忙 → 直接派', () => {
+  const r = planItem({ item: { botId: 'b1' }, name: '甲', done: 0, budget: 2, busy: false });
+  assert.equal(r.kind, 'run');
+});
+
+await test('★ 调度决策：上级叫一个忙人 → 打断（不是排队）', () => {
+  const r = planItem({ item: { botId: 'b1' }, name: '甲', done: 0, budget: 2, busy: true, superior: true });
+  assert.equal(r.kind, 'interrupt');
+});
+
+await test('★ 调度决策：同级叫一个忙人 → 投递（不打断，也不丢）', () => {
+  const r = planItem({ item: { botId: 'b1' }, name: '甲', done: 0, budget: 2, busy: true, superior: false });
+  assert.equal(r.kind, 'queue');
+  assert.match(r.why, /同级/);
+});
+
+await test('调度决策：这轮说过够了 → 跳过（且带名字，好在日志里认人）', () => {
+  const r = planItem({ item: { botId: 'b1' }, name: '甲', done: 2, budget: 2, busy: false });
+  assert.equal(r.kind, 'skip');
+  assert.match(r.why, /甲/);
+});
+
+await test('调度决策：预算判断优先于忙不忙（说够了就别打断别人）', () => {
+  const r = planItem({ item: { botId: 'b1' }, name: '甲', done: 2, budget: 2, busy: true, superior: true });
+  assert.equal(r.kind, 'skip');
+});
+
+await test('调度决策：没轮到的名单要把名字翻出来（日志要能认人）', () => {
+  const names = { b1: '甲', b2: '乙' };
+  assert.deepEqual(leftBehind([{ botId: 'b1' }, { botId: 'b2' }], (id) => names[id]), ['甲', '乙']);
+});
+
 const passed = results.filter((r) => r.ok).length;
 
 console.log('\n================ 单元测试 ================');
