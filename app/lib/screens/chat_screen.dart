@@ -1016,9 +1016,11 @@ class _MessageRow extends StatelessWidget {
 
     final accent = PB.colorFor(msg.authorId ?? displayName);
 
-    // 私聊里每条都是同一个人，头像和头部重复 —— 不画（顺便收掉左边那条留白，
-    // 气泡能贴左一点）。
-    final avatar = showAvatar && isGroup;
+    // 私聊里每条都是同一个人，头像和头部重复 —— 整列都不要（气泡能贴左一点）。
+    // 群聊里**这一列永远占位**，只有头像本身按需画：
+    // 同一串消息里如果有的行有缩进、有的没有，气泡就不在同一列上（错位）。
+    final reserveAvatarColumn = isGroup;
+    final avatar = showAvatar && reserveAvatarColumn;
     // 群聊里主控（总经理）不标名字：它是"你这边的人"，标出来只是噪音。
     // 头像还留着 —— 一眼能看出"这条是它说的"。
     final showName = showAuthor && !(isGroup && bot?.isMain == true);
@@ -1121,20 +1123,22 @@ class _MessageRow extends StatelessWidget {
         //   （以前是 CrossAxisAlignment.start，头像顶在最上面，名字反而跑到它右边。）
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          if (avatar) ...[
+          if (reserveAvatarColumn) ...[
             SizedBox(
               width: 34,
-              child: Padding(
-                // 往下留一点，别和气泡的最后一行贴死
-                padding: const EdgeInsets.only(bottom: 2),
-                child: BlobAvatar(
-                  seed: msg.authorId ?? displayName,
-                  color: accent,
-                  emoji: displayEmoji,
-                  size: 28,
-                  animate: false,
-                ),
-              ),
+              child: avatar
+                  ? Padding(
+                      // 往下留一点，别和气泡的最后一行贴死
+                      padding: const EdgeInsets.only(bottom: 2),
+                      child: BlobAvatar(
+                        seed: msg.authorId ?? displayName,
+                        color: accent,
+                        emoji: displayEmoji,
+                        size: 28,
+                        animate: false,
+                      ),
+                    )
+                  : null,
             ),
             const SizedBox(width: 8),
           ],
