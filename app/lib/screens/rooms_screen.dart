@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../app_state.dart';
 import '../models.dart';
@@ -6,6 +7,7 @@ import '../scope.dart';
 import '../text_utils.dart';
 import '../theme.dart';
 import '../widgets/blob_avatar.dart';
+import '../widgets/floating_menu.dart';
 import '../widgets/skeleton.dart';
 import 'bots_screen.dart';
 import 'chat_screen.dart';
@@ -43,14 +45,59 @@ class _RoomsScreenState extends State<RoomsScreen> {
     super.dispose();
   }
 
+  /// 被隐藏的会话：底部一行入口 + 一个能取消隐藏的弹层
+  Future<void> _showHidden(BuildContext context, List<Room> hidden) async {
+    final state = AppScope.read(context);
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: PB.bgElevated,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(PB.r3xl)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 12),
+            const Text(
+              '已隐藏的会话',
+              style: TextStyle(fontSize: PB.fsSm, color: PB.textSecondary),
+            ),
+            const SizedBox(height: 6),
+            for (final room in hidden)
+              ListTile(
+                leading: const Icon(LucideIcons.eye, size: 20),
+                title: Text(
+                  room.name,
+                  style: const TextStyle(fontSize: PB.fsSm),
+                ),
+                trailing: const Text(
+                  '取消隐藏',
+                  style: TextStyle(fontSize: PB.fsXs, color: PB.accent),
+                ),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  state.updateRoom(room.id, {'hidden': false});
+                },
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
-    final rooms = _query.isEmpty
-        ? state.rooms
-        : state.rooms
-              .where((r) => r.name.toLowerCase().contains(_query.toLowerCase()))
-              .toList();
+    final matched = state.rooms.where(
+      (r) =>
+          _query.isEmpty || r.name.toLowerCase().contains(_query.toLowerCase()),
+    );
+    // 右键菜单里「从侧边栏隐藏」的不进列表 —— 但底部要留一个入口能翻出来，
+    // 否则"隐藏"就是个陷阱：点错了就再也找不回来。
+    final rooms = matched.where((r) => !r.hidden).toList();
+    final hidden = matched.where((r) => r.hidden).toList();
 
     return Scaffold(
       backgroundColor: PB.bgApp,
@@ -230,6 +277,11 @@ class _RoomsScreenState extends State<RoomsScreen> {
                         );
                       }
                     },
+                  ),
+                if (hidden.isNotEmpty)
+                  _HiddenRow(
+                    count: hidden.length,
+                    onTap: () => _showHidden(context, hidden),
                   ),
               ],
             ),
@@ -662,7 +714,11 @@ class _RoomRowState extends State<_RoomRow> {
               child: InkWell(
                 borderRadius: BorderRadius.circular(12),
                 onTap: () => widget.onOpen(room),
-                onLongPress: () => _roomMenu(context, room),
+                // 桌面右键：贴着鼠标弹；手机长按：贴着这一行弹。
+                // （InkWell 没有 onLongPressStart，拿不到手指坐标，就用行的中心当锚点。）
+                onSecondaryTapDown: (d) =>
+                    _roomMenu(context, room, d.globalPosition),
+                onLongPress: () => _roomMenu(context, room, _rowAnchor()),
                 onHighlightChanged: (v) => setState(() => _pressed = v),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
@@ -786,57 +842,192 @@ class _RoomRowState extends State<_RoomRow> {
     );
   }
 
-  Future<void> _roomMenu(BuildContext context, Room room) async {
+  /// 这一行在屏幕上的中心点 —— 长按弹菜单时的锚点
+  Offset _rowAnchor() {
+    final box = context.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return Offset.zero;
+    return box.localToGlobal(box.size.center(Offset.zero));
+  }
+
+  /// 会话菜单：置顶 / 标为未读 / 重命名 / 复制 ID /
+  /// 隐藏 / 删除。
+  ///
+  /// 桌面右键和手机长按共用这一个菜单，只是弹出位置不同（都贴着触发点）。
+  /// 以前这里是 `showModalBottomSheet`，两个毛病：桌面上从屏幕最底下窜出来、
+  /// 离你点的那行半个屏幕远；而且只给群一个"解散这个群" —— **私聊根本删不掉**
+  /// （服务端 deleteRoom 也把 dm 挡住了，这次一起修）。
+  Future<void> _roomMenu(BuildContext context, Room room, Offset at) async {
     final state = widget.state;
-    await showModalBottomSheet<void>(
+    final bot = state.botById(room.botIds.isNotEmpty ? room.botIds.first : null);
+    await showFloatingMenu(
       context: context,
-      backgroundColor: PB.bgElevated,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(PB.r3xl)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 10),
-            Container(
-              width: 36,
-              height: 4,
-              decoration: BoxDecoration(
-                color: PB.borderPrimary,
-                borderRadius: BorderRadius.circular(2),
+      at: at,
+      entries: [
+        FloatingMenuEntry(
+          icon: room.pinned ? LucideIcons.pinOff : LucideIcons.pin,
+          label: room.pinned ? '取消置顶' : '置顶',
+          onTap: () => state.updateRoom(room.id, {'pinned': !room.pinned}),
+        ),
+        FloatingMenuEntry(
+          icon: room.unread ? LucideIcons.bellOff : LucideIcons.bell,
+          label: room.unread ? '标为已读' : '标为未读',
+          onTap: () => state.updateRoom(room.id, {'unread': !room.unread}),
+        ),
+        FloatingMenuEntry(
+          icon: LucideIcons.pencil,
+          // 私聊的标题就是那个 bot 的名字，改的是 bot 本身；群改的是群名
+          label: room.isGroup ? '重命名' : '重命名 Bot',
+          onTap: () => _rename(context, room, bot),
+        ),
+        FloatingMenuEntry(
+          icon: LucideIcons.copy,
+          label: '复制对话 ID',
+          onTap: () async {
+            await Clipboard.setData(ClipboardData(text: room.id));
+            if (!context.mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('对话 ID 已复制'),
+                duration: Duration(seconds: 1),
               ),
-            ),
-            ListTile(
-              leading: const Icon(LucideIcons.messageSquare, size: 20),
-              title: Text(room.name, style: const TextStyle(fontSize: PB.fsSm)),
-              subtitle: Text(
-                room.isGroup ? '群 · ${room.botIds.length} 个 bot' : '私聊',
+            );
+          },
+        ),
+        FloatingMenuEntry(
+          icon: room.hidden ? LucideIcons.eye : LucideIcons.eyeOff,
+          label: room.hidden ? '取消隐藏' : '从侧边栏隐藏',
+          onTap: () => state.updateRoom(room.id, {'hidden': !room.hidden}),
+        ),
+        FloatingMenuEntry(
+          icon: LucideIcons.trash2,
+          label: room.isGroup ? '解散这个群' : '删除这个对话',
+          danger: true,
+          onTap: () async {
+            if (!await _confirmDelete(context, room)) return;
+            if (context.mounted) await state.deleteRoom(room.id);
+          },
+        ),
+      ],
+    );
+  }
+
+  Future<void> _rename(BuildContext context, Room room, Bot? bot) async {
+    final state = widget.state;
+    final isDm = !room.isGroup;
+    final next = await _askName(
+      context,
+      title: isDm ? '重命名 Bot' : '重命名会话',
+      initial: isDm ? (bot?.name ?? room.name) : room.name,
+    );
+    if (next == null || next.isEmpty) return;
+    if (isDm) {
+      if (bot == null) return;
+      // 改 bot 名，服务端会同步把私聊标题一起改掉
+      await state.updateBot(bot.id, {'name': next});
+    } else {
+      await state.updateRoom(room.id, {'name': next});
+    }
+  }
+
+  /// 删除前必须问一次 —— 这个动作没有撤销。
+  Future<bool> _confirmDelete(BuildContext context, Room room) async {
+    final isGroup = room.isGroup;
+    final name = room.name;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: PB.bgElevated,
+        title: Text(
+          isGroup ? '解散「$name」？' : '删除和 $name 的对话？',
+          style: const TextStyle(fontSize: PB.fsLg),
+        ),
+        content: Text(
+          isGroup
+              ? '群和里面的聊天记录都会消失，成员 bot 本身不会被删掉。'
+              : '聊天记录会清空。bot 本身不会被删掉 —— 下次点它（或 @它）会重新开一个空对话。',
+          style: const TextStyle(fontSize: PB.fsSm, color: PB.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: PB.danger),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    return ok == true;
+  }
+
+  Future<String?> _askName(
+    BuildContext context, {
+    required String title,
+    required String initial,
+  }) {
+    final controller = TextEditingController(text: initial);
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: PB.bgElevated,
+        title: Text(title, style: const TextStyle(fontSize: PB.fsLg)),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          style: const TextStyle(fontSize: PB.fsSm),
+          onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 列表底部那一行「已隐藏 N 个会话」—— 隐藏功能的出口
+class _HiddenRow extends StatelessWidget {
+  const _HiddenRow({required this.count, required this.onTap});
+
+  final int count;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 10, 10, 16),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 9),
+          child: Row(
+            children: [
+              const Icon(
+                LucideIcons.eyeOff,
+                size: 16,
+                color: PB.textQuaternary,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '已隐藏 $count 个会话',
                 style: const TextStyle(
                   fontSize: PB.fsXs,
                   color: PB.textQuaternary,
                 ),
               ),
-            ),
-            const Divider(height: 1),
-            if (room.isGroup)
-              ListTile(
-                leading: const Icon(
-                  LucideIcons.trash2,
-                  size: 20,
-                  color: PB.danger,
-                ),
-                title: const Text(
-                  '解散这个群',
-                  style: TextStyle(fontSize: PB.fsSm, color: PB.danger),
-                ),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  await state.deleteRoom(room.id);
-                },
-              ),
-            const SizedBox(height: 8),
-          ],
+            ],
+          ),
         ),
       ),
     );

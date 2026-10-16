@@ -9,7 +9,7 @@ import 'chat_screen.dart';
 import 'rooms_screen.dart';
 
 /// 外层容器：宽屏左右分栏（左边会话列表 + 右边对话），窄屏走原来的单页导航。
-/// 微信 PC 端 / 同类客户端 就是这个形态，切换会话不用来回返回。
+/// 微信 PC 端就是这个形态：切换会话不用来回返回。
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key, this.initialRoomId});
 

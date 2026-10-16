@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../theme.dart';
 
-/// 圆角方形头像 + 渐变底 + 白色字形 —— 照着 同类客户端 的 agent 头像做的。
+/// 圆角方形头像 + 渐变底 + 白色字形（没有 emoji 时的兜底样式）。
 class BotAvatar extends StatelessWidget {
   const BotAvatar({
     super.key,
