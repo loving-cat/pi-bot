@@ -87,6 +87,7 @@ class _ChatScreenState extends State<ChatScreen> {
       // 用 state 的 notify（每来一条消息一次），不用 streamTick（那是 80ms 一次的
       // 流式增量，会把计数冲成天文数字）。
       _state!.addListener(_countIfScrolledUp);
+      FocusManager.instance.addListener(_onFocusChanged);
     }
   }
 
@@ -101,6 +102,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     _state?.removeListener(_countIfScrolledUp);
+    FocusManager.instance.removeListener(_onFocusChanged);
     _state?.openRoom(null);
     _scroll.dispose();
     _input.dispose();
@@ -130,6 +132,41 @@ class _ChatScreenState extends State<ChatScreen> {
     if (mounted && _scroll.hasClients) {
       _scroll.jumpTo(_scroll.position.maxScrollExtent);
     }
+  }
+
+  /// 焦点一变就排一次"兜底检查"。
+  ///
+  /// 为什么不能只在 build 里排：焦点丢了**不等于界面要重建** ——
+  /// 比如回车提交之后，Flutter 不会因为焦点变化就把整个 ChatScreen 重build，
+  /// 于是那时候注册的帧后回调根本不会跑（我第一版就是这么写的，没用）。
+  void _onFocusChanged() {
+    // 延后一帧再判：对话框 / 悬浮菜单通常在同一帧里就把焦点拿走了，
+    // 等一帧再看，能少抢很多次
+    WidgetsBinding.instance.addPostFrameCallback((_) => _keepComposerFocused());
+  }
+
+  /// 把焦点兜回输入框 —— 但**只在"无主"时**。
+  ///
+  /// 为什么需要：回车提交之后框架会先把焦点从输入框收走；如果这时没有别的控件
+  /// 接管，焦点就落在"空"上，用户得再点一下才能接着打（用户报的"发一句、
+  /// 再点一下输入框"）。
+  ///
+  /// 三条不抢的规则（避免把别人的焦点抢歪）：
+  ///   · 上面压着别的页面（设置页）→ 不抢
+  ///   · 当前焦点在一个**具体控件**上（对话框输入框、悬浮菜单的 Focus）→ 不抢
+  ///   · 焦点已经在自己身上 → 不用抢
+  /// 只有"焦点落在空 scope 上"（也就是没人要）时才拿回来。
+  void _keepComposerFocused() {
+    if (!mounted || _focus.hasFocus) return;
+    final route = ModalRoute.of(context);
+    if (route != null && !route.isCurrent) return;
+    final primary = FocusManager.instance.primaryFocus;
+    // ★ 判"有没有人持有焦点"要看**类型**，不要看 context.widget：
+    //   `unfocus()` 之后主焦点会落到祖先的 FocusScopeNode 上（那就是"无主"），
+    //   而 FocusScope 这个 widget 在树里不一定就是 FocusScope 类型 ——
+    //   按 context.widget 判会误判成"有人持有"，兜底就永远不生效。
+    if (primary != null && primary is! FocusScopeNode) return;
+    _focus.requestFocus();
   }
 
   Future<void> _send() async {
@@ -235,6 +272,9 @@ class _ChatScreenState extends State<ChatScreen> {
         if (mounted) _toBottom();
       });
     }
+
+    // 焦点兜底（见 _keepComposerFocused）—— 放在帧后，别在 build 里抢焦点
+    WidgetsBinding.instance.addPostFrameCallback((_) => _keepComposerFocused());
 
     // 消息列的左右留白：窗口越宽留白越大（内容列最多 1180），
     // 这样一个 2000px 的窗口里气泡也不会贴着两边。
