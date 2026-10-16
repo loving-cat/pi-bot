@@ -208,6 +208,23 @@ class _ScanScreenState extends State<ScanScreen> {
                             icon: const Icon(LucideIcons.refreshCw, size: 18),
                             label: const Text('重试'),
                           ),
+                          const SizedBox(height: 10),
+                          // ★ 相机起不来时别把人堵死在这页上。
+                          //
+                          //   真机上见过这种：权限没给/相机被占，这页就只剩一个
+                          //   "重试"，点来点去还是黑屏；而手动填地址的入口写在
+                          //   底部提示里（"回上一页手动填"）—— 那句在真机上还可能
+                          //   被挤到屏幕顶部去。直接给一个按钮最实在。
+                          TextButton(
+                            onPressed: () => Navigator.pop(context),
+                            child: const Text(
+                              '不用扫码，手动填地址和配对码',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: PB.fsSm,
+                              ),
+                            ),
+                          ),
                         ],
                       ],
                     ),
@@ -254,27 +271,39 @@ class _ScanScreenState extends State<ScanScreen> {
           Positioned(
             left: 0,
             right: 0,
-            bottom: 56,
-            child: Column(
-              children: [
-                const Text(
-                  '对准电脑终端里那个二维码',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: PB.fsLg,
-                    fontWeight: FontWeight.w600,
-                  ),
+            bottom: 0,
+            child: SafeArea(
+              top: false,
+              // ★ 别用裸的 bottom:56 —— 真机上（手势条 / 不同长宽比）它会被
+              //   挤到错位的地方去，用户看到的是"提示跑到屏幕顶上了"。
+              //   包进 SafeArea 里让它自己老老实实待在底部。
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 28),
+                child: Column(
+                  children: [
+                    const Text(
+                      '对准电脑终端里那个二维码',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: PB.fsLg,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      child: Text(
+                        '扫不了？在电脑端「设置 → 远程连接」里有配对码，回上一页手动填',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.6),
+                          fontSize: PB.fsXs,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  '扫不了？在电脑端「设置 → 远程连接」里有配对码，回上一页手动填',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.6),
-                    fontSize: PB.fsXs,
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
         ],
