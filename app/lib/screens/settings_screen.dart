@@ -8,6 +8,7 @@ import '../native.dart';
 import '../notify.dart';
 import '../scope.dart';
 import '../theme.dart';
+import '../widgets/model_group_editor.dart';
 import '../widgets/window_title_bar.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
@@ -190,6 +191,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const _Card(
                   child: _Hint('服务端配的是固定 token（PI_BOT_TOKEN），没有二维码。手机端在「固定 token」页填那个 token 就行。'),
                 ),
+
+              const SizedBox(height: 22),
+              // 用户自己配的模型组（baseUrl + key + 一组模型名）
+              const ModelGroupsSection(),
 
               const SizedBox(height: 22),
               const _SectionTitle(icon: LucideIcons.monitorSmartphone, title: '已连接的设备'),
