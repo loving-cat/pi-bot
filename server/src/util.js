@@ -36,3 +36,21 @@ export function log(...args) {
   const ts = new Date().toISOString().slice(11, 19);
   console.log(`[${ts}]`, ...args);
 }
+
+/**
+ * **插队**的落点：插在"正在写的那条回复"之前。
+ *
+ * 用户插话时，bot 手上那条回复还没写完。如果按普通追加放到最后，
+ * 读起来就是"它先答了、我才插话"，因果是反的。插在它前面，
+ * 用户读到的就是「我插的话 → 它的回应」。
+ *
+ * 已经说完（done/error）的消息一律不动 —— 用户已经看过它们了，
+ * 再挪位置会让人以为消息在跳。
+ *
+ * @param {Array<{status?: string}>} list 房间里的消息（按显示顺序）
+ * @returns {number} 插入下标
+ */
+export function insertionPoint(list) {
+  const i = list.findIndex((m) => m && m.status === 'streaming');
+  return i >= 0 ? i : list.length;
+}
