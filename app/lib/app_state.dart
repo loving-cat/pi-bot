@@ -26,6 +26,8 @@ class AppState extends ChangeNotifier {
   ServerInfo? serverInfo;
   List<Room> rooms = const [];
   List<Bot> bots = const [];
+  /// 用户自己配的模型组（key 是打码的 —— 真 key 不出服务端）
+  List<ModelGroup> modelGroups = const [];
   final Map<String, List<Msg>> messages = {};
   final Map<String, bool> typing = {};
 
@@ -166,6 +168,10 @@ class AppState extends ChangeNotifier {
       bots = ((res['bots'] as List?) ?? const [])
           .whereType<Map<String, dynamic>>()
           .map(Bot.fromJson)
+          .toList();
+      modelGroups = ((res['modelGroups'] as List?) ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(ModelGroup.fromJson)
           .toList();
       lastError = null;
     } catch (err) {
@@ -388,6 +394,37 @@ class AppState extends ChangeNotifier {
   Future<void> updateRoom(String roomId, Map<String, dynamic> patch) async {
     try {
       await api?.patch('/api/rooms/$roomId', patch);
+      await refresh();
+    } catch (err) {
+      lastError = '$err';
+      _notify();
+    }
+  }
+
+  // ---------------------------------------------------------------- 模型组
+
+  /// 新增或更新一个模型组。`id` 为空 = 新增。
+  /// 服务端会**热注册**，不用重启就能在模型列表里选到。
+  Future<String?> saveModelGroup(Map<String, dynamic> patch) async {
+    try {
+      final id = patch['id'] as String?;
+      if (id == null || id.isEmpty) {
+        await api?.post('/api/model-groups', patch);
+      } else {
+        await api?.patch('/api/model-groups/$id', patch);
+      }
+      await refresh();
+      return null; // null = 成功
+    } catch (err) {
+      lastError = '$err';
+      _notify();
+      return '$err';
+    }
+  }
+
+  Future<void> deleteModelGroup(String id) async {
+    try {
+      await api?.delete('/api/model-groups/\$id');
       await refresh();
     } catch (err) {
       lastError = '$err';
