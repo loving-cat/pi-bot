@@ -44,6 +44,8 @@ import {
 } from './context-budget.js';
 import { disposeAll, disposeMatching, evictIdle } from './session-pool.js';
 import { createWatchdog, stallCleanup } from './watchdog.js';
+import { createBuildInput } from './prompt-input.js';
+import { collectNewImages, snapshotImages } from './image-watch.js';
 import {
   composeGroupPrompt,
   departmentOf,
@@ -676,87 +678,20 @@ export class PiRunner {
   // ---------------------------------------------------------------- 附件
 
   /** 把附件整理成两路：图片直接喂模型，文档抽正文拼进提示词 */
-  async #buildInput(clean, files) {
-    const imageIds = [];
-    const docBlocks = [];
-    const inboxRel = [];
-    for (const id of files) {
-      const meta = metaFor(id);
-      if (!meta) continue;
-      if (meta.kind === 'image') {
-        imageIds.push(id);
-        continue;
-      }
-      const abs = inboxPath(id);
-      if (!abs) continue;
-      inboxRel.push(path.relative(config.workspace, abs).replace(/\\/g, '/'));
-      docBlocks.push(await attachmentBlock(abs, meta.name));
-    }
-
-    const parts = [];
-    if (clean) parts.push(clean);
-    if (imageIds.length) parts.push(`（用户发了 ${imageIds.length} 张图）`);
-    if (docBlocks.length) {
-      if (!clean) parts.push('用户发了文件，正文如下：');
-      parts.push('', ...docBlocks);
-    }
-    if (inboxRel.length) {
-      parts.push('', `【附件已放进工作目录：${inboxRel.join('、')}，需要重读时用 extract_file】`);
-    }
-    return { promptText: parts.join('\n').trim(), imageIds };
+  /**
+   * 拼输入（薄包装）：依赖在这里绑一次，逻辑在 prompt-input.js。
+   * 绑在这儿是因为 attachments.js 那几个助手本来就是按本进程的配置工作的。
+   */
+  #buildInput(clean, files) {
+    this.__buildInput ??= createBuildInput({
+      workspace: config.workspace,
+      metaFor,
+      inboxPath,
+      attachmentBlock,
+    });
+    return this.__buildInput(clean, files);
   }
 
-  /** 工作目录里的图片快照，用来发现 bot 刚生成的图 */
-  #snapshotImages() {
-    const out = new Map();
-    const walk = (dir, depth) => {
-      if (depth > 4 || out.size > 400) return;
-      let entries;
-      try {
-        entries = fs.readdirSync(dir, { withFileTypes: true });
-      } catch {
-        return;
-      }
-      for (const entry of entries) {
-        if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          walk(full, depth + 1);
-        } else if (/\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(entry.name)) {
-          try {
-            out.set(full, fs.statSync(full).mtimeMs);
-          } catch {
-            /* ignore */
-          }
-        }
-      }
-    };
-    walk(config.workspace, 0);
-    return out;
-  }
-
-  /** 跑完一轮后，把工作目录里新出现/刚改过的图收成附件 */
-  #newImagesSince(before) {
-    const after = this.#snapshotImages();
-    const fresh = [];
-    for (const [file, mtime] of after) {
-      const prev = before.get(file);
-      if (prev === undefined || mtime > prev + 5) fresh.push({ file, mtime });
-    }
-    fresh.sort((a, b) => b.mtime - a.mtime);
-    const out = [];
-    for (const item of fresh.slice(0, 4)) {
-      try {
-        const meta = saveFromPath(item.file);
-        out.push({ id: meta.id, name: meta.name, mime: meta.mime, kind: meta.kind, size: meta.size });
-      } catch (err) {
-        log('自动附图失败：', err?.message || err);
-      }
-    }
-    return out;
-  }
-
-  /** 给 send_image 工具用：把工作目录里的文件发到某个会话 */
   sendImage({ roomId, botId, filePath, caption }) {
     const bot = store.getBot(botId);
     const meta = saveFromPath(filePath);
@@ -1383,7 +1318,7 @@ export class PiRunner {
       if (img) images.push(img);
     }
     // bot 自己画图：记下开跑前的快照，跑完把新出现的图自动带上
-    const beforeImages = config.autoAttachImages ? this.#snapshotImages() : null;
+    const beforeImages = config.autoAttachImages ? snapshotImages(config.workspace) : null;
 
     let timeoutHandle = null;
     try {
@@ -1479,7 +1414,12 @@ export class PiRunner {
         }
       }
 
-      const produced = beforeImages ? this.#newImagesSince(beforeImages) : [];
+      const produced = beforeImages
+        ? collectNewImages(config.workspace, beforeImages, {
+            save: saveFromPath,
+            onError: (err) => log('自动附图失败：', err?.message || err),
+          })
+        : [];
 
       // 两次都救不回来 → 退而给一份操作摘要（总比一片空白好），并标成错误
       if (!finalText && !stepCapHit) {
