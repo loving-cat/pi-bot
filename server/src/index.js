@@ -26,17 +26,15 @@ async function banner(pairing, runner) {
   }
 
   const snap = pairing.snapshot();
-  const qr = await pairing.ascii();
-  console.log('  ┌─ 手机配对 ────────────────────────────────────┐');
-  console.log('  │  用 pi-bot App 里的「扫码配对」扫下面这个码     │');
+  console.log('  ┌─ 手机连接 ────────────────────────────────────┐');
+  console.log('  │  在 pi-bot App 的配对页填下面这两项             │');
   console.log('  └───────────────────────────────────────────────┘');
-  console.log(qr);
-  console.log(`  配对码     ${snap.code}   （${Math.round(config.pairTtlMs / 60000)} 分钟轮换）`);
   console.log(`  有效地址   ${snap.url}`);
   for (const { name, address } of lanAddresses()) {
     console.log(`             http://${address}:${config.port}      (${name})`);
   }
-  console.log(`  网页版     ${snap.url}/pair     ← 打不开二维码就点这个`);
+  console.log(`  配对码     ${snap.code}   （${Math.round(config.pairTtlMs / 60000)} 分钟轮换）`);
+  console.log(`  网页版     ${snap.url}/pair     ← 手机上不想手输地址就开这个`);
   console.log('');
 }
 
@@ -49,12 +47,7 @@ async function main() {
   pairing.onRotate = async (code) => {
     log(`🔑 配对码已轮换：${code}`);
     if (!config.staticToken) {
-      try {
-        console.log(await pairing.ascii());
-        console.log(`  配对码 ${code}   网页版 ${pairing.snapshot().url}/pair`);
-      } catch {
-        /* ignore */
-      }
+      console.log(`  配对码 ${code}   网页版 ${pairing.snapshot().url}/pair`);
     }
   };
 
