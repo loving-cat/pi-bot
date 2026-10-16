@@ -13,11 +13,11 @@
       "model": null,
       "thinking": "medium",
       "enabled": true,
-      "createdAt": 1792162274277,
+      "createdAt": 1792162432760,
       "createdBy": "system"
     },
-    "b_7c7eb36f698b25fd": {
-      "id": "b_7c7eb36f698b25fd",
+    "b_9efa23ae5dea53d6": {
+      "id": "b_9efa23ae5dea53d6",
       "name": "测试专员",
       "emoji": "🤖",
       "role": "member",
@@ -41,11 +41,11 @@
       "contextWindow": null,
       "maxTokens": null,
       "enabled": true,
-      "createdAt": 1792162274277,
+      "createdAt": 1792162432760,
       "createdBy": null
     },
-    "b_90d1596e803000d1": {
-      "id": "b_90d1596e803000d1",
+    "b_be5236ffdca81ac1": {
+      "id": "b_be5236ffdca81ac1",
       "name": "甲",
       "emoji": "🤖",
       "role": "member",
@@ -69,11 +69,11 @@
       "contextWindow": null,
       "maxTokens": null,
       "enabled": true,
-      "createdAt": 1792162274277,
+      "createdAt": 1792162432760,
       "createdBy": null
     },
-    "b_7318e9273e2e136e": {
-      "id": "b_7318e9273e2e136e",
+    "b_2b3371c715eb88ca": {
+      "id": "b_2b3371c715eb88ca",
       "name": "乙",
       "emoji": "🤖",
       "role": "member",
@@ -97,11 +97,11 @@
       "contextWindow": null,
       "maxTokens": null,
       "enabled": true,
-      "createdAt": 1792162274277,
+      "createdAt": 1792162432760,
       "createdBy": null
     },
-    "b_8745279931f518bc": {
-      "id": "b_8745279931f518bc",
+    "b_a1584ff74dce33bb": {
+      "id": "b_a1584ff74dce33bb",
       "name": "丙",
       "emoji": "🤖",
       "role": "member",
@@ -125,7 +125,7 @@
       "contextWindow": null,
       "maxTokens": null,
       "enabled": true,
-      "createdAt": 1792162274278,
+      "createdAt": 1792162432760,
       "createdBy": null
     }
   },
@@ -139,89 +139,89 @@
         "chief"
       ],
       "leadBotId": "chief",
-      "createdAt": 1792162274277,
-      "lastMessageAt": 1792162274277
+      "createdAt": 1792162432760,
+      "lastMessageAt": 1792162432760
     },
-    "dm_1e94a82249113b8c": {
-      "id": "dm_1e94a82249113b8c",
+    "dm_f596fa99ed75be74": {
+      "id": "dm_f596fa99ed75be74",
       "kind": "dm",
       "name": "测试专员",
       "topic": "",
       "botIds": [
-        "b_7c7eb36f698b25fd"
+        "b_9efa23ae5dea53d6"
       ],
-      "leadBotId": "b_7c7eb36f698b25fd",
-      "createdAt": 1792162274277,
-      "lastMessageAt": 1792162274277,
+      "leadBotId": "b_9efa23ae5dea53d6",
+      "createdAt": 1792162432760,
+      "lastMessageAt": 1792162432760,
       "cursors": {}
     },
-    "dm_12b5179838f2cac0": {
-      "id": "dm_12b5179838f2cac0",
+    "dm_4ba882e258ca8a62": {
+      "id": "dm_4ba882e258ca8a62",
       "kind": "dm",
       "name": "甲",
       "topic": "",
       "botIds": [
-        "b_90d1596e803000d1"
+        "b_be5236ffdca81ac1"
       ],
-      "leadBotId": "b_90d1596e803000d1",
-      "createdAt": 1792162274277,
-      "lastMessageAt": 1792162274277,
+      "leadBotId": "b_be5236ffdca81ac1",
+      "createdAt": 1792162432760,
+      "lastMessageAt": 1792162432760,
       "cursors": {}
     },
-    "dm_44f4cfee7241ed95": {
-      "id": "dm_44f4cfee7241ed95",
+    "dm_c195df8e087dbc48": {
+      "id": "dm_c195df8e087dbc48",
       "kind": "dm",
       "name": "乙",
       "topic": "",
       "botIds": [
-        "b_7318e9273e2e136e"
+        "b_2b3371c715eb88ca"
       ],
-      "leadBotId": "b_7318e9273e2e136e",
-      "createdAt": 1792162274278,
-      "lastMessageAt": 1792162274278,
+      "leadBotId": "b_2b3371c715eb88ca",
+      "createdAt": 1792162432760,
+      "lastMessageAt": 1792162432760,
       "cursors": {}
     },
-    "r_3cb278d585e4c586": {
-      "id": "r_3cb278d585e4c586",
+    "r_19dcdc627161d584": {
+      "id": "r_19dcdc627161d584",
       "kind": "group",
       "name": "测试部门",
       "topic": "",
       "botIds": [
-        "b_90d1596e803000d1",
-        "b_7318e9273e2e136e"
+        "b_be5236ffdca81ac1",
+        "b_2b3371c715eb88ca"
       ],
-      "leadBotId": "b_90d1596e803000d1",
-      "createdAt": 1792162274278,
-      "lastMessageAt": 1792162274280,
+      "leadBotId": "b_be5236ffdca81ac1",
+      "createdAt": 1792162432760,
+      "lastMessageAt": 1792162432763,
       "createdBy": null,
       "cursors": {
-        "b_90d1596e803000d1": "m_0951b2e888fab799"
+        "b_be5236ffdca81ac1": "m_6ef78a4ee3ba1d0c"
       }
     },
-    "dm_8ff8492192440263": {
-      "id": "dm_8ff8492192440263",
+    "dm_10363bf036ff9145": {
+      "id": "dm_10363bf036ff9145",
       "kind": "dm",
       "name": "丙",
       "topic": "",
       "botIds": [
-        "b_8745279931f518bc"
+        "b_a1584ff74dce33bb"
       ],
-      "leadBotId": "b_8745279931f518bc",
-      "createdAt": 1792162274278,
-      "lastMessageAt": 1792162274278,
+      "leadBotId": "b_a1584ff74dce33bb",
+      "createdAt": 1792162432760,
+      "lastMessageAt": 1792162432760,
       "cursors": {}
     },
-    "r_26f23117fa7ecc61": {
-      "id": "r_26f23117fa7ecc61",
+    "r_311bbd6cde4ecd8b": {
+      "id": "r_311bbd6cde4ecd8b",
       "kind": "group",
       "name": "测试部门2",
       "topic": "",
       "botIds": [
-        "b_8745279931f518bc"
+        "b_a1584ff74dce33bb"
       ],
-      "leadBotId": "b_8745279931f518bc",
-      "createdAt": 1792162274278,
-      "lastMessageAt": 1792162274278,
+      "leadBotId": "b_a1584ff74dce33bb",
+      "createdAt": 1792162432761,
+      "lastMessageAt": 1792162432761,
       "createdBy": null,
       "cursors": {}
     }
