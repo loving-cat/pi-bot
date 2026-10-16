@@ -113,4 +113,61 @@ void main() {
       expect(go(ResizeEdge.right, const Offset(10, -500)).top, 100);
     });
   });
+
+  group('screenDelta：拖上/左边时窗口会自己移动，位移要补偿', () {
+    // ★ 这条钉的是一个 P0：不做补偿的话，拖上边缘会**不断抽搐** ——
+    //   因为指针的"视口坐标"被窗口自身的移动抵消了，算出来位移≈0，
+    //   窗口弹回原尺寸、下一次又反向，来回抖。
+    const start = Rect.fromLTWH(100, 100, 800, 600);
+
+    test('拖下边（窗口没动）→ 视口位移就是屏幕位移', () {
+      const last = Rect.fromLTWH(100, 100, 800, 700); // 高度变了，左上角没动
+      expect(
+        screenDelta(
+          viewDelta: const Offset(0, 50),
+          startBounds: start,
+          lastBounds: last,
+        ),
+        const Offset(0, 50),
+      );
+    });
+
+    test('★ 拖上边：窗口上移 30 之后，视口位移被抵消了，必须补回来', () {
+      const last = Rect.fromLTWH(100, 70, 800, 630); // 上移 30、变高 30
+      // 指针在屏幕上往上挪了 30；但窗口也跟着上移 30 →
+      // 它的"视口坐标"几乎没变（这就是抽搐的根源）
+      const viewDelta = Offset(0, 0);
+      final d = screenDelta(
+        viewDelta: viewDelta,
+        startBounds: start,
+        lastBounds: last,
+      );
+      expect(d, const Offset(0, -30), reason: '补上窗口自身的位移');
+    });
+
+    test('★ 拖左边同理', () {
+      const last = Rect.fromLTWH(70, 100, 830, 600);
+      final d = screenDelta(
+        viewDelta: Offset.zero,
+        startBounds: start,
+        lastBounds: last,
+      );
+      expect(d, const Offset(-30, 0));
+    });
+
+    test('★ 补偿之后，算出来的始终是"屏幕上的累计位移"', () {
+      // 这正是 resizeBy 需要的量（它是以 startBounds 为基准算的）。
+      // 不做补偿时，窗口自身移动了多少就少算多少 —— 拖上边时恰好被抵消掉，
+      // 于是位移≈0、窗口弹回、下一帧反向 = 抽搐。
+      const screenTotal = Offset(0, -30); // 指针在屏幕上累计往上 30
+      const windowMove = Offset(0, -30); // 窗口也跟着上移了 30（我们设的）
+      final viewDelta = screenTotal - windowMove; // 所以视口内几乎没动
+      final d = screenDelta(
+        viewDelta: viewDelta,
+        startBounds: start,
+        lastBounds: start.shift(windowMove),
+      );
+      expect(d, screenTotal, reason: '补回来之后就是真正的屏幕位移，与窗口是否移动无关');
+    });
+  });
 }
