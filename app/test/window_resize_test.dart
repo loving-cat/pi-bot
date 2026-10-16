@@ -5,7 +5,9 @@
 // 把拖动转给 windowManager.startResizing —— 八个方向一个都不能少、也不能写错，
 // 而写错了只表现为"某个方向拖不动"，肉眼很难一个个试出来。
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:pi_bot/resizing.dart';
 import 'package:pi_bot/widgets/window_title_bar.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -169,5 +171,81 @@ void main() {
       );
       expect(d, screenTotal, reason: '补回来之后就是真正的屏幕位移，与窗口是否移动无关');
     });
+  });
+
+  testWidgets('★ 拖右边缘：每帧都要发（不能被限流卡成 30 次/秒），且不回弹', (tester) async {
+    // 这条钉的是"拖动不丝滑、卡卡的"那个坑：
+    // 曾经把 setBounds 限到 28ms 一次（~30 次/秒）—— 省了平台开销，
+    // 但窗口几何一秒只更新 30 次，快速拖动时每步跨很大，看着就是一顿一顿。
+    // 现在拖动期间内容已经降级成骨架（每帧只要 ~6-7ms），平台撑得住 60 次/秒，
+    // 所以闸门放到了 12ms（几乎不生效）。
+    // 另外这条也顺带钉"不回弹"（回弹 = 之前那个补偿超前的震荡 bug）。
+    final bounds = <Rect>[];
+    const channel = MethodChannel('window_manager');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      switch (call.method) {
+        case 'isMaximized':
+          return false;
+        case 'getBounds':
+          return <String, dynamic>{
+            'x': 100.0,
+            'y': 100.0,
+            'width': 800.0,
+            'height': 600.0,
+          };
+        case 'setBounds':
+          final a = (call.arguments as Map).cast<String, dynamic>();
+          bounds.add(
+            Rect.fromLTWH(
+              (a['x'] as num).toDouble(),
+              (a['y'] as num).toDouble(),
+              (a['width'] as num).toDouble(),
+              (a['height'] as num).toDouble(),
+            ),
+          );
+          return null;
+      }
+      return null;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+    tester.view.physicalSize = const Size(800, 600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      const MaterialApp(home: Scaffold(body: WindowResizeOverlay())),
+    );
+    await tester.pump();
+
+    // 抓住右边缘往左拖 12 帧
+    final g = await tester.startGesture(const Offset(796, 300));
+    await tester.pump();
+    for (var i = 0; i < 12; i++) {
+      await g.moveBy(const Offset(-10, 0));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await g.up();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(
+      bounds.length,
+      greaterThanOrEqualTo(6),
+      reason: '12 帧的拖动至少要发 6 次以上 —— 发得太少就是又被限流卡住了',
+    );
+    for (var i = 1; i < bounds.length; i++) {
+      expect(
+        bounds[i].width,
+        lessThanOrEqualTo(bounds[i - 1].width + 0.51),
+        reason: '一路往左拖，宽度只能减不能增 —— 增了就是回弹（震荡）',
+      );
+    }
+    expect(
+      bounds.last.width,
+      lessThan(800),
+      reason: '拖完应该真的变小了',
+    );
+    appResizing.value = false;
   });
 }
