@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { config } from './config.js';
+import { modelGroups } from './model-groups.js';
 import { readJson, log } from './util.js';
 
 const AGENT_DIR = path.join(os.homedir(), '.pi', 'agent');
@@ -87,6 +88,16 @@ export function loadExtraProviders() {
       out.cline = clineProviderConfig(clineCfg);
       log('📦 自动导入 cline 扩展的 ClinePass provider');
     }
+  }
+
+  // 3) 用户在设置里自己加的模型组（优先级最低 —— 前面两种是"部署方"配的，
+  //    这一种是"使用者"配的，同名时让前者说了算）
+  const custom = modelGroups.toProviderConfigs();
+  for (const [id, cfg] of Object.entries(custom)) {
+    if (!out[id]) out[id] = cfg;
+  }
+  if (Object.keys(custom).length) {
+    log(`📦 载入 ${Object.keys(custom).length} 个自定义模型组`);
   }
 
   return out;
