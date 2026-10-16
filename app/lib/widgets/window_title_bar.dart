@@ -11,7 +11,7 @@ import '../theme.dart';
 /// 无边框窗口顶部的**拖拽条**。
 ///
 /// 只负责拖拽（和双击最大化/还原）—— 窗口控制按钮统一由
-/// [WindowControlsOverlay] 画在整个窗口的右上角（学 同类客户端），
+/// [WindowControlsOverlay] 画在整个窗口的右上角，
 /// 聊天区自己不再放一套，否则会出现两套按钮。
 class WindowTitleBar extends StatefulWidget {
   const WindowTitleBar({super.key, this.height = 38});

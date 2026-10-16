@@ -254,3 +254,33 @@ flutter config --jdk-dir="/path/to/jdk-17+"
 `MaterialIcons-Regular.otf ... reducing it from 1645184 to 1588 bytes` 是**正常**的 ——
 1588 字节说明没有任何 `Icons.xxx` 被引用，字体被削成空壳是应该的。
 （对比第 7 条：只要代码里还有 `Icons.xxx`，这 1588 字节就意味着那些图标全是隐形的。）
+
+---
+
+## 22. 菜单每一项文字下面挂着两条绿线 —— Overlay 里没有 Material 祖先
+
+**症状**：右键菜单里每一项文字下面都有两条横杠，颜色还不受控制（截图里像绿色/黄色）。
+看着像自己写的样式出了问题，其实是 Flutter 在提醒你别的。
+
+**根因**：Flutter 的 `Text` 找不到 `Material` 祖先时，会**故意**用
+`TextDecoration.underline` + `TextDecorationStyle.double` + 黄色来画文字 ——
+这是它的提示机制，不是渲染 bug。
+
+而**插进 `Overlay` 的浮层不在 app 的 `Material` 之下**：`Overlay` 挂在 `Navigator` 上，
+`MaterialApp` 给的 `DefaultTextStyle` 传不到那里。所以菜单、弹层、Toast
+这类浮层全都会中招。
+
+**一行定位**（比截图快得多）：
+
+```dart
+debugPrint(DefaultTextStyle.of(tester.element(find.text('置顶'))).style.toString());
+// → decoration: TextDecoration.underline, decorationStyle: TextDecorationStyle.double
+```
+
+**修法**：浮层卡片外面套一层 `Material(type: MaterialType.transparency)` ——
+只借 `DefaultTextStyle`，不画底色，圆角/边框/阴影还是自己那个 `Container` 画。
+
+**回归测试**：断言 `DefaultTextStyle.of(...).style.decorationStyle != TextDecorationStyle.double`。
+这种坑肉眼描述起来都费劲，但一行断言能永久钉住。
+
+**同类**：`msg_ref_chip.dart` 的窥视弹层（也是 Overlay），一起修了。
