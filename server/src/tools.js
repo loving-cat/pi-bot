@@ -26,6 +26,15 @@ import { CODING_BASELINE_TITLE, CODING_BASELINE_HOWTO, isCodingRole } from './co
 export const REF_MERGE_MS = 180_000;
 
 /**
+ * 一次派活的任务描述上限（字符）。
+ *
+ * 派活描述超长时的处理原则：
+ *   超长直接拒绝，不截断。
+ * 截断会静默地削掉约束和禁止项 —— 对方拿着不完整的活去干，比不收更危险。
+ */
+export const MAX_TASK_CHARS = 4000;
+
+/**
  * 决定「来源房间里那条引用气泡」该新建还是合并。
  *
  * bot 给同事发私信时，用户只在来源房间看到「我发了」，永远不知道活派给了谁。
@@ -324,13 +333,31 @@ export function buildCommonTools({ runner, roomId, botId }) {
         '这个工具只用于：跨部门找人、或者确实不该让用户看到的内部确认。',
       parameters: Type.Object({
         botId: Type.String({ description: '对方的 bot id（先 list_bots）' }),
-        task: Type.String({ description: '完整、自包含的任务描述。对方看不到你的上下文，必须写全' }),
+        task: Type.String({
+          description:
+            '**工作说明书**，不是转述用户那句：\n' +
+            '· 要做的事（做什么 / 查什么）\n' +
+            '· **要它交回什么**（交付物越具体越好）\n' +
+            '· 所有约束、禁止项、必须取得同意的环节\n' +
+            '用户原话只在「措辞本身就是任务的一部分」时才带。\n' +
+            `不超过 ${MAX_TASK_CHARS} 字；超了会被**退回**（不截断 —— 截断会让约束悄悄没掉）。`,
+        }),
         timeoutMs: Type.Optional(Type.Number({ description: '超时毫秒，默认 300000' })),
       }),
       execute: async (_toolCallId, params) => {
         const target = store.getBot(params.botId);
         if (!target) return fail(`找不到 bot ${params.botId}`);
         if (target.id === botId) return fail('不能给自己发私信');
+        // ★ 超长直接退，**不截断**。
+        //   截断会把「约束 / 禁止项 / 要报批」这类东西悄悄切掉 ——
+        //   对方拿着一份缺约束的活去干，比不收更危险。宁可让它分两次派。
+        if (params.task.length > MAX_TASK_CHARS) {
+          return fail(
+            `任务描述太长（${params.task.length} 字，上限 ${MAX_TASK_CHARS} 字）。` +
+              '请压成一份自包含的工作说明书：做什么、要交回什么、有哪些约束。' +
+              '不要靠截断 —— 分两次派也行。',
+          );
+        }
         const dm = store.ensureDm(target.id);
         if (!dm) return fail('开不了私信会话');
 
