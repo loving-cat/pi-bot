@@ -35,8 +35,19 @@ export const REF_MERGE_MS = 180_000;
  *
  * @returns {{mode:'merge', refs:Array}|{mode:'append', ref:Object}}
  */
-export function planRefBubble({ last, botId, targetBotId, dmRoomId, at = now(), nowMs = at }) {
-  const ref = { botId: targetBotId, roomId: dmRoomId, at };
+export function planRefBubble({
+  last,
+  botId,
+  targetBotId,
+  dmRoomId,
+  at = now(),
+  nowMs = at,
+  count = null,
+}) {
+  // count = 他俩那个私聊里现在有多少条消息。
+  // 界面用它显示「5 条消息往来」—— 用户要的是"进展到哪一步了"，
+  // 只显示"已发送给 X"看不出有多少来回。
+  const ref = { botId: targetBotId, roomId: dmRoomId, at, count };
   const mergeable =
     Boolean(last) &&
     last.kind === 'ref' &&
@@ -264,6 +275,7 @@ export function buildCommonTools({ runner, roomId, botId }) {
             botId,
             targetBotId: target.id,
             dmRoomId: dm.id,
+            count: (store.listMessages(dm.id) || []).length,
           });
           if (plan.mode === 'merge') {
             // 同一个 bot 连着私信了好几个 → 合并成一个气泡（"已发送给 A 和 B"）
