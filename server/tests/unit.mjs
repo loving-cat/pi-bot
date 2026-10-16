@@ -478,7 +478,8 @@ await test('store: 轮次预算有默认值（老状态文件没有这一项也�
   assert.equal(l.memberTurns, 2);
   assert.equal(l.maxRuns, 10);
   assert.equal(l.maxSteps, 30);
-  assert.equal(l.turnMaxMs, 300_000);
+  // 5 分钟对写代码这类慢活偏紧 → 默认放到 10 分钟（App 的「部门预算」里也能改）
+  assert.equal(l.turnMaxMs, 600_000);
 });
 
 await test('store: 轮次预算能改，并且只认已知的键', () => {
