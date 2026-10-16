@@ -1,0 +1,29 @@
+{
+  "4c242a5e5862a45575": {
+    "id": "4c242a5e5862a45575",
+    "name": "note.txt",
+    "mime": "text/plain",
+    "kind": "file",
+    "size": 5,
+    "ext": ".txt",
+    "createdAt": 1792162275754
+  },
+  "0ddf303f598384c9ba": {
+    "id": "0ddf303f598384c9ba",
+    "name": "x.png",
+    "mime": "image/png",
+    "kind": "image",
+    "size": 2,
+    "ext": ".png",
+    "createdAt": 1792162275757
+  },
+  "4ab44b5f5a38d10f18": {
+    "id": "4ab44b5f5a38d10f18",
+    "name": "报表.csv",
+    "mime": "text/csv",
+    "kind": "file",
+    "size": 4,
+    "ext": ".csv",
+    "createdAt": 1792162275760
+  }
+}
