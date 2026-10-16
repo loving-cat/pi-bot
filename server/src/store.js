@@ -621,6 +621,22 @@ export class Store {
           this.dirtyRooms.add(roomId);
           n++;
         }
+        // ★ 工具行也要收尾。
+        //
+        //   只把消息标成 done 是不够的：那条消息里的工具步骤会一直停在
+        //   status='running' —— 客户端把它画成转圈的图标，于是群里永远显示
+        //   "正在调用工具…"，圈一直转但什么也没发生（用户报的）。
+        //   服务端重启打断的那一步，就明说被打断了。
+        if (Array.isArray(msg.steps) && msg.steps.some((s) => s?.status === 'running')) {
+          msg.steps = msg.steps.map((s) =>
+            s?.status === 'running'
+              ? { ...s, status: 'error', error: '服务端重启，这一步中断' }
+              : s,
+          );
+          msg.updatedAt = now();
+          this.dirtyRooms.add(roomId);
+          n++;
+        }
       }
     }
     if (n) this.saveNow();
