@@ -27,7 +27,6 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   Timer? _ticker;
-  int _qrStamp = DateTime.now().millisecondsSinceEpoch;
 
   @override
   void initState() {
@@ -71,7 +70,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onPressed: () {
               state.loadPairingInfo();
               state.refresh();
-              setState(() => _qrStamp = DateTime.now().millisecondsSinceEpoch);
             },
             icon: const Icon(LucideIcons.refreshCw, size: 20),
           ),
