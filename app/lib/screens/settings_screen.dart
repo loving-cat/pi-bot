@@ -101,29 +101,45 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _Card(
                   child: Column(
                     children: [
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(PB.r2xl),
-                        ),
-                        child: Image.network(
-                          '$base/api/qr.png?t=$_qrStamp',
-                          width: 196,
-                          height: 196,
-                          errorBuilder: (c, e, s) => const SizedBox(
-                            width: 196,
-                            height: 196,
-                            child: Center(
-                              child: Text(
-                                '二维码加载失败',
-                                style: TextStyle(color: Colors.black54),
+                      // ★ 这里以前画一张二维码给手机扫。
+                      //   扫码入口已经取消了（真机相机起不来），再画一张没人扫得了的码
+                      //   只会让人对着它发呆 —— 直接给**地址**和**配对码**，
+                      //   手机上照着填就行。
+                      Row(
+                        children: [
+                          const Icon(
+                            LucideIcons.link,
+                            size: 14,
+                            color: PB.textTertiary,
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              base,
+                              style: const TextStyle(
+                                fontFamily: PB.monoFamily,
+                                fontFamilyFallback: PB.monoFallback,
+                                fontSize: PB.fsSm,
+                                color: PB.textSecondary,
                               ),
                             ),
                           ),
-                        ),
+                          IconButton(
+                            tooltip: '复制地址',
+                            icon: const Icon(LucideIcons.copy, size: 15),
+                            onPressed: () {
+                              Clipboard.setData(ClipboardData(text: base));
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('地址已复制'),
+                                  duration: Duration(milliseconds: 1200),
+                                ),
+                              );
+                            },
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 6),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [

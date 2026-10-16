@@ -276,6 +276,30 @@ export class PiRunner {
    * 忙的时候**不并发**：把这条消息记进排队表，等当前这轮跑完直接接着跑一轮
    * （消息本身 send() 已经落库了，下一轮的 transcript 里必然带上它，不会丢）。
    */
+  /**
+   * 用户在群里说话、但房间里还有人在跑：让组长**当场**回一句。
+   *
+   * 不打断正在干的人（各有各的会话），只是不让用户排在机器后面 ——
+   * 用户是最高权威，不该等一个成员把手上的活磨完（那可能是几分钟）。
+   */
+  async #answerUserNow(roomId, leadBot, files) {
+    const room = store.getRoom(roomId);
+    if (!room) return;
+    const { members, leadId } = this.#department(room);
+    const fresh = this.#transcriptFor(roomId, leadBot.id);
+    const prompt = this.#composeGroupPrompt(room, leadBot, fresh, {
+      isLead: leadBot.id === leadId,
+      reason: '用户在群里刚说了话，先回应用户',
+      members,
+      leadId,
+      order: { index: 1 },
+    });
+    await this.run(roomId, leadBot.id, prompt, {
+      groupTurn: true,
+      attachments: files,
+    });
+  }
+
   #dispatchGroupRound(roomId, text, files) {
     if (this.roundLocks.has(roomId) || this.isRoomBusy(roomId)) {
       const pending = this.roundQueue.get(roomId);
@@ -1271,9 +1295,11 @@ export class PiRunner {
           meta: { queued: effective, queuedState: queued ?? 'queued' },
           attachments: hydrate(files),
         },
-        // ★ 插在"它正在写的那条回复"之前 —— 于是这条话后面跟着的就是它的回复，
-        //   用户读到的是「我插的话 → 它的回应」。
-        { beforeStreaming: true },
+        // ★ 用户的消息**就落在最新**（用户：“我的信息应该在最下面”）。
+        //   以前是插在“它正在写的那条回复”之前 —— 那样读起来因果更顺，
+        //   但那个回复可能是几分钟前开始的，一插就插到聊天记录中间去了，
+        //   用户找不到自己刚说的话。现在直接追加到底部。
+        {},
       );
       bus.emit('event', {
         t: 'steer.accepted',
@@ -1298,8 +1324,28 @@ export class PiRunner {
     });
 
     if (room.kind === 'group') {
-      // 部门：老大先接，再往下派（房间级串行，忙则排队）
-      this.#dispatchGroupRound(roomId, clean, files).catch((err) => log('runRound 异常：', err?.stack || err));
+      // ★ 用户说话必须优先。
+      //
+      //   真事：一个成员挂了（超时被收住），用户在群里发话 —— 组长半天不响。
+      //   因为群聊有房间锁，而这锁是“忙则排队”：只要还有人在跑，
+      //   用户这条就被排到下一轮（日志里是“房间正忙，这条消息排队等下一轮”），
+      //   而那个成员可能还要跑好几分钟。
+      //
+      //   用户是最高权威，不该排在机器后面。所以：别人继续跑（各干各的），
+      //   但组长当场回你一句 —— 它自己的会话是独立的，不会把正在干的人打断。
+      const roomBusy =
+        this.roundLocks.has(roomId) || this.isRoomBusy(roomId);
+      if (roomBusy && !this.isBusy(roomId, botId)) {
+        log(`【${room.name}】房间在忙，但用户说话了 → 让组长当场先回`);
+        this.#answerUserNow(roomId, bot, files).catch((err) =>
+          log('当场回应失败：', err?.message || err),
+        );
+      } else {
+        // 部门：老大先接，再往下派（房间级串行，忙则排队）
+        this.#dispatchGroupRound(roomId, clean, files).catch((err) =>
+          log('runRound 异常：', err?.stack || err),
+        );
+      }
     } else {
       this.#buildInput(clean, files)
         .then(({ promptText }) =>
