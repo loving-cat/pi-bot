@@ -14,7 +14,7 @@
 import path from 'node:path';
 import { config } from './config.js';
 import { bus } from './bus.js';
-import { newId, now, readJson, writeJsonAtomic } from './util.js';
+import { newId, now, readJson, writeJsonAtomic, insertionPoint } from './util.js';
 
 const STATE_FILE = path.join(config.dataDir, 'state.json');
 const ROOMS_DIR = path.join(config.dataDir, 'rooms');
@@ -544,7 +544,15 @@ export class Store {
     return (this.messages.get(roomId) ?? []).find((m) => m.id === messageId) ?? null;
   }
 
-  appendMessage(partial, { silent = false } = {}) {
+  /**
+   * 追加一条消息。
+   *
+   * beforeStreaming：**插队**用 —— 插在"正在写的那条回复"之前。
+   *   用户插话时，bot 手上那条回复还没写完；如果按普通追加放到最后，
+   *   读起来就是"它先答了、我才插话"，因果是反的（用户报的：
+   *   "只要是插队成功的，就把 bot 的回复放到最新"）。
+   */
+  appendMessage(partial, { silent = false, beforeStreaming = false } = {}) {
     const roomId = partial.roomId;
     if (!this.messages.has(roomId)) this.messages.set(roomId, []);
     const msg = {
@@ -570,13 +578,20 @@ export class Store {
       updatedAt: now(),
     };
     const list = this.messages.get(roomId);
-    list.push(msg);
+    // 插队：落在"正在写的那条"之前；没有正在写的就按普通追加
+    const at = beforeStreaming ? insertionPoint(list) : list.length;
+    list.splice(at, 0, msg);
     if (list.length > config.maxMessagesPerRoom) list.splice(0, list.length - config.maxMessagesPerRoom);
     this.dirtyRooms.add(roomId);
     const room = this.state.rooms[roomId];
     if (room) room.lastMessageAt = msg.createdAt;
     this.scheduleSave();
-    if (!silent) bus.emit('event', { t: 'msg.new', msg });
+    if (!silent) {
+      // 落点要一起告诉客户端 —— 不然它按"追加"放到最后，
+      // 本地看到的顺序和重新加载后的顺序就不一样了。
+      const insertBefore = at < list.length - 1 ? list[at + 1].id : null;
+      bus.emit('event', { t: 'msg.new', msg, insertBefore });
+    }
     return msg;
   }
 

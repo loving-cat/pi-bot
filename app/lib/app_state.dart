@@ -13,6 +13,18 @@ import 'platform.dart';
 import 'text_utils.dart';
 
 /// 全局状态：连接、房间、消息、流式输出。
+/// 把新成员接到名单后面：去重、保持原有顺序。
+///
+/// 抽成纯函数是为了能单测 —— "加人之后名单长什么样"这种事，
+/// 一旦只靠网络往返验证，就没人真的验过它了。
+List<String> mergeMemberIds(List<String> current, List<String> added) {
+  final out = [...current];
+  for (final id in added) {
+    if (!out.contains(id)) out.add(id);
+  }
+  return out;
+}
+
 class AppState extends ChangeNotifier {
   static const _kUrl = 'server_url';
   static const _kToken = 'server_token';
@@ -466,6 +478,27 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// 往群里加 bot —— 用户自己加成员（不用再跟主控说）。
+  ///
+  /// 服务端收 botIds 时本来就会：过滤掉不存在的 bot、名单里没有老大时顺手指定一个，
+  /// 所以这里只负责"接在后面 + 去重"。
+  Future<void> addBotsToRoom(String roomId, List<String> botIds) async {
+    if (botIds.isEmpty) return;
+    try {
+      final room = rooms.firstWhere(
+        (r) => r.id == roomId,
+        orElse: () => Room(id: '', name: '', kind: '', botIds: const []),
+      );
+      await api?.patch('/api/rooms/$roomId', {
+        'botIds': mergeMemberIds(room.botIds, botIds),
+      });
+      await refresh();
+    } catch (err) {
+      lastError = '$err';
+      _notify();
+    }
+  }
+
   /// 改"我叫什么"。服务端会把它写进每个 bot 的系统提示（下一轮生效）。
   Future<void> saveUserName(String name) async {
     try {
@@ -642,7 +675,20 @@ class AppState extends ChangeNotifier {
       case 'msg.new':
         final msg = Msg.fromJson((ev['msg'] as Map).cast<String, dynamic>());
         final list = messages.putIfAbsent(msg.roomId, () => []);
-        if (!list.any((m) => m.id == msg.id)) list.add(msg);
+        if (!list.any((m) => m.id == msg.id)) {
+          // 插队：服务端说这条插在哪条之前，本地就插哪。
+          // 不按它的话，本地顺序和"重新加载后的顺序"会不一样 ——
+          // 用户会看到消息跳一下。
+          final before = ev['insertBefore'] as String?;
+          final at = before == null
+              ? -1
+              : list.indexWhere((m) => m.id == before);
+          if (at >= 0) {
+            list.insert(at, msg);
+          } else {
+            list.add(msg);
+          }
+        }
         _touchRoom(msg.roomId, msg);
         break;
 
