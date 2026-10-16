@@ -279,7 +279,7 @@ await test('store: 非法颜色 / 非法形状退回 null（让客户端按 id �
 //   用户的原话："很多模型能支持 100w 上下文，然后 161k max token" ——
 //   所以这四个数必须能被用户/总经理覆盖，而且要能只覆盖其中一部分。
 // ---------------------------------------------------------------------------
-const { withCapacity, applyCompactionBudget } = await import('../src/pi-runner.js');
+const { withCapacity, applyCompactionBudget } = await import('../src/context-budget.js');
 
 const FAKE_MODEL = {
   provider: 'cline',
@@ -1180,6 +1180,35 @@ await test('会话层：补给的记录带发言人，超长会截断', () => {
   );
   assert.match(prompt, /用户: 干这个/);
   assert.match(prompt, /同事: x+…/, '超长的记录要截断，别把上下文撑爆');
+});
+
+
+// ---------------------------------------------------------------------------
+// 上下文预算（context-budget.js）：四个数都能被单独覆盖
+// ---------------------------------------------------------------------------
+const { readContext, positiveOrNull } = await import('../src/context-budget.js');
+
+await test('上下文：读不到占用时返回 null（界面该显示"—"而不是 0%）', () => {
+  assert.equal(readContext({}), null);
+  assert.equal(readContext({ getContextUsage: () => null }), null);
+  assert.equal(readContext({ getContextUsage: () => { throw new Error('炸了'); } }), null);
+});
+
+await test('上下文：读得到时把四个数都带上', () => {
+  const u = readContext({
+    getContextUsage: () => ({ tokens: 1234, contextWindow: 10000, percent: 12.3 }),
+    isCompacting: true,
+  });
+  assert.deepEqual(u, { tokens: 1234, contextWindow: 10000, percent: 12.3, compacting: true });
+});
+
+await test('上下文：正数助手 —— 0/负数/非数字都当没设', () => {
+  assert.equal(positiveOrNull(100), 100);
+  assert.equal(positiveOrNull('100'), 100);
+  assert.equal(positiveOrNull(0), null);
+  assert.equal(positiveOrNull(-1), null);
+  assert.equal(positiveOrNull('abc'), null);
+  assert.equal(positiveOrNull(undefined), null);
 });
 
 const passed = results.filter((r) => r.ok).length;
