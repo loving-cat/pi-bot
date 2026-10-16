@@ -20,6 +20,20 @@ const STATE_FILE = path.join(config.dataDir, 'state.json');
 const ROOMS_DIR = path.join(config.dataDir, 'rooms');
 const STATE_VERSION = 2;
 
+/**
+ * 把 avatar 颜色统一成 `#RRGGBB`。
+ * 接受 `#E93D82` / `e93d82` / `#e93`；非法输入返回 null（= 让客户端按 id 自己算）。
+ */
+function normalizeHex(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const s = String(v).trim().replace(/^#/, '');
+  const full = /^[0-9a-fA-F]{3}$/.test(s)
+    ? s.split('').map((c) => c + c).join('')
+    : s;
+  if (!/^[0-9a-fA-F]{6}$/.test(full)) return null;
+  return `#${full.toUpperCase()}`;
+}
+
 export const MAIN_BOT_ID = 'chief';
 
 /** 主控（总经理）的默认人设 */
@@ -202,8 +216,13 @@ export class Store {
       persona: String(patch.persona || '').slice(0, 4000),
       // tagline 是给用户看的一句话简介；persona 是给模型看的系统提示，不能直接展示到界面上
       tagline: String(patch.tagline || '').slice(0, 60),
+      // 形象：avatarShape 是预设形状下标（null = 按 id 随机），avatarColor 是 #RRGGBB（null = 按 id 随机）
+      avatarShape: Number.isInteger(patch.avatarShape) ? patch.avatarShape : null,
+      avatarColor: normalizeHex(patch.avatarColor),
       model: patch.model || null,
       thinking: patch.thinking || config.thinking,
+      // 用户手把手教给它的做法（SOP）。会拼进系统提示词，让 bot 真的"学会"。
+      skills: [],
       enabled: true,
       createdAt: now(),
       createdBy: patch.createdBy || null,
@@ -224,6 +243,20 @@ export class Store {
     if (patch.emoji !== undefined) next.emoji = String(patch.emoji).slice(0, 8);
     if (patch.persona !== undefined) next.persona = String(patch.persona).slice(0, 4000);
     if (patch.tagline !== undefined) next.tagline = String(patch.tagline).slice(0, 60);
+    if (patch.avatarShape !== undefined)
+      next.avatarShape = Number.isInteger(patch.avatarShape) ? patch.avatarShape : null;
+    if (patch.avatarColor !== undefined) next.avatarColor = normalizeHex(patch.avatarColor);
+    if (patch.skills !== undefined && Array.isArray(patch.skills)) {
+      next.skills = patch.skills
+        .slice(0, 40)
+        .map((s) => ({
+          id: String(s?.id || newId('sk_')),
+          title: String(s?.title || '').slice(0, 80),
+          howto: String(s?.howto || '').slice(0, 2000),
+          createdAt: s?.createdAt || now(),
+        }))
+        .filter((s) => s.title.trim());
+    }
     if (patch.model !== undefined) next.model = patch.model || null;
     if (patch.thinking !== undefined) next.thinking = patch.thinking || config.thinking;
     if (patch.enabled !== undefined) next.enabled = Boolean(patch.enabled);
@@ -408,6 +441,11 @@ export class Store {
       authorEmoji: partial.authorEmoji ?? null,
       text: partial.text ?? '',
       status: partial.status || 'done',
+      // kind='ref' 的消息不画气泡，只渲染一个"已发给 XX"的小浮动条（同类客户端 那种）。
+      kind: partial.kind || 'text',
+      // 跨会话引用：bot 给别的 bot 发了私信时，在来源房间留一条指向
+      // { botId, roomId } 的记录，用户点开能看到他们聊了什么。
+      refs: partial.refs ?? [],
       attachments: partial.attachments ?? [],
       steps: partial.steps ?? [],
       usage: partial.usage ?? null,
