@@ -6,7 +6,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import { config } from './config.js';
 import { lanAddresses } from './pairing.js';
-import { modelGroups } from './model-groups.js';
+import { modelGroups, testModelGroup } from './model-groups.js';
 import { store } from './store.js';
 import { metaFor, pathFor, saveBuffer } from './attachments.js';
 import { timingSafeEqual } from './util.js';
@@ -245,6 +245,20 @@ export function createHttpServer({ runner, pairing }) {
         const total = await runner.applyModelGroupChange();
         log(`🔌 新增模型组：${r.group.name}（${r.group.models.length} 个模型），可用模型 ${total} 个`);
         return send(res, 200, { group: r.group.toPublic() });
+      }
+
+      // 连通性测试：还没保存也能测（用户在编辑器里填完想先试一下）
+      if (pathname === '/api/model-groups/test' && req.method === 'POST') {
+        const body = await readBody(req);
+        // 有 id 就用存着的那份补全（key 打了码，不能拿它当值提交）
+        const saved = body.id ? modelGroups.get(body.id) : null;
+        const r = await testModelGroup({
+          baseUrl: body.baseUrl || saved?.baseUrl,
+          apiKey: body.apiKey || saved?.apiKey,
+          api: body.api || saved?.api,
+          model: body.model || saved?.models?.[0]?.id,
+        });
+        return send(res, 200, r);
       }
 
       const groupMatch = pathname.match(/^\/api\/model-groups\/([^/]+)$/);
