@@ -206,6 +206,38 @@ await test('★ 同级 @ 忙碌成员 → 不打断；等不到就上报（不�
   );
 });
 
+await test('★ 终止：当场停住，不再往下派下一个人（用户："点了要立即反应"）', async () => {
+  const { room, lead, member } = makeDept('F');
+  const mate = store.createBot({ name: '同事F', persona: '干活' });
+  store.updateRoom(room.id, { botIds: [lead.id, member.id, mate.id] });
+  const runner = new PiRunner();
+
+  const ran = [];
+  // 成员**不忙** —— 这样才能真的被派出去（不然会在 isBusy 那关被拦住，
+  // 这条测试就变成空转了：谁都没跑，断言当然成立，但什么也没验到）
+
+  PiRunner.prototype.run = async (_roomId, botId) => {
+    ran.push(botId);
+    if (botId === lead.id) {
+      return { ok: true, text: `@${member.name} @${mate.name} 你们俩上`, messageId: 'stub', ms: 1 };
+    }
+    // 第一个成员刚开始跑，用户就按了终止
+    await runner.abort(room.id);
+    return { ok: true, text: '好', messageId: `stub-${botId}`, ms: 1 };
+  };
+
+  await runner.runRound(room.id, { openerText: '干活', openerBotId: null, openerName: '用户' });
+  PiRunner.prototype.run = ORIGINAL_RUN;
+
+  assert.ok(ran.includes(lead.id), '组长要先跑');
+  assert.ok(!ran.includes(mate.id), `★ 终止之后不该再派别人，实际跑了：${ran.length} 个`);
+  assert.ok(runner.aborting.has(room.id), '终止标记要留在 set 里（新消息来了才清）');
+
+  // 新消息 = 新一轮 → 标记清掉，否则这个房间再也起不来
+  await runner.send(room.id, '再来一次');
+  assert.ok(!runner.aborting.has(room.id), '★ 新消息必须把终止标记清掉，否则房间永久卡死');
+});
+
 let failed = 0;
 for (const r of results) {
   if (r.ok) console.log(`  ✓ ${r.name}`);
