@@ -378,4 +378,56 @@ void main() {
     expect(find.text('详情'), findsOneWidget);
     expect(find.text('成员'), findsNothing, reason: '私聊没有"成员"这回事');
   });
+
+  testWidgets('私聊里气泡上不挂名字（顶上的胶囊已经说清是谁了）', (tester) async {
+    tester.view.physicalSize = const Size(1200, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final state = _stateWith(
+      [Room(id: 'r1', name: '甲', kind: 'dm', botIds: ['b1'])],
+      bots: [Bot(id: 'b1', name: '甲')],
+    );
+    addTearDown(state.dispose);
+    state.messages['r1'] = [
+      Msg(
+        id: 'm1',
+        roomId: 'r1',
+        authorType: 'bot',
+        authorId: 'b1',
+        authorName: '甲',
+        text: '第一条',
+        status: 'done',
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+      ),
+      Msg(
+        id: 'm2',
+        roomId: 'r1',
+        authorType: 'bot',
+        authorId: 'b1',
+        authorName: '甲',
+        text: '第二条',
+        status: 'done',
+        createdAt: DateTime.now().millisecondsSinceEpoch + 2000,
+      ),
+    ];
+    await tester.pumpWidget(
+      AppScope(
+        state: state,
+        child: MaterialApp(home: ChatScreen(room: state.rooms.first)),
+      ),
+    );
+    await tester.pump();
+
+    // 胶囊里有名字（那是允许的，也是用户要的）
+    expect(find.text('甲'), findsWidgets);
+    // 但气泡区域里不该再挂一份名字：正文两条都在，名字只出现在顶部胶囊
+    expect(find.text('第一条'), findsOneWidget);
+    expect(find.text('第二条'), findsOneWidget);
+    final nameRects = <Rect>[
+      for (var i = 0; i < tester.widgetList(find.text('甲')).length; i++)
+        tester.getRect(find.text('甲').at(i)),
+    ];
+    final inBody = nameRects.where((r) => r.top > 100).toList();
+    expect(inBody, isEmpty, reason: '正文里不该再出现作者名字（顶部胶囊之外）');
+  });
 }
