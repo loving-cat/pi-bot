@@ -539,15 +539,15 @@ export function buildChiefTools({ runner, health, roomId }) {
       name: 'list_models',
       label: '模型菜单',
       description:
-        '可用的模型白名单。只能从这里选：kimi 就是 k3、glm 就是 5.3、deepseek 就是 v4.1 flash，其他不许用。' +
-        '★=实测可用。写别名（如 ds-4.1-flash）或完整 slug 都行。一轮只调一次。',
+        '可用模型来自用户自己配的模型组（App 的「模型」页里配）。' +
+        '只能从这里选，写别名或完整 slug 都行。' +
+        '★=实测可用，✗=探活没过（仍可选，但可能报错）。一轮只调一次。',
       parameters: Type.Object({}),
       execute: async () =>
         ok(
-          '白名单（只能从这里选）：\n' +
+          '可选模型（只能从这里选）：\n' +
             menuText(health) +
-            '\n\n选型建议：写代码/改文件/跑命令 → ds-4.1-flash；长文档/方案/写作 → kimi-k3；' +
-            '通用中文活 → glm-5.3；简单批量 → glm-5.3-flash。',
+            '\n\n挑的时候看用途那一列；没把握就用列表第一个。',
           { menu: menuEntries().map((m) => m.alias) },
         ),
     }),

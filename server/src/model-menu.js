@@ -1,57 +1,30 @@
 /**
- * 模型菜单（白名单）。
+ * 模型菜单 —— **完全来自用户自己配的模型组**。
  *
- * 本机 models.json 挂了一百多个模型，但绝大多数是过期/挂掉的，
- * 而且主控自己挑很容易挑到老版本（kimi-k2.5 这种）。
- * 所以这里硬性收口成一份小菜单：kimi = k3、glm = 5.3、deepseek = v4.1 flash，
- * 其他一律不许用。同族多个线路时按探活结果自动挑活的。
+ * 以前这里写着一份内置白名单（"kimi=k3、glm=5.3、deepseek=v4.1 flash"）。
+ * 那是**本机的东西**，不该进仓库，也不该是别人的默认：
+ *   · 别人 clone 下来根本没有那些线路，菜单全是 ✗
+ *   · "我该用哪些模型"本来就该用户自己说了算 ——
+ *     App 里配的模型组就是答案（用户原话："每个人用自己配置的，
+ *     不然我们要模型组干什么，就是让用户自己配置自己的集合"）。
+ *
+ * 所以现在：菜单 = 所有**启用的模型组**里的模型（见 model-groups.js）。
+ * 一个组都没配 = 空菜单，这里会明确告诉用户去哪儿配。
  */
 import { modelGroups } from './model-groups.js';
 import { log } from './util.js';
 
-export const MODEL_MENU = [
-  {
-    alias: 'kimi-k3',
-    label: 'Kimi K3',
-    use: '长文档、写作、复杂推理、方案',
-    tier: 'strong',
-    slugs: ['ctyun/kimi-k3-oc'],
-  },
-  {
-    alias: 'glm-5.3',
-    label: 'GLM 5.3',
-    use: '通用主力，中文表达好，性价比高',
-    tier: 'strong',
-    slugs: ['ctyun/glm-5.3-oc'],
-  },
-  {
-    alias: 'glm-5.3-flash',
-    label: 'GLM 5.3 Flash',
-    use: '便宜快，适合批量/简单活',
-    tier: 'fast',
-    slugs: ['selfhost/wb-glm-5.3-flash'],
-  },
-  {
-    alias: 'ds-4.1-flash',
-    label: 'DeepSeek V4.1 Flash',
-    use: '写代码、改文件、跑命令的主力',
-    tier: 'code',
-    slugs: [
-      'cline/cline-pass/deepseek-v4.1-flash',
-      'selfhost/wbi-deepseek-v4.1-flash',
-      'selfhost/wb-deepseek-v4.1-flash',
-    ],
-  },
-];
+/** 一个模型组都没配时给 bot（也就是给用户）的提示 */
+export const EMPTY_MENU_HINT = [
+  '还没有可用的模型 —— 去 App 的「模型」页加一个模型组：',
+  '  1. 填 baseUrl + API key（任何 OpenAI 兼容接口都行）',
+  '  2. 点「测试连接」拉出模型列表，勾上你要用的',
+  '  3. 回来再让我选模型。',
+].join('\n');
 
-/**
- * 完整菜单 = 内置白名单 + 用户自己加的模型组。
- *
- * 内置那份是"我们探过活、知道能用的"；自定义那份是"用户自己知道能用"。
- * 分开是为了：内置那几条永远排前面（它们是主力），自定义的跟在后面。
- */
+/** 当前可选的模型（每项：alias / label / use / slugs / tier） */
 export function menuEntries() {
-  return [...MODEL_MENU, ...modelGroups.menuEntries()];
+  return modelGroups.menuEntries();
 }
 
 /** 菜单里所有合法 slug（去重） */
@@ -59,15 +32,16 @@ export function menuSlugs() {
   return [...new Set(menuEntries().flatMap((m) => m.slugs))];
 }
 
-export function findMenuEntry(input) {
+export function findMenuEntry(input, entries = menuEntries()) {
   if (!input) return null;
   const key = String(input).trim().toLowerCase();
-  const all = menuEntries();
   return (
-    all.find((m) => m.alias.toLowerCase() === key) ??
-    all.find((m) => m.slugs.some((s) => s.toLowerCase() === key)) ??
-    // 自定义组里的模型也允许直接用 `<组id>/<模型id>` 指定
-    all.find((m) => m.slugs.some((s) => s.toLowerCase().endsWith(`/${key}`))) ??
+    entries.find((m) => m.alias.toLowerCase() === key) ??
+    entries.find((m) => m.slugs.some((s) => s.toLowerCase() === key)) ??
+    // 也允许直接用 `<组id>/<模型id>` 或唯一后缀指定
+    entries.find((m) =>
+      m.slugs.some((s) => s.toLowerCase().endsWith(`/${key}`)),
+    ) ??
     null
   );
 }
@@ -76,42 +50,46 @@ export function findMenuEntry(input) {
  * 把别名或 slug 解析成实际可用的 slug：同族里优先取探活通过的。
  * @returns {{entry:object, slug:string, alive:boolean}|null}
  */
-export function resolveMenu(input, health) {
-  const entry = findMenuEntry(input);
+export function resolveMenu(input, health, entries) {
+  const entry = findMenuEntry(input, entries);
   if (!entry) return null;
   const alive = entry.slugs.filter((s) => health?.isKnownGood(s));
   const slug = alive[0] ?? entry.slugs[0];
   return { entry, slug, alive: alive.length > 0 || !health };
 }
 
-/** 菜单渲染成给主控看的文本 */
-export function menuText(health) {
-  const lines = [];
-  for (const entry of menuEntries()) {
-    const resolved = resolveMenu(entry.alias, health);
-    const mark = resolved.alive ? '★' : '✗';
-    lines.push(
-      `${mark} ${entry.alias.padEnd(14)} → ${resolved.slug.padEnd(44)} ${entry.use}`,
-    );
-  }
-  return lines.join('\n');
+/**
+ * 把一份菜单渲染成给主控看的文本。**纯函数** —— 菜单内容全在参数里，
+ * 所以"没配模型组时该说什么"这件事能被单测钉住，不用真去建组。
+ */
+export function renderMenu(entries, health) {
+  if (!entries.length) return EMPTY_MENU_HINT;
+  return entries
+    .map((entry) => {
+      const r = resolveMenu(entry.alias, health, entries);
+      const mark = r?.alive ? '★' : '✗';
+      return `${mark} ${entry.alias.padEnd(14)} → ${(r?.slug ?? '?').padEnd(44)} ${entry.use}`;
+    })
+    .join('\n');
 }
 
-/** 默认模型：优先 deepseek v4.1 flash（写代码），没有就取第一个活的 */
+/** 菜单渲染成给主控看的文本 */
+export function menuText(health) {
+  return renderMenu(menuEntries(), health);
+}
+
+/** 默认模型：菜单里第一个探活可用的；都没有就退回菜单第一个 */
 export function defaultMenuSlug(health) {
-  const preferred = ['ds-4.1-flash', 'glm-5.3', 'glm-5.3-flash', 'kimi-k3'];
-  for (const alias of preferred) {
-    const r = resolveMenu(alias, health);
+  const entries = menuEntries();
+  for (const entry of entries) {
+    const r = resolveMenu(entry.alias, health, entries);
     if (r?.alive) return r.slug;
   }
-  for (const entry of menuEntries()) {
-    const r = resolveMenu(entry.alias, health);
-    if (r) return r.slug;
-  }
-  return null;
+  const first = entries[0];
+  return first ? (resolveMenu(first.alias, health, entries)?.slug ?? null) : null;
 }
 
 export function logMenu(health) {
-  log('模型菜单（白名单）：');
+  log('模型菜单（来自你自己配的模型组）：');
   for (const line of menuText(health).split('\n')) log('   ' + line);
 }
