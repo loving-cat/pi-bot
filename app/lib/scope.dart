@@ -49,7 +49,7 @@ String shortText(String text, int max) {
   return flat.length <= max ? flat : '${flat.substring(0, max)}…';
 }
 
-/// `cline/cline-pass/deepseek-v4.1-flash` → `deepseek-v4.1-flash`
+/// `provider/model-id` → `model-id`
 String shortModel(String? slug) {
   if (slug == null || slug.isEmpty) return '';
   final parts = slug.split('/');
