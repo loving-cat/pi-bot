@@ -15,7 +15,7 @@ import { Type } from 'typebox';
 import path from 'node:path';
 import { config } from './config.js';
 import { store } from './store.js';
-import { menuText, resolveMenu, MODEL_MENU } from './model-menu.js';
+import { menuText, resolveMenu, menuEntries } from './model-menu.js';
 import { extractText } from './extract.js';
 import { webSearch, webFetch } from './web.js';
 import { log, now } from './util.js';
@@ -481,7 +481,7 @@ export function buildChiefTools({ runner, health, roomId }) {
             menuText(health) +
             '\n\n选型建议：写代码/改文件/跑命令 → ds-4.1-flash；长文档/方案/写作 → kimi-k3；' +
             '通用中文活 → glm-5.3；简单批量 → glm-5.3-flash。',
-          { menu: MODEL_MENU.map((m) => m.alias) },
+          { menu: menuEntries().map((m) => m.alias) },
         ),
     }),
 

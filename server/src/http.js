@@ -6,6 +6,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import { config } from './config.js';
 import { lanAddresses } from './pairing.js';
+import { modelGroups } from './model-groups.js';
 import { store } from './store.js';
 import { metaFor, pathFor, saveBuffer } from './attachments.js';
 import { timingSafeEqual } from './util.js';
@@ -162,6 +163,8 @@ export function createHttpServer({ runner, pairing }) {
           // 每个活着的会话的上下文占用（key 是 '房间:bot'）。
           // 放这儿而不是单开接口：App 每次刷新状态就顺带拿到了，少一次往返。
           context: runner.contextUsage(),
+          // 用户自己配的模型组（**key 已打码**，真 key 不出服务端）
+          modelGroups: modelGroups.listPublic(),
           pairing: config.staticToken ? null : pairing.snapshot(),
         });
       }
@@ -227,6 +230,37 @@ export function createHttpServer({ runner, pairing }) {
         const r = store.deleteBot(botMatch[1]);
         if (!r) return send(res, 400, { error: '删不了（不存在或它是主控）' });
         return send(res, 200, r);
+      }
+
+      // ---------- 模型组（用户自己配的 baseUrl/key/模型）----------
+      if (pathname === '/api/model-groups' && req.method === 'GET') {
+        return send(res, 200, { modelGroups: modelGroups.listPublic() });
+      }
+
+      if (pathname === '/api/model-groups' && req.method === 'POST') {
+        const body = await readBody(req);
+        const r = modelGroups.upsert(body);
+        if (r.error) return send(res, 400, { error: r.error });
+        // 运行时热注册，加完不用重启
+        const total = await runner.applyModelGroupChange();
+        log(`🔌 新增模型组：${r.group.name}（${r.group.models.length} 个模型），可用模型 ${total} 个`);
+        return send(res, 200, { group: r.group.toPublic() });
+      }
+
+      const groupMatch = pathname.match(/^\/api\/model-groups\/([^/]+)$/);
+      if (groupMatch && req.method === 'PATCH') {
+        const body = await readBody(req);
+        const r = modelGroups.upsert({ ...body, id: groupMatch[1] });
+        if (r.error) return send(res, 400, { error: r.error });
+        await runner.applyModelGroupChange();
+        return send(res, 200, { group: r.group.toPublic() });
+      }
+      if (groupMatch && req.method === 'DELETE') {
+        const ok2 = modelGroups.remove(groupMatch[1]);
+        if (!ok2) return send(res, 404, { error: '模型组不存在' });
+        await runner.applyModelGroupChange();
+        log(`🔌 删除模型组：${groupMatch[1]}`);
+        return send(res, 200, { id: groupMatch[1] });
       }
 
       // ---------- 房间 ----------
