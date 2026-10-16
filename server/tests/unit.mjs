@@ -1022,6 +1022,29 @@ await test('★ 工程基线是通用英文的，且不含本机痕迹', () => {
   assert.doesNotMatch(CODING_BASELINE_HOWTO, /[A-Za-z]:\|Users\|sk-[A-Za-z0-9]{8}|192\.168\./);
 });
 
+
+// ---------------------------------------------------------------------------
+// 部门规矩：只读部门真的拿不到改文件/跑命令的工具
+// ---------------------------------------------------------------------------
+const { toolsForPolicy, POLICY_DEFAULT } = await import('../src/store.js');
+
+await test('★ 部门规矩：默认（允许）时工具一个不少', () => {
+  const all = ['read', 'write', 'edit', 'ls', 'find', 'grep', 'bash'];
+  assert.deepEqual(toolsForPolicy(all, POLICY_DEFAULT), all);
+});
+
+await test('★ 部门规矩：只读时收走 write/edit/bash，保留只看的那几个', () => {
+  const all = ['read', 'write', 'edit', 'ls', 'find', 'grep', 'bash'];
+  const got = toolsForPolicy(all, { dangerous: 'deny', requireProof: false });
+  assert.deepEqual(got, ['read', 'ls', 'find', 'grep']);
+  assert.ok(!got.includes('bash'), '★ 只读部门绝不能留 bash');
+});
+
+await test('部门规矩：不认识的值不当成 deny（宁可宽松也不误伤）', () => {
+  const all = ['read', 'write', 'bash'];
+  assert.deepEqual(toolsForPolicy(all, { dangerous: 'whatever' }), all);
+});
+
 const passed = results.filter((r) => r.ok).length;
 
 console.log('\n================ 单元测试 ================');

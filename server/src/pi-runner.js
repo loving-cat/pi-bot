@@ -26,7 +26,7 @@ import {
 } from '@earendil-works/pi-coding-agent';
 import { config } from './config.js';
 import { bus } from './bus.js';
-import { store } from './store.js';
+import { store, toolsForPolicy } from './store.js';
 import { loadExtraProviders, settingsDefaultModel } from './providers.js';
 import { modelGroups } from './model-groups.js';
 import { ModelHealth } from './model-health.js';
@@ -199,7 +199,7 @@ function emitContext(roomId, botId, session) {
  *   3. 文件规矩 —— 附件在 _inbox/、产出图要 send_image
  *   4. 说话规矩 —— 禁止念模型名/思考等级/token/id、禁止点评谁是老大
  */
-export function buildAppendSystemPrompt(bot = {}, { userName = '' } = {}) {
+export function buildAppendSystemPrompt(bot = {}, { userName = '', policy = null } = {}) {
   const skills = Array.isArray(bot.skills) ? bot.skills.filter((s) => s?.title) : [];
   return [
     ...(bot.persona ? [bot.persona] : []),
@@ -241,6 +241,20 @@ export function buildAppendSystemPrompt(bot = {}, { userName = '' } = {}) {
       // 内部动作不对外播报
       '也不要报告你刚调了什么工具、查了什么记录、跑了几步 —— 直接给结果（用户问了才说）。\n' +
       '像真人老板拉群那样说话：说清要做什么、找谁对接，就够了，不要念名单。',
+    // ★ 部门规矩：只读 / 必须附证据。两条都是"行为"，所以写进系统提示。
+    //   （只读还有一道硬拦：建会话时直接不给改文件的工具 —— 见 #ensureSession）
+    ...(policy?.dangerous === 'deny'
+      ? [
+          '【这个部门是只读的】你只能看（读文件、搜索、列目录），**不能改文件、不能跑命令**。\n' +
+            '需要动东西时：说清楚要改什么、为什么，交给用户或主控定 —— 别试。',
+        ]
+      : []),
+    ...(policy?.requireProof
+      ? [
+          '【交付要附证据】交活时把凭据一起给：命令的输出、改动的文件路径、测试结果。\n' +
+            '不要只说"改好了"——没有证据的交付按未完成算。',
+        ]
+      : []),
   ];
 }
 
@@ -475,6 +489,10 @@ export class PiRunner {
     this.modelRuntime = await ModelRuntime.create();
     // 心跳看门狗：发现的“卡死不动”由它负责收尾 + 上报
     this.startWatchdog();
+    // 部门规矩变了 → 作废空闲会话（工具集和系统提示是建会话时定的，不重建不生效）
+    bus.on('event', (ev) => {
+      if (ev?.t === 'policy.updated') this.applyPolicyChange();
+    });
 
     for (const [providerId, providerConfig] of Object.entries(loadExtraProviders())) {
       try {
@@ -658,12 +676,20 @@ export class PiRunner {
         agentDir: getAgentDir(),
         appendSystemPrompt: buildAppendSystemPrompt(bot, {
           userName: store.userName(),
+          // 部门规矩跟着会话走：工具集是建会话时定的，规矩变了会作废重建
+          policy: store.policy(),
         }),
         noExtensions: config.noExtensions || undefined,
       });
       await resourceLoader.reload();
 
-      const baseTools = isChief ? config.chiefTools : config.tools;
+      // ★ 部门规矩：只读部门不给"能拆家"的工具。
+      //
+      //   这是**能真拦住**的那种约束 —— 不给工具，它就干不了；
+      //   靠系统提示里写"请先征求同意"是拦不住的（模型忙起来就忘了）。
+      //   看还是能看的（read/ls/find/grep 留着）。
+      const rawTools = isChief ? config.chiefTools : config.tools;
+      const baseTools = toolsForPolicy(rawTools, store.policy());
       const options = {
         cwd: config.workspace,
         sessionManager,
@@ -968,6 +994,8 @@ export class PiRunner {
           '你的做法：',
           '1. 先把要求拆成几件具体的活，判断每一件该交给谁。',
           '2. **就在这个群里用 @同事名字 把活派出去**——被 @ 的人会接着在群里发言去干。',
+          '   ★ 派活时把三样写清：**做什么 / 要交回什么 / 验收标准**（一句话说清怎么算做完）。',
+          '   少一样，对方就容易交回一个不好验收的东西，你还得多跑一个来回。',
           '   ★ 必须用 @ 在群里派，**不要用 message_bot 私信派活**：用户要看得见谁领了什么活。',
           '   message_bot 只用于「跨部门找人」或「确实不该让用户看到的内部确认」。',
           '3. 自己别闷头把活全干完；只有「确实只有你能干」的那部分才自己做。',
@@ -1894,6 +1922,30 @@ export class PiRunner {
       store.clearSessionFile(roomId, botId);
       n++;
     }
+    return n;
+  }
+
+  /**
+   * 部门规矩变了 → 把会话作废重建。
+   *
+   * 为什么要重建：工具集和系统提示都是**建会话时**定下来的，
+   * 不重建的话"改成只读"要等到会话自然过期才生效 —— 用户会以为没生效。
+   * （对话历史保留，只是会话本身重新开一个。）
+   */
+  applyPolicyChange() {
+    let n = 0;
+    for (const [key, entry] of [...this.sessions]) {
+      if (entry.busy) continue; // 正在跑的这轮不打断，它结束后下次自然重建
+      try {
+        entry.unsubscribe?.();
+        entry.session?.dispose();
+      } catch {
+        /* ignore */
+      }
+      this.sessions.delete(key);
+      n++;
+    }
+    if (n) log(`⚙️ 部门规矩变了 → 作废 ${n} 个空闲会话（下次跑会用新规矩重建）`);
     return n;
   }
 
