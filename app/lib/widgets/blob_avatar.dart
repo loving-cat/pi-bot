@@ -68,6 +68,84 @@ class BlobAvatar extends StatefulWidget {
   State<BlobAvatar> createState() => _BlobAvatarState();
 }
 
+/// 让**一整片区域**里的头像都跟着鼠标看。
+///
+/// 每个头像负责的是"**自己所在的那块区域**"，而不是自己那 46 像素：
+///   · 会话行   → 整个会话行（含名字、预览文字、时间）
+///   · 聊天头部 → 整个胶囊
+///   · 成员列表 → 整个成员行
+///   · 消息     → 整条消息（含气泡）
+///
+/// 用户原话："头像要在自己负责这个范围跟随鼠标，例如胶囊内的 bot 头像，
+/// 当鼠标挪动到胶囊内时跟随。"
+///
+/// 用法：把这块区域包起来就行，里面的 BlobAvatar 不用各自声明 hovered。
+/// forceHovered 是给"按下也算"这类外部状态用的（会话行按住要持续跟随）。
+class AvatarHoverScope extends StatefulWidget {
+  const AvatarHoverScope({
+    super.key,
+    required this.child,
+    this.forceHovered = false,
+  });
+
+  final Widget child;
+
+  /// 外部强制的悬停（比如"按住了"）—— 和鼠标悬停取或
+  final bool forceHovered;
+
+  @override
+  State<AvatarHoverScope> createState() => _AvatarHoverScopeState();
+}
+
+class _AvatarHoverScopeState extends State<AvatarHoverScope> {
+  bool _hovered = false;
+
+  void _set(bool v) {
+    if (v == _hovered || !mounted) return;
+    setState(() => _hovered = v);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      // opaque:false —— 只关心"鼠标在不在这片区域里"，不挡下面的命中测试
+      opaque: false,
+      onEnter: (_) => _set(true),
+      onExit: (_) => _set(false),
+      child: _AvatarHover(
+        hovered: _hovered || widget.forceHovered,
+        child: widget.child,
+      ),
+    );
+  }
+}
+
+/// 容器**自己已经在跟踪悬停**时用它广播给里面的头像（省一层 MouseRegion）。
+/// 例：胶囊 (_HoverLift) 本来就有 _hover 状态。
+class AvatarHoverBroadcast extends StatelessWidget {
+  const AvatarHoverBroadcast({
+    super.key,
+    required this.hovered,
+    required this.child,
+  });
+
+  final bool hovered;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) =>
+      _AvatarHover(hovered: hovered, child: child);
+}
+
+class _AvatarHover extends InheritedWidget {
+  const _AvatarHover({required this.hovered, required super.child});
+
+  final bool hovered;
+
+  @override
+  bool updateShouldNotify(_AvatarHover old) => hovered != old.hovered;
+}
+
 class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
   late final _BlobShape _shape = _BlobShape.fromSeed(widget.seed);
   AnimationController? _wobble;
@@ -79,6 +157,9 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
 
   /// 鼠标是不是停在它身上（只有这时候才订阅全局指针）
   bool _following = false;
+
+  /// 上一次"被悬停"的状态（显式 或 区域）—— 用来判断要不要开/停跟随
+  bool _followHovered = false;
 
   /// 视线偏移（像素，已经收敛过）。
   /// 用 ValueNotifier 而不是 setState：鼠标一动就重建整个 widget 太浪费，
@@ -168,11 +249,23 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
     _wake();
   }
 
-  /// 鼠标进来（或外面说"这一行被悬停了"）才开始跟随
-  void _onEnter(PointerEnterEvent _) => _startFollow();
+  /// 鼠标进到头像自己这几十像素里
+  void _onEnter(PointerEnterEvent _) {
+    _selfHovered = true;
+    _syncFollow();
+  }
 
-  /// 鼠标离开：停掉跟随，视线回正（否则它会一直斜着眼看别处）
-  void _onExit(PointerExitEvent _) => _stopFollow();
+  /// 鼠标离开头像自己这块
+  ///
+  /// ★ 这里**不能**直接 `_stopFollow()`。以前就是直接停的，于是：
+  ///   "鼠标从头像上移到同一行的文字上"时，头像自己发的 onExit 把跟随停掉，
+  ///   而外层区域（会话行 / 胶囊）的悬停状态**没变**、不会再通知一次
+  ///   → 跟随就死了。用户看到的就是"只有鼠标在头像里面时才跟随"。
+  ///   现在交给 _syncFollow 统一判断：只要还在自己负责的区域里就继续跟随。
+  void _onExit(PointerExitEvent _) {
+    _selfHovered = false;
+    _syncFollow();
+  }
 
   void _startFollow() {
     if (_following) return;
@@ -195,13 +288,46 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
     if (_gaze.value != Offset.zero) _gaze.value = Offset.zero;
   }
 
+  /// 我所在的这块区域（会话行 / 胶囊 / 成员行…）有没有被悬停。
+  /// 缓存在字段里：didUpdateWidget 里不能调 dependOnInheritedWidgetOfExactType。
+  bool _scopeHovered = false;
+
+  /// 鼠标在不在头像自己这几十像素里（头像自己的 MouseRegion 报的）
+  bool _selfHovered = false;
+
+  /// 我"被悬停"了吗 —— **三个来源取或**：
+  ///   ① 外面显式传的（会话行：整行 hover / 按住）
+  ///   ② 我所在的这块区域（AvatarHoverScope：胶囊、消息、成员行…）
+  ///   ③ 头像自己这几十像素
+  bool _hoveredNow() => widget.hovered || _scopeHovered || _selfHovered;
+
+  /// 悬停状态变了就开/停跟随（显式参数变化和区域变化都走这里）
+  void _syncFollow() {
+    final h = _hoveredNow();
+    if (h == _followHovered) return;
+    _followHovered = h;
+    if (h) {
+      _startFollow();
+    } else {
+      _stopFollow();
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // 依赖的 AvatarHoverScope 变化会走到这里
+    _scopeHovered =
+        context.dependOnInheritedWidgetOfExactType<_AvatarHover>()?.hovered ??
+            false;
+    _syncFollow();
+  }
+
   @override
   void didUpdateWidget(BlobAvatar old) {
     super.didUpdateWidget(old);
-    // 行悬停的变化 —— 比头像自己那 46px 大得多（用户要的"进到这一行就跟随"）
-    if (widget.hovered != old.hovered) {
-      widget.hovered ? _startFollow() : _stopFollow();
-    }
+    // 显式 hovered 的变化（区域悬停的变化走 didChangeDependencies）
+    if (widget.hovered != old.hovered) _syncFollow();
   }
 
   void _onPoke() {
