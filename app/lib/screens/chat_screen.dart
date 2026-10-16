@@ -253,11 +253,6 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
         actions: [
-          if (busy)
-            Padding(
-              padding: const EdgeInsets.only(right: 6),
-              child: _StopButton(onTap: () => state.abort(room.id)),
-            ),
           PopupMenuButton<String>(
             icon: const Icon(LucideIcons.ellipsis, size: 18),
             padding: EdgeInsets.zero,
@@ -400,29 +395,6 @@ class _ChatScreenState extends State<ChatScreen> {
             onStop: () => state.abort(room.id),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _StopButton extends StatelessWidget {
-  const _StopButton({required this.onTap});
-
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: PB.accent,
-      shape: const CircleBorder(),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: const SizedBox(
-          width: 34,
-          height: 34,
-          child: Icon(LucideIcons.square, size: 18, color: Colors.white),
-        ),
       ),
     );
   }
