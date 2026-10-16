@@ -233,13 +233,25 @@ Rect resizeBy({
 /// 铺在最上层但**在窗口控制按钮下面**（main.dart 里的 Stack 顺序），
 /// 所以右上角"关闭"按钮的右上角不会被角热区抢走点击。
 class WindowResizeOverlay extends StatefulWidget {
-  const WindowResizeOverlay({super.key, this.edge = 5, this.corner = 11});
+  const WindowResizeOverlay({
+    super.key,
+    this.edge = 5,
+    this.corner = 11,
+    this.reserveTopRight = 132,
+  });
 
   /// 四条边的热区厚度。太薄点不中，太厚会盖住贴边的按钮
   final double edge;
 
   /// 四个角的热区边长 —— 比边厚一点，斜着拖更容错
   final double corner;
+
+  /// 右上角要避开多宽 —— 那是窗口控制按钮的地盘。
+  ///
+  /// Windows 自己也从不在标题栏按钮上做缩放。以前这里的右上角热区正好压在
+  /// "关闭"按钮的右上角上，鼠标停在那儿会同时命中"关闭按钮"和"缩放热区"，
+  /// 表现很怪（用户报的悬停右上角后整窗变灰，就是从这个位置触发的）。
+  final double reserveTopRight;
 
   static bool get isSupported => WindowTitleBar.isSupported;
 
@@ -313,8 +325,9 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
           edge: ResizeEdge.topLeft,
           cursor: SystemMouseCursors.resizeUpLeft,
         ),
+        // 右上角让开控制按钮（见 reserveTopRight）
         _zone(
-          right: 0,
+          right: widget.reserveTopRight,
           top: 0,
           width: c,
           height: c,
@@ -340,7 +353,7 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
         // 四条边：单方向拉伸（左右两端让开角热区，免得抢）
         _zone(
           left: c,
-          right: c,
+          right: widget.reserveTopRight,
           top: 0,
           height: t,
           edge: ResizeEdge.top,
