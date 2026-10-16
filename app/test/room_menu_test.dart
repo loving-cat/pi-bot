@@ -665,4 +665,132 @@ void main() {
     expect(find.text('资料库'), findsOneWidget);
     expect(find.text('成员'), findsNothing);
   });
+
+  testWidgets('★ 发完第一条、bot 正在回 —— 第二条还能点能打', (tester) async {
+    // 用户报："我发送第一条消息 想输入第二条 结果没有聚焦到输入框，
+    //          就算我去点击也不行，直接没法输入。"
+    // 这是**空房间 → 有消息**那一下的结构切换（空态换成消息栈），
+    // 而且 bot 正在流式回复（composer 上方会插一条"它下一步会看到"的提示）。
+    tester.view.physicalSize = const Size(900, 700);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final state = _stateWith(
+      [Room(id: 'r1', name: '甲', kind: 'dm', botIds: const ['b1'])],
+      bots: [Bot(id: 'b1', name: '甲')],
+    );
+    addTearDown(state.dispose);
+    state.messages['r1'] = [];
+    state.typing['r1'] = false;
+
+    await tester.pumpWidget(
+      AppScope(
+        state: state,
+        child: MaterialApp(home: ChatScreen(room: state.rooms.first)),
+      ),
+    );
+    await tester.pump();
+
+    final field = find.byType(TextField);
+    expect(field, findsOneWidget);
+
+    // ① 空房间先打一条
+    await tester.enterText(field, '第一条');
+    await tester.pump();
+    expect(find.text('第一条'), findsOneWidget);
+
+    // ② 等价于"发出去了"：消息进列表 + bot 开始流式回 + typing 亮起
+    state.messages['r1'] = [
+      Msg(
+        id: 'm1',
+        roomId: 'r1',
+        authorType: 'user',
+        authorName: '我',
+        text: '第一条',
+        status: 'done',
+        createdAt: 1,
+      ),
+      Msg(
+        id: 'm2',
+        roomId: 'r1',
+        authorType: 'bot',
+        authorId: 'b1',
+        authorName: '甲',
+        text: '收到',
+        status: 'streaming',
+        createdAt: 2,
+      ),
+    ];
+    state.typing['r1'] = true;
+    state.notifyListeners();
+    await tester.pump();
+    await tester.pump();
+
+    // ③ 点一下输入框 —— 必须能命中、能聚焦
+    await tester.tap(field);
+    await tester.pump();
+    final node = tester.widget<TextField>(field).focusNode;
+    expect(node?.hasFocus, isTrue, reason: '★ 点一下就该聚焦到输入框');
+
+    // ④ 再打一条
+    await tester.enterText(field, '第二条');
+    await tester.pump();
+    expect(
+      tester.widget<TextField>(field).controller?.text,
+      '第二条',
+      reason: '★ 第二条必须能打进去',
+    );
+  });
+
+  testWidgets('★ 在已聚焦的输入框上再点一下 —— 会把输入连接重开一次', (tester) async {
+    // 用户报的那个状态：Dart 侧 hasFocus=true，但引擎那边的文本输入连接断了，
+    // 键盘事件到不了 Dart。这时"再点一下"本来是没有状态变化的（已经聚焦了），
+    // 所以引擎不会重连 —— 用户的原话就是"就算我去点击也不行"。
+    // 现在点一下会走一次真正的 unfocus → 下一帧 requestFocus。
+    tester.view.physicalSize = const Size(900, 700);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final state = _stateWith(
+      [Room(id: 'r1', name: '甲', kind: 'dm', botIds: const ['b1'])],
+      bots: [Bot(id: 'b1', name: '甲')],
+    );
+    addTearDown(state.dispose);
+    state.messages['r1'] = [
+      Msg(
+        id: 'm1',
+        roomId: 'r1',
+        authorType: 'user',
+        authorName: '我',
+        text: '第一条',
+        status: 'done',
+        createdAt: 1,
+      ),
+    ];
+
+    await tester.pumpWidget(
+      AppScope(
+        state: state,
+        child: MaterialApp(home: ChatScreen(room: state.rooms.first)),
+      ),
+    );
+    await tester.pump();
+
+    final field = find.byType(TextField);
+    await tester.tap(field);
+    await tester.pump();
+    final node = tester.widget<TextField>(field).focusNode!;
+    expect(node.hasFocus, isTrue, reason: '第一下点要聚焦');
+
+    var dropped = false;
+    node.addListener(() {
+      if (!node.hasFocus) dropped = true;
+    });
+
+    // 再点一下（同一点、没拖动）
+    await tester.tap(field);
+    await tester.pump();
+    await tester.pump();
+
+    expect(dropped, isTrue, reason: '★ 再点一下必须真的重开一次连接（先放下再拿起）');
+    expect(node.hasFocus, isTrue, reason: '重开完还得聚焦着，别把用户晾在那儿');
+  });
 }
