@@ -30,60 +30,6 @@ class FloatingMenuEntry {
   final bool danger;
 }
 
-/// 鼠标悬停时浮出来的信息卡（比如悬在 @某人 上）。
-///
-/// 和 showFloatingMenu 的关键区别：**这张卡不吃鼠标事件**（IgnorePointer）。
-/// 否则卡一浮出来就挡在指针下面，mouse exit 永远不触发，卡就下不去了 ——
-/// 悬停卡最常见的翻车方式就是这个。
-///
-/// @returns 一个"收起来"的函数；调用方负责在 mouse exit / dispose 时调用它。
-VoidCallback showHoverCard({
-  required BuildContext context,
-  required Offset at,
-  required Widget child,
-  double width = 232,
-}) {
-  final overlay = Overlay.maybeOf(context);
-  if (overlay == null) return () {};
-  final screen = MediaQuery.sizeOf(context);
-
-  final left = (at.dx + 12).clamp(
-    8.0,
-    (screen.width - width - 8).clamp(8.0, double.infinity),
-  );
-  // 贴指针下方；底下放不下就翻上去（信息卡不高，翻边很便宜）
-  final below = at.dy + 14;
-  final openDown = below + 120 < screen.height;
-  final top = openDown ? below : null;
-  final bottom = openDown ? null : (screen.height - at.dy + 14);
-
-  late OverlayEntry entry;
-  var removed = false;
-  entry = OverlayEntry(
-    builder: (ctx) => Material(
-      // 同上：Overlay 里没有 Material 祖先，不套会被 Flutter 画黄色双下划线
-      type: MaterialType.transparency,
-      child: Stack(
-        children: [
-          Positioned(
-            left: left,
-            top: top,
-            bottom: bottom,
-            width: width,
-            child: IgnorePointer(child: child),
-          ),
-        ],
-      ),
-    ),
-  );
-  overlay.insert(entry);
-  return () {
-    if (removed) return;
-    removed = true;
-    if (entry.mounted) entry.remove();
-  };
-}
-
 /// 菜单该摆在哪 —— 纯函数，单独拎出来是为了能单测。
 ///
 /// ★ 这个函数存在的理由是踩过的坑：**一律往上开**。在窗口上边右键时，
