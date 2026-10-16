@@ -90,6 +90,25 @@ export function loadExtraProviders() {
     }
   }
 
+  // 2.5) 把本机 cline 那套带成一个「正在用」的模型组（App 里能看见、不可删）
+  const clineCfg = readJson(path.join(AGENT_DIR, 'cline-provider', 'config.json'), null);
+  if (clineCfg?.apiKey) {
+    const p = clineProviderConfig(clineCfg);
+    modelGroups.seedBuiltin({
+      id: 'local_cline',
+      name: '本机 cline（正在用）',
+      baseUrl: p.baseUrl,
+      apiKey: p.apiKey,
+      api: p.api,
+      models: p.models.map((m) => ({
+        id: m.id,
+        name: m.name,
+        contextWindow: m.contextWindow,
+        maxTokens: m.maxTokens,
+      })),
+    });
+  }
+
   // 3) 用户在设置里自己加的模型组（优先级最低 —— 前面两种是"部署方"配的，
   //    这一种是"使用者"配的，同名时让前者说了算）
   const custom = modelGroups.toProviderConfigs();
