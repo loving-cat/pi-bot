@@ -25,7 +25,7 @@ class ModelPickerField extends StatelessWidget {
       controller: controller,
       decoration: InputDecoration(
         labelText: label,
-        hintText: 'cline/cline-pass/deepseek-v4.1-flash',
+        hintText: 'provider/model-id',
         suffixIcon: IconButton(
           tooltip: '从列表里选',
           icon: const Icon(LucideIcons.list, size: 18),
