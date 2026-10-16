@@ -53,6 +53,10 @@ class AppState extends ChangeNotifier {
   /// 群聊轮次预算（防止 bot 解不了就互相聊个没完）
   Map<String, int> groupLimits = const {};
 
+  /// 部门规矩（危险动作 / 交付要附证据）。
+  /// 服务端一直在收，界面以前没有入口 —— 用户只能看着 bot 随便跑命令。
+  Map<String, dynamic> policy = const {'dangerous': 'allow', 'requireProof': false};
+
   /// 用户自己叫什么。
   /// bot 的系统提示里会用这个名字称呼你（服务端拼进去的），
   /// 界面上左上角显示它 —— 显示主机名没意义，那是机器的名字，不是人的。
@@ -217,6 +221,9 @@ class AppState extends ChangeNotifier {
           .toList();
       // 用户自己叫什么（bot 用它称呼你）。漏了这句左上角就会退回显示服务端地址。
       userName = ((res['user'] as Map?)?['name'] as String?)?.trim() ?? '';
+      policy =
+          ((res['policy'] as Map?) ?? const {'dangerous': 'allow', 'requireProof': false})
+              .cast<String, dynamic>();
       groupLimits = ((res['groupLimits'] as Map?) ?? const {}).map(
         (k, v) => MapEntry('$k', (v as num?)?.toInt() ?? 0),
       );
@@ -531,6 +538,17 @@ class AppState extends ChangeNotifier {
 
   /// 改群聊轮次预算。服务端会挡掉非法值（0/负数会被保持原值），
   /// 所以这里不用自己校验，改完拉一次就是真值。
+  /// 改部门规矩（危险动作 / 要不要附证据）
+  Future<void> savePolicy(Map<String, dynamic> patch) async {
+    try {
+      await api?.patch('/api/policy', patch);
+      await refresh();
+    } catch (err) {
+      lastError = '$err';
+      _notify();
+    }
+  }
+
   Future<void> saveGroupLimits(Map<String, dynamic> patch) async {
     try {
       await api?.patch('/api/group-limits', patch);
@@ -783,6 +801,12 @@ class AppState extends ChangeNotifier {
       case 'user.updated':
         userName = ((ev['user'] as Map?)?['name'] as String?)?.trim() ?? '';
         break;
+      case 'policy.updated':
+        policy =
+            ((ev['policy'] as Map?) ?? policy).cast<String, dynamic>();
+        _notify();
+        break;
+
       case 'groupLimits.updated':
         groupLimits = ((ev['limits'] as Map?) ?? const {}).map(
           (k, v) => MapEntry('$k', (v as num?)?.toInt() ?? 0),
