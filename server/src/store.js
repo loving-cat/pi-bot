@@ -20,6 +20,13 @@ const STATE_FILE = path.join(config.dataDir, 'state.json');
 const ROOMS_DIR = path.join(config.dataDir, 'rooms');
 const STATE_VERSION = 2;
 
+/** 正整数字符串/数字 → 正整数；其他（含空、null、负数、小数）→ null（= 用上层默认） */
+function positiveOrNull(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.floor(n);
+}
+
 /**
  * 把 avatar 颜色统一成 `#RRGGBB`。
  * 接受 `#E93D82` / `e93d82` / `#e93`；非法输入返回 null（= 让客户端按 id 自己算）。
@@ -223,6 +230,14 @@ export class Store {
       thinking: patch.thinking || config.thinking,
       // 用户手把手教给它的做法（SOP）。会拼进系统提示词，让 bot 真的"学会"。
       skills: [],
+      // 上下文预算：null = 用全局默认（config.reserveTokens / keepRecentTokens），
+      // 而全局默认是 null 时就用 pi 自带的 16384 / 20000。
+      reserveTokens: null,
+      keepRecentTokens: null,
+      // 模型容量覆盖：null = 用模型自带的。有些模型标称 1M 上下文 / 32k 输出，
+      // 但实际能给到 161k 输出 —— 这种就得让用户（或总经理）手动抬。
+      contextWindow: null,
+      maxTokens: null,
       enabled: true,
       createdAt: now(),
       createdBy: patch.createdBy || null,
@@ -257,6 +272,14 @@ export class Store {
         }))
         .filter((s) => s.title.trim());
     }
+    if (patch.reserveTokens !== undefined)
+      next.reserveTokens = positiveOrNull(patch.reserveTokens);
+    if (patch.keepRecentTokens !== undefined)
+      next.keepRecentTokens = positiveOrNull(patch.keepRecentTokens);
+    if (patch.contextWindow !== undefined)
+      next.contextWindow = positiveOrNull(patch.contextWindow);
+    if (patch.maxTokens !== undefined)
+      next.maxTokens = positiveOrNull(patch.maxTokens);
     if (patch.model !== undefined) next.model = patch.model || null;
     if (patch.thinking !== undefined) next.thinking = patch.thinking || config.thinking;
     if (patch.enabled !== undefined) next.enabled = Boolean(patch.enabled);
@@ -303,10 +326,13 @@ export class Store {
     const rooms = Object.values(this.state.rooms);
     const mainId = this.mainBot()?.id;
     return rooms.sort((a, b) => {
-      // 主控 DM 置顶
+      // 1) 用户手动置顶的最前（右键菜单里那个「置顶」）
+      if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1;
+      // 2) 没手动置顶时，主控 DM 默认在最上面
       const aPin = a.kind === 'dm' && a.botIds[0] === mainId ? 1 : 0;
       const bPin = b.kind === 'dm' && b.botIds[0] === mainId ? 1 : 0;
       if (aPin !== bPin) return bPin - aPin;
+      // 3) 其余按最新消息
       return (b.lastMessageAt || 0) - (a.lastMessageAt || 0);
     });
   }
@@ -379,6 +405,10 @@ export class Store {
     if (patch.name !== undefined) room.name = String(patch.name).slice(0, 60);
     if (patch.topic !== undefined) room.topic = String(patch.topic).slice(0, 500);
     if (patch.leadBotId !== undefined && room.botIds.includes(patch.leadBotId)) room.leadBotId = patch.leadBotId;
+    // 侧边栏的三个开关（右键菜单里改）。都是"看的人自己"的属性，不影响 bot 怎么干活。
+    if (patch.pinned !== undefined) room.pinned = Boolean(patch.pinned);
+    if (patch.hidden !== undefined) room.hidden = Boolean(patch.hidden);
+    if (patch.unread !== undefined) room.unread = Boolean(patch.unread);
     if (patch.botIds !== undefined) {
       room.botIds = [...new Set(patch.botIds.filter((b) => this.state.bots[b]))];
       if (!room.botIds.includes(room.leadBotId)) room.leadBotId = room.botIds[0] ?? null;
@@ -390,7 +420,11 @@ export class Store {
 
   deleteRoom(id) {
     const room = this.state.rooms[id];
-    if (!room || room.kind === 'dm') return null;
+    if (!room) return null;
+    // ★ 私聊也能删。
+    //   以前这里写的是 `if (!room || room.kind === 'dm') return null` —— 结果侧边栏
+    //   那一列 bot 私聊（恰恰是用户最想清掉的一堆）一个都删不掉。
+    //   注意删的是**这个会话**，不是那个 bot：下次点它 / @它，ensureDm 会重新开一个空的。
     delete this.state.rooms[id];
     this.messages.delete(id);
     for (const key of Object.keys(this.state.sessions)) {
@@ -441,7 +475,7 @@ export class Store {
       authorEmoji: partial.authorEmoji ?? null,
       text: partial.text ?? '',
       status: partial.status || 'done',
-      // kind='ref' 的消息不画气泡，只渲染一个"已发给 XX"的小浮动条（同类客户端 那种）。
+      // kind='ref' 的消息不画气泡，只渲染一个"已发给 XX"的小浮动条。
       kind: partial.kind || 'text',
       // 跨会话引用：bot 给别的 bot 发了私信时，在来源房间留一条指向
       // { botId, roomId } 的记录，用户点开能看到他们聊了什么。

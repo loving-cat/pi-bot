@@ -26,7 +26,7 @@ export const REF_MERGE_MS = 180_000;
  * 决定「来源房间里那条引用气泡」该新建还是合并。
  *
  * bot 给同事发私信时，用户只在来源房间看到「我发了」，永远不知道活派给了谁。
- * 所以要在来源房间留一条 kind='ref' 的指针（同类客户端 那种小浮动条）。
+ * 所以要在来源房间留一条 kind='ref' 的指针（一个「已发送给 XX」的小浮动条）。
  * 同一个 bot 连着私信好几个人时不该刷屏 → 180s 窗口内合并成一个气泡「已发送给 A 和 B」。
  *
  * 抽成纯函数是为了能单测：合并窗口是时间敏感的，写错了只会表现为「界面偶尔刷屏」，
@@ -193,7 +193,7 @@ export function buildCommonTools({ runner, roomId, botId }) {
 
         // ★ 在来源房间留一条可点击的引用记录。
         //   没有这一步，用户只看到"我发了"，永远不知道它把活派给了谁、
-        //   对方回了什么。同类客户端 的做法就是在原地浮一个小气泡。
+        //   对方回了什么。在来源房间原地浮一个小气泡最直观。
         if (roomId && roomId !== dm.id) {
           const me = store.getBot(botId);
           const recent = store.listMessages(roomId, { limit: 1 });
@@ -346,6 +346,53 @@ export function buildChiefTools({ runner, health, roomId }) {
         if (!bot) return fail(`找不到 bot ${target}`);
         if (patch.model !== undefined || patch.thinking !== undefined) runner.resetSessionForBot(bot.id);
         return ok(`已更新 ${bot.emoji ?? ''}${bot.name}。«内部：${bot.model ?? '默认'}/${bot.thinking}»`);
+      },
+    }),
+
+    defineTool({
+      name: 'set_context_budget',
+      label: '调同事的上下文预算',
+      description:
+        '给某个 bot 调上下文预算（能装多少、单次最多输出多少、什么时候压缩）。' +
+        '**默认不用调** —— 只有明显超出常规的活才动它：要读一大批文件、长链路排查、' +
+        '上百轮工具调用、或者要它一次写很长的东西。调完在给用户的话里说一句"我把它的' +
+        '上下文调大了"，别报数字。',
+      parameters: Type.Object({
+        botId: Type.String({ description: '给谁调（先 list_bots）' }),
+        contextWindow: Type.Optional(
+          Type.Number({ description: '上下文窗口，比如 1000000。留空不改' }),
+        ),
+        maxTokens: Type.Optional(
+          Type.Number({ description: '单次回复最多输出多少 token，比如 161000。留空不改' }),
+        ),
+        reserveTokens: Type.Optional(
+          Type.Number({ description: '留给回复的余量，越大越早触发压缩。留空不改' }),
+        ),
+        keepRecentTokens: Type.Optional(
+          Type.Number({ description: '压缩时保留最近多少 token 不总结。留空不改' }),
+        ),
+      }),
+      execute: async (_toolCallId, params) => {
+        const target = store.getBot(params.botId);
+        if (!target) return fail(`找不到 bot ${params.botId}`);
+        const patch = {};
+        for (const k of ['contextWindow', 'maxTokens', 'reserveTokens', 'keepRecentTokens']) {
+          if (params[k] !== undefined) patch[k] = params[k];
+        }
+        if (Object.keys(patch).length === 0) return fail('至少要给一个数值');
+        const bot = store.updateBot(params.botId, patch);
+        // ★ 预算是在建会话时套上去的，所以必须重建 —— 但用 reload 而不是 reset：
+        //   reset 会清掉会话文件（等于让它失忆），调预算不该有那个副作用。
+        runner.reloadSessionForBot(bot.id);
+        const shown = Object.entries(patch)
+          .map(([k, v]) => `${k}=${v}`)
+          .join('、');
+        log(`chief 调了 ${bot.name} 的预算：${shown}`);
+        return ok(
+          `已调好 ${bot.emoji ?? ''}${bot.name} 的上下文预算（${shown}），会话已按新预算重建、对话历史保留。` +
+            '«内部：这些数值不用写给用户看，说一句"我把它调大了"就够»',
+          { botId: bot.id, patch },
+        );
       },
     }),
 
