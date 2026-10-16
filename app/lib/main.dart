@@ -124,19 +124,22 @@ class _PiBotAppState extends State<PiBotApp> with WidgetsBindingObserver {
         //
         //   手机上 WindowTitleBar 返回零高，这里等于没加东西。
         builder: (context, child) => AvatarLife.watchPointer(
-          child: Column(
+          child: Stack(
+            fit: StackFit.expand,
             children: [
-              const WindowTitleBar(),
-              Expanded(
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    if (child != null) child,
-                    if (WindowResizeOverlay.isSupported)
-                      const Positioned.fill(child: WindowResizeOverlay()),
-                  ],
-                ),
+              Column(
+                children: [
+                  const WindowTitleBar(),
+                  Expanded(child: child ?? const SizedBox.shrink()),
+                ],
               ),
+              // ★ 缩放热区必须**浮在最上层**。
+              //   它之前在标题条下面 —— 而热区的"顶边"就在 y=0..5，
+              //   标题条（y=0..38）把它整个盖住了，于是向上拖只会移动窗口、
+              //   没法把窗口往上拉伸（用户报的"没有向上拉伸的方法了"）。
+              //   右上角那 132px 依然让开控制按钮（reserveTopRight）。
+              if (WindowResizeOverlay.isSupported)
+                const Positioned.fill(child: WindowResizeOverlay()),
             ],
           ),
         ),

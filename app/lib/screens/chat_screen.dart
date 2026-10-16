@@ -48,6 +48,11 @@ class _ChatScreenState extends State<ChatScreen> {
   final _focus = FocusNode();
   AppState? _state;
   bool _stick = true;
+
+  /// 往上翻的时候又来了几条新消息 —— 显示在"回到底部"那个按钮上。
+  /// 这样用户知道"下面有多少没看"，而不是只看到一个箭头。
+  int _unreadWhileUp = 0;
+  String? _lastMsgId;
   String? _shownError;
   final List<Attachment> _pending = [];
   bool _uploading = false;
@@ -70,13 +75,32 @@ class _ChatScreenState extends State<ChatScreen> {
       unawaited(_state!.loadMessages(widget.room.id));
       _scroll.addListener(() {
         if (!_scroll.hasClients) return;
-        _stick = (_scroll.position.maxScrollExtent - _scroll.offset) < 140;
+        final stick = (_scroll.position.maxScrollExtent - _scroll.offset) < 140;
+        if (stick == _stick) return;
+        setState(() {
+          _stick = stick;
+          // 回到底部就把计数清掉
+          if (stick) _unreadWhileUp = 0;
+        });
       });
+      // 新消息计数：只在"往上翻着"的时候累加。
+      // 用 state 的 notify（每来一条消息一次），不用 streamTick（那是 80ms 一次的
+      // 流式增量，会把计数冲成天文数字）。
+      _state!.addListener(_countIfScrolledUp);
     }
+  }
+
+  void _countIfScrolledUp() {
+    final list = _state?.messages[widget.room.id] ?? const [];
+    final lastId = list.isEmpty ? null : list.last.id;
+    if (lastId == _lastMsgId) return;
+    _lastMsgId = lastId;
+    if (!_stick && mounted) setState(() => _unreadWhileUp++);
   }
 
   @override
   void dispose() {
+    _state?.removeListener(_countIfScrolledUp);
     _state?.openRoom(null);
     _scroll.dispose();
     _input.dispose();
@@ -84,15 +108,26 @@ class _ChatScreenState extends State<ChatScreen> {
     super.dispose();
   }
 
-  void _toBottom({bool animate = false}) {
+  Future<void> _toBottom({bool animate = false}) async {
     if (!_scroll.hasClients) return;
-    if (animate) {
-      _scroll.animateTo(
-        _scroll.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 220),
+    if (!animate) {
+      _scroll.jumpTo(_scroll.position.maxScrollExtent);
+      return;
+    }
+    // ★ 动画期间消息可能还在变长（流式输出），一开始算的那个目标点会落空 ——
+    //   表现是"点了回到底部，其实还差一截"。所以滚完之后对一次账，不够再补。
+    for (var i = 0; i < 3; i++) {
+      final target = _scroll.position.maxScrollExtent;
+      if ((target - _scroll.offset).abs() < 1) break;
+      await _scroll.animateTo(
+        target,
+        duration: const Duration(milliseconds: 200),
         curve: Curves.easeOut,
       );
-    } else {
+      if (!mounted) return;
+      await Future<void>.delayed(const Duration(milliseconds: 16));
+    }
+    if (mounted && _scroll.hasClients) {
       _scroll.jumpTo(_scroll.position.maxScrollExtent);
     }
   }
@@ -228,9 +263,16 @@ class _ChatScreenState extends State<ChatScreen> {
         centerTitle: true,
         // 居中的小胶囊：头像 + 会话名（状态只在"干活/压缩"时露出来，
         // 平时保持安静 —— 参考 / ds-bot 那种感觉）
-        // 点胶囊 → 右边滑出面板（这个会话是谁 / 里面有谁 / 上下文用得怎么样）
+        // 点胶囊 → 右侧面板（这个会话是谁 / 里面有谁 / 上下文用得怎么样）。
+        // 宽屏它是布局里的一栏（和左边同级，没遮罩）；窄屏才走整页滑入。
         title: GestureDetector(
-          onTap: () => showRoomPanel(context, room),
+          onTap: () {
+            if (MediaQuery.sizeOf(context).width >= kTwoPaneMinWidth) {
+              AppScope.read(context).togglePanel();
+            } else {
+              showRoomPanel(context, room);
+            }
+          },
           child: Container(
             padding: const EdgeInsets.fromLTRB(6, 5, 14, 5),
             decoration: BoxDecoration(
@@ -438,26 +480,49 @@ class _ChatScreenState extends State<ChatScreen> {
                           ),
                         ),
                       ),
+                      // 「回到底部」：往上翻聊天记录时浮出来，点一下回到最新。
+                      // 下面又来了几条新消息就顺手标出来 —— 只给一个光秃秃的箭头，
+                      // 用户不知道值不值得马上回去看。
                       if (!_stick)
                         Positioned(
                           right: 16,
                           bottom: 12,
                           child: Material(
                             color: PB.bgActive,
-                            shape: const CircleBorder(),
+                            shape: const StadiumBorder(),
                             clipBehavior: Clip.antiAlias,
                             child: InkWell(
                               onTap: () {
-                                setState(() => _stick = true);
-                                _toBottom(animate: true);
+                                setState(() {
+                                  _stick = true;
+                                  _unreadWhileUp = 0;
+                                });
+                                unawaited(_toBottom(animate: true));
                               },
-                              child: const SizedBox(
-                                width: 36,
-                                height: 36,
-                                child: Icon(
-                                  LucideIcons.arrowDown,
-                                  size: 18,
-                                  color: PB.textSecondary,
+                              child: Padding(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: _unreadWhileUp > 0 ? 12 : 9,
+                                  vertical: 9,
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(
+                                      LucideIcons.arrowDown,
+                                      size: 18,
+                                      color: PB.textSecondary,
+                                    ),
+                                    if (_unreadWhileUp > 0) ...[
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        '$_unreadWhileUp 条新消息',
+                                        style: const TextStyle(
+                                          fontSize: PB.fsXxs,
+                                          color: PB.textSecondary,
+                                        ),
+                                      ),
+                                    ],
+                                  ],
                                 ),
                               ),
                             ),
