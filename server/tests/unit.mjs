@@ -448,7 +448,7 @@ await test('store: 用户名超长会截断（它会进系统提示，别让它�
 
 await test('prompt: 系统提示里明确写了"在跟谁说话"', async () => {
   // 在用例内部动态 import：这个文件后面才 import 它，靠前用会踩 TDZ
-  const { buildAppendSystemPrompt } = await import('../src/pi-runner.js');
+  const { buildAppendSystemPrompt } = await import('../src/system-prompt.js');
   const p = buildAppendSystemPrompt({}, { userName: '小陈' }).join('\n');
   assert.match(p, /在跟谁说话/);
   assert.match(p, /小陈/);
@@ -461,7 +461,7 @@ await test('prompt: 系统提示里明确写了"在跟谁说话"', async () => {
 });
 
 await test('prompt: 没传用户名也不能拼出"跟 说话"这种残句', async () => {
-  const { buildAppendSystemPrompt } = await import('../src/pi-runner.js');
+  const { buildAppendSystemPrompt } = await import('../src/system-prompt.js');
   const p = buildAppendSystemPrompt({}, {}).join('\n');
   assert.match(p, /叫「用户」/);
 });
@@ -756,7 +756,7 @@ await test('ref: 同一个同事重复私信 → 去重，不出现两个同名�
 //   这是全项目最容易悄悄写坏、又最难发现的地方 —— 提示词错了不报错，
 //   只是 bot 突然开始念配置表，或者把用户教过的 SOP 忘了。
 // ---------------------------------------------------------------------------
-const { buildAppendSystemPrompt } = await import('../src/pi-runner.js');
+const { buildAppendSystemPrompt } = await import('../src/system-prompt.js');
 
 await test('prompt: 人设排在最前面', () => {
   const p = buildAppendSystemPrompt({ persona: '你是资深设计师' });
@@ -1490,6 +1490,53 @@ await test('自动附图：单张保存失败不影响其它张', () => {
   assert.equal(out.length, 1, '坏的那张跳过，好的那张照样收');
   assert.equal(out[0].name, 'b.png');
   fs.rmSync(root, { recursive: true, force: true });
+});
+
+
+// ---------------------------------------------------------------------------
+// 建会话的决策（session-factory.js）：挑哪个模型、哪个思考档位
+// ---------------------------------------------------------------------------
+const { pickModelAndThinking } = await import('../src/session-factory.js');
+
+await test('★ 建会话：bot 没单独设模型 → 用全局默认', () => {
+  const global = { provider: 'p', id: 'default' };
+  const r = pickModelAndThinking({ bot: {}, fallbackModel: global });
+  assert.equal(r.model, global);
+  assert.equal(r.thinking, null);
+});
+
+await test('★ 建会话：bot 设了模型 → 用它自己的', () => {
+  const own = { provider: 'grp', id: 'flash' };
+  const global = { provider: 'p', id: 'default' };
+  const r = pickModelAndThinking({ bot: { model: 'grp/flash' }, botModel: own, fallbackModel: global });
+  assert.equal(r.model, own);
+});
+
+await test('★ 建会话：档位已知会吐空 → 自动换一个能用的', () => {
+  const own = { provider: 'cline', id: 'x-oc' };
+  const r = pickModelAndThinking({
+    bot: { thinking: 'medium' },
+    botModel: own,
+    safeLevel: (slug, level) => {
+      assert.equal(slug, 'cline/x-oc', '要用完整 slug 去问档位矩阵');
+      assert.equal(level, 'medium');
+      return 'low';
+    },
+  });
+  assert.equal(r.thinking, 'low', '★ 这个档位会吐空，得换掉');
+});
+
+await test('建会话：档位没问题就原样用', () => {
+  const r = pickModelAndThinking({
+    bot: { thinking: 'high' },
+    safeLevel: () => null,
+  });
+  assert.equal(r.thinking, 'high');
+});
+
+await test('建会话：没设思考等级就不传（听 pi 的默认）', () => {
+  const r = pickModelAndThinking({ bot: { model: 'a/b' }, safeLevel: () => 'low' });
+  assert.equal(r.thinking, null, '没设过就别瞎给');
 });
 
 const passed = results.filter((r) => r.ok).length;
