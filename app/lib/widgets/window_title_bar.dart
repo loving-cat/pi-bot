@@ -140,9 +140,20 @@ class _WinBtnState extends State<_WinBtn> {
         : Colors.transparent;
     final fg = _hover && widget.danger ? Colors.white : PB.textSecondary;
 
-    return Tooltip(
-      message: widget.tip,
-      waitDuration: const Duration(milliseconds: 600),
+    // ★ 这里**故意不放 Tooltip**。
+    //
+    //   两个原因：
+    //   1. Windows 自己的最小化/最大化/关闭本来就没有 tooltip —— 加了反而多一层噪音。
+    //   2. 更重要的：Tooltip 在这个叠层里会出问题 —— 悬停 600ms 后它浮出来，
+    //      但没能正常画成小卡片，而是**整窗铺了一层半透明灰**；而且它不会自己收，
+    //      必须点一下才消失（用户报的"悬停右上角后整个软件变灰"就是这个）。
+    //      这个叠层是：无边框窗口 + MaterialApp.builder 里套的 Stack(fit: expand)，
+    //      Tooltip 的 OverlayPortal 在里面算错了尺寸。
+    //
+    //   无障碍信息用 Semantics 给，不靠 tooltip。
+    return Semantics(
+      label: widget.tip,
+      button: true,
       child: MouseRegion(
         cursor: SystemMouseCursors.basic,
         onEnter: (_) => setState(() => _hover = true),
