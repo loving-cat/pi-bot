@@ -218,3 +218,26 @@ new RegExp(`@[\\s\\p{Extended_Pictographic}\\uFE0F\\u200D]*${escapeRe(name)}`, '
 ## 20. 每个 (房间 × bot) 一个 AgentSession，内存一直涨
 
 **修法**：LRU（`config.maxSessions`，默认 40），超出时释放最久没用且不忙的。
+
+---
+
+## 21. `flutter build apk` 报 "Gradle requires JVM 17 or later"
+
+**症状**：`Running Gradle task 'assembleRelease'...` 一秒后失败，日志里是
+`Gradle requires JVM 17 or later to run. Your build is currently configured to use JVM 8.`
+（`flutter doctor -v` 同时会提示 `X Could not determine java version`）
+
+**根因**：这台机器的 `JAVA_HOME` 指着 `C:\Program Files\Java\jdk-1.8`。Flutter 找 JDK 的顺序是
+Android Studio 自带的 → `JAVA_HOME` → PATH，没有 Android Studio 就落到 1.8 上。
+
+**修法**：构建时显式指定 JDK 21（不写进 `android/gradle.properties`，
+那是用户机器相关的东西，不该进开源仓库）：
+
+```bash
+JAVA_HOME="C:\Users\you\.jdks\openjdk-21.0.2" flutter build apk --release
+```
+
+**顺带**：图标全换成 Lucide 后，构建日志里
+`MaterialIcons-Regular.otf ... reducing it from 1645184 to 1588 bytes` 是**正常**的 ——
+1588 字节说明没有任何 `Icons.xxx` 被引用，字体被削成空壳是应该的。
+（对比第 7 条：只要代码里还有 `Icons.xxx`，这 1588 字节就意味着那些图标全是隐形的。）
