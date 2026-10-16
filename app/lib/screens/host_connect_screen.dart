@@ -7,7 +7,6 @@ import '../models.dart';
 import '../platform.dart';
 import '../scope.dart';
 import '../theme.dart';
-import 'pair_screen.dart';
 
 /// 桌面端专用：本机服务端连不上时的兜底页。
 ///
@@ -82,7 +81,11 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
                     ),
                     child: const Text(
                       'π',
-                      style: TextStyle(fontSize: 30, fontWeight: FontWeight.w600, color: Colors.white),
+                      style: TextStyle(
+                        fontSize: 30,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
+                      ),
                     ),
                   ),
                 ),
@@ -90,7 +93,10 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
                 Text(
                   online ? '连上了' : '正在连接本机服务端…',
                   textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: PB.fsXl, fontWeight: FontWeight.w600),
+                  style: const TextStyle(
+                    fontSize: PB.fsXl,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
                 const SizedBox(height: 8),
                 if (!online)
@@ -108,7 +114,11 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
                 SelectableText(
                   url,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: PB.fsXs, color: PB.textTertiary),
+                  style: const TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: PB.fsXs,
+                    color: PB.textTertiary,
+                  ),
                 ),
                 const SizedBox(height: 26),
                 Container(
@@ -123,18 +133,28 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
                     children: [
                       Row(
                         children: [
-                          const Icon(LucideIcons.terminal, size: 15, color: PB.textTertiary),
+                          const Icon(
+                            LucideIcons.terminal,
+                            size: 15,
+                            color: PB.textTertiary,
+                          ),
                           const SizedBox(width: 8),
                           const Text(
                             '服务端没起？在终端跑：',
-                            style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+                            style: TextStyle(
+                              fontSize: PB.fsXs,
+                              color: PB.textTertiary,
+                            ),
                           ),
                         ],
                       ),
                       const SizedBox(height: 10),
                       Container(
                         width: double.infinity,
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
+                        ),
                         decoration: BoxDecoration(
                           color: PB.bgApp,
                           borderRadius: BorderRadius.circular(PB.rLg),
@@ -153,7 +173,11 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
                       const SizedBox(height: 10),
                       const Text(
                         '起来之后这里会自动连上，不用点任何东西。',
-                        style: TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary, height: 1.5),
+                        style: TextStyle(
+                          fontSize: PB.fsXxs,
+                          color: PB.textQuaternary,
+                          height: 1.5,
+                        ),
                       ),
                     ],
                   ),
@@ -165,13 +189,17 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
                   label: const Text('立即重试'),
                 ),
                 const SizedBox(height: 10),
-                TextButton(
-                  onPressed: () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const PairScreen()),
-                  ),
-                  child: const Text(
-                    '连别的服务端（手机端才需要配对）',
-                    style: TextStyle(fontSize: PB.fsXs, color: PB.textQuaternary),
+                // ★ PC 端**不给**去手机配对表单的入口。
+                //   PC 是宿主：服务端就跑在这台机器上，它没有"去连别人"这个需求。
+                //   真正需要的是"把手机接进来" —— 那是「设置 → 远程连接」里的
+                //   二维码 + 配对码，扫一下就行，不用在这填任何东西。
+                const Text(
+                  '要把手机接进来？去「设置 → 远程连接」，扫一下二维码就行，这里不用填。',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: PB.fsXs,
+                    color: PB.textQuaternary,
+                    height: 1.5,
                   ),
                 ),
               ],
