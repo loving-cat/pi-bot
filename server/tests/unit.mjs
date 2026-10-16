@@ -1590,6 +1590,91 @@ await test('回执：查不到 bot 就用 id 兜底（别出现 undefined 的残
   assert.ok(!/undefined/.test(n));
 });
 
+
+// ---------------------------------------------------------------------------
+// 模型接线（model-registry.js）：认 slug + 模型组注册
+// ---------------------------------------------------------------------------
+const { resolveModel, modelLabel, syncModelGroups } = await import('../src/model-registry.js');
+
+const FAKE_RT = {
+  getModel: (p, id) => (p === 'grpA' && id === 'flash' ? { provider: 'grpA', id: 'flash' } : null),
+  getModels: () => [
+    { provider: 'grpA', id: 'flash' },
+    { provider: 'grpB', id: 'pro' },
+    { provider: 'grpB', id: 'dup' },
+    { provider: 'grpC', id: 'dup' },
+  ],
+};
+
+await test('认模型：写全了就能直接找到', () => {
+  assert.equal(resolveModel(FAKE_RT, 'grpA/flash').id, 'flash');
+});
+
+await test('认模型：只给模型 id 也认（全局唯一时）', () => {
+  assert.equal(resolveModel(FAKE_RT, 'pro').provider, 'grpB');
+});
+
+await test('认模型：裸 id 撞名 → 取第一个（历史写法，不强行报错）', () => {
+  // 说明区别：**后缀写法**撞名才返回 null（见下一条）。
+  // 裸 id 是老写法，很多地方在用它，这里保持"取第一个"的既有行为。
+  assert.equal(resolveModel(FAKE_RT, 'dup').provider, 'grpB');
+});
+
+await test('★ 认模型：只给后半截、且有两个候选 → 不猜，返回 null', () => {
+  // "只给后半截"是唯一能对上就认的宽松写法；对不上两个就必须让人说清。
+  const rt = {
+    getModel: () => null,
+    getModels: () => [
+      { provider: 'a', id: 'x/deepseek' },
+      { provider: 'b', id: 'y/deepseek' },
+    ],
+  };
+  assert.equal(resolveModel(rt, 'deepseek'), null, '两个候选时不许瞎挑');
+  const rt2 = { getModel: () => null, getModels: () => [{ provider: 'a', id: 'x/deepseek' }] };
+  assert.equal(resolveModel(rt2, 'deepseek').provider, 'a', '唯一候选就认');
+});
+
+await test('认模型：找不到就 null，不要瞎给一个', () => {
+  assert.equal(resolveModel(FAKE_RT, '不存在'), null);
+  assert.equal(resolveModel(null, 'grpA/flash'), null);
+  assert.equal(resolveModel(FAKE_RT, ''), null);
+});
+
+await test('模型标签：给日志和档位矩阵用的完整标识', () => {
+  assert.equal(modelLabel({ provider: 'grpA', id: 'flash' }), 'grpA/flash');
+  assert.equal(modelLabel(null), null);
+});
+
+await test('★ 模型组：新组注册进去，删掉的组要显式注销', () => {
+  const calls = [];
+  const runtime = {
+    registerProvider: (id) => calls.push('+' + id),
+    unregisterProvider: (id) => calls.push('-' + id),
+  };
+  const registered = new Set(['old']);
+  const next = syncModelGroups(runtime, registered, { fresh: {}, keep: {} });
+  assert.deepEqual(calls, ['-old', '+fresh', '+keep'], '★ 幽灵组不注销，菜单里会留一个选不动的项');
+  assert.deepEqual([...next].sort(), ['fresh', 'keep']);
+});
+
+await test('模型组：注册失败不抛出去（一个组坏了别拖垮整次同步）', () => {
+  const errs = [];
+  const runtime = {
+    registerProvider: (id) => {
+      if (id === 'bad') throw new Error('炸了');
+    },
+    unregisterProvider: () => {},
+  };
+  const next = syncModelGroups(runtime, new Set(), { bad: {}, good: {} }, { onError: (id) => errs.push(id) });
+  assert.deepEqual(errs, ['bad']);
+  assert.deepEqual([...next], ['good'], '坏的那个不入账，好的照常');
+});
+
+await test('模型组：没有 runtime 时原样返回（不炸）', () => {
+  const registered = new Set(['a']);
+  assert.equal(syncModelGroups(null, registered, {}), registered);
+});
+
 const passed = results.filter((r) => r.ok).length;
 
 console.log('\n================ 单元测试 ================');
