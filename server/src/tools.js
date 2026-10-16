@@ -20,6 +20,7 @@ import { menuText, resolveMenu, menuEntries } from './model-menu.js';
 import { extractText } from './extract.js';
 import { webSearch, webFetch } from './web.js';
 import { log, now, isBusyError, planDispatchRetry } from './util.js';
+import { CODING_BASELINE_TITLE, CODING_BASELINE_HOWTO, isCodingRole } from './coding-baseline.js';
 
 /** 同一个 bot 连着私信多个人时，多久以内的引用气泡合并成一个（ms） */
 export const REF_MERGE_MS = 180_000;
@@ -490,6 +491,15 @@ export function buildChiefTools({ runner, health, roomId }) {
         }),
         model: Type.Optional(Type.String({ description: 'ds-4.1-flash / glm-5.3 / kimi-k3 / glm-5.3-flash' })),
         thinking: Type.Optional(Type.String({ description: THINKING_LEVELS.join(' / ') })),
+        skills: Type.Optional(
+          Type.Array(
+            Type.Object({
+              title: Type.String({ description: '技能名，如「爬虫反爬 SOP」' }),
+              howto: Type.String({ description: '具体怎么做，越细越好' }),
+            }),
+            { description: '额外技能。开发类的 bot 会自动带上工程基线，不用你写' },
+          ),
+        ),
       }),
       execute: async (_toolCallId, params) => {
         const check = checkModel(runner, params.model, health);
@@ -501,6 +511,20 @@ export function buildChiefTools({ runner, health, roomId }) {
             duplicated: true,
           });
         }
+        // ★ 造"开发类"bot 时**自动挂上工程基线**。
+        //
+        //   用户要的："建立 coding 相关的 bot 的时候 优先让开发类 bot 必须调用
+        //   这类 skill。" 靠主控每次记得手写是不现实的 —— 它一忙就忘。
+        //   所以在这里一刀切：命中就是开发类，基线必须带。
+        const skills = [...(params.skills ?? [])];
+        const coding = isCodingRole({
+          name: params.name,
+          persona: params.persona,
+          tagline: params.tagline ?? '',
+        });
+        if (coding && !skills.some((k) => k?.title === CODING_BASELINE_TITLE)) {
+          skills.unshift({ title: CODING_BASELINE_TITLE, howto: CODING_BASELINE_HOWTO });
+        }
         const bot = store.createBot({
           name: params.name,
           persona: params.persona,
@@ -509,8 +533,12 @@ export function buildChiefTools({ runner, health, roomId }) {
           model: check.resolved ?? null,
           thinking: params.thinking ?? undefined,
           createdBy: 'chief',
+          skills,
         });
-        log(`chief 招了：${bot.emoji} ${bot.name} (${bot.model ?? '默认'}/${bot.thinking})`);
+        log(
+          `chief 招了：${bot.emoji} ${bot.name} (${bot.model ?? '默认'}/${bot.thinking})` +
+            (coding ? ' ＋工程基线' : ''),
+        );
         return ok(`已招到 ${bot.emoji} ${bot.name}（id=${bot.id}）。«内部：${bot.model ?? '默认'}/${bot.thinking}，不要写进给用户看的话»`, {
           botId: bot.id,
         });
