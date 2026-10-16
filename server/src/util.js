@@ -37,6 +37,53 @@ export function log(...args) {
   console.log(`[${ts}]`, ...args);
 }
 
+/** 目标正忙 —— 这不是"不通"，是"排一下队" */
+export function isBusyError(msg) {
+  return /正在忙/.test(String(msg ?? ''));
+}
+
+/**
+ * 派活失败后要不要再试一次？
+ *
+ * 用户原话："发现不通，就立马反馈给 mainbot，main bot 再去把任务交接给 bot
+ * 一次，要重试 3 次至少。"
+ *
+ * 为什么必须有这个（真事）：三个成员同时在群里干活时，第二个私信直接被打回
+ * ——因为 runBotOnce 碰到"目标正忙"是**立刻失败**。于是主控看到的就是
+ * "私聊派活这条路不通"，然后就自己上手了。其实对方只是还在忙。
+ *
+ * 抽成纯函数是为了能单测：重试策略（几次、等多久、什么错该等）是这条链上
+ * 最容易写错、也最容易被以后改动弄坏的部分。
+ *
+ * @param {number} attempt   已经试过几次（从 1 开始）
+ * @param {string} error     上一次的失败原因
+ * @param {number} waitedMs  已经为它等了多久
+ * @param {number} maxAttempts 最多试几次
+ * @param {number} waitBudgetMs 总共最多等多久
+ * @returns {{retry: boolean, waitMs: number, why: string}}
+ */
+export function planDispatchRetry({
+  attempt,
+  error,
+  waitedMs = 0,
+  maxAttempts = 3,
+  waitBudgetMs = 180_000,
+} = {}) {
+  if (attempt >= maxAttempts) {
+    return { retry: false, waitMs: 0, why: `已经试了 ${attempt} 次` };
+  }
+  // 只有"正忙"值得等。其他错（找不到 bot、起不来）再等也不会变。
+  if (!isBusyError(error)) {
+    return { retry: false, waitMs: 0, why: '不是排队问题，重试没用' };
+  }
+  if (waitedMs >= waitBudgetMs) {
+    return { retry: false, waitMs: 0, why: '等太久了' };
+  }
+  // 越等越久，但不超过剩下的预算
+  const step = Math.min(5_000 * 2 ** (attempt - 1), waitBudgetMs - waitedMs);
+  return { retry: true, waitMs: step, why: '对方还在忙，排一下队' };
+}
+
 /**
  * **插队**的落点：插在"正在写的那条回复"之前。
  *
