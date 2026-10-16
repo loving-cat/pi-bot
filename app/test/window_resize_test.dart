@@ -248,4 +248,71 @@ void main() {
     );
     appResizing.value = false;
   });
+
+  testWidgets('★ 斜着拖右下角：左上角不许动，宽高按位移长大', (tester) async {
+    // 用户报"拖动右下角斜着，整个界面就放大了"。
+    // 先把数学钉住：拖右下角时 left/top 一点都不能变，width/height 各加位移量。
+    final bounds = <Rect>[];
+    const channel = MethodChannel('window_manager');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      switch (call.method) {
+        case 'isMaximized':
+          return false;
+        case 'getBounds':
+          return <String, dynamic>{
+            'x': 100.0,
+            'y': 100.0,
+            'width': 800.0,
+            'height': 600.0,
+          };
+        case 'setBounds':
+          final a = (call.arguments as Map).cast<String, dynamic>();
+          bounds.add(
+            Rect.fromLTWH(
+              (a['x'] as num).toDouble(),
+              (a['y'] as num).toDouble(),
+              (a['width'] as num).toDouble(),
+              (a['height'] as num).toDouble(),
+            ),
+          );
+          return null;
+      }
+      return null;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+    tester.view.physicalSize = const Size(800, 600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      const MaterialApp(home: Scaffold(body: WindowResizeOverlay())),
+    );
+    await tester.pump();
+
+    // 抓右下角（坐标 796,596 —— 角热区 11x11 内）
+    final g = await tester.startGesture(const Offset(796, 596));
+    await tester.pump();
+    for (var i = 0; i < 10; i++) {
+      await g.moveBy(const Offset(8, 6)); // 斜着往右下
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await g.up();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(bounds, isNotEmpty, reason: '应该发出了 setBounds');
+    for (final r in bounds) {
+      expect(r.left, closeTo(100, 0.51), reason: '拖右下角时左上角不许动');
+      expect(r.top, closeTo(100, 0.51), reason: '拖右下角时左上角不许动');
+    }
+    final last = bounds.last;
+    // 指针总共走了 (80, 60)；窗口最多长这么多（可能因插值/限流少发几帧，
+    // 但绝不可以"超过"位移量 —— 超了就是被放大了）
+    expect(last.width, lessThanOrEqualTo(880 + 0.51), reason: '宽度不能超过位移量');
+    expect(last.height, lessThanOrEqualTo(660 + 0.51), reason: '高度不能超过位移量');
+    expect(last.width, greaterThan(800), reason: '往右拖应该真的变宽');
+    expect(last.height, greaterThan(600), reason: '往下拖应该真的变高');
+    appResizing.value = false;
+  });
 }
