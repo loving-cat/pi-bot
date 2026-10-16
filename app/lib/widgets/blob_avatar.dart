@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../theme.dart';
@@ -68,6 +69,9 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
   Timer? _blinkTimer;
   Timer? _settleTimer;
 
+  /// 鼠标是不是停在它身上（只有这时候才订阅全局指针）
+  bool _following = false;
+
   /// 视线偏移（像素，已经收敛过）。
   /// 用 ValueNotifier 而不是 setState：鼠标一动就重建整个 widget 太浪费，
   /// 这里只让 CustomPaint 重绘。
@@ -80,14 +84,10 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
-    // ★ 眼神跟随和"呼吸"是两件事：侧边栏那些头像 animate: false（不呼吸），
-    //   但也该跟着鼠标看。
-    //   ⚠️ 这一句必须在下面那个 `if (!_alive) return` **之前** ——
-    //   上一版写在它后面，于是静态头像永远登记不上监听，
-    //   症状就是"侧边栏的头像不跟随鼠标"。
-    if (BlobAvatar.animationsEnabled && widget.followPointer) {
-      AvatarLife.pointer.addListener(_followPointer);
-    }
+    // ★ 眼神跟随改成了**悬停才订阅**（见 _onEnter/_onExit）。
+    //   以前是每个头像都订阅全局指针 —— 侧边栏一列十几个，鼠标一动它们全部
+    //   重绘，快速划过时会明显发卡（用户报的）。
+    //   现在同一时刻最多只有一个头像在跟随，成本几乎为零。
     if (!_alive) return;
 
     _rng = math.Random(widget.seed.hashCode);
@@ -160,6 +160,23 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
     _wake();
   }
 
+  /// 鼠标进来才开始跟随（整个头像框都算命中区）
+  void _onEnter(PointerEnterEvent _) {
+    if (_following) return;
+    if (!BlobAvatar.animationsEnabled || !widget.followPointer) return;
+    AvatarLife.pointer.addListener(_followPointer);
+    _following = true;
+    _wake(); // 顺便眨个眼/动一下，像注意到你了
+  }
+
+  /// 鼠标离开：停掉跟随，视线回正（否则它会一直斜着眼看别处）
+  void _onExit(PointerExitEvent _) {
+    if (!_following) return;
+    AvatarLife.pointer.removeListener(_followPointer);
+    _following = false;
+    if (_gaze.value != Offset.zero) _gaze.value = Offset.zero;
+  }
+
   void _onPoke() {
     if (!_alive || _poke == null) return;
     _wake();
@@ -197,34 +214,38 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
   Widget build(BuildContext context) {
     // 调用方自己给的 badge 优先（比如主控的星标）
     final cornerBadge = widget.badge ?? _emojiBadge();
-    return SizedBox(
-      width: widget.size,
-      height: widget.size,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          if (widget.interactive && _alive)
-            GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTapDown: (_) => _onPoke(),
-              child: _content(),
-            )
-          else
-            _content(),
-          if (cornerBadge != null)
-            Positioned(
-              right: -3,
-              bottom: -3,
-              child: Container(
-                padding: const EdgeInsets.all(2),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).scaffoldBackgroundColor,
-                  shape: BoxShape.circle,
+    return MouseRegion(
+      onEnter: _onEnter,
+      onExit: _onExit,
+      child: SizedBox(
+        width: widget.size,
+        height: widget.size,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            if (widget.interactive && _alive)
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTapDown: (_) => _onPoke(),
+                child: _content(),
+              )
+            else
+              _content(),
+            if (cornerBadge != null)
+              Positioned(
+                right: -3,
+                bottom: -3,
+                child: Container(
+                  padding: const EdgeInsets.all(2),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).scaffoldBackgroundColor,
+                    shape: BoxShape.circle,
+                  ),
+                  child: cornerBadge,
                 ),
-                child: cornerBadge,
               ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }
