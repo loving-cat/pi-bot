@@ -189,6 +189,19 @@ class PB {
     return base.copyWith(
       scaffoldBackgroundColor: bgApp,
       canvasColor: bgApp,
+      // ★ 页面切换统一用**淡入淡出**，不用默认的"滑入/上浮"。
+      //   默认那套是从一边推过来的：设置页整页盖过来的时候，聊天顶部那个
+      //   悬浮胶囊正好在同一位置，看着像"被盖住了一下"（用户报的）。
+      //   淡入没有位移，也就没有"谁盖谁"的错觉 —— 桌面端本来也更习惯这种。
+      pageTransitionsTheme: const PageTransitionsTheme(
+        builders: {
+          TargetPlatform.windows: _FadePageTransitionsBuilder(),
+          TargetPlatform.macOS: _FadePageTransitionsBuilder(),
+          TargetPlatform.linux: _FadePageTransitionsBuilder(),
+          TargetPlatform.android: _FadePageTransitionsBuilder(),
+          TargetPlatform.iOS: _FadePageTransitionsBuilder(),
+        },
+      ),
       dividerColor: borderTertiary,
       splashFactory: InkSparkle.splashFactory,
       textTheme: base.textTheme.copyWith(
@@ -421,6 +434,26 @@ class PB {
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
         waitDuration: const Duration(milliseconds: 500),
       ),
+    );
+  }
+}
+
+/// 纯淡入的页面过渡（无位移、无缩放）—— 不制造"页面盖过来"的错觉。
+class _FadePageTransitionsBuilder extends PageTransitionsBuilder {
+  const _FadePageTransitionsBuilder();
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    // 进场用较快的 easeOut（推页面要跟手），出场交给下面的页面自己淡
+    return FadeTransition(
+      opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
+      child: child,
     );
   }
 }
