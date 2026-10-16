@@ -238,6 +238,8 @@ class Bot {
     this.persona = '',
     List<BotSkill>? skills,
     this.enabled = true,
+    this.reserveTokens,
+    this.keepRecentTokens,
   }) : skills = skills ?? [];
 
   final String id;
@@ -246,6 +248,11 @@ class Bot {
   String role; // main | member
   String? model;
   String? thinking;
+
+  /// 上下文预算（null = 用全局默认）。
+  /// 服务端一直支持这两个值，客户端以前根本没解析 —— 所以面板里也就改不了。
+  int? reserveTokens;
+  int? keepRecentTokens;
 
   /// 给用户看的一句话简介（persona 是给模型的系统提示，不能直接展示）
   String tagline;
@@ -264,6 +271,8 @@ class Bot {
     role: json['role'] as String? ?? 'member',
     model: json['model'] as String?,
     thinking: json['thinking'] as String?,
+    reserveTokens: (json['reserveTokens'] as num?)?.toInt(),
+    keepRecentTokens: (json['keepRecentTokens'] as num?)?.toInt(),
     persona: json['persona'] as String? ?? '',
     skills: ((json['skills'] as List?) ?? const [])
         .whereType<Map>()
