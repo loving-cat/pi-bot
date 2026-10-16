@@ -118,10 +118,14 @@ class _HomeShellState extends State<HomeShell> {
                             total -
                             _chatMin -
                             (state.panelOpen ? _rightWidth : 0);
-                        _leftWidth = (_leftWidth + dx).clamp(
-                          _leftMin,
-                          _leftMax < maxByChat ? _leftMax : maxByChat,
-                        );
+                        // ★ clamp 的上下界必须 min ≤ max，否则 Dart 直接抛
+                        //   ArgumentError（"Invalid argument(s): Invalid clamp range"）——
+                        //   窗口窄 + 面板开着时 maxByChat 会小于 _leftMin，那时候
+                        //   一拖就崩。这里先夹出合法的上界。
+                        final hi = maxByChat < _leftMin
+                            ? _leftMin
+                            : (maxByChat < _leftMax ? maxByChat : _leftMax);
+                        _leftWidth = (_leftWidth + dx).clamp(_leftMin, hi);
                       }),
                     ),
                     Expanded(
