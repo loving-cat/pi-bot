@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
 import '../theme.dart';
+import 'avatar_life.dart';
 
 /// 会呼吸的彩色 blob 头像。
 ///
@@ -18,6 +20,8 @@ class BlobAvatar extends StatefulWidget {
     this.animate = true,
     this.badge,
     this.ring = false,
+    this.mood = AvatarMood.idle,
+    this.interactive = false,
   });
 
   final String seed;
@@ -29,6 +33,14 @@ class BlobAvatar extends StatefulWidget {
 
   /// 主控那种"高一级"的身份环
   final bool ring;
+
+  /// 心情：闲 / 干活中（干活中视线略抬，而且不会"睡着"）
+  final AvatarMood mood;
+
+  /// 可点：戳一下会挤一下。
+  /// 默认 false —— 列表里的头像外面本来就有整行的点击，套一层手势会把行点击吃掉。
+  /// 只有"孤零零挂着"的大头像（会话头部那种）才该开。
+  final bool interactive;
 
   /// 单测里关掉动画。
   ///
@@ -46,40 +58,110 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
   late final _BlobShape _shape = _BlobShape.fromSeed(widget.seed);
   AnimationController? _wobble;
   AnimationController? _blink;
+  AnimationController? _poke;
   math.Random? _rng;
+  Timer? _blinkTimer;
+  Timer? _settleTimer;
+
+  /// 视线偏移（像素，已经收敛过）。
+  /// 用 ValueNotifier 而不是 setState：鼠标一动就重建整个 widget 太浪费，
+  /// 这里只让 CustomPaint 重绘。
+  final ValueNotifier<Offset> _gaze = ValueNotifier(Offset.zero);
+
+  bool _awake = false;
+
+  bool get _alive => widget.animate && BlobAvatar.animationsEnabled;
 
   @override
   void initState() {
     super.initState();
-    if (widget.animate && BlobAvatar.animationsEnabled) {
-      _wobble = AnimationController(
-        vsync: this,
-        duration: const Duration(seconds: 11),
-      )..repeat();
-      _rng = math.Random(widget.seed.hashCode);
-      _blink = AnimationController(
-        vsync: this,
-        duration: const Duration(milliseconds: 190),
-      );
+    if (!_alive) return;
+    _rng = math.Random(widget.seed.hashCode);
+    _wobble = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 11),
+    );
+    _blink = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 190),
+    );
+    _poke = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 380),
+    );
+    _wake();
+    AvatarLife.pointer.addListener(_followPointer);
+  }
+
+  /// 醒过来：开始扭动 + 重新排眨眼，并定个"再没动静就睡"的闹钟。
+  ///
+  /// 睡着的头像不动也不重绘 —— 一屏十几个头像全在动的话，光栅线程是一直满载的。
+  void _wake() {
+    if (!mounted || !_alive) return;
+    if (!_awake) {
+      _awake = true;
+      _wobble?.repeat();
       _scheduleBlink();
     }
+    _settleTimer?.cancel();
+    // 干活中的不睡：它本来就该显得"在动"
+    if (widget.mood == AvatarMood.busy) return;
+    _settleTimer = Timer(AvatarLife.settleAfter, _sleep);
+  }
+
+  void _sleep() {
+    if (!mounted) return;
+    _wobble?.stop();
+    _blinkTimer?.cancel();
+    _blink?.value = 0;
+    _awake = false;
   }
 
   void _scheduleBlink() {
+    _blinkTimer?.cancel();
     if (!mounted || _blink == null) return;
     final delay = Duration(milliseconds: 2600 + (_rng?.nextInt(4200) ?? 2000));
-    Future<void>.delayed(delay, () async {
+    _blinkTimer = Timer(delay, () async {
       if (!mounted || _blink == null) return;
       await _blink!.forward(from: 0);
+      if (!mounted) return;
       await _blink!.reverse();
-      _scheduleBlink();
+      if (mounted) _scheduleBlink();
     });
+  }
+
+  /// 眼睛跟着鼠标：越近越明显，远了就基本回正 ——
+  /// 做成"眼睛黏在鼠标上"反而诡异。
+  void _followPointer() {
+    final p = AvatarLife.pointer.value;
+    if (!mounted || !_alive || p == null) return;
+    final box = context.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return;
+    final next = eyeOffsetToward(
+      avatarCenter: box.localToGlobal(box.size.center(Offset.zero)),
+      pointer: p,
+      size: widget.size,
+    );
+    if ((next - _gaze.value).distance < 0.2) return;
+    _gaze.value = next;
+    _wake();
+  }
+
+  void _onPoke() {
+    if (!_alive || _poke == null) return;
+    _wake();
+    _poke!.forward(from: 0).then((_) => _poke!.reverse());
   }
 
   @override
   void dispose() {
+    AvatarLife.pointer.removeListener(_followPointer);
+    _blinkTimer?.cancel();
+    _settleTimer?.cancel();
+    _gaze.dispose();
     _wobble?.dispose();
     _blink?.dispose();
+    _poke?.dispose();
     super.dispose();
   }
 
@@ -103,7 +185,14 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
       child: Stack(
         clipBehavior: Clip.none,
         children: [
-          _content(),
+          if (widget.interactive && _alive)
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTapDown: (_) => _onPoke(),
+              child: _content(),
+            )
+          else
+            _content(),
           if (cornerBadge != null)
             Positioned(
               right: -3,
@@ -123,24 +212,37 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
   }
 
   Widget _content() {
-    Widget paint(double phase, double blink) => CustomPaint(
-      size: Size.square(widget.size),
-      painter: _BlobPainter(
-        shape: _shape,
-        color: widget.color,
-        phase: phase,
-        blink: blink,
-        ring: widget.ring,
-      ),
-    );
+    // 干活中的视线略微上抬（"在想"）；其余时间跟着鼠标
+    final busyLift = widget.mood == AvatarMood.busy
+        ? Offset(0, -widget.size * 0.045)
+        : Offset.zero;
 
-    if (!widget.animate || _wobble == null) return paint(0, 0);
+    Widget paint(double phase, double blink, double poke, Offset gaze) =>
+        CustomPaint(
+          size: Size.square(widget.size),
+          painter: _BlobPainter(
+            shape: _shape,
+            color: widget.color,
+            phase: phase,
+            blink: blink,
+            poke: poke,
+            gaze: gaze + busyLift,
+            ring: widget.ring,
+          ),
+        );
+
+    if (!_alive || _wobble == null) return paint(0, 0, 0, _gaze.value);
 
     return RepaintBoundary(
       child: AnimatedBuilder(
-        animation: Listenable.merge([_wobble!, _blink!]),
-        builder: (context, _) =>
-            paint(_wobble!.value * 2 * math.pi, _blink!.value),
+        // 视线也并进来：鼠标一动只有这里重绘，不重建 widget
+        animation: Listenable.merge([_wobble!, _blink!, _poke!, _gaze]),
+        builder: (context, _) => paint(
+          _wobble!.value * 2 * math.pi,
+          _blink!.value,
+          _poke!.value,
+          _gaze.value,
+        ),
       ),
     );
   }
@@ -241,6 +343,8 @@ class _BlobPainter extends CustomPainter {
     required this.color,
     required this.phase,
     required this.blink,
+    required this.poke,
+    required this.gaze,
     this.ring = false,
   });
 
@@ -248,6 +352,12 @@ class _BlobPainter extends CustomPainter {
   final Color color;
   final double phase;
   final double blink;
+
+  /// 0→1→0：被戳一下的挤压量
+  final double poke;
+
+  /// 眼睛的偏移（像素）
+  final Offset gaze;
   final bool ring;
 
   /// 按形状种类采样轮廓点（都绕中心一圈，角度递增）。
@@ -264,7 +374,9 @@ class _BlobPainter extends CustomPainter {
               final theta = i / steps * 2 * math.pi;
               var r = 1.0;
               for (final h in shape.harmonics) {
-                r += h.amp * math.sin(h.freq * theta + h.phase + phase * h.speed);
+                r +=
+                    h.amp *
+                    math.sin(h.freq * theta + h.phase + phase * h.speed);
               }
               return center +
                   Offset(
@@ -279,38 +391,22 @@ class _BlobPainter extends CustomPainter {
 
       case _ShapeKind.pill:
         // 宽一点、扁一点 + 比 squircle 圆得多 → 看着就是颗胶囊
-        return _superellipse(
-          center,
-          baseRadius * 1.10,
-          baseRadius * 0.88,
-          2.9,
-        );
+        return _superellipse(center, baseRadius * 1.10, baseRadius * 0.88, 2.9);
 
       case _ShapeKind.hexagon:
         // 正六边形；顶点稍多留一点，平滑那一步会把角磨圆
-        return _rotate(
-          [
-            for (var i = 0; i < 6; i++)
-              () {
-                final t = i / 6 * 2 * math.pi + math.pi / 6;
-                return Offset(
-                  math.cos(t) * baseRadius,
-                  math.sin(t) * baseRadius,
-                );
-              }(),
-          ],
-          center,
-        );
+        return _rotate([
+          for (var i = 0; i < 6; i++)
+            () {
+              final t = i / 6 * 2 * math.pi + math.pi / 6;
+              return Offset(math.cos(t) * baseRadius, math.sin(t) * baseRadius);
+            }(),
+        ], center);
     }
   }
 
   /// 超椭圆 |x/a|^n + |y/b|^n = 1 —— n=2 是椭圆，n=4 出头就是 iOS 那种圆角方
-  List<Offset> _superellipse(
-    Offset center,
-    double a,
-    double b,
-    double n,
-  ) {
+  List<Offset> _superellipse(Offset center, double a, double b, double n) {
     const steps = 44;
     final pts = <Offset>[];
     for (var i = 0; i < steps; i++) {
@@ -365,6 +461,17 @@ class _BlobPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
     final baseRadius = size.shortestSide / 2 * 0.9;
+
+    // 被戳的那一下：横向撑开、纵向压扁，然后弹回去。
+    // 整块一起变形（身体 + 眼睛），否则眼睛会"浮"在压扁的身体外面。
+    canvas.save();
+    if (poke > 0.01) {
+      final s = 1 + poke * 0.10;
+      canvas.translate(center.dx, center.dy);
+      canvas.scale(s, 1 / s);
+      canvas.translate(-center.dx, -center.dy);
+    }
+
     final path = _blobPath(center, baseRadius);
 
     // 1) 主体：左上到右下的渐变
@@ -425,8 +532,8 @@ class _BlobPainter extends CustomPainter {
     final eyePaint = Paint()
       ..color = Color.lerp(color, Colors.black, 0.84)!.withValues(alpha: 0.95);
     for (final side in [-1.0, 1.0]) {
-      final cx = center.dx + side * size.shortestSide * shape.eyeGap;
-      final cy = center.dy + size.shortestSide * (shape.eyeY - 0.5);
+      final cx = center.dx + side * size.shortestSide * shape.eyeGap + gaze.dx;
+      final cy = center.dy + size.shortestSide * (shape.eyeY - 0.5) + gaze.dy;
       canvas.save();
       canvas.translate(cx, cy);
       canvas.rotate(side * shape.eyeTilt);
@@ -439,6 +546,8 @@ class _BlobPainter extends CustomPainter {
       );
       canvas.restore();
     }
+
+    canvas.restore();
   }
 
   @override
@@ -446,7 +555,9 @@ class _BlobPainter extends CustomPainter {
       old.phase != phase ||
       old.blink != blink ||
       old.color != color ||
-      old.shape != shape;
+      old.shape != shape ||
+      old.poke != poke ||
+      old.gaze != gaze;
 }
 
 /// 群头像：2-4 个小 blob 叠在一起
