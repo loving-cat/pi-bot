@@ -17,6 +17,7 @@ import 'package:pi_bot/screens/chat_screen.dart';
 import 'package:pi_bot/screens/home_shell.dart';
 import 'package:pi_bot/screens/rooms_screen.dart';
 import 'package:pi_bot/widgets/blob_avatar.dart';
+import 'package:pi_bot/widgets/room_panel.dart';
 import 'package:pi_bot/widgets/md_text.dart';
 import 'package:pi_bot/widgets/floating_menu.dart';
 
@@ -554,5 +555,114 @@ void main() {
       greaterThan(3),
       reason: '★ 鼠标进到胶囊里（哪怕落在名字上）头像就该跟随',
     );
+  });
+
+  test('把新成员接在名单后面：去重、不乱序', () {
+    expect(mergeMemberIds(const ['a'], const ['b']), const ['a', 'b']);
+    expect(mergeMemberIds(const ['a', 'b'], const ['b', 'c']), const [
+      'a',
+      'b',
+      'c',
+    ]);
+    expect(mergeMemberIds(const ['a'], const []), const ['a']);
+    // 已经在里面的不能再加一遍（多选时容易重复点）
+    expect(mergeMemberIds(const ['a'], const ['a', 'a']), const ['a']);
+  });
+
+  testWidgets('★ 成员面板能自己加 bot：按钮 + 选人对话框', (tester) async {
+    // 用户要的："这个成员 要允许 用户自己增加 bot" —— 不用再跟主控说。
+    tester.view.physicalSize = const Size(1200, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final state = _stateWith(
+      [
+        Room(
+          id: 'g1',
+          name: '内容运营组',
+          kind: 'group',
+          botIds: const ['b1'],
+          leadBotId: 'b1',
+        ),
+      ],
+      bots: [
+        Bot(id: 'b1', name: '运营总监'),
+        Bot(id: 'b2', name: '文案编辑', tagline: '写文案'),
+        Bot(id: 'b3', name: '视觉设计', tagline: '配图'),
+      ],
+    );
+    addTearDown(state.dispose);
+
+    await tester.pumpWidget(
+      AppScope(
+        state: state,
+        child: MaterialApp(
+          home: Scaffold(body: RoomPanel(room: state.rooms.first)),
+        ),
+      ),
+    );
+    await tester.pump();
+    // 切到「成员」
+    await tester.tap(find.text('成员').first);
+    await tester.pumpAndSettle();
+
+    // 按钮上写明还能加几个（花名册里没进来的有 2 个）
+    expect(find.text('添加成员'), findsOneWidget, reason: '群成员面板要有入口');
+
+    await tester.tap(find.text('添加成员'));
+    await tester.pumpAndSettle();
+
+    // 对话框里只列**还没进来**的（已在群里的运营总监不该出现在列表里）
+    Finder inDialog(Finder f) => find.descendant(
+      of: find.byType(AlertDialog),
+      matching: f,
+    );
+    expect(find.text('往「内容运营组」里加谁'), findsOneWidget);
+    expect(inDialog(find.text('文案编辑')), findsOneWidget);
+    expect(inDialog(find.text('视觉设计')), findsOneWidget);
+    expect(
+      inDialog(find.text('运营总监')),
+      findsNothing,
+      reason: '已经在群里的不该再列（面板后面的成员行不算）',
+    );
+
+    // 没选人时"添加"是禁用的
+    final btn = tester.widget<FilledButton>(
+      find.ancestor(
+        of: find.text('添加'),
+        matching: find.byType(FilledButton),
+      ),
+    );
+    expect(btn.onPressed, isNull, reason: '一个都没选时不能点添加');
+
+    // 勾两个 → 按钮变成"添加 2 个"
+    await tester.tap(find.text('文案编辑'));
+    await tester.pump();
+    await tester.tap(find.text('视觉设计'));
+    await tester.pump();
+    expect(find.text('添加 2 个'), findsOneWidget);
+  });
+
+  testWidgets('私聊没有「成员」页（一个私聊就一个人）', (tester) async {
+    tester.view.physicalSize = const Size(1200, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final state = _stateWith(
+      [Room(id: 'r1', name: '甲', kind: 'dm', botIds: const ['b1'])],
+      bots: [Bot(id: 'b1', name: '甲'), Bot(id: 'b2', name: '乙')],
+    );
+    addTearDown(state.dispose);
+    await tester.pumpWidget(
+      AppScope(
+        state: state,
+        child: MaterialApp(
+          home: Scaffold(body: RoomPanel(room: state.rooms.first)),
+        ),
+      ),
+    );
+    await tester.pump();
+    // 第三个页签只有群才有 —— 私聊里想加人，就是"新建一个群"
+    expect(find.text('详情'), findsOneWidget);
+    expect(find.text('资料库'), findsOneWidget);
+    expect(find.text('成员'), findsNothing);
   });
 }
