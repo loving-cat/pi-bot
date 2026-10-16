@@ -176,9 +176,12 @@ class PB {
         titleLarge: t(17, FontWeight.w600, spacing: -0.2, height: 1.3),
         titleMedium: t(15, FontWeight.w600, spacing: -0.1, height: 1.35),
         titleSmall: t(13.5, FontWeight.w600, spacing: -0.05),
-        bodyLarge: t(15, FontWeight.w400, spacing: 0.05, height: 1.5),
-        bodyMedium: t(fsBase, FontWeight.w400, spacing: 0.05, height: 1.5),
-        bodySmall: t(fsSm, FontWeight.w400, spacing: 0.05, height: 1.45),
+        // ★ 行距放宽到 1.7 —— 原先 1.5 在中文长段落里"糊成一坨"，
+        //   尤其消息里经常整段整段地写。字距也稍微放开一点（中文比拉丁字母
+        //   更需要一点点呼吸，但别放太多，否则像拉散了对齐）。
+        bodyLarge: t(15, FontWeight.w400, spacing: 0.12, height: 1.7),
+        bodyMedium: t(fsBase, FontWeight.w400, spacing: 0.12, height: 1.7),
+        bodySmall: t(fsSm, FontWeight.w400, spacing: 0.1, height: 1.65),
         labelLarge: t(fsBase, FontWeight.w500, spacing: 0.1),
         labelMedium: t(fsXs, FontWeight.w500, spacing: 0.2),
         labelSmall: t(fsXxs, FontWeight.w500, spacing: 0.3),
