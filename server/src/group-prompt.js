@@ -1,0 +1,142 @@
+/**
+ * 群聊的**会话层**：谁先开口、每个人能看见什么、提示词怎么拼。
+ *
+ * 从 pi-runner.js 搬出来的（那边原本 2000 行，判断/拼装/执行混在一起）。
+ * 这一层的特点是**几乎全是纯逻辑**：
+ *   · 输入是房间、成员、消息列表；
+ *   · 输出是一个 id 列表或一段字符串。
+ * 所以它能单测 —— 以前要验"@点名时是不是只叫被点名的"，
+ * 得把 PiRunner 的原型方法整个打桩才能验。
+ *
+ * 唯一的外部依赖是 store（查 bot、查消息游标），没有网络、没有模型、
+ * 没有 session，也不写任何东西。
+ */
+import { store } from './store.js';
+import { parseMentions, rosterLine } from './mentions.js';
+
+/** 部门成员（含老大）+ 老大 id。老大的 id 不在名单里时退回第一个 */
+export function departmentOf(room) {
+  const members = room.botIds.map((id) => store.getBot(id)).filter(Boolean);
+  const leadId =
+    room.leadBotId && members.some((m) => m.id === room.leadBotId)
+      ? room.leadBotId
+      : (members[0]?.id ?? null);
+  return { members, leadId };
+}
+
+/**
+ * 一条消息进来时，该谁先开口。
+ *
+ *   · @点名 → 只叫被点名的（@all 就是除自己外全员）
+ *   · 否则**部门老大先接**（老大负责把活拆开分下去）
+ *   · 部门刚成立（kickoff）→ 直接交给老大安排
+ */
+export function openingSpeakers(room, { text = '', openerBotId = null, kickoff = false } = {}) {
+  const { members, leadId } = departmentOf(room);
+  const others = members.filter((m) => m.id !== openerBotId);
+  if (!others.length) return [];
+  if (kickoff) return leadId ? [leadId] : [others[0].id];
+
+  const { all, found } = parseMentions(text, members, { selfId: openerBotId });
+  if (all) return others.map((m) => m.id);
+  const named = found.filter((id) => id !== openerBotId);
+  if (named.length) return named;
+  if (leadId) return [leadId];
+  return [others[0].id];
+}
+
+/**
+ * 某个成员"还没看过"的那段记录 —— 用游标（seenCursor）算位置，
+ * 已经说过的、自己说的、没写完的都不给它看。
+ */
+export function transcriptFor(roomId, botId, limit = 30) {
+  const list = store.listMessages(roomId, { limit: 200 });
+  const cursor = store.seenCursor(roomId, botId);
+  let start = 0;
+  if (cursor) {
+    const idx = list.findIndex((m) => m.id === cursor);
+    if (idx >= 0) start = idx + 1;
+  }
+  const fresh = list
+    .slice(start)
+    .filter((m) => m.authorId !== botId && m.status === 'done' && (m.text ?? '').trim());
+  return fresh.slice(-limit);
+}
+
+/** 房间里最后一条消息的 id（推进游标用） */
+export function lastMessageId(roomId) {
+  const list = store.listMessages(roomId, { limit: 1 });
+  return list[list.length - 1]?.id ?? null;
+}
+
+/** 给某个成员看的提示词：我是谁、同事是谁、老大是谁、现在轮到我了 */
+export function composeGroupPrompt(
+  room,
+  bot,
+  fresh,
+  { isLead = false, reason = '', members = [], leadId = null, order = null } = {},
+) {
+  const lead = members.find((m) => m.id === leadId) ?? null;
+  const peers = members.filter((m) => m.id !== bot.id);
+
+  const head = [
+    `【部门】${room.name}${room.topic ? ` —— ${room.topic}` : ''}`,
+    lead
+      ? `【部门老大】${lead.emoji ?? ''}${lead.name}${lead.id === bot.id ? '（就是你）' : ''}`
+      : '',
+    `【同事】${peers.map((m) => rosterLine(m, { isLead: m.id === leadId })).join('、') || '（暂时没有）'}`,
+    '',
+    // 发言顺序与并发：被叫的顺序就是老大 @ 的顺序（老大定先后）。
+    // 同时要说清"你们是并行的"，不然它们会以为得排队等人说完。
+    order ? `你是这一轮**第 ${order.index} 个**被叫到的（顺序由部门老大决定）。` : '',
+    '同一批被叫到的人**同时开干**（各干各的，不用等人）；谁先干完谁先发言。',
+    '你可以 @ 别人接着做 —— 那就是下一波。',
+    '',
+    '规则：写「@同事名字」就是把发言权交给它（它会接着说话、去干你派的活）；',
+    '只写名字不带 @ 就只是提到它，不会触发它发言。',
+  ].filter(Boolean);
+
+  const parts = [head.join('\n')];
+
+  if (fresh?.length) {
+    const lines = fresh.map((m) => {
+      const who = m.authorType === 'user' ? '用户' : m.authorName;
+      const body = (m.text ?? '').trim();
+      return `${who}: ${body.length > 1600 ? `${body.slice(0, 1600)}…` : body}`;
+    });
+    parts.push('', '【群里刚刚发生的事（补给你的记录）】', ...lines);
+  }
+
+  const rules = isLead
+    ? [
+        `你是「${room.name}」的**部门老大**。这个部门收到的活，由你先接。`,
+        '',
+        '你的做法：',
+        '1. 先把要求拆成几件具体的活，判断每一件该交给谁。',
+        '2. **就在这个群里用 @同事名字 把活派出去**——被 @ 的人会接着在群里发言去干。',
+        '   ★ 派活时把三样写清：**做什么 / 要交回什么 / 验收标准**（一句话说清怎么算做完）。',
+        '   少一样，对方就容易交回一个不好验收的东西，你还得多跑一个来回。',
+        '   ★ 必须用 @ 在群里派，**不要用 message_bot 私信派活**：用户要看得见谁领了什么活。',
+        '   message_bot 只用于「跨部门找人」或「确实不该让用户看到的内部确认」。',
+        '3. 自己别闷头把活全干完；只有「确实只有你能干」的那部分才自己做。',
+        '4. 大家交完结果后，用几句话给用户一个结论（别再复述他们的原文）。',
+        '5. 如果这条消息只是闲聊、确认、或者根本不用动手，就直接回答，不要派活。',
+        '6. 不需要你接就只输出 [PASS]。',
+      ]
+    : [
+        `你是「${room.name}」的成员，不是老大——**只做别人派给你的事**。`,
+        '',
+        '你的做法：',
+        '1. 老大或同事 @ 你，就是要你干这件事：把它做完，**在群里直接给结果**。',
+        '2. 需要别人配合，就 @对方名字，把那部分交给它。',
+        '3. 不要复述别人的话，不要客套，不要总结全场。',
+        '4. 不需要你出手就只输出 [PASS]，不要输出其他任何字。',
+      ];
+
+  parts.push(
+    '',
+    `【现在轮到你：${bot.emoji ?? ''}${bot.name}】${reason ? `（${reason}）` : ''}`,
+    ...rules,
+  );
+  return parts.join('\n');
+}
