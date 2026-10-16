@@ -161,6 +161,57 @@ await test('store: 脏房间追踪（避免全量重写）', () => {
 });
 
 // ---------------------------------------------------------------------------
+// 侧边栏右键菜单：置顶 / 隐藏 / 标为未读，以及「私聊也能删」
+// ---------------------------------------------------------------------------
+
+await test('store: 侧边栏三个开关能改（置顶/隐藏/标为未读）', () => {
+  const bot = store.createBot({ name: '开关对象' });
+  const dm = store.listRooms().find((r) => r.kind === 'dm' && r.botIds[0] === bot.id);
+  store.updateRoom(dm.id, { pinned: true, hidden: true, unread: true });
+  const after = store.getRoom(dm.id);
+  assert.equal(after.pinned, true);
+  assert.equal(after.hidden, true);
+  assert.equal(after.unread, true);
+  // 关掉也要能关（右键菜单是 toggle，不是单向）
+  store.updateRoom(dm.id, { pinned: false, hidden: false, unread: false });
+  assert.equal(store.getRoom(dm.id).pinned, false);
+  assert.equal(store.getRoom(dm.id).hidden, false);
+});
+
+await test('store: 置顶的排在最前面（压过"主控 DM 默认置顶"）', () => {
+  const a = store.createBot({ name: '置顶甲' });
+  const b = store.createBot({ name: '置顶乙' });
+  const dmA = store.listRooms().find((r) => r.kind === 'dm' && r.botIds[0] === a.id);
+  store.updateRoom(dmA.id, { pinned: true });
+  // 主控那一个是 role=main，默认也在最前；手动置顶的要排在它前面
+  assert.equal(store.listRooms()[0].id, dmA.id);
+  store.updateRoom(dmA.id, { pinned: false });
+  assert.notEqual(store.listRooms()[0].id, dmA.id);
+  assert.ok(store.getRoom(b.id) === null || true, '乙只是用来占位的');
+});
+
+await test('store: 私聊也能删（以前 deleteRoom 直接被 return null 挡住）', () => {
+  const bot = store.createBot({ name: '待删对象' });
+  const dm = store.listRooms().find((r) => r.kind === 'dm' && r.botIds[0] === bot.id);
+  assert.ok(dm, '建 bot 时自动开了私聊');
+  const r = store.deleteRoom(dm.id);
+  assert.ok(r, '私聊删除不该被拒绝');
+  assert.equal(store.getRoom(dm.id), null);
+  // ★ 删的是"这个会话"，不是那个 bot —— bot 得留着
+  assert.ok(store.getBot(bot.id), 'bot 本身不能被连带删掉');
+});
+
+await test('store: 删掉私聊后，再找它还能重新开一个空的', () => {
+  const bot = store.createBot({ name: '重开对象' });
+  const dm = store.listRooms().find((r) => r.kind === 'dm' && r.botIds[0] === bot.id);
+  store.deleteRoom(dm.id);
+  const again = store.ensureDm(bot.id);
+  assert.ok(again, 'ensureDm 应该重新开一个');
+  assert.notEqual(again.id, dm.id, '是新房间，不是刚删的那个');
+  assert.equal((store.listMessages(again.id) || []).length, 0, '新开的应该是空的');
+});
+
+// ---------------------------------------------------------------------------
 // store：用户教的 SOP（skills）+ 形象（avatarShape / avatarColor）
 // ---------------------------------------------------------------------------
 
@@ -220,6 +271,93 @@ await test('store: 非法颜色 / 非法形状退回 null（让客户端按 id �
   store.updateBot(bot.id, { avatarColor: 'javascript:alert(1)', avatarShape: '3' });
   assert.equal(store.getBot(bot.id).avatarColor, null);
   assert.equal(store.getBot(bot.id).avatarShape, null, '字符串 "3" 不算合法形状');
+});
+
+// ---------------------------------------------------------------------------
+// 上下文预算：模型容量覆盖 + 压缩参数
+//   用户的原话："很多模型能支持 100w 上下文，然后 161k max token" ——
+//   所以这四个数必须能被用户/总经理覆盖，而且要能只覆盖其中一部分。
+// ---------------------------------------------------------------------------
+const { withCapacity, applyCompactionBudget } = await import('../src/pi-runner.js');
+
+const FAKE_MODEL = {
+  provider: 'cline',
+  id: 'cline-pass/deepseek-v4.1-flash',
+  contextWindow: 1_000_000,
+  maxTokens: 32_768,
+};
+
+await test('容量覆盖：没设过就原样返回（不碰模型自带的数）', () => {
+  const same = withCapacity(FAKE_MODEL, {});
+  assert.equal(same, FAKE_MODEL, '没改动就该是同一个对象，别白白多建一个');
+});
+
+await test('容量覆盖：只抬 maxTokens（1M 上下文 / 32k → 161k 输出）', () => {
+  const m = withCapacity(FAKE_MODEL, { maxTokens: 161_000 });
+  assert.equal(m.maxTokens, 161_000);
+  assert.equal(m.contextWindow, 1_000_000, '没设的那一项不能被改掉');
+  assert.equal(FAKE_MODEL.maxTokens, 32_768, '★ 不能改到原对象上（那是全局注册表的）');
+});
+
+await test('容量覆盖：非法值当没设', () => {
+  const m = withCapacity(FAKE_MODEL, { maxTokens: 0, contextWindow: -5 });
+  assert.equal(m, FAKE_MODEL);
+  const m2 = withCapacity(FAKE_MODEL, { maxTokens: '161000' });
+  assert.equal(m2.maxTokens, 161_000, '字符串数字要认');
+});
+
+await test('压缩预算：bot 上没设 → 不覆盖，交给 pi 自己的默认', () => {
+  const calls = [];
+  const session = { settingsManager: { applyOverrides: (o) => calls.push(o) } };
+  const r = applyCompactionBudget(session, {});
+  assert.equal(r, null);
+  assert.equal(calls.length, 0, '一层都没设就别去动 settings');
+});
+
+await test('压缩预算：bot 上设了 → 按会话覆盖（不动全局 settings.json）', () => {
+  const calls = [];
+  const session = { settingsManager: { applyOverrides: (o) => calls.push(o) } };
+  const r = applyCompactionBudget(session, { reserveTokens: 400_000, keepRecentTokens: 50_000 });
+  assert.deepEqual(r, { reserveTokens: 400_000, keepRecentTokens: 50_000 });
+  assert.deepEqual(calls[0], { compaction: { reserveTokens: 400_000, keepRecentTokens: 50_000 } });
+});
+
+await test('压缩预算：没有 settingsManager 的会话不能把整轮搞崩', () => {
+  assert.equal(applyCompactionBudget({}, { reserveTokens: 1000 }), null);
+  assert.equal(applyCompactionBudget(null, { reserveTokens: 1000 }), null);
+});
+
+// ---------------------------------------------------------------------------
+// store：每个 bot 的四个预算数字（用户和总经理都能改）
+// ---------------------------------------------------------------------------
+
+await test('store: bot 的四个预算数字默认都是 null（= 用上层默认）', () => {
+  const bot = store.createBot({ name: '预算对象' });
+  for (const k of ['reserveTokens', 'keepRecentTokens', 'contextWindow', 'maxTokens']) {
+    assert.equal(bot[k], null, k + ' 默认该是 null');
+  }
+});
+
+await test('store: 四个预算数字能改，非法值退回 null', () => {
+  const bot = store.createBot({ name: '预算对象2' });
+  store.updateBot(bot.id, {
+    contextWindow: 1_000_000,
+    maxTokens: 161_000,
+    reserveTokens: 400_000,
+    keepRecentTokens: 50_000,
+  });
+  const b = store.getBot(bot.id);
+  assert.equal(b.contextWindow, 1_000_000);
+  assert.equal(b.maxTokens, 161_000);
+  assert.equal(b.reserveTokens, 400_000);
+  assert.equal(b.keepRecentTokens, 50_000);
+  // 清回去（总经理任务做完可以恢复默认）
+  store.updateBot(bot.id, { maxTokens: null, contextWindow: null });
+  assert.equal(store.getBot(bot.id).maxTokens, null);
+  // 脏值
+  store.updateBot(bot.id, { reserveTokens: 'abc', keepRecentTokens: -1 });
+  assert.equal(store.getBot(bot.id).reserveTokens, null);
+  assert.equal(store.getBot(bot.id).keepRecentTokens, null);
 });
 
 // ---------------------------------------------------------------------------
