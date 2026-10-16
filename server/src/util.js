@@ -37,9 +37,7 @@ export function log(...args) {
   console.log(`[${ts}]`, ...args);
 }
 
-/** 目标正忙 —— 这不是"不通"，是"排一下队" */
-export function isBusyError(msg) {
-  return /正在忙/.test(String(msg ?? ''));
+/** 目标正忙 —— 这不是"不通"，是"排一下队" */export function isBusyError(msg) {  return /正在忙/.test(String(msg ?? ''));
 }
 
 /**
@@ -100,4 +98,36 @@ export function planDispatchRetry({
 export function insertionPoint(list) {
   const i = list.findIndex((m) => m && m.status === 'streaming');
   return i >= 0 ? i : list.length;
+}
+
+/**
+ * 出事了该**谁**知晓？—— "组长 / 部长级别"这条规则。
+ *
+ * 用户原话："做个心跳机制可以给工程师 bot 们，这样如果任务中断了，
+ * 组长 / 部长级别的知晓。"
+ *
+ * 规则（按优先级）：
+ *   · 部门里的活 → 先找**组长**（在群里说，用户也看得见"这单断了"）
+ *   · 没有组长 / 私聊 / prefer='chief' → 找**主控**
+ *   · 出事的 bot 自己就是那个人 → 没必要自己报自己
+ *
+ * 抽成纯函数是为了单测：这条"该谁知晓"的逻辑一旦写反（比如私聊里去叫组长），
+ * 表现是"没人知道断了"，而这件事本身很难从日志里看出来。
+ */
+export function pickEscalationHost({
+  roomKind = 'dm',
+  leadBotId = null,
+  fromBotId = null,
+  chiefId = null,
+  prefer = 'lead',
+} = {}) {
+  if (prefer === 'lead' && roomKind === 'group' && leadBotId && leadBotId !== fromBotId) {
+    return { role: 'lead', hostId: leadBotId };
+  }
+  if (chiefId && chiefId !== fromBotId) return { role: 'chief', hostId: chiefId };
+  // 主控就是出事的那个 → 退回组长（如果有）
+  if (leadBotId && leadBotId !== fromBotId && roomKind === 'group') {
+    return { role: 'lead', hostId: leadBotId };
+  }
+  return { role: null, hostId: null };
 }
