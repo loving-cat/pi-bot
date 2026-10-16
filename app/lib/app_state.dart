@@ -644,7 +644,10 @@ class AppState extends ChangeNotifier {
     if (foreground && _openRoomId == msg.roomId) return;
     final room = rooms.where((r) => r.id == msg.roomId).firstOrNull;
     Notifier.show(
-      title: room?.isGroup == true ? '${room!.name} · ${msg.authorName}' : msg.authorName,
+      // 通知标题也用现查的名字（bot 改名后，老消息的通知不该还是旧名）
+      title: room?.isGroup == true
+          ? '${room!.name} · ${botById(msg.authorId)?.name ?? msg.authorName}'
+          : (botById(msg.authorId)?.name ?? msg.authorName),
       body: preview(text, 120),
       roomId: msg.roomId,
     );
@@ -667,6 +670,17 @@ class AppState extends ChangeNotifier {
     final bPin = !b.isGroup && b.botIds.contains(mainId) ? 1 : 0;
     if (aPin != bPin) return bPin - aPin;
     return b.lastMessageAt.compareTo(a.lastMessageAt);
+  }
+
+  /// 按名字找 bot —— @提及 的 chip 和悬停卡要用它把"名字"换成"那个 bot"。
+  /// 名字可能带前后空格（模型写 @名字 时爱这么干），所以两边都 trim 一下。
+  Bot? botByName(String name) {
+    final key = name.trim();
+    if (key.isEmpty) return null;
+    for (final b in bots) {
+      if (b.name.trim() == key) return b;
+    }
+    return null;
   }
 
   Bot? botById(String? id) {

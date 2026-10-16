@@ -91,6 +91,25 @@ class WindowControlsOverlay extends StatelessWidget {
   }
 }
 
+/// 给"右上角窗口控制按钮"让位的占位块 —— 各页面的 AppBar actions 末尾都该放一个。
+///
+/// 控制按钮是**画在整个窗口右上角**的（无边框窗口，见 [WindowControlsOverlay]），
+/// 而 AppBar 的 actions 也在右上角 —— 两者会叠在一起。
+/// 用户截图里"设置页的刷新和关闭叠在一块"就是这么来的。没让位的页面全中招。
+class WindowControlsSpacer extends StatelessWidget {
+  const WindowControlsSpacer({super.key});
+
+  /// 三个按钮 × 44
+  static const double width = 132;
+
+  @override
+  Widget build(BuildContext context) {
+    // 手机/网页上没有自绘的窗口按钮，不用留
+    if (!WindowTitleBar.isSupported) return const SizedBox.shrink();
+    return const SizedBox(width: width);
+  }
+}
+
 /// 单个窗口按钮。hover 时浮出底色（关闭键是红色），和 Windows 原生行为一致。
 class _WinBtn extends StatefulWidget {
   const _WinBtn({
@@ -161,7 +180,11 @@ Rect resizeBy({
   var r = start.right;
   var b = start.bottom;
 
-  const leftEdges = {ResizeEdge.left, ResizeEdge.topLeft, ResizeEdge.bottomLeft};
+  const leftEdges = {
+    ResizeEdge.left,
+    ResizeEdge.topLeft,
+    ResizeEdge.bottomLeft,
+  };
   const rightEdges = {
     ResizeEdge.right,
     ResizeEdge.topRight,
@@ -239,12 +262,15 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
     if (!WindowResizeOverlay.isSupported) return;
     windowManager.addListener(this);
     // 启动时窗口可能已经是最大化（比如上次退出时就是）
-    windowManager.isMaximized().then((m) {
-      if (mounted && m != _maximized) setState(() => _maximized = m);
-    }).catchError((_) {
-      // 平台没实现（比如跑单测时没有插件）就当"没最大化"：
-      // 铺上热区最多是多余，不铺就是彻底不能缩放
-    });
+    windowManager
+        .isMaximized()
+        .then((m) {
+          if (mounted && m != _maximized) setState(() => _maximized = m);
+        })
+        .catchError((_) {
+          // 平台没实现（比如跑单测时没有插件）就当"没最大化"：
+          // 铺上热区最多是多余，不铺就是彻底不能缩放
+        });
   }
 
   @override

@@ -7,11 +7,13 @@ import '../scope.dart';
 import '../text_utils.dart';
 import '../theme.dart';
 import '../widgets/blob_avatar.dart';
+import '../widgets/window_title_bar.dart';
 import '../widgets/floating_menu.dart';
 import '../widgets/skeleton.dart';
 import 'bots_screen.dart';
 import 'chat_screen.dart';
 import 'settings_screen.dart';
+
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 class RoomsScreen extends StatefulWidget {
@@ -168,6 +170,8 @@ class _RoomsScreenState extends State<RoomsScreen> {
                 ],
               ),
         actions: [
+          // 搜索/新建/设置这三个也在右上角，得给窗口按钮让位
+          const WindowControlsSpacer(),
           _CircleIcon(
             icon: _searching ? LucideIcons.x : LucideIcons.search,
             onTap: () => setState(() {
@@ -399,7 +403,9 @@ class _RoomsScreenState extends State<RoomsScreen> {
                         subtitle: Text(
                           bot.isMain
                               ? '总经理'
-                              : (bot.tagline.isNotEmpty ? preview(bot.tagline, 34) : '成员'),
+                              : (bot.tagline.isNotEmpty
+                                    ? preview(bot.tagline, 34)
+                                    : '成员'),
                           style: const TextStyle(
                             fontSize: PB.fsXs,
                             color: PB.textQuaternary,
@@ -682,18 +688,25 @@ class _RoomRowState extends State<_RoomRow> {
     final state = widget.state;
     final last = room.lastMessage;
     final busy = state.typing[room.id] == true;
-    final bot = state.botById(room.botIds.isNotEmpty ? room.botIds.first : null);
+    final bot = state.botById(
+      room.botIds.isNotEmpty ? room.botIds.first : null,
+    );
     final previewText = busy
         ? '正在干活…'
         : last == null
         ? (room.topic.isNotEmpty
               ? preview(room.topic, 46)
               : (!room.isGroup && bot != null
-                    ? (bot.tagline.isNotEmpty ? preview(bot.tagline, 40) : '还没有消息')
+                    ? (bot.tagline.isNotEmpty
+                          ? preview(bot.tagline, 40)
+                          : '还没有消息')
                     : (room.isGroup && room.leadName != null
                           ? '负责人 ${room.leadName} · ${room.botIds.length} 人'
                           : '还没有消息')))
-        : '${last.isUser ? '我' : last.authorName}：${preview(last.text, 46)}';
+        // 名字现查，别用消息里存的那份快照 ——
+        // 用户给 bot 改名之后，它以前发过的消息还挂着旧名字。
+        : '${last.isUser ? '我' : (state.botById(last.authorId)?.name ?? last.authorName)}：'
+              '${preview(last.text, 46)}';
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 1),
@@ -858,7 +871,9 @@ class _RoomRowState extends State<_RoomRow> {
   /// （服务端 deleteRoom 也把 dm 挡住了，这次一起修）。
   Future<void> _roomMenu(BuildContext context, Room room, Offset at) async {
     final state = widget.state;
-    final bot = state.botById(room.botIds.isNotEmpty ? room.botIds.first : null);
+    final bot = state.botById(
+      room.botIds.isNotEmpty ? room.botIds.first : null,
+    );
     await showFloatingMenu(
       context: context,
       at: at,
