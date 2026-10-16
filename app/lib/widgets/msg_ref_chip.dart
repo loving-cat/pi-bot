@@ -194,7 +194,6 @@ class _PeekLayerState extends State<_PeekLayer>
   }
 
   Widget _card(double w, double h) {
-    final state = AppScope.of(context);
     return SizedBox(
       width: w,
       height: h,
@@ -281,7 +280,7 @@ class _PeekLayerState extends State<_PeekLayer>
                 onTap: () {
                   widget.onClose();
                   // 跳进那个 bot 的私聊，用户想接着聊就接着聊
-                  state.openRoom(widget.refs.first.roomId);
+                  requestRoom(context, widget.refs.first.roomId);
                 },
                 child: const Padding(
                   padding: EdgeInsets.symmetric(vertical: 9),

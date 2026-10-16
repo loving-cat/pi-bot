@@ -1331,6 +1331,9 @@ Future<void> openBotDm(BuildContext context, String name) async {
   }
   if (target == null) return;
   final room = await state.ensureDm(target.id);
-  if (room == null) return;
-  state.openRoom(room.id);
+  if (room == null || !context.mounted) return;
+  // ★ 以前这里是 state.openRoom(room.id) —— 它只记一个"正在看哪个房间"，
+  //   不发通知；而宽屏分栏的选中项是 HomeShell 自己的状态，压根不看这个字段，
+  //   所以点了 @ 什么都不会发生。走统一入口，由 HomeShell 按布局决定怎么切。
+  requestRoom(context, room.id);
 }
