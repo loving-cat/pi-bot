@@ -8,10 +8,27 @@ import 'package:pi_bot/app_state.dart';
 import 'package:pi_bot/models.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-const serverUrl = String.fromEnvironment('PI_BOT_URL', defaultValue: 'http://127.0.0.1:8787');
-const token = String.fromEnvironment('PI_BOT_TOKEN', defaultValue: 'test-token');
+const serverUrl = String.fromEnvironment(
+  'PI_BOT_URL',
+  defaultValue: 'http://127.0.0.1:8787',
+);
+const token = String.fromEnvironment(
+  'PI_BOT_TOKEN',
+  defaultValue: 'test-token',
+);
 
-Future<void> waitFor(bool Function() predicate, int seconds, String what) async {
+/// 这条是**真集成**用例：要有服务端、而且服务端必须带静态 token 起来。
+/// 默认不跑 —— 否则在"服务端走配对码模式"时它会报一个和代码无关的失败，
+/// 让人以为是自己改坏了。要跑就：
+///   cd ../server && PI_BOT_TOKEN=test-token node src/index.js
+///   cd ../app && flutter test --dart-define=PI_BOT_E2E=true test/app_state_test.dart
+const runE2E = bool.fromEnvironment('PI_BOT_E2E');
+
+Future<void> waitFor(
+  bool Function() predicate,
+  int seconds,
+  String what,
+) async {
   final deadline = DateTime.now().add(Duration(seconds: seconds));
   while (DateTime.now().isBefore(deadline)) {
     if (predicate()) return;
@@ -39,7 +56,12 @@ void main() {
     if (state.paired) await state.signOut();
     expect(state.paired, isFalse);
 
+    if (!runE2E) {
+      markTestSkipped('集成用例默认不跑（加 --dart-define=PI_BOT_E2E=true 才跑）');
+      return;
+    }
     await state.useToken(serverUrl, token, device: 'flutter-test');
+    expect(state.paired, isTrue, reason: '换 token 失败：${state.lastError}');
     await waitFor(() => state.link == LinkState.online, 20, 'WebSocket 连上');
 
     expect(state.rooms, isNotEmpty, reason: '至少应该有一个默认群');
@@ -52,13 +74,16 @@ void main() {
     await state.sendMessage(room.id, '只回答两个字：你好');
 
     await waitFor(
-      () => (state.messages[room.id] ?? const [])
-          .any((m) => m.authorType == 'bot' && m.status != 'streaming'),
+      () => (state.messages[room.id] ?? const []).any(
+        (m) => m.authorType == 'bot' && m.status != 'streaming',
+      ),
       120,
       'bot 回复完成',
     );
 
-    final botMsg = (state.messages[room.id] ?? const []).lastWhere((m) => m.authorType == 'bot');
+    final botMsg = (state.messages[room.id] ?? const []).lastWhere(
+      (m) => m.authorType == 'bot',
+    );
     expect(botMsg.text.trim(), isNotEmpty, reason: 'bot 回复不应该为空');
     expect(botMsg.status, 'done');
 
