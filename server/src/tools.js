@@ -13,6 +13,7 @@
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import path from 'node:path';
+import { bus } from './bus.js';
 import { config } from './config.js';
 import { store } from './store.js';
 import { menuText, resolveMenu, menuEntries } from './model-menu.js';
@@ -129,6 +130,60 @@ function deptLine(room) {
 
 export function buildCommonTools({ runner, roomId, botId }) {
   return [
+    defineTool({
+      name: 'ask_user',
+      label: '★ 问用户要个选择',
+      description:
+        '卡住了、或者后面怎么走取决于用户的口味时，用它弹一张**可点的卡片**给用户，' +
+        '而不是在聊天里写一段"您看是 A 还是 B？"——卡片用户能直接点，省得打字。' +
+        '**只在真的岔路口用**（方向分歧、要不要花钱、要不要删东西、它给的几个方案' +
+        '你判断不了哪个好）。能自己判断的就自己判断，别拿小事去问。' +
+        '发完你就先停下，等用户回。',
+      parameters: Type.Object({
+        question: Type.String({ description: '一句话问清楚要用户决定什么' }),
+        options: Type.Array(
+          Type.Object({
+            label: Type.String({ description: '选项短标题，几个字，点了会原样发给你' }),
+            detail: Type.Optional(
+              Type.String({ description: '一句话说明这个选项是什么意思/代价' }),
+            ),
+          }),
+          { description: '2-4 个选项' },
+        ),
+        allowCustom: Type.Optional(
+          Type.Boolean({ description: '要不要同时给一个"我自己说"的输入框，默认给' }),
+        ),
+      }),
+      execute: async (_toolCallId, { question, options, allowCustom }) => {
+        const opts = (Array.isArray(options) ? options : [])
+          .map((o) => ({
+            label: String(o?.label ?? '').trim().slice(0, 40),
+            detail: String(o?.detail ?? '').trim().slice(0, 200),
+          }))
+          .filter((o) => o.label)
+          .slice(0, 6);
+        if (!opts.length) return fail('至少要给一个选项');
+        const msg = store.appendMessage({
+          roomId,
+          authorType: 'bot',
+          authorId: botId,
+          authorName: store.getBot(botId)?.name ?? '',
+          authorEmoji: store.getBot(botId)?.emoji ?? null,
+          kind: 'ask',
+          text: String(question ?? '').slice(0, 500),
+          status: 'done',
+          meta: { options: opts, allowCustom: allowCustom !== false },
+        });
+        bus.emit('event', { t: 'msg.new', msg });
+        log(`❓ ${store.getBot(botId)?.name ?? botId} 问用户：${String(question).slice(0, 40)}`);
+        return ok(
+          '卡片已经发给用户了，等他点/答。' +
+            '**这一轮到此为止，不要再自己往下猜** —— 猜错了比等着更贵。',
+          { options: opts.map((o) => o.label) },
+        );
+      },
+    }),
+
     defineTool({
       name: 'web_search',
       label: '上网搜',
