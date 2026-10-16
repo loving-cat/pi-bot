@@ -110,19 +110,6 @@ export function createHttpServer({ runner, pairing }) {
         return send(res, 200, { token, device, serverName: config.serverName, workspace: config.workspace });
       }
 
-      // ---------- 二维码（不需要鉴权，二维码本身就是凭证）----------
-      if ((pathname === '/api/qr.svg' || pathname === '/api/qr.png') && req.method === 'GET') {
-        if (config.staticToken) return send(res, 404, { error: '固定 token 模式，没有二维码' });
-        if (pathname.endsWith('.svg')) {
-          const svg = await pairing.svg();
-          res.writeHead(200, { 'content-type': 'image/svg+xml; charset=utf-8', 'cache-control': 'no-store' });
-          return res.end(svg);
-        }
-        const png = await pairing.png();
-        res.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'no-store' });
-        return res.end(png);
-      }
-
       // ---------- 网页版配对页（手机上打不开相机 App 时用）----------
       if (pathname === '/pair' && req.method === 'GET') {
         const snap = config.staticToken ? null : pairing.snapshot();
@@ -131,7 +118,7 @@ export function createHttpServer({ runner, pairing }) {
         return res.end(html);
       }
 
-      // 配对码本来就在二维码里，不算秘密，公开让配对页能刷新
+      // 配对码本来就不是秘密（要拿它配对），公开让配对页能刷新
       if (pathname === '/api/pairing' && req.method === 'GET') {
         return send(res, 200, config.staticToken ? { static: true } : pairing.snapshot());
       }
@@ -396,7 +383,7 @@ export function serverInfo(runner) {
   };
 }
 
-/** 网页版配对页：手机上直接打开就能看二维码 */
+/** 网页版配对页：手机上直接打开就能看到地址和配对码（照着填进 App） */
 function pairPage(snap) {
   const addresses = lanAddresses()
     .map(({ name, address }) => `http://${address}:${config.port}  <span class="dim">(${name})</span>`)
@@ -409,7 +396,7 @@ function pairPage(snap) {
 <div class="card">
   <div class="logo">π</div>
   <h1>${config.serverName}</h1>
-  <p class="dim">服务端配的是固定 token（PI_BOT_TOKEN），不需要二维码。</p>
+  <p class="dim">服务端配的是固定 token（PI_BOT_TOKEN），不需要配对码。</p>
   <p class="dim">在 App 的「固定 token」页填入服务端 .env 里的那个 token 就行。</p>
 </div></body></html>`;
   }
@@ -420,13 +407,12 @@ function pairPage(snap) {
 <div class="card">
   <div class="logo">π</div>
   <h1>${config.serverName}</h1>
-  <p class="dim">用 pi-bot App 里的「扫码配对」扫下面这个码</p>
-  <img id="qr" src="/api/qr.svg" alt="二维码" width="260" height="260">
+  <p class="dim">在 App 的配对页填下面两项</p>
+  <p class="dim">地址</p>
+  <div class="code small">${addresses}</div>
+  <p class="dim">配对码</p>
   <div class="code" id="code">${snap.code}</div>
   <p class="dim"><span id="ttl">${Math.round(snap.ttlMs / 1000)}</span> 秒后换新码</p>
-  <hr>
-  <p class="dim">也可以手动填地址：</p>
-  <div class="code small">${addresses}</div>
 </div>
 <script>
   let ttl = ${Math.round(snap.ttlMs / 1000)};
@@ -437,8 +423,6 @@ function pairPage(snap) {
     if (el) el.textContent = ttl;
   }, 1000);
   setInterval(() => {
-    const img = document.getElementById('qr');
-    if (img) img.src = '/api/qr.svg?t=' + Date.now();
     fetch('/api/pairing').then(r => r.json()).then(d => {
       const c = document.getElementById('code');
       if (c && d.code) c.textContent = d.code;
@@ -472,7 +456,6 @@ function pairStyles() {
     }
     h1 { font-size: 20px; font-weight: 600; letter-spacing: -.3px; margin: 0 0 6px; }
     .dim { color: rgba(242,242,242,.45); font-size: 13px; line-height: 1.6; margin: 6px 0; }
-    #qr { margin: 18px 0 8px; background: #fff; border-radius: 14px; padding: 10px; }
     .code {
       font-family: ui-monospace, Menlo, Consolas, monospace;
       font-size: 30px; font-weight: 600; letter-spacing: 6px;
