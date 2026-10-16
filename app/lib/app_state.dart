@@ -203,6 +203,8 @@ class AppState extends ChangeNotifier {
           .whereType<Map<String, dynamic>>()
           .map(ModelGroup.fromJson)
           .toList();
+      // 用户自己叫什么（bot 用它称呼你）。漏了这句左上角就会退回显示服务端地址。
+      userName = ((res['user'] as Map?)?['name'] as String?)?.trim() ?? '';
       groupLimits = ((res['groupLimits'] as Map?) ?? const {}).map(
         (k, v) => MapEntry('$k', (v as num?)?.toInt() ?? 0),
       );
