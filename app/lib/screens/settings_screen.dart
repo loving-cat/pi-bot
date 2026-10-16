@@ -10,7 +10,6 @@ import '../scope.dart';
 import '../theme.dart';
 import '../widgets/group_limits_section.dart';
 import '../widgets/model_group_editor.dart';
-import '../widgets/window_title_bar.dart';
 
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
@@ -75,8 +74,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             },
             icon: const Icon(LucideIcons.refreshCw, size: 20),
           ),
-          // 别让"刷新"顶到窗口控制按钮下面去
-          const WindowControlsSpacer(),
           const SizedBox(width: 8),
         ],
       ),

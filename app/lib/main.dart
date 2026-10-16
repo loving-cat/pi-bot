@@ -114,19 +114,29 @@ class _PiBotAppState extends State<PiBotApp> with WidgetsBindingObserver {
         // 放根上而不是 HomeShell 里 —— 配对页 / 连不上服务端那页也要能关窗口、能缩放。
         // 顺序要紧：后面的先命中，所以窗口按钮压住缩放热区（右上角那个角别抢"关闭"）。
         // 让所有头像都能知道鼠标在哪（眼睛跟着看）。包在最外层，弹层里也生效。
+        //
+        // ★ 结构：`Column([标题条, 其余])`。
+        //   标题条是**独立的一条**，窗口控制按钮住在它里面 ——
+        //   于是下面所有的页面（包括 push 出来的路由、对话框、全屏浮层）
+        //   从 y=0 起就和按钮没关系了，**任何页面都不需要"让位"**。
+        //   以前按钮是浮在最上层的，谁的上边缘在窗口顶部谁就得手动避让，
+        //   每加一个页面都要想一遍（设置页就被压过、聊天页还因此白推左 132px）。
+        //
+        //   手机上 WindowTitleBar 返回零高，这里等于没加东西。
         builder: (context, child) => AvatarLife.watchPointer(
-          child: Stack(
-            fit: StackFit.expand,
+          child: Column(
             children: [
-              if (child != null) child,
-              if (WindowResizeOverlay.isSupported)
-                const Positioned.fill(child: WindowResizeOverlay()),
-              if (WindowControlsOverlay.isSupported)
-                const Positioned(
-                  top: 0,
-                  right: 0,
-                  child: WindowControlsOverlay(),
+              const WindowTitleBar(),
+              Expanded(
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    if (child != null) child,
+                    if (WindowResizeOverlay.isSupported)
+                      const Positioned.fill(child: WindowResizeOverlay()),
+                  ],
                 ),
+              ),
             ],
           ),
         ),
