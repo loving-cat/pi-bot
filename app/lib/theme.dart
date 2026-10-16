@@ -6,6 +6,11 @@ import 'package:flutter/material.dart';
 ///   · 预先定好的色阶变量
 ///   · 逐点校准
 /// 侧栏 #0E0E0E、聊天区 #121212、气泡 #1B1B1B、圆按钮 #1F1F1F、强调 #1E86FC。
+/// 宽屏阈值：>= 这个宽度走左右分栏（微信 PC / 同类客户端 那种），否则单页导航。
+/// 只在这里定义一次 —— HomeShell 和"跳会话"的逻辑必须用同一个数，
+/// 不然会出现"宽屏下点了跳转却 push 出一个整页聊天"。
+const double kTwoPaneMinWidth = 760;
+
 class PB {
   // ---- 背景层次
   static const bgApp = Color(0xFF0E0E0E);
