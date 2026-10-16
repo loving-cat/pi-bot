@@ -24,15 +24,19 @@ Future<void> main() async {
   // 帧耗时采样（只有带了 PI_BOT_FRAME_LOG 环境变量才工作，平时零开销）
   FrameLog.start();
 
+
   // 桌面端：无边框窗口（像 同类客户端 那样），控制按钮由 App 自己画在右上角
   if (WindowTitleBar.isSupported) {
     await windowManager.ensureInitialized();
     const options = WindowOptions(
       // 注意：这里的 size 是**逻辑像素**，最终物理尺寸 = size × 系统缩放
       size: Size(1180, 760),
-      minimumSize: Size(760, 520),
+      minimumSize: kWindowMinSize,
       center: true,
-      backgroundColor: Colors.transparent,
+      // ★ 不透明。以前是 Colors.transparent —— 无边框 + 每像素 alpha 的窗口，
+      //   每次重绘都要走 DWM 的混合路径（每帧整窗重新合成）。界面本来就铺满
+      //   bgApp，透明没有任何视觉效果，纯粹白花钱。
+      backgroundColor: PB.bgApp,
       skipTaskbar: false,
       // ★ 真正去标题栏的是这个（插件会在窗口过程里处理 WM_NCCALCSIZE）
       titleBarStyle: TitleBarStyle.hidden,

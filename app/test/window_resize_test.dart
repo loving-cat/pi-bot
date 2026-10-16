@@ -7,6 +7,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pi_bot/widgets/window_title_bar.dart';
+import 'package:window_manager/window_manager.dart';
 
 void main() {
   testWidgets('八个缩放热区都在，且方向光标各不相同', (tester) async {
@@ -63,5 +64,53 @@ void main() {
     // 正中间：应该穿到下面的内容上
     await tester.tapAt(tester.getCenter(find.byType(WindowResizeOverlay)));
     expect(tapped, 1, reason: '热区不能挡住窗口中间的操作');
+  });
+
+  group('resizeBy：拖动后的窗口矩形', () {
+    const start = Rect.fromLTWH(100, 100, 800, 600);
+    const min = Size(400, 300);
+
+    Rect go(ResizeEdge e, Offset d) =>
+        resizeBy(start: start, delta: d, edge: e, minSize: min);
+
+    test('抓右下角：只动右下，左上角不许漂', () {
+      final r = go(ResizeEdge.bottomRight, const Offset(50, 30));
+      expect(r, const Rect.fromLTWH(100, 100, 850, 630));
+    });
+
+    test('抓左上角：只动左上', () {
+      final r = go(ResizeEdge.topLeft, const Offset(50, 30));
+      expect(r, const Rect.fromLTWH(150, 130, 750, 570));
+    });
+
+    test('抓右边：高度一点都不能变', () {
+      final r = go(ResizeEdge.right, const Offset(50, 999));
+      expect(r.height, 600);
+      expect(r.width, 850);
+    });
+
+    test('抓下边：宽度一点都不能变', () {
+      final r = go(ResizeEdge.bottom, const Offset(999, 30));
+      expect(r.width, 800);
+      expect(r.height, 630);
+    });
+
+    test('顶到最小尺寸：被拖的那条边卡住，另一条边不动', () {
+      // 抓右边往左拖过头 → 右边停在 100+400，左边还是 100
+      final r = go(ResizeEdge.right, const Offset(-900, 0));
+      expect(r.left, 100, reason: '左上角不该跟着跑');
+      expect(r.width, 400);
+    });
+
+    test('抓左上角顶到最小尺寸：左边跟着走，右边不动', () {
+      final r = go(ResizeEdge.topLeft, const Offset(900, 900));
+      expect(r.right, 900, reason: '右下角不该跟着跑');
+      expect(r.width, 400);
+      expect(r.height, 300);
+    });
+
+    test('抓右边时 y 方向完全不影响', () {
+      expect(go(ResizeEdge.right, const Offset(10, -500)).top, 100);
+    });
   });
 }
