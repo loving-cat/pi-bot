@@ -3,7 +3,6 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:window_manager/window_manager.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -15,7 +14,6 @@ import '../theme.dart';
 import '../widgets/attachment_view.dart';
 import '../widgets/blob_avatar.dart';
 import '../widgets/md_text.dart';
-import '../widgets/window_title_bar.dart';
 import '../widgets/message_actions.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
@@ -252,44 +250,6 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
         actions: [
-          // 无边框窗口：自己提供最小化 / 最大化 / 关闭。
-          // 注：封装成自定义组件时这个位置不渲染，内联 IconButton 才稳定。
-          if (WindowControlsOverlay.isSupported) ...[
-            IconButton(
-              tooltip: '最小化',
-              iconSize: 16,
-              padding: EdgeInsets.zero,
-              visualDensity: VisualDensity.compact,
-              constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
-              onPressed: () => windowManager.minimize(),
-              icon: const Icon(LucideIcons.minus),
-            ),
-            IconButton(
-              tooltip: '最大化 / 还原',
-              iconSize: 14,
-              padding: EdgeInsets.zero,
-              visualDensity: VisualDensity.compact,
-              constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
-              onPressed: () async {
-                if (await windowManager.isMaximized()) {
-                  await windowManager.unmaximize();
-                } else {
-                  await windowManager.maximize();
-                }
-              },
-              icon: const Icon(LucideIcons.square),
-            ),
-            IconButton(
-              tooltip: '关闭',
-              iconSize: 16,
-              padding: EdgeInsets.zero,
-              visualDensity: VisualDensity.compact,
-              constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
-              onPressed: () => windowManager.close(),
-              icon: const Icon(LucideIcons.x),
-            ),
-            const SizedBox(width: 8),
-          ],
           if (busy)
             Padding(
               padding: const EdgeInsets.only(right: 6),
