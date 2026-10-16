@@ -4,6 +4,9 @@ import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+
+import '../resizing.dart';
+
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -387,6 +390,7 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
 
   @override
   void dispose() {
+    _resizeQuiet?.cancel();
     _ticker?.dispose();
     if (WindowResizeOverlay.isSupported) windowManager.removeListener(this);
     super.dispose();
@@ -397,6 +401,21 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
     final target = _target;
     final cur = _current;
     if (target == null || cur == null) {
+      _ticker?.stop();
+      return;
+    }
+    // ★ 大幅度/快速拖动时**直接跳过去**，不要插值慢慢追。
+    //   插值的代价是"窗口永远落后指针一点"，拖得快的时候这个落后会越拉越大，
+    //   然后一帧跳一大截 —— 看着就是一顿一顿的（和"闪"混在一起）。
+    //   小幅度微调用插值（丝滑），大幅度直接跟手。
+    final far =
+        (target.left - cur.left).abs() > 60 ||
+        (target.top - cur.top).abs() > 60 ||
+        (target.right - cur.right).abs() > 60 ||
+        (target.bottom - cur.bottom).abs() > 60;
+    if (far) {
+      _current = target;
+      _send(target);
       _ticker?.stop();
       return;
     }
@@ -556,9 +575,31 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
   /// （实测拉伸时 raster 5~8ms、20~30% 的帧超过 16ms 预算，拖起来就是"不丝滑"）。
   /// 改成自己算：每个 pointer 事件算一次矩形交给 setBounds，节奏跟着 Flutter
   /// 的帧走，不跟系统消息队列赛跑。
-  /// 松手：把间隔闸清掉，让最后一个位置马上落定（不然会慢半拍）
+  /// 降级渲染的"静默期"定时器。
+  ///
+  /// ★ 这里踩过一个坑：以前是"Ticker 停下来就恢复渲染"。但插值在拖动过程中
+  ///   会不停收敛（命中吸附就 stop）—— 于是每收敛一次骨架就恢复成内容、
+  ///   你再动一下又变骨架，**内容 ↔ 骨架 反复闪**（用户报的"快速大幅度拖动
+  ///   会一直闪"）。
+  ///   所以这个状态必须由**手势**驱动：拖动开始置位，每次拖动续期，
+  ///   松手（或 220ms 没有新的拖动事件）之后才恢复。
+  Timer? _resizeQuiet;
+
+  void _markResizing() {
+    if (!appResizing.value) appResizing.value = true;
+    _resizeQuiet?.cancel();
+    _resizeQuiet = Timer(const Duration(milliseconds: 220), () {
+      if (mounted) appResizing.value = false;
+    });
+  }
+
+  /// 松手：清掉间隔闸（让最后落点立刻生效）+ 结束降级渲染
   void _endDrag() {
     _lastSend = null;
+    _resizeQuiet?.cancel();
+    _resizeQuiet = Timer(const Duration(milliseconds: 140), () {
+      if (mounted) appResizing.value = false;
+    });
   }
 
   Future<void> _beginDrag(ResizeEdge edge, DragStartDetails d) async {
@@ -566,6 +607,7 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
     _startPointer = d.globalPosition;
     _lastBounds = null;
     _lastSend = null;
+    _markResizing();
     try {
       _startBounds = await windowManager.getBounds();
       _lastBounds = _startBounds;
@@ -597,6 +639,7 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
     //   由 Ticker 每帧朝目标插值着走 —— 这样窗口是被"牵引"过去的，
     //   而不是每来一个指针事件就硬跳一次（那才是"波动很大"的来源）。
     _target = next;
+    _markResizing(); // 降级渲染（每次拖动都续期，不会来回闪）
     if (_ticker?.isActive != true) _ticker?.start();
   }
 
