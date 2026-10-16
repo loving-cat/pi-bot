@@ -222,6 +222,29 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// 「请切到某个会话」的一次性请求 —— 点 @提及 / 点引用气泡 / 点通知这些
+  /// **外部入口**用。
+  ///
+  /// 为什么不直接用 openRoom：那个是"我正在看哪个房间"，由 ChatScreen 在
+  /// didChangeDependencies / dispose 里维护 —— 那两处都在 build 阶段附近，
+  /// 不能触发通知；而且它一变，分栏布局的选中项会被 ChatScreen 的生命周期带跑
+  /// （切房间时旧页面 dispose 会把它清成 null，于是又跳回第一个会话）。
+  /// 两个语义不同，所以分开。
+  String? _pendingRoomId;
+
+  /// 请求切到某个会话（会通知界面，由 HomeShell 决定怎么切）
+  void requestRoom(String roomId) {
+    _pendingRoomId = roomId;
+    _notify();
+  }
+
+  /// 取走待处理的切房间请求（取走即清空，只生效一次）
+  String? takePendingRoom() {
+    final id = _pendingRoomId;
+    _pendingRoomId = null;
+    return id;
+  }
+
   void openRoom(String? roomId) {
     _openRoomId = roomId;
   }
