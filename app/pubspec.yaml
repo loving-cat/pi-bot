@@ -20,6 +20,8 @@ dependencies:
   flutter_local_notifications: ^18.0.1
   lucide_icons_flutter: ^3.1.25
   window_manager: ^0.5.2
+  # 拿显示器可用区域（拖动时把窗口夹在当前屏内，避免跨屏触发 DPI 重缩放）
+  screen_retriever: ^0.2.2
 
 dev_dependencies:
   flutter_test:
