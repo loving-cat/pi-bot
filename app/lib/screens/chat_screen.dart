@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
@@ -57,6 +59,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final List<Attachment> _pending = [];
   bool _uploading = false;
 
+  /// 防止“粘贴路径 → 转附件”自己重入（清空文本也会触发监听）
+  bool _convertingPaste = false;
+
   @override
   void initState() {
     super.initState();
@@ -70,6 +75,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    // ★ 粘贴的是**文件路径**就自动变成附件。
+    //
+    //   为什么不拦 Ctrl+V：剪贴板要异步读，按键处理里没法同步判断"这是不是文件名" ——
+    //   强行拦会把正常粘贴文字也挡掉。所以让它先正常粘进输入框，
+    //   然后看一眼：如果整段就是一个（或几个）存在的文件路径，就收成附件。
+    //   在资源管理器里复制文件、粘到这儿，就是这个形态。
+    _input.addListener(_absorbPastedPaths);
     if (_state == null) {
       _state = AppScope.read(context);
       _state!.openRoom(widget.room.id);
@@ -107,6 +119,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     FocusManager.instance.removeListener(_onFocusChanged);
     _state?.openRoom(null);
     _scroll.dispose();
+    _input.removeListener(_absorbPastedPaths);
     _input.dispose();
     _focus.dispose();
     super.dispose();
@@ -289,6 +302,38 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     } catch (err) {
       _toast('选文件失败：$err');
     }
+  }
+
+  /// 粘贴进来的路径 → 收成附件（图片、PDF、Word 都行；一次粘多个也认）
+  void _absorbPastedPaths() {
+    if (_convertingPaste) return;
+    final text = _input.text.trim();
+    if (text.isEmpty || text.length > 2000) return;
+    // 多行（从资源管理器一次复制多个文件）也支持，每条一个路径
+    final lines = text
+        .split(RegExp(r'[\r\n]+'))
+        .map((l) => l.trim().replaceAll('"', ''))
+        .where((l) => l.isNotEmpty)
+        .toList();
+    if (lines.isEmpty || lines.length > 20) return;
+    final files = <File>[];
+    for (final line in lines) {
+      // 只认“整段就是一个存在的文件”的形态，不碰正常打字内容
+      if (line.contains(' ') && !File(line).existsSync()) return;
+      final f = File(line);
+      if (!f.existsSync()) return;
+      files.add(f);
+    }
+    if (files.isEmpty) return;
+    _convertingPaste = true;
+    _input.clear();
+    _convertingPaste = false;
+    unawaited(
+      _uploadAll([
+        for (final f in files)
+          (f.uri.pathSegments.last, () => f.readAsBytes()),
+      ]),
+    );
   }
 
   Future<void> _uploadAll(
@@ -491,7 +536,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           const SizedBox(width: 6),
         ],
       ),
-      body: Column(
+      // ★ 把附件（图片 / PDF / Word…）直接拖进聊天框。
+      //   只在桌面端有效（desktop_drop 在移动端不注册），移动端就是普通 Scaffold。
+      //   反馈用提示条 —— 不去做布满全屏的高亮层（以前加过，一不小心就把 body
+      //   的嵌套改坏、整个文件都不编译了）。
+      body: DropTarget(
+        onDragEntered: (_) => _toast('松手就加进来（图片 / PDF / Word 都行）'),
+        onDragDone: (detail) async {
+          final files = detail.files
+              .where((f) => f.path.trim().isNotEmpty)
+              .toList();
+          if (files.isEmpty) return;
+          await _uploadAll([
+            for (final f in files) (f.name, () => File(f.path).readAsBytes()),
+          ]);
+        },
+        child: Column(
         children: [
           Expanded(
             child: msgs.isEmpty
@@ -626,6 +686,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             ),
           ),
         ],
+      ),
       ),
     );
   }
