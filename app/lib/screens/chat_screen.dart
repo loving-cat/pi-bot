@@ -1197,6 +1197,19 @@ class _MessageRow extends StatelessWidget {
   final Msg msg;
   final bool showAuthor;
 
+  /// 这条是不是**最后一条**排队中的消息？
+  ///
+  /// 用户："这个下面闪电 说下一步会看到不需要每一句话都有" ——
+  /// 连着插三句就挂三个提示，太吵。挂在最后一条上，读起来就是
+  /// "从这儿往后它还没看到"。
+  bool _isLastSteer(BuildContext context, Msg m) {
+    final list = AppScope.of(context).messages[m.roomId] ?? const <Msg>[];
+    for (var i = list.length - 1; i >= 0; i--) {
+      if (list[i].wasSteer) return list[i].id == m.id;
+    }
+    return true;
+  }
+
   /// 是不是"这个作者连续发言的最后一条" —— 头像挂在这一条上
   final bool showAvatar;
   final Bot? bot;
@@ -1324,7 +1337,7 @@ class _MessageRow extends StatelessWidget {
                   ),
                 ),
               ),
-              if (msg.wasSteer)
+              if (msg.wasSteer && _isLastSteer(context, msg))
                 Padding(
                   padding: const EdgeInsets.only(top: 4, right: 4),
                   child: Row(

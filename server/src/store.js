@@ -37,7 +37,7 @@ export const GROUP_LIMITS_DEFAULT = {
   memberTurns: 2,
   /** 一条用户消息最多触发几次 bot 运行（防无限互吹） */
   maxRuns: 10,
-  /** 部门里单次最多动手几步 */
+  /** 部门里单次最多**来回几轮**（对话轮次，不是工具调用次数） */
   maxSteps: 30,
   /** 部门单轮最长跑多久（毫秒） */
   turnMaxMs: 300_000,
