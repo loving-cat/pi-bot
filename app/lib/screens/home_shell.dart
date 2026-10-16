@@ -33,7 +33,35 @@ class _HomeShellState extends State<HomeShell> {
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
     final width = MediaQuery.sizeOf(context).width;
-    final wide = width >= 760;
+    final wide = width >= kTwoPaneMinWidth;
+
+    // 外部入口（点 @提及 / 引用气泡 / 通知）请求切会话：分栏的选中项在这里，
+    // 所以必须在这一层消费掉。取走即清空，只生效一次。
+    final jump = state.takePendingRoom();
+    if (jump != null) {
+      if (wide) {
+        _selectedId = jump;
+      } else {
+        Room? target;
+        for (final r in state.rooms) {
+          if (r.id == jump) {
+            target = r;
+            break;
+          }
+        }
+        // build 里不能 push，等这一帧画完
+        if (target != null) {
+          final room = target;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => ChatScreen(room: room)),
+              );
+            }
+          });
+        }
+      }
+    }
 
     if (!wide) return RoomsScreen(initialRoomId: widget.initialRoomId);
 
@@ -77,9 +105,8 @@ class _HomeShellState extends State<HomeShell> {
               ),
             ],
           ),
-          // 右上角窗口控制按钮，盖在最上层
-          if (WindowControlsOverlay.isSupported)
-            const Positioned(top: 0, right: 0, child: WindowControlsOverlay()),
+          // 右上角窗口控制按钮和四周缩放热区都在 main.dart 的根布局里 ——
+          // 那两样要在配对页也生效，放这儿就只有配对完之后才管用。
         ],
       ),
     );

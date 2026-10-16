@@ -21,6 +21,18 @@ class AppScope extends InheritedNotifier<AppState> {
   }
 }
 
+/// 从任何地方请求"切到某个会话"（点 @提及 / 点引用气泡 / 点通知都走这里）。
+///
+/// 具体怎么切由 HomeShell 决定：宽屏切左侧选中项，窄屏 push 一个新页面。
+/// 调用方不需要知道现在是哪种布局，也不需要自己 push —— 所以这里只发一个请求。
+///
+/// ★ 别改回 openRoom：分栏布局的选中项是 HomeShell 的本地状态，
+///   openRoom 只是记一个"正在看哪个房间"，切不动界面（点了没反应就是这么来的）。
+void requestRoom(BuildContext context, String roomId) {
+  if (roomId.isEmpty) return;
+  AppScope.read(context).requestRoom(roomId);
+}
+
 String formatTime(int millis) {
   if (millis <= 0) return '';
   final dt = DateTime.fromMillisecondsSinceEpoch(millis);
