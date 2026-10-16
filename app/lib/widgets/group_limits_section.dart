@@ -125,7 +125,7 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
                 children: [
                   _num('一条消息最多跑几次', _runs, '10'),
                   const SizedBox(width: 10),
-                  _num('单次最多动手几步', _steps, '30'),
+                  _num('单次最多来回几轮', _steps, '30'),
                 ],
               ),
             ],
