@@ -16,6 +16,7 @@ import 'package:pi_bot/scope.dart';
 import 'package:pi_bot/screens/chat_screen.dart';
 import 'package:pi_bot/screens/home_shell.dart';
 import 'package:pi_bot/screens/rooms_screen.dart';
+import 'package:pi_bot/widgets/ask_card.dart';
 import 'package:pi_bot/widgets/blob_avatar.dart';
 import 'package:pi_bot/widgets/room_panel.dart';
 import 'package:pi_bot/widgets/md_text.dart';
@@ -912,6 +913,121 @@ void main() {
       identical(tester.state(find.byType(EditableText)), after),
       isTrue,
       reason: '提示消失时同样不能重建输入框',
+    );
+  });
+
+  testWidgets('★ 连着插三句，只挂**一个**"它下一步会看到"', (tester) async {
+    // 用户："这个下面闪电 说下一步会看到不需要每一句话都有"
+    tester.view.physicalSize = const Size(900, 700);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final state = _stateWith(
+      [Room(id: 'r1', name: '甲', kind: 'dm', botIds: const ['b1'])],
+      bots: [Bot(id: 'b1', name: '甲')],
+    );
+    addTearDown(state.dispose);
+    Msg queued(int i) => Msg(
+      id: 'm$i',
+      roomId: 'r1',
+      authorType: 'user',
+      authorName: '我',
+      text: '第$i句',
+      status: 'done',
+      meta: {'queued': 'steer'},
+      createdAt: i,
+    );
+    state.messages['r1'] = [queued(1), queued(2), queued(3)];
+    state.typing['r1'] = true;
+
+    await tester.pumpWidget(
+      AppScope(
+        state: state,
+        child: MaterialApp(home: ChatScreen(room: state.rooms.first)),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(
+      find.text('它下一步会看到'),
+      findsOneWidget,
+      reason: '★ 三句排队只该挂一个提示（挂在最后一条上）',
+    );
+  });
+
+  testWidgets('★ 询问卡片要有入场动效（不是直接出现）', (tester) async {
+    // 用户："这个询问卡片 要有动态动画，现在没有动画 触发的感觉都没有"
+    tester.view.physicalSize = const Size(900, 700);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final state = _stateWith(
+      [Room(id: 'r1', name: '甲', kind: 'dm', botIds: const ['b1'])],
+      bots: [Bot(id: 'b1', name: '甲')],
+    );
+    addTearDown(state.dispose);
+    state.messages['r1'] = [
+      Msg(
+        id: 'a1',
+        roomId: 'r1',
+        authorType: 'bot',
+        authorId: 'b1',
+        authorName: '甲',
+        text: '选一个',
+        status: 'done',
+        kind: 'ask',
+        meta: {
+          'options': [
+            {'label': '行情看板', 'detail': '自选股、大盘'},
+            {'label': '盯盘提醒', 'detail': '异动推给你'},
+          ],
+          'allowCustom': true,
+        },
+        createdAt: 1,
+      ),
+    ];
+
+    await tester.pumpWidget(
+      AppScope(
+        state: state,
+        child: MaterialApp(home: ChatScreen(room: state.rooms.first)),
+      ),
+    );
+    // 第一帧：卡片应该还是"没到位"的状态
+    await tester.pump();
+    final fades = tester
+        .widgetList<FadeTransition>(
+          find.descendant(
+            of: find.byType(AskCard),
+            matching: find.byType(FadeTransition),
+          ),
+        )
+        .toList();
+    expect(fades, isNotEmpty, reason: '卡片里应该有 FadeTransition');
+    final firstOpacity = fades.first.opacity.value;
+    expect(
+      firstOpacity,
+      lessThan(1.0),
+      reason: '★ 第一帧不该是"已经全部到位"（那就是没有动画）',
+    );
+
+    await tester.pumpAndSettle();
+    expect(find.text('行情看板'), findsOneWidget);
+    expect(find.text('盯盘提醒'), findsOneWidget);
+    expect(find.text('或者我自己说一句…'), findsOneWidget);
+    // 走完动画后所有元素都到位
+    final done = tester
+        .widgetList<FadeTransition>(
+          find.descendant(
+            of: find.byType(AskCard),
+            matching: find.byType(FadeTransition),
+          ),
+        )
+        .map((f) => f.opacity.value)
+        .toList();
+    expect(
+      done.every((v) => v > 0.99),
+      isTrue,
+      reason: '动画结束后每一条都该完全不透明：$done',
     );
   });
 }

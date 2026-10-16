@@ -743,7 +743,7 @@ export class PiRunner {
    * 群（部门）里跑一轮。
    *
    * 流程：定首发人 → 依次跑 → 每个 bot 的输出里 @了谁，谁就排到队尾接着跑。
-   * 每人有轮次预算（老大多一些），总步数有上限，防止部门内部无限互吹。
+   * 每人有轮次预算（老大多一些），自己来回的轮数也有上限，防止部门内部无限互吹。
    */
   async runRound(
     roomId,
@@ -980,7 +980,9 @@ export class PiRunner {
     };
 
     let stepCapHit = false;
-    const stepCap = groupTurn ? store.groupLimits().maxSteps : 0;
+    // 部门里"最多来回几轮"（对话轮次，不是工具调用次数）
+    const turnCap = groupTurn ? store.groupLimits().maxSteps : 0;
+    let turns = 0;
 
     const onEvent = (event) => {
       switch (event.type) {
@@ -1033,7 +1035,23 @@ export class PiRunner {
           break;
         }
         case 'message_start':
-          if (event.message?.role === 'assistant') buffer = '';
+          if (event.message?.role === 'assistant') {
+            buffer = '';
+            turns++;
+            // ★ 部门内的"步数"上限按**对话轮次**算，不按工具调用次数算。
+            //
+            //   用户原话："这个步数 不是算工具调用多少次，是每次干完要多次对话，
+            //   步数是对话次数 —— 你这 30 步很多模型活都干不完，对话次数算才行。"
+            //
+            //   一次 assistant 发言 = 一轮（里面可能带好几个工具调用，也可能
+            //   一个工具都不用、只是接着想）。按工具调用算的话，模型连查带改
+            //   跑十几个 bash 就把额度烧光了 —— 活才刚开个头。
+            if (turnCap > 0 && turns >= turnCap && !stepCapHit) {
+              stepCapHit = true;
+              log(`${bot.name} 在群里来回 ${turns} 轮，收住`);
+              entry.session.abort().catch(() => {});
+            }
+          }
           break;
         case 'message_update':
           if (event.assistantMessageEvent?.type === 'text_delta') {
@@ -1058,12 +1076,6 @@ export class PiRunner {
             startedAt: Date.now(),
           });
           pushSteps();
-          // 部门内回答不该跑成长任务：超过上限就收住，避免一个成员把整个部门拖住
-          if (stepCap > 0 && steps.length >= stepCap && !stepCapHit) {
-            stepCapHit = true;
-            log(`${bot.name} 在群里连跑了 ${steps.length} 步，收住`);
-            entry.session.abort().catch(() => {});
-          }
           break;
         }
         case 'tool_execution_end': {
@@ -1217,7 +1229,7 @@ export class PiRunner {
         botMsg.id,
         {
           text: stepCapHit
-            ? `${finalText}\n\n_（部门内单次最多动手 ${stepCap} 步，已收住；要它继续做完就在私聊里派活）_`
+            ? `${finalText}\n\n_（部门里一次最多来回 ${turnCap} 轮，已收住；要它继续做完就在私聊里派活）_`
             : finalText,
           status: 'done',
           steps,
@@ -1236,7 +1248,7 @@ export class PiRunner {
           roomId,
           botMsg.id,
           {
-            text: `${partial || '（在群里动手步数到上限，先收住）'}\n\n_（部门内单次最多动手 ${stepCap} 步，已收住）_`,
+            text: `${partial || '（在群里来回轮数到上限，先收住）'}\n\n_（部门里一次最多来回 ${turnCap} 轮，已收住）_`,
             status: 'done',
             steps,
             usage,
