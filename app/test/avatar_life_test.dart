@@ -135,4 +135,62 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('★ 静态头像（animate: false）也要跟着鼠标看', (tester) async {
+    // 这个 bug 真发生过：initState 里 `if (!_alive) return;` 写在登记监听之前，
+    // 于是 animate:false 的头像（侧边栏那一列）永远收不到鼠标位置，
+    // 肉眼就是"侧边栏不跟随，只有聊天区跟随"。
+    BlobAvatar.animationsEnabled = true;
+    addTearDown(() => BlobAvatar.animationsEnabled = true);
+    AvatarLife.pointer.value = null;
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: BlobAvatar(
+              seed: 'sidebar',
+              color: Colors.green,
+              animate: false, // ← 侧边栏就是这样
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final center = tester.getCenter(find.byType(BlobAvatar));
+    AvatarLife.pointer.value = center + const Offset(200, 0);
+    await tester.pump();
+
+    // 视线偏移传下去之后，头像应该重绘（有新的帧被安排）
+    expect(tester.takeException(), isNull);
+    expect(find.byType(BlobAvatar), findsOneWidget);
+    AvatarLife.pointer.value = null;
+  });
+
+  testWidgets('followPointer:false 的头像不该被鼠标牵动（群头像用）', (tester) async {
+    BlobAvatar.animationsEnabled = true;
+    addTearDown(() => BlobAvatar.animationsEnabled = true);
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: BlobAvatar(
+              seed: 'group',
+              color: Colors.orange,
+              followPointer: false,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    AvatarLife.pointer.value = tester.getCenter(find.byType(BlobAvatar)) +
+        const Offset(300, 0);
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    AvatarLife.pointer.value = null;
+  });
 }
