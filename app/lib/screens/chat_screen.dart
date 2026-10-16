@@ -14,6 +14,7 @@ import '../theme.dart';
 import '../widgets/window_title_bar.dart';
 import '../widgets/attachment_view.dart';
 import '../widgets/avatar_life.dart';
+import '../widgets/ask_card.dart';
 import '../widgets/blob_avatar.dart';
 import '../widgets/context_chip.dart';
 import '../widgets/floating_menu.dart';
@@ -1009,6 +1010,12 @@ class _MessageRow extends StatelessWidget {
   /// @提及 → chip/悬停卡要用的信息（名字换成 bot）
   final MentionInfo? Function(String name)? mentionOf;
 
+  /// 用户在卡片上选了/自己写了 → **原样当成一条普通消息发回去**。
+  /// 这样服务端不用多一套协议，bot 拿到的就是"用户说话了"。
+  Future<void> _answerAsk(BuildContext context, String text) async {
+    await AppScope.read(context).sendMessage(msg.roomId, text);
+  }
+
   @override
   Widget build(BuildContext context) {
     // 引用行（bot 私信了别的 bot）不画气泡，只渲染一个可点的小浮动条。
@@ -1016,6 +1023,10 @@ class _MessageRow extends StatelessWidget {
     // 上下文压缩：在对话中间留一条小横条 ——
     // 不然用户看到的是"bot 刚才那几轮说的话不见了"，不知道发生了什么。
     if (msg.isCompact) return CompactNotice(msg: msg);
+    // 「问你」卡片：卡住时让用户点一下/写一句，不用打字回一长串
+    if (msg.isAsk) {
+      return AskCard(msg: msg, onAnswer: (text) => _answerAsk(context, text));
+    }
 
     final isUser = msg.isUser;
     final streaming = msg.isStreaming;
