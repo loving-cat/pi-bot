@@ -693,6 +693,13 @@ class _RoomRow extends StatefulWidget {
 class _RoomRowState extends State<_RoomRow> {
   bool _pressed = false;
 
+  /// 整行是否被鼠标指着（由外面包一层 MouseRegion 设置）
+  bool _hovered = false;
+
+  // 说明：_pressed 由 InkWell.onHighlightChanged 驱动 —— 它**同时**覆盖
+  // "鼠标悬停"和"按下"两种状态。头像的眼睛跟随就用它当"这一行被指到了"的信号
+  // （见下面 BlobAvatar 的 hovered），所以不用再包一层 MouseRegion。
+
   @override
   Widget build(BuildContext context) {
     final room = widget.room;
@@ -719,149 +726,157 @@ class _RoomRowState extends State<_RoomRow> {
         : '${last.isUser ? '我' : (state.botById(last.authorId)?.name ?? last.authorName)}：'
               '${preview(last.text, 46)}';
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 1),
-      child: Stack(
-        children: [
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 140),
-            curve: Curves.easeOut,
-            decoration: BoxDecoration(
-              color: (widget.selected || _pressed)
-                  ? PB.bgHover
-                  : Colors.transparent,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Material(
-              color: Colors.transparent,
-              borderRadius: BorderRadius.circular(12),
-              child: InkWell(
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 1),
+        child: Stack(
+          children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 140),
+              curve: Curves.easeOut,
+              decoration: BoxDecoration(
+                color: (widget.selected || _pressed)
+                    ? PB.bgHover
+                    : Colors.transparent,
                 borderRadius: BorderRadius.circular(12),
-                onTap: () => widget.onOpen(room),
-                // 桌面右键：贴着鼠标弹；手机长按：贴着这一行弹。
-                // （InkWell 没有 onLongPressStart，拿不到手指坐标，就用行的中心当锚点。）
-                onSecondaryTapDown: (d) =>
-                    _roomMenu(context, room, d.globalPosition),
-                onLongPress: () => _roomMenu(context, room, _rowAnchor()),
-                onHighlightChanged: (v) => setState(() => _pressed = v),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 9,
-                  ),
-                  child: Row(
-                    children: [
-                      if (room.isGroup)
-                        GroupBlobAvatar(
-                          seeds: room.botIds,
-                          size: 46,
-                          animate: false,
-                        )
-                      else
-                        BlobAvatar(
-                          seed: room.botIds.isNotEmpty
-                              ? room.botIds.first
-                              : room.id,
-                          color: PB.colorFor(
-                            room.botIds.isNotEmpty
+              ),
+              child: Material(
+                color: Colors.transparent,
+                borderRadius: BorderRadius.circular(12),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () => widget.onOpen(room),
+                  // 桌面右键：贴着鼠标弹；手机长按：贴着这一行弹。
+                  // （InkWell 没有 onLongPressStart，拿不到手指坐标，就用行的中心当锚点。）
+                  onSecondaryTapDown: (d) =>
+                      _roomMenu(context, room, d.globalPosition),
+                  onLongPress: () => _roomMenu(context, room, _rowAnchor()),
+                  onHighlightChanged: (v) => setState(() => _pressed = v),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 9,
+                    ),
+                    child: Row(
+                      children: [
+                        if (room.isGroup)
+                          GroupBlobAvatar(
+                            seeds: room.botIds,
+                            size: 46,
+                            animate: false,
+                          )
+                        else
+                          BlobAvatar(
+                            seed: room.botIds.isNotEmpty
                                 ? room.botIds.first
                                 : room.id,
-                          ),
-                          emoji: state
-                              .botById(
-                                room.botIds.isNotEmpty
-                                    ? room.botIds.first
-                                    : null,
-                              )
-                              ?.emoji,
-                          size: 46,
-                          animate: false,
-                          ring:
-                              state
-                                  .botById(
-                                    room.botIds.isNotEmpty
-                                        ? room.botIds.first
-                                        : null,
-                                  )
-                                  ?.isMain ??
-                              false,
-                          badge: busy
-                              ? const SizedBox(
-                                  width: 12,
-                                  height: 12,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 1.8,
-                                    color: PB.accent,
-                                  ),
+                            color: PB.colorFor(
+                              room.botIds.isNotEmpty
+                                  ? room.botIds.first
+                                  : room.id,
+                            ),
+                            emoji: state
+                                .botById(
+                                  room.botIds.isNotEmpty
+                                      ? room.botIds.first
+                                      : null,
                                 )
-                              : null,
-                        ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    room.name,
-                                    style: const TextStyle(
-                                      fontSize: PB.fsBase,
-                                      fontWeight: FontWeight.w600,
-                                      letterSpacing: -0.1,
-                                      color: PB.textPrimary,
+                                ?.emoji,
+                            size: 46,
+                            animate: false,
+                            // 整行被指到（悬停/按下）就让它跟着鼠标看 ——
+                            // 用户的心智是"我进到这条会话上，它就该看着我"，
+                            // 而不是"鼠标必须精确压在头像那 46px 里"。
+                            hovered: _hovered || _pressed,
+                            ring:
+                                state
+                                    .botById(
+                                      room.botIds.isNotEmpty
+                                          ? room.botIds.first
+                                          : null,
+                                    )
+                                    ?.isMain ??
+                                false,
+                            badge: busy
+                                ? const SizedBox(
+                                    width: 12,
+                                    height: 12,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 1.8,
+                                      color: PB.accent,
                                     ),
-                                    overflow: TextOverflow.ellipsis,
+                                  )
+                                : null,
+                          ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      room.name,
+                                      style: const TextStyle(
+                                        fontSize: PB.fsBase,
+                                        fontWeight: FontWeight.w600,
+                                        letterSpacing: -0.1,
+                                        color: PB.textPrimary,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
                                   ),
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  formatTime(room.lastMessageAt),
-                                  style: const TextStyle(
-                                    fontSize: PB.fsXxs,
-                                    color: PB.textQuaternary,
-                                    fontFeatures: [
-                                      FontFeature.tabularFigures(),
-                                    ],
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    formatTime(room.lastMessageAt),
+                                    style: const TextStyle(
+                                      fontSize: PB.fsXxs,
+                                      color: PB.textQuaternary,
+                                      fontFeatures: [
+                                        FontFeature.tabularFigures(),
+                                      ],
+                                    ),
                                   ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              previewText,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: PB.fsSm,
-                                height: 1.3,
-                                color: busy ? PB.accent : PB.textTertiary,
+                                ],
                               ),
-                            ),
-                          ],
+                              const SizedBox(height: 4),
+                              Text(
+                                previewText,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: PB.fsSm,
+                                  height: 1.3,
+                                  color: busy ? PB.accent : PB.textTertiary,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
-          if (widget.selected)
-            Positioned(
-              left: 0,
-              top: 12,
-              bottom: 12,
-              child: Container(
-                width: 3,
-                decoration: BoxDecoration(
-                  color: PB.accent,
-                  borderRadius: BorderRadius.circular(2),
+            if (widget.selected)
+              Positioned(
+                left: 0,
+                top: 12,
+                bottom: 12,
+                child: Container(
+                  width: 3,
+                  decoration: BoxDecoration(
+                    color: PB.accent,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
                 ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }
