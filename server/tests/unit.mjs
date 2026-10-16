@@ -860,6 +860,47 @@ await test('自称：主控人设不再把人写成"总经理"', async () => {
   assert.match(text, /用自己的名字自称/);
 });
 
+
+// ---------------------------------------------------------------------------
+// 派活重试策略（"发现不通就重试 3 次，不行就报给主控"）
+// ---------------------------------------------------------------------------
+const { planDispatchRetry, isBusyError } = await import('../src/util.js');
+
+await test('重试：对方忙 → 再试一次（用户要的"至少 3 次"）', () => {
+  const r = planDispatchRetry({ attempt: 1, error: '甲 正在忙' });
+  assert.equal(r.retry, true);
+  assert.ok(r.waitMs > 0);
+});
+
+await test('重试：第 3 次之后不再试了', () => {
+  assert.equal(planDispatchRetry({ attempt: 3, error: '甲 正在忙' }).retry, false);
+});
+
+await test('重试：不是"忙"的错就不该等（等也不会变）', () => {
+  assert.equal(planDispatchRetry({ attempt: 1, error: '起不来：401' }).retry, false);
+  assert.equal(planDispatchRetry({ attempt: 1, error: '找不到 bot x' }).retry, false);
+});
+
+await test('重试：等太久就放弃，交给上报主控', () => {
+  const r = planDispatchRetry({ attempt: 2, error: '甲 正在忙', waitedMs: 999_999 });
+  assert.equal(r.retry, false);
+  assert.match(r.why, /等太久/);
+});
+
+await test('重试：等待时间递增，但不会超预算', () => {
+  const a = planDispatchRetry({ attempt: 1, error: '忙' }).waitMs;
+  const b = planDispatchRetry({ attempt: 2, error: '忙' }).waitMs;
+  assert.ok(b >= a, `${b} 应该 >= ${a}`);
+  const capped = planDispatchRetry({ attempt: 2, error: '忙', waitedMs: 175_000 }).waitMs;
+  assert.ok(capped <= 5_000, '不能超预算');
+});
+
+await test('isBusyError：只认"忙"这一类', () => {
+  assert.equal(isBusyError('甲 正在忙'), true);
+  assert.equal(isBusyError('会话还没就绪'), false);
+  assert.equal(isBusyError(null), false);
+});
+
 const passed = results.filter((r) => r.ok).length;
 
 console.log('\n================ 单元测试 ================');
