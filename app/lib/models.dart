@@ -254,6 +254,73 @@ class Bot {
   );
 }
 
+/// 用户自己加的一个「模型组」—— 一套 baseUrl + key + 一组 modelId。
+///
+/// 服务端那份是真 key（不出服务端），这里拿到的 key 是**打码后的**，
+/// 只用来显示"有没有配"和"配的是哪个"。
+class ModelGroup {
+  ModelGroup({
+    required this.id,
+    required this.name,
+    required this.baseUrl,
+    this.api = 'openai-completions',
+    this.hasKey = false,
+    this.keyMasked = '',
+    List<ModelSpec>? models,
+    this.enabled = true,
+  }) : models = models ?? [];
+
+  final String id;
+  String name;
+  String baseUrl;
+  String api;
+  bool hasKey;
+
+  /// 形如 `sk-abc…xyzw`
+  String keyMasked;
+  List<ModelSpec> models;
+  bool enabled;
+
+  /// 给模型选择器用：`<组id>/<模型id>` —— 和 pi 的 slug 格式一致
+  String slugFor(String modelId) => '$id/$modelId';
+
+  factory ModelGroup.fromJson(Map<String, dynamic> json) => ModelGroup(
+    id: json['id'] as String,
+    name: json['name'] as String? ?? '未命名模型组',
+    baseUrl: json['baseUrl'] as String? ?? '',
+    api: json['api'] as String? ?? 'openai-completions',
+    hasKey: json['hasKey'] as bool? ?? false,
+    keyMasked: json['keyMasked'] as String? ?? '',
+    enabled: json['enabled'] as bool? ?? true,
+    models: ((json['models'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => ModelSpec.fromJson(e.cast<String, dynamic>()))
+        .toList(),
+  );
+}
+
+/// 模型组里的一个模型
+class ModelSpec {
+  ModelSpec({
+    required this.id,
+    this.name = '',
+    this.contextWindow = 0,
+    this.maxTokens = 0,
+  });
+
+  final String id;
+  String name;
+  int contextWindow;
+  int maxTokens;
+
+  factory ModelSpec.fromJson(Map<String, dynamic> json) => ModelSpec(
+    id: json['id'] as String? ?? '',
+    name: json['name'] as String? ?? '',
+    contextWindow: _asInt(json['contextWindow']),
+    maxTokens: _asInt(json['maxTokens']),
+  );
+}
+
 /// 一条"教它做一项任务"的记录。
 class BotSkill {
   BotSkill({required this.id, required this.title, required this.howto});
