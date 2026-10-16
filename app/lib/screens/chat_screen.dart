@@ -42,7 +42,7 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final _scroll = ScrollController();
   final _input = TextEditingController();
   final _focus = FocusNode();
@@ -60,6 +60,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     if (widget.initialText != null) {
       _input.text = widget.initialText!;
       _input.selection = TextSelection.collapsed(offset: _input.text.length);
@@ -101,6 +102,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _state?.removeListener(_countIfScrolledUp);
     FocusManager.instance.removeListener(_onFocusChanged);
     _state?.openRoom(null);
@@ -145,6 +147,66 @@ class _ChatScreenState extends State<ChatScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _keepComposerFocused());
   }
 
+  /// 点了但没拖动？（拖是选字，不能打断）
+  Offset? _tapDown;
+  DateTime _tapAt = DateTime.now();
+
+  /// 把**文本输入连接**重开一次。
+  ///
+  /// 用户报："我发送第一条消息、想输入第二条，结果没有聚焦到输入框，
+  /// 就算我去点击也不行，直接没法输入。"
+  ///
+  /// 真机上量过（注入真实鼠标点击 + 截图）：**点击其实能聚焦** ——
+  /// 边框变亮、光标也出来了。所以不是"点不动"，是**键盘输入这条路断了**：
+  /// Dart 侧 `hasFocus` 还是 true，但引擎那边的文本输入连接已经废了，
+  /// 键盘事件根本到不了 Dart。
+  ///
+  /// 为什么"再点一下"救不回来：输入框**已经**聚焦了，没有状态变化，
+  /// 引擎不会重新 attach。必须先 unfocus、下一帧再 requestFocus，
+  /// 才会有一次真正的 detach/attach。
+  void _reattachInput() {
+    if (!mounted || !_focus.hasFocus) return;
+    _focus.unfocus();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focus.requestFocus();
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    // 窗口重新激活时顺手重连一次 —— 从别的程序切回来最容易碰上这个状态
+    if (state == AppLifecycleState.resumed) _reattachInput();
+  }
+
+  /// 点了输入框（但没拖）但键盘还是没反应 —— 顺手重连一次。
+  ///
+  /// 这是用户那句“就算我去点击也不行”的正面回答：点一下现在真的会重连。
+  /// 拖不算（拖是选中文字，不能打断）；没聚焦时也不插手，
+  /// 让正常的“点一下聚焦”自己走。
+  Widget _tapToReattach(Widget child) {
+    return Listener(
+      // translucent：自己看得到事件，子控件（输入框、发送键）一样收得到
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (e) {
+        _tapDown = e.position;
+        _tapAt = DateTime.now();
+      },
+      onPointerUp: (e) {
+        final down = _tapDown;
+        _tapDown = null;
+        if (down == null) return;
+        if ((e.position - down).distance > 6) return;
+        if (DateTime.now().difference(_tapAt) >
+            const Duration(milliseconds: 600)) {
+          return;
+        }
+        _reattachInput();
+      },
+      child: child,
+    );
+  }
+
   /// 把焦点兜回输入框 —— 但**只在"无主"时**。
   ///
   /// 为什么需要：回车提交之后框架会先把焦点从输入框收走；如果这时没有别的控件
@@ -187,8 +249,16 @@ class _ChatScreenState extends State<ChatScreen> {
         setState(() => _pending.addAll(files));
       }
     } finally {
-      // 发完继续留着焦点，方便接着敲
-      if (mounted) _focus.requestFocus();
+      // 发完继续留着焦点，方便接着敲。
+      // 但如果正处在"还聚焦着、键盘却没反应"的状态，单纯 requestFocus
+      // 不顶用（没有状态变化 → 引擎不重连），得把连接重开一次。
+      if (mounted) {
+        if (_focus.hasFocus) {
+          _reattachInput();
+        } else {
+          _focus.requestFocus();
+        }
+      }
     }
   }
 
@@ -306,70 +376,74 @@ class _ChatScreenState extends State<ChatScreen> {
         // 点胶囊 → 右侧面板（这个会话是谁 / 里面有谁 / 上下文用得怎么样）。
         // 宽屏它是布局里的一栏（和左边同级，没遮罩）；窄屏才走整页滑入。
         // 鼠标移上去会**浮起来**、右边冒出一个 `>` —— 告诉用户"这里能点开"。
-        title: AvatarHoverScope(child: _HoverLift(
-          onTap: () {
-            if (MediaQuery.sizeOf(context).width >= kTwoPaneMinWidth) {
-              AppScope.read(context).togglePanel();
-            } else {
-              showRoomPanel(context, room);
-            }
-          },
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(6, 5, 14, 5),
-            decoration: BoxDecoration(
-              color: PB.bgElevated,
-              borderRadius: BorderRadius.circular(PB.rFull),
-              border: Border.all(color: PB.borderSecondary),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (room.isGroup)
-                  GroupBlobAvatar(seeds: room.botIds, size: 22, animate: busy)
-                else
-                  BlobAvatar(
-                    seed: room.botIds.isNotEmpty ? room.botIds.first : room.id,
-                    color: PB.colorFor(
-                      room.botIds.isNotEmpty ? room.botIds.first : room.id,
-                    ),
-                    emoji: lead?.emoji,
-                    size: 22,
-                    animate: true,
-                    mood: busy ? AvatarMood.busy : AvatarMood.idle,
-                  ),
-                const SizedBox(width: 8),
-                Text(
-                  room.isGroup ? room.name : (lead?.name ?? room.name),
-                  style: const TextStyle(
-                    fontSize: PB.fsSm,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                // 状态只在"正在干活 / 正在压缩"时露出来 —— 平时不占地方
-                if (busy || state.compactingIn(room.id)) ...[
-                  const SizedBox(width: 8),
-                  if (state.compactingIn(room.id))
-                    const Text(
-                      '压缩中',
-                      style: TextStyle(fontSize: PB.fsXxs, color: PB.warn),
-                    )
+        title: AvatarHoverScope(
+          child: _HoverLift(
+            onTap: () {
+              if (MediaQuery.sizeOf(context).width >= kTwoPaneMinWidth) {
+                AppScope.read(context).togglePanel();
+              } else {
+                showRoomPanel(context, room);
+              }
+            },
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(6, 5, 14, 5),
+              decoration: BoxDecoration(
+                color: PB.bgElevated,
+                borderRadius: BorderRadius.circular(PB.rFull),
+                border: Border.all(color: PB.borderSecondary),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (room.isGroup)
+                    GroupBlobAvatar(seeds: room.botIds, size: 22, animate: busy)
                   else
-                    const SizedBox(
-                      width: 11,
-                      height: 11,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 1.8,
-                        color: PB.accent,
+                    BlobAvatar(
+                      seed: room.botIds.isNotEmpty
+                          ? room.botIds.first
+                          : room.id,
+                      color: PB.colorFor(
+                        room.botIds.isNotEmpty ? room.botIds.first : room.id,
                       ),
+                      emoji: lead?.emoji,
+                      size: 22,
+                      animate: true,
+                      mood: busy ? AvatarMood.busy : AvatarMood.idle,
                     ),
+                  const SizedBox(width: 8),
+                  Text(
+                    room.isGroup ? room.name : (lead?.name ?? room.name),
+                    style: const TextStyle(
+                      fontSize: PB.fsSm,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  // 状态只在"正在干活 / 正在压缩"时露出来 —— 平时不占地方
+                  if (busy || state.compactingIn(room.id)) ...[
+                    const SizedBox(width: 8),
+                    if (state.compactingIn(room.id))
+                      const Text(
+                        '压缩中',
+                        style: TextStyle(fontSize: PB.fsXxs, color: PB.warn),
+                      )
+                    else
+                      const SizedBox(
+                        width: 11,
+                        height: 11,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 1.8,
+                          color: PB.accent,
+                        ),
+                      ),
+                  ],
+                  // 上下文占用：平时也就是一个小圆环
+                  const SizedBox(width: 6),
+                  ContextChip(roomId: room.id),
                 ],
-                // 上下文占用：平时也就是一个小圆环
-                const SizedBox(width: 6),
-                ContextChip(roomId: room.id),
-              ],
+              ),
             ),
           ),
-        )),
+        ),
         actions: [
           PopupMenuButton<String>(
             icon: const Icon(LucideIcons.ellipsis, size: 18),
@@ -524,30 +598,32 @@ class _ChatScreenState extends State<ChatScreen> {
                     ],
                   ),
           ),
-          _Composer(
-            controller: _input,
-            focus: _focus,
-            busy: busy,
-            queuedCount: state.queued[room.id] ?? 0,
-            pending: _pending,
-            uploading: _uploading,
-            onPickImages: _pickImages,
-            onPickFiles: _pickFiles,
-            onTeach: () =>
-                showTeachDialog(context, state.mainBot ?? state.bots.first),
-            onRemovePending: (att) =>
-                setState(() => _pending.removeWhere((a) => a.id == att.id)),
-            onSend: _send,
-            onStop: () => state.abort(room.id),
-            showJump: !_stick,
-            unread: _unreadWhileUp,
-            onJump: () {
-              setState(() {
-                _stick = true;
-                _unreadWhileUp = 0;
-              });
-              unawaited(_toBottom(animate: true));
-            },
+          _tapToReattach(
+            _Composer(
+              controller: _input,
+              focus: _focus,
+              busy: busy,
+              queuedCount: state.queued[room.id] ?? 0,
+              pending: _pending,
+              uploading: _uploading,
+              onPickImages: _pickImages,
+              onPickFiles: _pickFiles,
+              onTeach: () =>
+                  showTeachDialog(context, state.mainBot ?? state.bots.first),
+              onRemovePending: (att) =>
+                  setState(() => _pending.removeWhere((a) => a.id == att.id)),
+              onSend: _send,
+              onStop: () => state.abort(room.id),
+              showJump: !_stick,
+              unread: _unreadWhileUp,
+              onJump: () {
+                setState(() {
+                  _stick = true;
+                  _unreadWhileUp = 0;
+                });
+                unawaited(_toBottom(animate: true));
+              },
+            ),
           ),
         ],
       ),
@@ -625,25 +701,26 @@ class _EmptyHint extends StatelessWidget {
                       child: AvatarHoverScope(
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
-                        children: [
-                          BlobAvatar(
-                            seed: room.botIds[i],
-                            color: PB.colorFor(room.botIds[i]),
-                            size: 14,
-                            animate: false,
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            i < room.botNames.length
-                                ? room.botNames[i]
-                                : room.botIds[i],
-                            style: const TextStyle(
-                              fontSize: PB.fsXs,
-                              color: PB.textTertiary,
+                          children: [
+                            BlobAvatar(
+                              seed: room.botIds[i],
+                              color: PB.colorFor(room.botIds[i]),
+                              size: 14,
+                              animate: false,
                             ),
-                          ),
-                        ],
-                      )),
+                            const SizedBox(width: 6),
+                            Text(
+                              i < room.botNames.length
+                                  ? room.botNames[i]
+                                  : room.botIds[i],
+                              style: const TextStyle(
+                                fontSize: PB.fsXs,
+                                color: PB.textTertiary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                 ],
               ),
@@ -1260,132 +1337,135 @@ class _MessageRow extends StatelessWidget {
       );
     }
 
-    return AvatarHoverScope(child: Padding(
-      // ★ 气泡之间的呼吸（照 参考 那种节奏）：换个人发言 26px，
-      //   同一个人连着说 6px。以前是 16 / 3 —— 谁跟谁说的都黏成一坨。
-      padding: EdgeInsets.only(top: showAuthor ? 26 : 6),
-      child: Row(
-        // ★ 头像**贴底**，不是贴顶 —— 这样气泡就落在头像的右上方，
-        //   同时名字/职位在气泡的左上方。三者的相对位置一眼看清是谁在说。
-        //   （以前是 CrossAxisAlignment.start，头像顶在最上面，名字反而跑到它右边。）
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          if (reserveAvatarColumn) ...[
-            SizedBox(
-              width: 34,
-              child: avatar
-                  ? Padding(
-                      // 往下留一点，别和气泡的最后一行贴死
-                      padding: const EdgeInsets.only(bottom: 2),
-                      child: BlobAvatar(
-                        seed: msg.authorId ?? displayName,
-                        color: accent,
-                        emoji: displayEmoji,
-                        size: 28,
-                        animate: false,
-                      ),
-                    )
-                  : null,
-            ),
-            const SizedBox(width: 8),
-          ],
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (showName)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 7),
-                    child: Row(
-                      children: [
-                        Text(
-                          displayName,
-                          style: TextStyle(
-                            fontSize: PB.fsSm,
-                            fontWeight: FontWeight.w600,
-                            color: accent,
-                          ),
+    return AvatarHoverScope(
+      child: Padding(
+        // ★ 气泡之间的呼吸（照 参考 那种节奏）：换个人发言 26px，
+        //   同一个人连着说 6px。以前是 16 / 3 —— 谁跟谁说的都黏成一坨。
+        padding: EdgeInsets.only(top: showAuthor ? 26 : 6),
+        child: Row(
+          // ★ 头像**贴底**，不是贴顶 —— 这样气泡就落在头像的右上方，
+          //   同时名字/职位在气泡的左上方。三者的相对位置一眼看清是谁在说。
+          //   （以前是 CrossAxisAlignment.start，头像顶在最上面，名字反而跑到它右边。）
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            if (reserveAvatarColumn) ...[
+              SizedBox(
+                width: 34,
+                child: avatar
+                    ? Padding(
+                        // 往下留一点，别和气泡的最后一行贴死
+                        padding: const EdgeInsets.only(bottom: 2),
+                        child: BlobAvatar(
+                          seed: msg.authorId ?? displayName,
+                          color: accent,
+                          emoji: displayEmoji,
+                          size: 28,
+                          animate: false,
                         ),
-                        if (isLead)
-                          const Padding(
-                            padding: EdgeInsets.only(left: 6),
-                            child: Text(
-                              '负责人',
-                              style: TextStyle(
-                                fontSize: PB.fsXxs,
-                                fontWeight: FontWeight.w600,
-                                color: PB.textQuaternary,
+                      )
+                    : null,
+              ),
+              const SizedBox(width: 8),
+            ],
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (showName)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 7),
+                      child: Row(
+                        children: [
+                          Text(
+                            displayName,
+                            style: TextStyle(
+                              fontSize: PB.fsSm,
+                              fontWeight: FontWeight.w600,
+                              color: accent,
+                            ),
+                          ),
+                          if (isLead)
+                            const Padding(
+                              padding: EdgeInsets.only(left: 6),
+                              child: Text(
+                                '负责人',
+                                style: TextStyle(
+                                  fontSize: PB.fsXxs,
+                                  fontWeight: FontWeight.w600,
+                                  color: PB.textQuaternary,
+                                ),
                               ),
                             ),
-                          ),
-                      ],
-                    ),
-                  ),
-                if (msg.steps.isNotEmpty) _Steps(steps: msg.steps),
-                GestureDetector(
-                  onLongPress: onLongPress,
-                  child: Container(
-                    constraints: BoxConstraints(maxWidth: maxBubble),
-                    padding: const EdgeInsets.fromLTRB(15, 13, 15, 13),
-                    decoration: BoxDecoration(
-                      color: PB.bgBubble,
-                      borderRadius: BorderRadius.circular(PB.rBubble),
-                      border: Border.all(
-                        color: msg.status == 'error'
-                            ? PB.danger.withValues(alpha: 0.45)
-                            : (streaming
-                                  ? PB.accent.withValues(alpha: 0.22)
-                                  : PB.borderHighlight),
+                        ],
                       ),
-                      boxShadow: PB.shadow(y: 1, blur: 4, alpha: 0.22),
                     ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (msg.attachments.isNotEmpty)
-                          AttachmentList(
-                            items: msg.attachments,
-                            urlFor: (id) => AppScope.read(context).fileUrl(id),
-                          ),
-                        if (streaming &&
-                            msg.text.isEmpty &&
-                            msg.attachments.isEmpty)
-                          const _TypingDots()
-                        else if (msg.text.trim().isNotEmpty)
-                          MdText(
-                            streaming ? '${msg.text}▍' : msg.text,
-                            selectable: !streaming,
-                            onMentionTap: (name) => openBotDm(context, name),
-                            mentionOf: mentionOf,
-                            mentions: mentions,
-                            style: const TextStyle(
-                              fontSize: PB.fsBase,
-                              height: 1.5,
-                              color: PB.textPrimary,
+                  if (msg.steps.isNotEmpty) _Steps(steps: msg.steps),
+                  GestureDetector(
+                    onLongPress: onLongPress,
+                    child: Container(
+                      constraints: BoxConstraints(maxWidth: maxBubble),
+                      padding: const EdgeInsets.fromLTRB(15, 13, 15, 13),
+                      decoration: BoxDecoration(
+                        color: PB.bgBubble,
+                        borderRadius: BorderRadius.circular(PB.rBubble),
+                        border: Border.all(
+                          color: msg.status == 'error'
+                              ? PB.danger.withValues(alpha: 0.45)
+                              : (streaming
+                                    ? PB.accent.withValues(alpha: 0.22)
+                                    : PB.borderHighlight),
+                        ),
+                        boxShadow: PB.shadow(y: 1, blur: 4, alpha: 0.22),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (msg.attachments.isNotEmpty)
+                            AttachmentList(
+                              items: msg.attachments,
+                              urlFor: (id) =>
+                                  AppScope.read(context).fileUrl(id),
                             ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-                if (msg.error != null && msg.error!.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 5, left: 2),
-                    child: Text(
-                      msg.error!,
-                      style: const TextStyle(
-                        fontSize: PB.fsXs,
-                        color: PB.danger,
+                          if (streaming &&
+                              msg.text.isEmpty &&
+                              msg.attachments.isEmpty)
+                            const _TypingDots()
+                          else if (msg.text.trim().isNotEmpty)
+                            MdText(
+                              streaming ? '${msg.text}▍' : msg.text,
+                              selectable: !streaming,
+                              onMentionTap: (name) => openBotDm(context, name),
+                              mentionOf: mentionOf,
+                              mentions: mentions,
+                              style: const TextStyle(
+                                fontSize: PB.fsBase,
+                                height: 1.5,
+                                color: PB.textPrimary,
+                              ),
+                            ),
+                        ],
                       ),
                     ),
                   ),
-                // 用量行（↑0 ↓0 ⚡0）不再显示，属于噪音
-              ],
+                  if (msg.error != null && msg.error!.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 5, left: 2),
+                      child: Text(
+                        msg.error!,
+                        style: const TextStyle(
+                          fontSize: PB.fsXs,
+                          color: PB.danger,
+                        ),
+                      ),
+                    ),
+                  // 用量行（↑0 ↓0 ⚡0）不再显示，属于噪音
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
-    ));
+    );
   }
 }
 
