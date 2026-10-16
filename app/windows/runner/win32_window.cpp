@@ -193,7 +193,7 @@ Win32Window::MessageHandler(HWND hwnd,
                             LPARAM const lparam) noexcept {
   switch (message) {
     // ---- 无边框窗口 ----
-    // 客户区 = 整个窗口，去掉原生标题栏和边框（像 同类客户端 那样）
+    // 客户区 = 整个窗口，去掉原生标题栏和边框
     case WM_NCCALCSIZE: {
       if (wparam == TRUE) {
         auto* params = reinterpret_cast<NCCALCSIZE_PARAMS*>(lparam);
