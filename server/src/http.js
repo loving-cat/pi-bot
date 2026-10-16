@@ -155,6 +155,7 @@ export function createHttpServer({ runner, pairing }) {
           // 群聊轮次预算（防止 bot 解不了就互相聊个没完）
           groupLimits: store.groupLimits(),
           policy: store.policy(),
+          templates: store.templates(),
           // 用户自己是谁（bot 要知道在跟谁说话）
           user: store.userSummary(),
           pairing: config.staticToken ? null : pairing.snapshot(),
@@ -310,6 +311,38 @@ export function createHttpServer({ runner, pairing }) {
         await runner.applyModelGroupChange();
         log(`🔌 删除模型组：${groupMatch[1]}`);
         return send(res, 200, { id: groupMatch[1] });
+      }
+
+      // ---------- 部门模板 ----------
+      if (pathname === '/api/templates' && req.method === 'GET') {
+        return send(res, 200, { templates: store.templates() });
+      }
+      if (pathname === '/api/templates' && req.method === 'POST') {
+        const body = await readBody(req);
+        // 两种来源：从现成的部门存（给 roomId），或直接给一份班子
+        const r = body.roomId
+          ? store.saveTemplateFromRoom(body.roomId, { name: body.name })
+          : store.createTemplate(body);
+        if (r.error) return send(res, 400, { error: r.error });
+        log(`📦 存了部门模板：${r.template.name}（${r.template.members.length} 人）`);
+        return send(res, 200, { template: r.template });
+      }
+      const tplMatch = pathname.match(/^\/api\/templates\/([^/]+)$/);
+      if (tplMatch && req.method === 'DELETE') {
+        const r = store.deleteTemplate(tplMatch[1]);
+        if (r.error) return send(res, 404, { error: r.error });
+        return send(res, 200, { ok: true });
+      }
+      const tplApply = pathname.match(/^\/api\/templates\/([^/]+)\/apply$/);
+      if (tplApply && req.method === 'POST') {
+        const body = await readBody(req);
+        const r = store.applyTemplate(tplApply[1], { name: body.name });
+        if (r.error) return send(res, 404, { error: r.error });
+        log(`🧩 照模板开了部门：${r.room.name}（复用/新造 ${r.bots.length} 人）`);
+        return send(res, 200, {
+          room: store.roomSummary(r.room),
+          bots: r.bots.map((b) => b.id),
+        });
       }
 
       // ---------- 房间 ----------

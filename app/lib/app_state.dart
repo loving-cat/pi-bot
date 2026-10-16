@@ -538,6 +538,19 @@ class AppState extends ChangeNotifier {
 
   /// 改群聊轮次预算。服务端会挡掉非法值（0/负数会被保持原值），
   /// 所以这里不用自己校验，改完拉一次就是真值。
+  /// 把一个部门存成模板（只存班子，不存聊天记录）。返回错误文案或 null。
+  Future<String?> saveTemplateFromRoom(String roomId, String name) async {
+    try {
+      await api?.post('/api/templates', {'roomId': roomId, 'name': name});
+      await refresh();
+      return null;
+    } catch (err) {
+      lastError = '$err';
+      _notify();
+      return '$err';
+    }
+  }
+
   /// 改部门规矩（危险动作 / 要不要附证据）
   Future<void> savePolicy(Map<String, dynamic> patch) async {
     try {

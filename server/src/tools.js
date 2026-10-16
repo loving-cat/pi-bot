@@ -704,6 +704,34 @@ export function buildChiefTools({ runner, health, roomId }) {
     }),
 
     defineTool({
+      name: 'list_department_templates',
+      label: '看有哪些部门模板',
+      description:
+        '这台机器上存过的部门模板（班子 = 人 + 人设 + 模型 + 技能，不含聊天记录）。\n' +
+        '用户说「照上次那个再开一个」「用 XX 模板开个部门」时，先看这里拿 id。',
+      parameters: Type.Object({}),
+      execute: async () => {
+        const list = store.templates();
+        if (!list.length) {
+          return ok(
+            '还没有部门模板。建部门时带上 saveAs（写个模板名）就会存一份；\n' +
+              '或者让用户右键一个部门选「存成部门模板」。',
+          );
+        }
+        return ok(
+          list
+            .map(
+              (t) =>
+                `${t.name}  «id=${t.id}»  —— ${t.members.length} 人，负责人 ${t.lead ?? '—'}` +
+                (t.topic ? `；${t.topic}` : ''),
+            )
+            .join('\n'),
+          { templates: list.map((t) => t.id) },
+        );
+      },
+    }),
+
+    defineTool({
       name: 'create_department',
       label: '★ 建一个部门',
       description:
@@ -715,7 +743,17 @@ export function buildChiefTools({ runner, health, roomId }) {
       parameters: Type.Object({
         name: Type.String({ description: '部门名，如「爬虫攻坚组」「A股数据看板开发组」' }),
         topic: Type.Optional(Type.String({ description: '这个部门负责什么' })),
-        lead: Type.String({ description: '部门老大的名字，必须是 members 里某一个的 name' }),
+        templateId: Type.Optional(
+          Type.String({
+            description:
+              '★ 照已有的部门模板开（先 list_department_templates 拿 id）。\n' +
+              '给这个就不用再给 lead/members —— 人、人设、模型、技能都照模板来。',
+          }),
+        ),
+        saveAs: Type.Optional(
+          Type.String({ description: '顺手把这次这套班子存成模板（写模板名），以后能照开' }),
+        ),
+        lead: Type.Optional(Type.String({ description: '部门老大的名字，必须是 members 里某一个的 name' })),
         members: Type.Array(
           Type.Object({
             name: Type.String({ description: '成员名字，体现职责，如「后端工程师」「测试工程师」' }),
@@ -731,6 +769,23 @@ export function buildChiefTools({ runner, health, roomId }) {
         ),
       }),
       execute: async (_toolCallId, params) => {
+        // ★ 照模板开：人 / 人设 / 模型 / 技能 全从模板来，不再要求 lead+members。
+        //   这是"这个班子不错，再来一个一样的"那条路 —— 用户不必重述一遍要求。
+        if (params.templateId) {
+          const r = store.applyTemplate(params.templateId, { name: params.name });
+          if (r.error) {
+            return fail(
+              `${r.error}。现有模板：${
+                store.templates().map((t) => `${t.name}(${t.id})`).join('、') || '（还没有）'
+              }`,
+            );
+          }
+          if (params.saveAs) store.saveTemplateFromRoom(r.room.id, { name: params.saveAs });
+          return ok(
+            `照模板「${r.template.name}」开好了：${r.room.name}（${r.bots.length} 人，` +
+              `负责人 ${store.getBot(r.room.leadBotId)?.name ?? '—'}）。«内部：roomId=${r.room.id}»`,
+          );
+        }
         const members = params.members ?? [];
         if (!members.length) return fail('至少要有一个成员');
         if (!members.some((m) => m.name === params.lead)) {
@@ -784,6 +839,8 @@ export function buildChiefTools({ runner, health, roomId }) {
           leadBotId: leadBot?.id,
           createdBy: 'chief',
         });
+        // 顺手存一份模板：下次"再开一个这样的"或"照这个改"就不用重描述一遍
+        if (params.saveAs) store.saveTemplateFromRoom(room.id, { name: params.saveAs });
 
         const me = store.mainBot();
         // ★ 给用户看的公告：像真人老板拉群那样说话。

@@ -895,8 +895,70 @@ class _RoomRowState extends State<_RoomRow> {
   /// 以前这里是 `showModalBottomSheet`，两个毛病：桌面上从屏幕最底下窜出来、
   /// 离你点的那行半个屏幕远；而且只给群一个"解散这个群" —— **私聊根本删不掉**
   /// （服务端 deleteRoom 也把 dm 挡住了，这次一起修）。
-  Future<void> _roomMenu(BuildContext context, Room room, Offset at) async {
-    final state = widget.state;
+  /// 把一个部门存成模板（只存班子，不存聊天记录）
+  Future<void> _saveAsTemplate(BuildContext context, Room room) async {
+    final controller = TextEditingController(text: room.name);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: PB.bgElevated,
+        title: Text(
+          '把「${room.name}」存成模板',
+          style: const TextStyle(fontSize: PB.fsLg),
+        ),
+        content: SizedBox(
+          width: 380,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '存的是这套班子：每个人的人设、模型、技能，以及谁当负责人。\n'
+                '不存聊天记录 —— 所以它可以反复用来开新部门。',
+                style: TextStyle(
+                  fontSize: PB.fsXs,
+                  color: PB.textTertiary,
+                  height: 1.6,
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                decoration: const InputDecoration(labelText: '模板名'),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final name = controller.text.trim();
+    controller.dispose();
+    if (name.isEmpty) return;
+    if (!context.mounted) return;
+    final state = AppScope.read(context);
+    final err = await state.saveTemplateFromRoom(room.id, name);
+    if (!context.mounted) return;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 2),
+        content: Text(err ?? '已存成模板「$name」—— 以后可以让主控照它开新部门'),
+      ),
+    );
+  }
+
+  Future<void> _roomMenu(BuildContext context, Room room, Offset at) async {    final state = widget.state;
     final bot = state.botById(
       room.botIds.isNotEmpty ? room.botIds.first : null,
     );
@@ -939,6 +1001,14 @@ class _RoomRowState extends State<_RoomRow> {
           label: room.hidden ? '取消隐藏' : '从侧边栏隐藏',
           onTap: () => state.updateRoom(room.id, {'hidden': !room.hidden}),
         ),
+        // ★ 「这个班子不错，再来一个一样的」——存成部门模板。
+        //   只存班子（人 + 人设 + 模型 + 技能）和谁当老大，不存聊天记录。
+        if (room.isGroup)
+          FloatingMenuEntry(
+            icon: LucideIcons.packagePlus,
+            label: '存成部门模板',
+            onTap: () => _saveAsTemplate(context, room),
+          ),
         FloatingMenuEntry(
           icon: LucideIcons.trash2,
           label: room.isGroup ? '解散这个群' : '删除这个对话',
