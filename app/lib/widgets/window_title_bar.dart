@@ -3,6 +3,7 @@ import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -325,7 +326,7 @@ class WindowResizeOverlay extends StatefulWidget {
 }
 
 class _WindowResizeOverlayState extends State<WindowResizeOverlay>
-    with WindowListener {
+    with WindowListener, SingleTickerProviderStateMixin {
   bool _maximized = false;
 
   // 拖动过程中的基准：起点矩形 + 起点鼠标位置 + 抓的是哪条边
@@ -337,8 +338,28 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
   /// 拖上边/左边时要靠它把窗口自身的位移补偿掉（见 screenDelta）。
   Rect? _lastBounds;
 
+  // ---- 平滑 ----
+  //
+  // 指针事件来得比"窗口真的改完尺寸"快得多。每个事件都硬发一次 setBounds，
+  // 就会"上一发还没落地又发下一发"地堆起来 —— 看着就是一跳一跳
+  // （用户报的"波动很大、不丝滑"）。
+  //
+  // 改成：指针只更新**目标**，由 Ticker 按帧率朝目标插值着走。
+  // 窗口像被牵引过去，而不是每帧硬跳到新位置。
+  Ticker? _ticker;
+  Rect? _target;
+  Rect? _current;
+  bool _sending = false;
+
+  /// 每帧朝目标靠多少：越大越跟手，越小越飘
+  static const _follow = 0.38;
+
+  /// 差这么小就直接吸附（否则永远差半个像素、Ticker 停不下来）
+  static const _snap = 0.75;
+
   @override
   void initState() {
+    _ticker = createTicker(_onTick);
     super.initState();
     if (!WindowResizeOverlay.isSupported) return;
     windowManager.addListener(this);
@@ -356,8 +377,47 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
 
   @override
   void dispose() {
+    _ticker?.dispose();
     if (WindowResizeOverlay.isSupported) windowManager.removeListener(this);
     super.dispose();
+  }
+
+  /// 每帧朝目标插值一步
+  void _onTick(Duration _) {
+    final target = _target;
+    final cur = _current;
+    if (target == null || cur == null) {
+      _ticker?.stop();
+      return;
+    }
+    double mix(double a, double b) => a + (b - a) * _follow;
+    var next = Rect.fromLTRB(
+      mix(cur.left, target.left),
+      mix(cur.top, target.top),
+      mix(cur.right, target.right),
+      mix(cur.bottom, target.bottom),
+    );
+    final close =
+        (next.left - target.left).abs() < _snap &&
+        (next.top - target.top).abs() < _snap &&
+        (next.right - target.right).abs() < _snap &&
+        (next.bottom - target.bottom).abs() < _snap;
+    if (close) next = target; // 吸附上去
+    _current = next;
+    _send(next);
+    if (close) _ticker?.stop();
+  }
+
+  /// 发一发 setBounds。
+  /// 上一发还没落地就跳过 —— 堆起来只会抖，不会更快。
+  void _send(Rect r) {
+    if (_sending) return;
+    _sending = true;
+    unawaited(
+      windowManager.setBounds(r).whenComplete(() {
+        _sending = false;
+      }),
+    );
   }
 
   @override
@@ -470,6 +530,9 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
     try {
       _startBounds = await windowManager.getBounds();
       _lastBounds = _startBounds;
+      // 插值的起点/目标都设成当前值，免得第一帧从 (0,0) 飞过去
+      _current = _startBounds;
+      _target = _startBounds;
     } catch (_) {
       _startBounds = null; // 拿不到就不拖，别乱跳
     }
@@ -492,7 +555,11 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
       minSize: kWindowMinSize,
     );
     _lastBounds = next;
-    unawaited(windowManager.setBounds(next));
+    // ★ 只更新**目标**，不直接 setBounds。
+    //   由 Ticker 每帧朝目标插值着走 —— 这样窗口是被"牵引"过去的，
+    //   而不是每来一个指针事件就硬跳一次（那才是"波动很大"的来源）。
+    _target = next;
+    if (_ticker?.isActive != true) _ticker?.start();
   }
 
   Widget _zone({
