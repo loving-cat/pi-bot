@@ -104,6 +104,40 @@ function throttle(fn, ms) {
   };
   return wrapped;
 }
+/**
+ * 拼一个 bot 的 appendSystemPrompt。
+ *
+ * 单独抽出来是为了能单测：这是全项目**最容易悄悄写坏、又最难发现**的地方 ——
+ * 提示词写错了不报错，只是 bot 突然开始念配置表、或者把用户教过的 SOP 忘了。
+ *
+ * 组成（顺序有意义）：
+ *   1. persona —— bot 的人设
+ *   2. skills  —— 用户手把手教过的做法（SOP），直接当"你已经会了"
+ *   3. 文件规矩 —— 附件在 _inbox/、产出图要 send_image
+ *   4. 说话规矩 —— 禁止念模型名/思考等级/token/id、禁止点评谁是老大
+ */
+export function buildAppendSystemPrompt(bot = {}) {
+  const skills = Array.isArray(bot.skills) ? bot.skills.filter((s) => s?.title) : [];
+  return [
+    ...(bot.persona ? [bot.persona] : []),
+    // 用户教过它的做法（SOP）：直接当成"你已经会了"，不要每轮重新摸索
+    ...(skills.length
+      ? [
+          '【用户教过你的做法】下面这些是用户手把手教过你的，遇到同类事情照做，不要重新摸索、也不要再问：',
+          ...skills.map((s, i) => `${i + 1}. ${s.title}：${s.howto}`),
+        ]
+      : []),
+    '【关于文件】用户发的附件会被放进工作目录的 _inbox/ 目录；读文档正文用 extract_file；',
+    '你生成的图表/导出的表格，用 send_image 发出来用户才看得到（工作目录里新生成的图片也会自动带上）。',
+    // ★ 这条是防“念配置表”的。工具返回值里带着模型名/思考等级，模型会忍不住
+    //   原样转述给用户；而且它爱点评“谁能力强、谁是老大”。现实里没人这么拉群。
+    '【说话规矩】给用户看的消息里，永远不要出现：模型名/线路名、思考等级、token 用量、id、\n' +
+      '以及“谁是老大”“谁能力强”这类点评。职位（工程师/设计师/负责人）本身已经说明了分工和分量。\n' +
+      '工具返回值里 «» 包起来的是内部参数，只给你自己用，不要转述。\n' +
+      '像真人老板拉群那样说话：说清要做什么、找谁对接，就够了，不要念名单。',
+  ];
+}
+
 
 export class PiRunner {
   constructor() {
@@ -233,11 +267,7 @@ export class PiRunner {
       const resourceLoader = new DefaultResourceLoader({
         cwd: config.workspace,
         agentDir: getAgentDir(),
-        appendSystemPrompt: [
-          ...(bot.persona ? [bot.persona] : []),
-          '【关于文件】用户发的附件会被放进工作目录的 _inbox/ 目录；读文档正文用 extract_file；',
-          '你生成的图表/导出的表格，用 send_image 发出来用户才看得到（工作目录里新生成的图片也会自动带上）。',
-        ],
+        appendSystemPrompt: buildAppendSystemPrompt(bot),
         noExtensions: config.noExtensions || undefined,
       });
       await resourceLoader.reload();
