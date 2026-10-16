@@ -602,10 +602,49 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                 next.authorType != msg.authorType ||
                                 (next.createdAt - msg.createdAt) >
                                     5 * 60 * 1000;
+                            // ★ 这条是**外面的人说的**（不在这个会话的名单里）——
+                            //   比如负责人把某个成员的报告转进群里。
+                            //   挂一条「消息来自 X」，点开是**只读**的窥视：
+                            //   看那个 bot 的私聊里到底说了什么（用户要的"链路可见"）。
+                            final relayed = msg.authorType == 'bot' &&
+                                msg.authorId != null &&
+                                !room.botIds.contains(msg.authorId);
+                            final relayedBot = relayed
+                                ? state.botById(msg.authorId)
+                                : null;
+                            final relayedRoom = relayedBot == null
+                                ? null
+                                : state.rooms
+                                      .where(
+                                        (r) =>
+                                            !r.isGroup &&
+                                            r.botIds.contains(relayedBot.id),
+                                      )
+                                      .firstOrNull;
                             // 不居中：整行铺满，bot 贴左、我贴右
                             return _Appear(
                               key: ValueKey(msg.id),
-                              child: _MessageRow(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  if (relayedBot != null)
+                                    _RelayedFrom(
+                                      bot: relayedBot,
+                                      // 点开那个 bot 的私聊（只读）——
+                                      // 找不到私聊房间就不给点（只显示是谁说的）
+                                      onTap: relayedRoom == null
+                                          ? null
+                                          : () => showChatPeek(
+                                              context,
+                                              refs: [
+                                                MsgRef(
+                                                  botId: relayedBot.id,
+                                                  roomId: relayedRoom.id,
+                                                ),
+                                              ],
+                                            ),
+                                    ),
+                                  _MessageRow(
                                 msg: msg,
                                 showAuthor: newAuthor,
                                 showAvatar: endOfRun,
@@ -629,6 +668,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                     msg.authorId == room.leadBotId,
                                 onLongPress: () =>
                                     showMessageActions(context, msg),
+                                  ),
+                                ],
                               ),
                             );
                           },
@@ -1237,6 +1278,89 @@ class _AppearState extends State<_Appear> with SingleTickerProviderStateMixin {
           child: child,
         ),
         child: widget.child,
+      ),
+    );
+  }
+}
+
+/// 「消息来自 X」—— 这条不是这个会话的人说的，是从别处转过来的。
+///
+/// 用户要的（截图里 同类客户端 那种）：一行居中的小字 + 头像，**可点** ——
+/// 点开是**只读**的窥视，看那个 bot 的私聊里到底说了什么，整条链路就看清了。
+/// 以前只有"已发送给 X"那种（bot 主动私信时才有），转发进来的没有标记。
+class _RelayedFrom extends StatefulWidget {
+  const _RelayedFrom({required this.bot, this.onTap});
+
+  final Bot bot;
+
+  /// null = 找不到对应的私聊房间，只显示"是谁说的"，不给点
+  final VoidCallback? onTap;
+
+  @override
+  State<_RelayedFrom> createState() => _RelayedFromState();
+}
+
+class _RelayedFromState extends State<_RelayedFrom> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final canTap = widget.onTap != null;
+    final accent = PB.colorFor(widget.bot.id);
+    return Align(
+      alignment: Alignment.center,
+      child: MouseRegion(
+        cursor: canTap ? SystemMouseCursors.click : SystemMouseCursors.basic,
+        onEnter: (_) => setState(() => _hover = true),
+        onExit: (_) => setState(() => _hover = false),
+        child: GestureDetector(
+          onTap: widget.onTap,
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: _hover && canTap ? PB.bgHover : Colors.transparent,
+              borderRadius: BorderRadius.circular(PB.rFull),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '消息来自',
+                  style: TextStyle(
+                    fontSize: PB.fsXxs,
+                    color: PB.textQuaternary,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                BlobAvatar(
+                  seed: widget.bot.id,
+                  color: accent,
+                  emoji: widget.bot.emoji,
+                  size: 14,
+                  animate: false,
+                ),
+                const SizedBox(width: 5),
+                Text(
+                  widget.bot.name,
+                  style: TextStyle(
+                    fontSize: PB.fsXxs,
+                    fontWeight: FontWeight.w500,
+                    color: canTap ? accent : PB.textTertiary,
+                  ),
+                ),
+                if (canTap) ...[
+                  const SizedBox(width: 4),
+                  Icon(
+                    LucideIcons.chevronRight,
+                    size: 12,
+                    color: _hover ? accent : PB.textQuaternary,
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
