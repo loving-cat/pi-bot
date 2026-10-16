@@ -31,7 +31,7 @@ import { loadExtraProviders, settingsDefaultModel } from './providers.js';
 import { modelGroups } from './model-groups.js';
 import { ModelHealth } from './model-health.js';
 import { buildChiefTools, buildCommonTools } from './tools.js';
-import { MODEL_MENU, defaultMenuSlug, logMenu, resolveMenu } from './model-menu.js';
+import { defaultMenuSlug, logMenu, menuSlugs, resolveMenu } from './model-menu.js';
 import { attachmentBlock } from './extract.js';
 import { inboxPath, metaFor, readForModel, saveFromPath } from './attachments.js';
 import { parseMentions, rosterLine } from './mentions.js';
@@ -303,10 +303,9 @@ export class PiRunner {
     // 后台探活：结果缓存 24h，菜单按它自动切到活着的线路
     this.health.runAll({ concurrency: 6 }).catch((err) => log('模型探活出错：', err?.message || err));
 
-    // 白名单模型的「档位矩阵」：找出会静默返回空的组合（比如 glm-5.3-oc @ medium）
-    const menuSlugs = MODEL_MENU.flatMap((m) => m.slugs);
+    // 菜单里那些模型的「档位矩阵」：找出会静默返回空的组合（思考等级 × 模型）
     this.health
-      .runLevelMatrix(menuSlugs)
+      .runLevelMatrix(menuSlugs())
       .catch((err) => log('档位矩阵出错：', err?.message || err));
 
     return this;

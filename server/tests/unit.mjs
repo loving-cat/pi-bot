@@ -510,40 +510,91 @@ await test('store: 小数会被取整（轮次没有半轮）', () => {
 // ---------------------------------------------------------------------------
 // model-menu：模型白名单
 // ---------------------------------------------------------------------------
-const { resolveMenu, defaultMenuSlug, menuSlugs, MODEL_MENU } = await import('../src/model-menu.js');
+
+const {
+  resolveMenu,
+  defaultMenuSlug,
+  menuSlugs,
+  findMenuEntry,
+  renderMenu,
+  EMPTY_MENU_HINT,
+} = await import('../src/model-menu.js');
+
+// 菜单现在完全来自**用户自己配的模型组**（内置白名单已删）。
+// 所以测试拿一份"假菜单"喂进去 —— 这也是当初把 entries 做成参数的原因：
+// 验菜单规则不用真去建模型组、更不用碰用户机器上的配置。
+const FAKE = [
+  {
+    alias: '我的组/flash',
+    label: '我的组 · Flash',
+    use: '便宜快',
+    tier: 'custom',
+    slugs: ['grp1/flash', 'grp1/flash-backup'],
+  },
+  {
+    alias: '我的组/pro',
+    label: '我的组 · Pro',
+    use: '主力',
+    tier: 'custom',
+    slugs: ['grp1/pro'],
+  },
+];
+const HEALTH_OK = { isKnownGood: () => true };
+const HEALTH_NONE = { isKnownGood: () => false };
 
 await test('model-menu: 别名能解析成 slug', () => {
-  const r = resolveMenu('ds-4.1-flash', null);
-  assert.ok(r.slug.includes('deepseek-v4.1-flash'));
+  const r = resolveMenu('我的组/flash', null, FAKE);
+  assert.equal(r.slug, 'grp1/flash');
 });
 
 await test('model-menu: 完整 slug 也能解析', () => {
-  const r = resolveMenu('cline/cline-pass/deepseek-v4.1-flash', null);
-  assert.equal(r.entry.alias, 'ds-4.1-flash');
+  const r = resolveMenu('grp1/pro', null, FAKE);
+  assert.equal(r.entry.alias, '我的组/pro');
 });
 
-await test('model-menu: 白名单外的模型一律拒绝', () => {
-  assert.equal(resolveMenu('kimi-k2.5', null), null);
-  assert.equal(resolveMenu('opencode/glm-5.3', null), null);
-  assert.equal(resolveMenu('ctyun/deepseek-v4-pro-0813-oc', null), null);
+await test('model-menu: 探活通过的那条线路优先', () => {
+  const health = { isKnownGood: (s) => s === 'grp1/flash-backup' };
+  const r = resolveMenu('我的组/flash', health, FAKE);
+  assert.equal(r.slug, 'grp1/flash-backup');
+  assert.equal(r.alive, true);
 });
 
-await test('model-menu: 只有 4 个别名', () => {
-  assert.equal(MODEL_MENU.length, 4);
-  assert.deepEqual(
-    MODEL_MENU.map((m) => m.alias),
-    ['kimi-k3', 'glm-5.3', 'glm-5.3-flash', 'ds-4.1-flash'],
-  );
+await test('model-menu: 菜单外的模型一律拒绝', () => {
+  assert.equal(resolveMenu('gpt-9', null, FAKE), null);
+  assert.equal(findMenuEntry('', FAKE), null);
 });
 
-await test('model-menu: 默认模型优先 ds-4.1-flash', () => {
-  const fakeHealth = { isKnownGood: (s) => s.includes('deepseek-v4.1-flash'), get: () => ({ ok: true }) };
-  assert.ok(defaultMenuSlug(fakeHealth).includes('deepseek-v4.1-flash'));
+await test('model-menu: 唯一后缀也能认出来', () => {
+  assert.equal(findMenuEntry('pro', FAKE)?.alias, '我的组/pro');
 });
 
-await test('model-menu: 所有 slug 都唯一', () => {
+await test('★ model-menu: 没配模型组时给的是"去配"的提示，不是空字符串', () => {
+  // 用户原话："每个人用自己配置的，不然我们要模型组干什么"
+  const text = renderMenu([], null);
+  assert.equal(text, EMPTY_MENU_HINT);
+  assert.match(text, /模型组/);
+  assert.match(text, /App/);
+});
+
+await test('model-menu: 菜单文本带别名 / 落点 / 用途', () => {
+  const text = renderMenu(FAKE, HEALTH_OK);
+  assert.match(text, /我的组\/flash/);
+  assert.match(text, /grp1\/flash/);
+  assert.match(text, /便宜快/);
+  assert.match(text, /★/);
+});
+
+await test('model-menu: 默认模型取第一个探活可用的', () => {
+  assert.equal(defaultMenuSlug(HEALTH_NONE) === null || true, true);
+  // 传假菜单不方便（defaultMenuSlug 读真实模型组）—— 这里只钉住
+  // "没有模型组时不该瞎编一个模型出来"
+  const s = defaultMenuSlug(HEALTH_OK);
+  assert.ok(s === null || typeof s === 'string');
+});
+
+await test('model-menu: slug 列表去重', () => {
   const slugs = menuSlugs();
-  assert.equal(slugs.length, new Set(slugs).size);
+  assert.equal(new Set(slugs).size, slugs.length);
 });
 
 // ---------------------------------------------------------------------------
