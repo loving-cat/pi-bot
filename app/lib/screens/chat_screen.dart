@@ -306,7 +306,7 @@ class _ChatScreenState extends State<ChatScreen> {
         // 点胶囊 → 右侧面板（这个会话是谁 / 里面有谁 / 上下文用得怎么样）。
         // 宽屏它是布局里的一栏（和左边同级，没遮罩）；窄屏才走整页滑入。
         // 鼠标移上去会**浮起来**、右边冒出一个 `>` —— 告诉用户"这里能点开"。
-        title: _HoverLift(
+        title: AvatarHoverScope(child: _HoverLift(
           onTap: () {
             if (MediaQuery.sizeOf(context).width >= kTwoPaneMinWidth) {
               AppScope.read(context).togglePanel();
@@ -369,7 +369,7 @@ class _ChatScreenState extends State<ChatScreen> {
               ],
             ),
           ),
-        ),
+        )),
         actions: [
           PopupMenuButton<String>(
             icon: const Icon(LucideIcons.ellipsis, size: 18),
@@ -622,8 +622,9 @@ class _EmptyHint extends StatelessWidget {
                         borderRadius: BorderRadius.circular(PB.rFull),
                         border: Border.all(color: PB.borderTertiary),
                       ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
+                      child: AvatarHoverScope(
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
                         children: [
                           BlobAvatar(
                             seed: room.botIds[i],
@@ -642,7 +643,7 @@ class _EmptyHint extends StatelessWidget {
                             ),
                           ),
                         ],
-                      ),
+                      )),
                     ),
                 ],
               ),
@@ -1259,7 +1260,7 @@ class _MessageRow extends StatelessWidget {
       );
     }
 
-    return Padding(
+    return AvatarHoverScope(child: Padding(
       // ★ 气泡之间的呼吸（照 参考 那种节奏）：换个人发言 26px，
       //   同一个人连着说 6px。以前是 16 / 3 —— 谁跟谁说的都黏成一坨。
       padding: EdgeInsets.only(top: showAuthor ? 26 : 6),
@@ -1384,7 +1385,7 @@ class _MessageRow extends StatelessWidget {
           ),
         ],
       ),
-    );
+    ));
   }
 }
 
