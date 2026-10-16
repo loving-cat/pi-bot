@@ -21,3 +21,6 @@ tools/
 .DS_Store
 Thumbs.db
 .rid
+
+# 调试用的临时快照
+.scratch/
