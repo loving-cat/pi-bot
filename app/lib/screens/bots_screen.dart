@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models.dart';
 import '../scope.dart';
 import '../theme.dart';
+import '../widgets/model_picker_field.dart';
 import '../widgets/blob_avatar.dart';
 import 'chat_screen.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
@@ -301,13 +302,7 @@ class _BotRow extends StatelessWidget {
                       onChanged: (_) => setLocal(() {}),
                     ),
                     const SizedBox(height: 10),
-                    TextField(
-                      controller: modelController,
-                      decoration: const InputDecoration(
-                        labelText: '模型 slug（留空用默认）',
-                        hintText: 'cline/cline-pass/deepseek-v4.1-flash',
-                      ),
-                    ),
+                    ModelPickerField(controller: modelController),
                     const SizedBox(height: 14),
                     const Text(
                       '思考等级',
