@@ -115,6 +115,8 @@ void main() {
     });
   });
 
+  group('问用户的卡片', _ask);
+
   test('kind=compact 的消息要认出来（它要画成一条横条，不是气泡）', () {
     final m = Msg.fromJson({
       'id': 'm1',
@@ -128,3 +130,56 @@ void main() {
 }
 
 // 引用气泡的文案：有往来条数时要说"N 条消息往来"，而不是"已发送给 X"
+
+// 问用户的卡片
+void _ask() {
+  test('kind=ask 的消息要能取出选项和"允许自己说"', () {
+    final m = Msg.fromJson({
+      'id': 'a1',
+      'kind': 'ask',
+      'text': '要不要现在发？',
+      'meta': {
+        'options': [
+          {'label': '现在就发', 'detail': '赶今晚的流量'},
+          {'label': '再等等', 'detail': '先把封面换掉'},
+        ],
+        'allowCustom': true,
+      },
+    });
+    expect(m.isAsk, isTrue);
+    expect(m.askOptions.length, 2);
+    expect(m.askOptions.first.label, '现在就发');
+    expect(m.askOptions.first.detail, '赶今晚的流量');
+    expect(m.askAllowCustom, isTrue);
+  });
+
+  test('没写 allowCustom 时默认给输入框（用户"自定义 query"那条路）', () {
+    final m = Msg.fromJson({
+      'id': 'a2',
+      'kind': 'ask',
+      'meta': {'options': [{'label': '好'}]},
+    });
+    expect(m.askAllowCustom, isTrue);
+  });
+
+  test('明确关掉就不给输入框', () {
+    final m = Msg.fromJson({
+      'id': 'a3',
+      'kind': 'ask',
+      'meta': {'options': [{'label': '好'}], 'allowCustom': false},
+    });
+    expect(m.askAllowCustom, isFalse);
+  });
+
+  test('选项缺字段也不炸（服务端给脏数据时界面不能崩）', () {
+    final m = Msg.fromJson({
+      'id': 'a4',
+      'kind': 'ask',
+      'meta': {
+        'options': ['不是 map', {'label': 'ok'}, {'detail': '没标题'}],
+      },
+    });
+    expect(m.askOptions.length, 2, reason: '非 map 的跳过，缺 label 的留空');
+    expect(m.askOptions.first.label, 'ok');
+  });
+}
