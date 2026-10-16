@@ -1079,4 +1079,57 @@ void main() {
     );
     expect(medium.selected, isTrue, reason: '当前等级要选中');
   });
+
+  testWidgets('★ 「消息来自 X」：转进来的消息才挂，自己人说的不挂', (tester) async {
+    // 用户（截图 同类客户端 那种）：转进来的消息要有一行"消息来自 X"，点开是只读窥视。
+    tester.view.physicalSize = const Size(900, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final state = _stateWith(
+      [Room(id: 'g1', name: '研发组', kind: 'group', botIds: const ['b1'])],
+      bots: [
+        Bot(id: 'b1', name: '组员甲'),
+        Bot(id: 'b2', name: '评分汇总官'),
+      ],
+    );
+    addTearDown(state.dispose);
+    state.messages['g1'] = [
+      Msg(
+        id: 'm1',
+        roomId: 'g1',
+        authorType: 'bot',
+        authorId: 'b1', // 自己人 → 不该挂
+        authorName: '组员甲',
+        text: '我自己说的',
+        status: 'done',
+        createdAt: 1,
+      ),
+      Msg(
+        id: 'm2',
+        roomId: 'g1',
+        authorType: 'bot',
+        authorId: 'b2', // 不在这个会话名单里 → 转进来的
+        authorName: '评分汇总官',
+        text: '转进来的报告',
+        status: 'done',
+        createdAt: 2,
+      ),
+    ];
+
+    await tester.pumpWidget(
+      AppScope(
+        state: state,
+        child: MaterialApp(home: ChatScreen(room: state.rooms.first)),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(
+      find.text('消息来自'),
+      findsOneWidget,
+      reason: '★ 只有转进来的那条该挂标记（自己人说的不该挂）',
+    );
+    expect(find.text('评分汇总官'), findsWidgets, reason: '标记里要写是谁说的');
+  });
 }
