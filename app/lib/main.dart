@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:window_manager/window_manager.dart';
 
 import 'app_state.dart';
 import 'notify.dart';
 import 'scope.dart';
 import 'screens/pair_screen.dart';
+import 'platform.dart';
+import 'widgets/window_title_bar.dart';
 import 'screens/home_shell.dart';
+import 'screens/host_connect_screen.dart';
 import 'theme.dart';
 
 /// 开发用：`--dart-define=PI_BOT_URL=http://127.0.0.1:8787 --dart-define=PI_BOT_TOKEN=test-token`
@@ -13,7 +17,30 @@ const _devUrl = String.fromEnvironment('PI_BOT_URL');
 const _devToken = String.fromEnvironment('PI_BOT_TOKEN');
 const _devOpen = String.fromEnvironment('PI_BOT_OPEN');
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // 桌面端：无边框窗口（像 同类客户端 那样），控制按钮由 App 自己画在右上角
+  if (WindowTitleBar.isSupported) {
+    await windowManager.ensureInitialized();
+    const options = WindowOptions(
+      size: Size(1180, 760),
+      minimumSize: Size(760, 520),
+      center: true,
+      backgroundColor: Colors.transparent,
+      skipTaskbar: false,
+      // ★ 真正去标题栏的是这个（插件会在窗口过程里处理 WM_NCCALCSIZE）
+      titleBarStyle: TitleBarStyle.hidden,
+      title: 'pi-bot',
+    );
+    await windowManager.waitUntilReadyToShow(options, () async {
+      await windowManager.setAsFrameless();
+      await windowManager.setHasShadow(true);
+      await windowManager.show();
+      await windowManager.focus();
+    });
+  }
+
   runApp(const PiBotApp());
 }
 
@@ -83,7 +110,8 @@ class _Root extends StatelessWidget {
     if (!state.ready) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
-    if (!state.paired) return const PairScreen();
+    // 桌面端是宿主：永远不显示手机那套配对界面，连不上就显示「怎么起服务端」
+    if (!state.paired) return isHostPlatform ? const HostConnectScreen() : const PairScreen();
 
     if (_devOpen.isNotEmpty) {
       final match = state.rooms.where(

@@ -2,6 +2,9 @@
 
 #include <dwmapi.h>
 #include <flutter_windows.h>
+#include <windowsx.h>
+#include <cstdio>  // GET_X_LPARAM / GET_Y_LPARAM
+#include <fstream>
 
 #include "resource.h"
 
@@ -134,8 +137,19 @@ bool Win32Window::Create(const std::wstring& title,
   UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);
   double scale_factor = dpi / 96.0;
 
+  // 无边框窗口：**创建时就不要标题栏**。
+  // 保留 WS_THICKFRAME（自己处理 WM_NCHITTEST 来拖拽改大小）、最小化/最大化按钮。
+  // 先去掉 WS_CAPTION，再配合 WM_NCCALCSIZE 把剩下的细边框也抹掉。
+  // 样式不用动：Windows 在 CreateWindow 时会把 WS_CAPTION 补回来，
+  // 真正去掉标题栏靠 flutter_window.cpp 里的 WM_NCCALCSIZE 返回 0。
+  const DWORD window_style = WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN;
+  {
+    std::ofstream probe("D:/pi-bot/probe.txt", std::ios::app);
+    probe << "[want] 0x" << std::hex << window_style << std::dec << "\n";
+  }
+
   HWND window = CreateWindow(
-      window_class, title.c_str(), WS_OVERLAPPEDWINDOW,
+      window_class, title.c_str(), window_style,
       Scale(origin.x, scale_factor), Scale(origin.y, scale_factor),
       Scale(size.width, scale_factor), Scale(size.height, scale_factor),
       nullptr, nullptr, GetModuleHandle(nullptr), this);
@@ -143,6 +157,12 @@ bool Win32Window::Create(const std::wstring& title,
   if (!window) {
     return false;
   }
+  {
+    std::ofstream probe("D:/pi-bot/probe.txt", std::ios::app);
+    probe << "[got]  0x" << std::hex << (unsigned long)GetWindowLong(window, GWL_STYLE) << std::dec << "\n";
+  }
+
+
 
   UpdateTheme(window);
 
@@ -173,12 +193,62 @@ LRESULT CALLBACK Win32Window::WndProc(HWND const window,
   return DefWindowProc(window, message, wparam, lparam);
 }
 
+// 无边框窗口的拖拽改大小热区宽度（逻辑像素）
+static constexpr int kResizeBorder = 6;
+
 LRESULT
 Win32Window::MessageHandler(HWND hwnd,
                             UINT const message,
                             WPARAM const wparam,
                             LPARAM const lparam) noexcept {
   switch (message) {
+    // ---- 无边框窗口 ----
+    // 客户区 = 整个窗口，去掉原生标题栏和边框（像 同类客户端 那样）
+    case WM_NCCALCSIZE: {
+      if (wparam == TRUE) {
+        auto* params = reinterpret_cast<NCCALCSIZE_PARAMS*>(lparam);
+        // 最大化时 Windows 会把窗口撑到工作区之外，这里把边距补回来，
+        // 否则内容会被任务栏盖住。
+        if (IsZoomed(hwnd)) {
+          const int frame_x =
+              GetSystemMetrics(SM_CXSIZEFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
+          const int frame_y =
+              GetSystemMetrics(SM_CYSIZEFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
+          params->rgrc[0].left += frame_x;
+          params->rgrc[0].right -= frame_x;
+          params->rgrc[0].top += frame_y;
+          params->rgrc[0].bottom -= frame_y;
+        }
+        return 0;
+      }
+      break;
+    }
+
+    // 没有非客户区了，拖拽改大小得自己算：离边 6px 以内返回对应的 resize 代码
+    case WM_NCHITTEST: {
+      const LRESULT hit = DefWindowProc(hwnd, message, wparam, lparam);
+      if (hit != HTCLIENT) return hit;
+
+      RECT rect;
+      GetWindowRect(hwnd, &rect);
+      const POINT cursor{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+
+      const bool left = cursor.x < rect.left + kResizeBorder;
+      const bool right = cursor.x >= rect.right - kResizeBorder;
+      const bool top = cursor.y < rect.top + kResizeBorder;
+      const bool bottom = cursor.y >= rect.bottom - kResizeBorder;
+
+      if (top && left) return HTTOPLEFT;
+      if (top && right) return HTTOPRIGHT;
+      if (bottom && left) return HTBOTTOMLEFT;
+      if (bottom && right) return HTBOTTOMRIGHT;
+      if (left) return HTLEFT;
+      if (right) return HTRIGHT;
+      if (top) return HTTOP;
+      if (bottom) return HTBOTTOM;
+      return HTCLIENT;
+    }
+
     case WM_DESTROY:
       window_handle_ = nullptr;
       Destroy();

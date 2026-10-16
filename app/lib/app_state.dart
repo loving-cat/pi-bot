@@ -10,6 +10,7 @@ import 'models.dart';
 import 'native.dart';
 import 'notify.dart';
 import 'platform.dart';
+import 'text_utils.dart';
 
 /// 全局状态：连接、房间、消息、流式输出。
 class AppState extends ChangeNotifier {
@@ -60,11 +61,21 @@ class AppState extends ChangeNotifier {
   // ---------------------------------------------------------------- 启动
 
   Future<void> bootstrap() async {
+    try {
+      await _bootstrapInner();
+    } catch (err) {
+      lastError = "启动失败：$err";
+    } finally {
+      ready = true;
+      _notify();
+    }
+  }
+
+  Future<void> _bootstrapInner() async {
     final prefs = await SharedPreferences.getInstance();
     serverUrl = prefs.getString(_kUrl);
     token = prefs.getString(_kToken);
     deviceName = prefs.getString(_kDevice) ?? '我的手机';
-    ready = true;
     if (paired) {
       api = Api(serverUrl!, token ?? '');
       unawaited(refresh());
@@ -599,7 +610,7 @@ class AppState extends ChangeNotifier {
     final room = rooms.where((r) => r.id == msg.roomId).firstOrNull;
     Notifier.show(
       title: room?.isGroup == true ? '${room!.name} · ${msg.authorName}' : msg.authorName,
-      body: text,
+      body: preview(text, 120),
       roomId: msg.roomId,
     );
   }
