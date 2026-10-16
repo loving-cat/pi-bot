@@ -15,6 +15,7 @@ import '../widgets/window_title_bar.dart';
 import '../widgets/attachment_view.dart';
 import '../widgets/avatar_life.dart';
 import '../widgets/blob_avatar.dart';
+import '../widgets/context_chip.dart';
 import '../widgets/floating_menu.dart';
 import '../widgets/md_text.dart';
 import '../widgets/msg_ref_chip.dart';
@@ -240,7 +241,10 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    busy
+                    // 压缩中优先显示 —— 那一会儿 bot 是不动的，不说明白就像卡死了
+                    state.compactingIn(room.id)
+                        ? '正在压缩上下文…'
+                        : busy
                         ? '正在干活…'
                         : (room.isGroup
                               ? '负责人 ${room.leadName ?? '-'} · ${room.botIds.length} 人'
@@ -256,6 +260,9 @@ class _ChatScreenState extends State<ChatScreen> {
                 ],
               ),
             ),
+            // 上下文占用：用了多少 / 是不是在压缩，一眼看到（点了有细节）
+            ContextChip(roomId: room.id),
+            const SizedBox(width: 4),
           ],
         ),
         actions: [
@@ -1006,6 +1013,9 @@ class _MessageRow extends StatelessWidget {
   Widget build(BuildContext context) {
     // 引用行（bot 私信了别的 bot）不画气泡，只渲染一个可点的小浮动条。
     if (msg.isRef) return MsgRefChip(refs: msg.refs);
+    // 上下文压缩：在对话中间留一条小横条 ——
+    // 不然用户看到的是"bot 刚才那几轮说的话不见了"，不知道发生了什么。
+    if (msg.isCompact) return CompactNotice(msg: msg);
 
     final isUser = msg.isUser;
     final streaming = msg.isStreaming;

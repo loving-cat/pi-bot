@@ -34,6 +34,9 @@ class AppState extends ChangeNotifier {
   /// 每个会话里排队/插话中的用户消息条数
   final Map<String, int> queued = {};
 
+  /// 上下文占用，key 是 `房间:bot`（服务端 /api/state 和 context 事件都按这个格式给）
+  final Map<String, ContextInfo> contexts = {};
+
   /// App 是不是在前台（不在前台才弹通知）
   bool foreground = true;
 
@@ -173,6 +176,17 @@ class AppState extends ChangeNotifier {
           .whereType<Map<String, dynamic>>()
           .map(ModelGroup.fromJson)
           .toList();
+      final ctx = (res['context'] as Map?)?.cast<String, dynamic>() ?? const {};
+      contexts
+        ..clear()
+        ..addAll(
+          ctx.map(
+            (k, v) => MapEntry(
+              k,
+              ContextInfo.fromJson((v as Map).cast<String, dynamic>()),
+            ),
+          ),
+        );
       lastError = null;
     } catch (err) {
       lastError = '$err';
@@ -613,6 +627,19 @@ class AppState extends ChangeNotifier {
         }
         break;
 
+      case 'context': {
+        // 每轮结束（以及压缩前后）服务端都会报一次
+        final key = '${ev['roomId']}:${ev['botId']}';
+        contexts[key] = ContextInfo.fromJson(ev.cast<String, dynamic>());
+        break;
+      }
+      case 'bot.compacting': {
+        final key = '${ev['roomId']}:${ev['botId']}';
+        final prev = contexts[key];
+        final active = ev['active'] as bool? ?? false;
+        contexts[key] = (prev ?? ContextInfo()).copyWith(compacting: active);
+        break;
+      }
       case 'typing':
         typing[ev['roomId'] as String] = ev['active'] as bool? ?? false;
         if (ev['active'] != true) queued.remove(ev['roomId']);
@@ -723,6 +750,36 @@ class AppState extends ChangeNotifier {
 
   /// 按名字找 bot —— @提及 的 chip 和悬停卡要用它把"名字"换成"那个 bot"。
   /// 名字可能带前后空格（模型写 @名字 时爱这么干），所以两边都 trim 一下。
+  /// 某个会话的上下文占用。
+  ///
+  /// 私聊就一个 bot；群里可能会有好几个（各自一个会话），取**占用最高的那个** ——
+  /// 头部显示不下那么多，而"哪个快满了"才是用户要看的。
+  ContextInfo? contextFor(String roomId) {
+    ContextInfo? worst;
+    String prefix = '$roomId:';
+    for (final e in contexts.entries) {
+      if (!e.key.startsWith(prefix)) continue;
+      final c = e.value;
+      if (worst == null) {
+        worst = c;
+        continue;
+      }
+      final a = c.percent ?? -1;
+      final b = worst.percent ?? -1;
+      if (a > b) worst = c;
+    }
+    return worst;
+  }
+
+  /// 这个会话里有没有谁在压缩上下文
+  bool compactingIn(String roomId) {
+    final prefix = '$roomId:';
+    for (final e in contexts.entries) {
+      if (e.key.startsWith(prefix) && e.value.compacting) return true;
+    }
+    return false;
+  }
+
   Bot? botByName(String name) {
     final key = name.trim();
     if (key.isEmpty) return null;
