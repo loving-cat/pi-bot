@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../theme.dart';
 
@@ -64,21 +65,58 @@ class _ScanScreenState extends State<ScanScreen> {
     formats: const [BarcodeFormat.qrCode],
     // 预览分辨率别开太大，低端机上启动更快
     cameraResolution: const Size(1280, 720),
+    // ★ 权限我们自己先去要（见 _askPermission），要到了再启动相机。
+    //   以前交给插件自己启自己要 —— 真机上遇到过"压根不弹权限框"（
+    //   拒过一次之后系统就不再弹了），用户看到的就是一片黑。
+    autoStart: false,
   );
   bool _handled = false;
   bool _torch = false;
   bool _slow = false;
   Timer? _slowTimer;
 
+  /// 相机权限当前是什么状态（用户要的：不给权限就不让扫）
+  PermissionStatus? _perm;
+
   @override
   void initState() {
     super.initState();
     _controller.addListener(_onState);
-    // 相机起得慢的时候给个"正在启动"，别让人对着一片黑猜
     _slowTimer = Timer(const Duration(milliseconds: 1200), () {
       if (mounted && !_controller.value.isInitialized)
         setState(() => _slow = true);
     });
+    // 进页面就问权限 —— 不给就不起相机（用户要的就是这个）
+    WidgetsBinding.instance.addPostFrameCallback((_) => _askPermission());
+  }
+
+  /// 显式申请相机权限。
+  ///
+  /// 为什么不能指望插件自己弹：Android 一旦被拒过两次（或用户在系统里
+  /// 关掉了），**再请求就不弹窗了** —— 直接回"拒绝"。用户看到的现象就是
+  /// "压根没跟手机申请权限"。所以：
+  ///   · 能弹就弹（系统对话框，用户点"允许"就完事）；
+  ///   · 不能弹（永久拒绝）就直说，并给一个**去系统设置**的按钮；
+  ///   · 就是不给 —— 那就手动填地址配对码，不堵死。
+  Future<void> _askPermission() async {
+    var status = await Permission.camera.status;
+    if (status.isDenied) {
+      status = await Permission.camera.request();
+    }
+    if (!mounted) return;
+    setState(() => _perm = status);
+    if (status.isGranted || status.isLimited) {
+      try {
+        await _controller.start();
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _openSettings() async {
+    await openAppSettings();
+    // 从设置回来再看一眼（用户可能刚打开）
+    if (!mounted) return;
+    await _askPermission();
   }
 
   void _onState() {
@@ -100,6 +138,13 @@ class _ScanScreenState extends State<ScanScreen> {
       if (mounted && !_controller.value.isInitialized)
         setState(() => _slow = true);
     });
+    // 先看权限 —— 没给就把系统对话框再叫一次，而不是盲启相机
+    final status = await Permission.camera.status;
+    if (mounted) setState(() => _perm = status);
+    if (!status.isGranted && !status.isLimited) {
+      await _askPermission();
+      return;
+    }
     try {
       await _controller.stop();
     } catch (_) {}
@@ -155,7 +200,54 @@ class _ScanScreenState extends State<ScanScreen> {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        if (error == null) ...[
+                        // ★ 没给相机权限 —— 把话说清楚，并给两个出口
+                        if (_perm != null &&
+                            !_perm!.isGranted &&
+                            !_perm!.isLimited) ...[
+                          const Icon(
+                            LucideIcons.cameraOff,
+                            size: 38,
+                            color: PB.textTertiary,
+                          ),
+                          const SizedBox(height: 18),
+                          Text(
+                            _perm!.isPermanentlyDenied
+                                ? '扫码要用相机。\n你之前拒绝过两次，系统不再弹窗了 ——\n去设置里把 pi-bot 的相机权限打开。'
+                                : '扫码要用相机。\n不给权限就扫不了码（也可以直接手填地址+配对码）。',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: PB.textSecondary,
+                              fontSize: PB.fsSm,
+                              height: 1.7,
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          FilledButton.icon(
+                            onPressed: _perm!.isPermanentlyDenied
+                                ? _openSettings
+                                : _askPermission,
+                            icon: Icon(
+                              _perm!.isPermanentlyDenied
+                                  ? LucideIcons.settings
+                                  : LucideIcons.camera,
+                              size: 18,
+                            ),
+                            label: Text(
+                              _perm!.isPermanentlyDenied ? '去系统设置' : '允许使用相机',
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          TextButton(
+                            onPressed: () => Navigator.pop(context),
+                            child: const Text(
+                              '不用扫码，手动填地址和配对码',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: PB.fsSm,
+                              ),
+                            ),
+                          ),
+                        ] else if (error == null) ...[
                           const SizedBox(
                             width: 26,
                             height: 26,

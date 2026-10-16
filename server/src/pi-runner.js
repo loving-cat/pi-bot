@@ -35,7 +35,7 @@ import { defaultMenuSlug, logMenu, menuSlugs, resolveMenu } from './model-menu.j
 import { attachmentBlock } from './extract.js';
 import { inboxPath, metaFor, readForModel, saveFromPath } from './attachments.js';
 import { parseMentions, rosterLine } from './mentions.js';
-import { log, pickEscalationHost } from './util.js';
+import { log, pickEscalationHost, isSuperiorCall } from './util.js';
 
 const MAX_STEP_TEXT = 200;
 
@@ -254,6 +254,61 @@ export class PiRunner {
     this.initNote = null;
     /** 心跳看门狗（一个进程只需要一个） */
     this.watchdog = null;
+    /**
+     * 房间级锁：一个房间同一时刻只能跑一个 runRound。
+     *
+     * 以前没有这层：群里用户连发两条消息，`send()` 只检查「老大忙不忙」，
+     * 成员在跑的时候第二条消息会再开一个 runRound —— 两个轮次同时跑，
+     * 各有一份 maxRuns 预算（限制失效），游标互相踩。
+     */
+    this.roundLocks = new Set();
+    /** roomId -> { text, files }：锁被占时进来的消息，合并到这里等下一轮 */
+    this.roundQueue = new Map();
+  }
+
+  /**
+   * 群（部门）里触发一轮 —— 带房间级串行。
+   *
+   * 忙的时候**不并发**：把这条消息记进排队表，等当前这轮跑完直接接着跑一轮
+   * （消息本身 send() 已经落库了，下一轮的 transcript 里必然带上它，不会丢）。
+   */
+  #dispatchGroupRound(roomId, text, files) {
+    if (this.roundLocks.has(roomId) || this.isRoomBusy(roomId)) {
+      const pending = this.roundQueue.get(roomId);
+      this.roundQueue.set(roomId, {
+        text: pending ? `${pending.text}\n${text}` : text,
+        files: pending ? [...pending.files, ...files] : [...files],
+      });
+      log(`【${store.getRoom(roomId)?.name ?? roomId}】房间正忙，这条消息排队等下一轮`);
+      return Promise.resolve();
+    }
+    this.roundLocks.add(roomId);
+    return this.#drainGroupRounds(roomId, { text, files });
+  }
+
+  /** 把排队的一轮轮跑掉；跑完（或出错）都要释放房间锁 */
+  async #drainGroupRounds(roomId, first) {
+    let next = first;
+    try {
+      while (next) {
+        try {
+          const { promptText } = await this.#buildInput(next.text, next.files);
+          await this.runRound(roomId, {
+            openerText: next.text,
+            attachmentContext: promptText,
+            attachments: next.files,
+          });
+        } catch (err) {
+          // 单轮炸掉不能把整个房间锁死，也不能吞掉排队的那条
+          log('runRound 异常：', err?.stack || err);
+        }
+        // 取下一轮 + 释放锁之间不能有 await，否则新消息会落在缝里丢掉
+        next = this.roundQueue.get(roomId) ?? null;
+        if (next) this.roundQueue.delete(roomId);
+      }
+    } finally {
+      this.roundLocks.delete(roomId);
+    }
   }
 
   /**
@@ -901,9 +956,13 @@ export class PiRunner {
     const limits = store.groupLimits();
     const budget = (botId) => (botId === leadId ? limits.leadTurns : limits.memberTurns);
     const used = new Map();
+    const chiefId = store.mainBot()?.id ?? null;
     const queue = opening.map((botId) => ({
       botId,
       reason: kickoff ? '部门刚成立，先由你安排' : openerBotId ? `${openerName} 叫了你` : '用户发了新消息',
+      fromId: openerBotId ?? null,
+      fromName: openerName,
+      fromText: openerText,
     }));
 
     log(
@@ -918,9 +977,74 @@ export class PiRunner {
       const bot = store.getBot(item.botId);
       if (!bot) continue;
       const done = used.get(item.botId) ?? 0;
-      if (done >= budget(item.botId)) continue;
+      if (done >= budget(item.botId)) {
+        log(`【${room.name}】${bot.name} 这轮已说过 ${done} 次 → 不再叫它`);
+        continue;
+      }
+      // ★ 上级叫它 → 无论多忙都要**停下来听**。
+      //
+      //   用户原话：“无论多忙 当组长 部长 自己上级@的时候 必须先停下来听最新的
+      //   要求，同时上报目前自己的进度。”
+      //
+      //   上一版我写成了“等它忙完再派” —— 方向不对：上级的要求是**实时**的，
+      //   等它把手上的活磨完可能已经几分钟过去了。所以这里改成 steer：
+      //   把上级那句“先停下、先报进度、再按新要求干”直接插进它正在跑的那一轮。
+      //      · 是上级 / 用户 → 打断（steer）
+      //      · 只是同级同事 → 不打断，排队等它忙完（不然群里会互相擂断）
+      if (this.isBusy(roomId, bot.id)) {
+        const superior = isSuperiorCall({
+          fromId: item.fromId,
+          fromRole: item.fromId ? 'bot' : 'user',
+          leadId,
+          chiefId,
+          selfId: bot.id,
+        });
+        const entry = this.sessions.get(this.#key(roomId, bot.id));
+        if (superior && entry?.session) {
+          const steered =
+            `【${item.fromName || '上级'} 叫停】先把你手上正在做的事停一下。\n\n` +
+            `${item.fromName || '上级'} 刚刚说：\n` +
+            `${(item.fromText || '').slice(0, 1200) || '（看群里的最新消息）'}\n\n` +
+            '请先回报一句：你现在做到哪一步了、还差什么。\n' +
+            '然后按上面的新要求继续 —— 新要求优先于你手上正在做的事。';
+          try {
+            await entry.session.steer(steered);
+            log(`【${room.name}】上级改主意了 → 叫停 ${bot.name}（它正忙，让它先报进度再接新要求）`);
+            store.appendMessage(
+              {
+                roomId,
+                authorType: 'system',
+                authorId: bot.id,
+                authorName: '叫停回执',
+                text: `已叫停${bot.name}：让它先报进度，再按新的要求继续。`,
+                status: 'done',
+                meta: { via: 'steer_by_superior', fromId: item.fromId ?? null },
+              },
+              // 插在它正在写的那条之前 —— 读起来是“叫停 → 它的回应”
+              { beforeStreaming: true },
+            );
+            continue;
+          } catch (err) {
+            log(`叫停 ${bot.name} 失败：${err?.message || err}`);
+          }
+        }
+        log(`【${room.name}】${bot.name} 还在忙 → 等它空下来再派（${item.reason}）`);
+        const deadline = Date.now() + config.groupBusyWaitMs;
+        while (this.isBusy(roomId, bot.id) && Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 2000));
+        }
+        if (this.isBusy(roomId, bot.id)) {
+          log(`【${room.name}】${bot.name} 一直忙，这一单没派出去 → 上报`);
+          this.escalate({
+            roomId,
+            fromBotId: bot.id,
+            reason: `要派给${bot.name}的活一直没派出去（它忙了 ${Math.round(config.groupBusyWaitMs / 1000)} 秒以上）`,
+            prefer: 'lead',
+          }).catch((err) => log('上报失败：', err?.message || err));
+          continue;
+        }
+      }
       used.set(item.botId, done + 1);
-      if (this.isBusy(roomId, bot.id)) continue;
       runs++;
 
       const fresh = this.#transcriptFor(roomId, bot.id);
@@ -935,7 +1059,11 @@ export class PiRunner {
       const res = await this.run(roomId, bot.id, prompt, { groupTurn: true, attachments });
       store.setCursor(roomId, bot.id, this.#lastMessageId(roomId));
 
-      if (!res.ok) continue;
+      // 没成也得说一声 —— 不然"叫了它但没动静"没人知道
+      if (!res.ok) {
+        log(`【${room.name}】${bot.name} 这轮没跑成：${res.error ?? '未知原因'}（${item.reason}）`);
+        continue;
+      }
       const text = res.text.trim();
       if (/^\[?PASS\]?$/i.test(text)) {
         store.deleteMessage(roomId, res.messageId);
@@ -949,9 +1077,25 @@ export class PiRunner {
       const queued = new Set(queue.map((q) => q.botId));
       for (const id of next) {
         if (id === bot.id || queued.has(id)) continue;
-        queue.push({ botId: id, reason: `${bot.name} 叫了你` });
+        queue.push({
+          botId: id,
+          reason: `${bot.name} 叫了你`,
+          fromId: bot.id,
+          fromName: bot.name,
+          fromText: text,
+        });
         queued.add(id);
       }
+    }
+
+    // ★ 排到一半被预算掐断，也必须留痕。
+    //   用户报过"组长明明 @ 了，怎么只有一个 bot 动起来" —— 以前这类出口
+    //   全是静默的，日志里只看到"首发：某某"，后面什么都没有，根本查不出为什么。
+    if (queue.length) {
+      log(
+        `【${room.name}】⚠️ 还有 ${queue.length} 个人在排队但预算用完了` +
+          `（本轮到上限 ${limits.maxRuns} 次）：${queue.map((q) => store.getBot(q.botId)?.name ?? q.botId).join('、')}`,
+      );
     }
 
     // 没被叫到的成员也算「看过这条了」，避免下次一次性倒一堆旧账
@@ -1028,10 +1172,8 @@ export class PiRunner {
     });
 
     if (room.kind === 'group') {
-      // 部门：老大先接，再往下派
-      this.#buildInput(clean, files)
-        .then(({ promptText }) => this.runRound(roomId, { openerText: clean, attachmentContext: promptText, attachments: files }))
-        .catch((err) => log('runRound 异常：', err?.stack || err));
+      // 部门：老大先接，再往下派（房间级串行，忙则排队）
+      this.#dispatchGroupRound(roomId, clean, files).catch((err) => log('runRound 异常：', err?.stack || err));
     } else {
       this.#buildInput(clean, files)
         .then(({ promptText }) =>
@@ -1459,6 +1601,8 @@ export class PiRunner {
   }
 
   async abort(roomId) {
+    // 用户按了停止：排队中的轮次一并清掉，不然它会在当前这轮结束后自己接着跑
+    this.roundQueue.delete(roomId);
     let aborted = false;
     for (const [key, entry] of this.sessions) {
       if (key.startsWith(`${roomId}:`) && entry.session && entry.busy) {
