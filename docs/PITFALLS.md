@@ -227,15 +227,28 @@ new RegExp(`@[\\s\\p{Extended_Pictographic}\\uFE0F\\u200D]*${escapeRe(name)}`, '
 `Gradle requires JVM 17 or later to run. Your build is currently configured to use JVM 8.`
 （`flutter doctor -v` 同时会提示 `X Could not determine java version`）
 
-**根因**：这台机器的 `JAVA_HOME` 指着 `C:\Program Files\Java\jdk-1.8`。Flutter 找 JDK 的顺序是
-Android Studio 自带的 → `JAVA_HOME` → PATH，没有 Android Studio 就落到 1.8 上。
+**根因**：`JAVA_HOME` 指着一个 JDK 8 —— 很多机器上本来就装着 1.8，或者没装
+Android Studio、Flutter 顺着 `JAVA_HOME` 就落到了 1.8 上。
+（Flutter 找 JDK 的顺序：Android Studio 自带的 → `JAVA_HOME` → PATH。）
 
-**修法**：构建时显式指定 JDK 21（不写进 `android/gradle.properties`，
-那是用户机器相关的东西，不该进开源仓库）：
+**修法**：让它指向任意一个 JDK 17+。三种写法，按影响范围从小到大：
 
 ```bash
-JAVA_HOME="C:\Users\XL\.jdks\openjdk-21.0.2" flutter build apk --release
+# ① 只影响这一次构建（临时）
+JAVA_HOME="/path/to/jdk-17+" flutter build apk --release
+
+# ② 一劳永逸，而且**不污染仓库**（推荐）—— 写进用户级 gradle 配置：
+#    Linux/macOS: ~/.gradle/gradle.properties
+#    Windows:     %USERPROFILE%\.gradle\gradle.properties
+org.gradle.java.home=/path/to/jdk-17+
+
+# ③ 或者让 Flutter 自己记住
+flutter config --jdk-dir="/path/to/jdk-17+"
 ```
+
+> ⚠️ **别写进 `android/gradle.properties`** —— 那个文件是要提交的，等于把你的机器路径
+> 发给每一个 clone 的人。凡是"跟这台机器有关"的东西（JDK 路径、SDK 路径、本地代理、
+> API key）一律放用户级配置或环境变量。
 
 **顺带**：图标全换成 Lucide 后，构建日志里
 `MaterialIcons-Regular.otf ... reducing it from 1645184 to 1588 bytes` 是**正常**的 ——

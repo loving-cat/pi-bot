@@ -28,3 +28,6 @@ Thumbs.db
 
 # 调试用的临时快照
 .scratch/
+
+# Windows runner 调试探针的产物（别提交）
+probe.txt
