@@ -62,12 +62,16 @@ Offset eyeOffsetToward({
   final d = pointer - avatarCenter;
   final len = d.distance;
   if (len < 0.5) return Offset.zero;
-  // ★ 幅度调大了（用户："跟随的幅度太小了，完全感觉不到"）。
-  //   原来是 reach 0.11*size 且衰减分母 2.4*size —— 46px 的头像在常见距离下
-  //   只偏 3px，等于看不出来。现在 0.16*size、分母降到 1.0*size：
-  //   同样的距离偏 7px 左右，一眼能看出它在看你。
-  //   上限 0.16 是量过的：再大，窄形状（水滴/拱形）的眼睛会压到轮廓上。
-  final falloff = len / (len + size * 1.0);
+  // ★ 这是"看方向"，不是"看距离"。
+  //
+  //   以前用 len/(len+size) 做衰减 —— 那意味着**越近偏得越少**。
+  //   但真实场景恰恰相反：用户的鼠标往往就在同一行里（离头像几十像素），
+  //   那时候偏移量趋近 0，看起来就是"它没在看我"（用户两次报这个问题）。
+  //
+  //   改成：只要往某个方向偏出去一小段（0.3*size），就直接给满偏移。
+  //   于是"鼠标在这一行的任何位置"都等于"它的眼睛正看着你"。
+  //   上限 0.16*size 是量过的：再大，窄形状（水滴/拱形）的眼睛会压到轮廓上。
+  final falloff = (len / (size * 0.3)).clamp(0.0, 1.0);
   final reach = size * 0.16;
   return d * (falloff * reach / len);
 }
