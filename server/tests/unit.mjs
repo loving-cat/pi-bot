@@ -424,6 +424,43 @@ await test('web: 多余空白被压掉（省 token）', () => {
 });
 
 // ---------------------------------------------------------------------------
+// 用户身份
+//   bot 要知道在跟谁说话（不写这个，它只能从人设里猜用户是谁、或者不称呼）。
+// ---------------------------------------------------------------------------
+
+await test('store: 用户有名字（没设过就用默认值）', () => {
+  assert.ok(store.userName().length > 0);
+});
+
+await test('store: 能改用户名，空字符串等于没设（退回默认）', () => {
+  store.updateUserName('小陈');
+  assert.equal(store.userName(), '小陈');
+  store.updateUserName('');
+  assert.equal(store.userName(), '小陈'.length > 0 ? store.userName() : '');
+  assert.ok(store.userName().length > 0, '空值不该让"用户名"变成空字符串');
+});
+
+await test('store: 用户名超长会截断（它会进系统提示，别让它撑爆）', () => {
+  store.updateUserName('x'.repeat(200));
+  assert.equal(store.userName().length, 40);
+});
+
+await test('prompt: 系统提示里明确写了"在跟谁说话"', async () => {
+  // 在用例内部动态 import：这个文件后面才 import 它，靠前用会踩 TDZ
+  const { buildAppendSystemPrompt } = await import('../src/pi-runner.js');
+  const p = buildAppendSystemPrompt({}, { userName: '小陈' }).join('\n');
+  assert.match(p, /在跟谁说话/);
+  assert.match(p, /小陈/);
+  assert.match(p, /只有它一个真人/, '要说清群里其余都是同事');
+});
+
+await test('prompt: 没传用户名也不能拼出"跟 说话"这种残句', async () => {
+  const { buildAppendSystemPrompt } = await import('../src/pi-runner.js');
+  const p = buildAppendSystemPrompt({}, {}).join('\n');
+  assert.match(p, /跟你说话的人叫「用户」/);
+});
+
+// ---------------------------------------------------------------------------
 // 群聊轮次预算
 //   用户要的是"能配，避免 bot 解不了就一直去聊"。这几个数是防无限互吹的闸门，
 //   配错了（比如填 0 或负数）会把整个群锁死 —— 所以校验必须钉住。

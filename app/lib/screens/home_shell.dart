@@ -4,6 +4,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../models.dart';
 import '../scope.dart';
 import '../theme.dart';
+import '../widgets/room_panel.dart';
 import 'chat_screen.dart';
 import 'rooms_screen.dart';
 
@@ -36,6 +37,7 @@ class _HomeShellState extends State<HomeShell> {
 
     // 外部入口（点 @提及 / 引用气泡 / 通知）请求切会话：分栏的选中项在这里，
     // 所以必须在这一层消费掉。取走即清空，只生效一次。
+    final panelOpen = state.panelOpen;
     final jump = state.takePendingRoom();
     if (jump != null) {
       if (wide) {
@@ -100,6 +102,12 @@ class _HomeShellState extends State<HomeShell> {
                               embedded: true,
                             ),
                     ),
+                    // ★ 右侧详情面板是**布局里的一栏**（点聊天顶部胶囊开关），
+                    //   和左边那栏同级：没有遮罩、不盖住聊天，聊天区自己让出宽度。
+                    if (panelOpen && selected != null) ...[
+                      Container(width: 1, color: PB.borderTertiary),
+                      SizedBox(width: 340, child: RoomPanel(room: selected)),
+                    ],
                   ],
                 ),
               ),
