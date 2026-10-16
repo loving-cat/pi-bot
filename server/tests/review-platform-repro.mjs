@@ -9,6 +9,7 @@
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const ROOT = 'D:/pi-bot/server/data/_review_repro';
 fs.rmSync(ROOT, { recursive: true, force: true });
@@ -110,6 +111,7 @@ say(gl.status === 500, `5b. PATCH /api/group-limits → ${gl.status}`, `${await 
 const mg = await J('POST', '/api/model-groups', { name: 'g', baseUrl: 'http://127.0.0.1:1', apiKey: 'sk-x', models: [{ id: 'm' }] });
 say(mg.status === 500, `5c. POST /api/model-groups → ${mg.status}`, `${await mg.text()}｜但组已建：${modelGroups.listPublic().map((g) => g.name).join(',')}`);
 
+store.saveNow();
 server.close();
 
 // ── 6. state.json 坏掉 → 静默清库 + 原地覆盖 ───────────────────────────
@@ -118,8 +120,9 @@ console.log(`\n   （当前 state.json 里 bots=${Object.keys(s6.bots).length}�
 const good = fs.readFileSync(path.join(ROOT, 'state.json'), 'utf8');
 fs.writeFileSync(path.join(ROOT, 'state.json'), good.slice(0, Math.floor(good.length * 0.7)));
 const child = await import('node:child_process');
+const storeUrl = pathToFileURL(path.resolve('src/store.js')).href;
 const out = child.execSync(
-  `node -e "process.env.PI_BOT_HOME='${ROOT}';import('${path.resolve('src/store.js').replace(/\\/g, '/')}').then(({store})=>{console.log(JSON.stringify({bots:Object.keys(store.state.bots).length,rooms:Object.keys(store.state.rooms).length}));store.saveNow();})"`,
+  `node -e "process.env.PI_BOT_HOME='${ROOT}';import('${storeUrl}').then(({store})=>{console.log(JSON.stringify({bots:Object.keys(store.state.bots).length,rooms:Object.keys(store.state.rooms).length}));store.saveNow();})"`,
   { encoding: 'utf8' },
 );
 console.log(`★ 复现  6. state.json 被截断（写坏/断电/手工改坏）后重启\n        重启读到 ${out.trim()}（原 ${Object.keys(s6.bots).length} 个 bot）；且下一次 saveNow 会把坏文件原地覆盖，原始内容不可恢复`);
@@ -129,7 +132,7 @@ fs.writeFileSync(path.join(ROOT, 'state.json'), good);
 const s7 = path.join(ROOT, 'state.json');
 fs.rmSync(s7);
 fs.mkdirSync(s7); // 占住目标路径，让 rename 失败（等价于 Windows 上文件被独占/盘满）
-const code7 = child.spawnSync(process.execPath, ['-e', `process.env.PI_BOT_HOME='${ROOT}';import('${path.resolve('src/store.js').replace(/\\/g, '/')}').then(({store})=>{store.createBot({name:'x',persona:'p'});setTimeout(()=>process.exit(0),1000);})`], { encoding: 'utf8' });
+const code7 = child.spawnSync(process.execPath, ['-e', `process.env.PI_BOT_HOME='${ROOT}';import('${storeUrl}').then(({store})=>{store.createBot({name:'x',persona:'p'});setTimeout(()=>process.exit(0),1000);})`], { encoding: 'utf8' });
 console.log(`★ 复现  7. 磁盘写不进去（rename EPERM）→ 未捕获异常，进程退出码 ${code7.status}\n        ${String(code7.stderr).split('\n').find((l) => l.includes('Error')) ?? ''}｜index.js 里没有 uncaughtException 兜底`);
 fs.rmSync(s7, { recursive: true, force: true });
 
@@ -139,7 +142,7 @@ fs.rmSync(ROOT8, { recursive: true, force: true });
 fs.mkdirSync(path.join(ROOT8, 'rooms'), { recursive: true });
 const one = (name) =>
   child.execSync(
-    `node -e "process.env.PI_BOT_HOME='${ROOT8}';import('${path.resolve('src/store.js').replace(/\\/g, '/')}').then(({store})=>{store.createBot({name:'${name}',persona:'p'});store.saveNow();})"`,
+    `node -e "process.env.PI_BOT_HOME='${ROOT8}';import('${storeUrl}').then(({store})=>{store.createBot({name:'${name}',persona:'p'});store.saveNow();})"`,
     { encoding: 'utf8' },
   );
 one('bot_A');
