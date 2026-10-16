@@ -43,6 +43,7 @@ import {
   withCapacity,
 } from './context-budget.js';
 import { disposeAll, disposeMatching, evictIdle } from './session-pool.js';
+import { createWatchdog, stallCleanup } from './watchdog.js';
 import {
   composeGroupPrompt,
   departmentOf,
@@ -295,86 +296,34 @@ export class PiRunner {
   }
 
   /**
-   * 心跳机制 —— 给干活的 bot 们装上“我还活着”。
+   * 心跳看门狗：还在跑的会话报心跳，卡死的判中断并收尾。
    *
-   * 用户原话：“做个心跳机制可以给工程师 bot 们，这样如果任务中断了，
-   * 组长 / 部长级别的知晓。”
-   *
-   * 为什么不能只看“进程还在不在”：最常见的卡死是**进程好好的、但那一轮
-   * 再也不出声了**（工具挂住、socket 半死）。外面看到的就是永远转圈。
-   *
-   * 所以这里做两件事：
-   *   · 每 config.heartbeatMs 报一次“还活着，最后一次动静是 N 秒前”；
-   *   · 超过 config.stallMs 没动静 → 判为中断：收尾那一轮，并**上报组长**。
+   * 判断逻辑在 watchdog.js（那边能直接调 tick 单测，不用等定时器）；
+   * 这里只负责把它接到 runner 上：会话表 + 事件总线 + 收尾动作。
    */
   startWatchdog() {
-    if (this.watchdog) return;
-    this.watchdog = setInterval(
-      () => this.#beatAll(),
-      Math.max(5_000, config.heartbeatMs),
-    );
-    // 别因为这个定时器把进程吊着不退
-    this.watchdog.unref?.();
-    log(
-      `💓 心跳看门狗已启动：每 ${Math.round(Math.max(5_000, config.heartbeatMs) / 1000)}s 报一次，` +
-        `超过 ${Math.round(config.stallMs / 1000)}s 没动静就判为中断并上报组长`,
-    );
+    this.watchdog ??= createWatchdog({
+      sessions: this.sessions,
+      heartbeatMs: config.heartbeatMs,
+      stallMs: config.stallMs,
+      emit: (ev) => bus.emit('event', ev),
+      onStall: (info) => {
+        const cleaned = this.#stallCleanup(info);
+        if (!cleaned) return;
+        this.escalate({
+          roomId: cleaned.roomId,
+          fromBotId: cleaned.botId,
+          reason: `心跳断了：已经 ${cleaned.secs} 秒没动静，这一轮中断了`,
+          prefer: 'lead',
+        }).catch((err) => log('上报中断失败：', err?.message || err));
+      },
+    });
+    this.watchdog.start();
   }
 
-  #beatAll() {
-    const nowMs = Date.now();
-    for (const [key, entry] of this.sessions) {
-      if (!entry.busy) continue;
-      const sep = key.indexOf(':');
-      const roomId = key.slice(0, sep);
-      const botId = key.slice(sep + 1);
-      const ageMs = nowMs - (entry.progressAt ?? entry.startedAt ?? nowMs);
-      bus.emit('event', {
-        t: 'bot.heartbeat',
-        roomId,
-        botId,
-        ageMs,
-        startedAt: entry.startedAt ?? null,
-      });
-      if (ageMs < config.stallMs || entry.stallNotified) continue;
-      entry.stallNotified = true;
-      this.#onStall(roomId, botId, entry, ageMs);
-    }
-  }
-
-  /** 心跳断了：收尾这一轮 + 让组长知道 */
-  #onStall(roomId, botId, entry, ageMs) {
-    const bot = store.getBot(botId);
-    const secs = Math.round(ageMs / 1000);
-    log(`💔 ${bot?.name ?? botId} 已经 ${secs}s 没动静 —— 判为中断，收尾并上报`);
-    // ① 把这一轮捣掉（它已经没动静了）
-    entry.session?.abort?.().catch(() => {});
-    // ② 正在写的那条消息得收尾 —— 不收的话客户端永远转圈
-    const msgId = entry.liveMsgId;
-    if (msgId) {
-      const msg = store.getMessage(roomId, msgId);
-      store.updateMessage(
-        roomId,
-        msgId,
-        {
-          status: 'error',
-          error: `心跳断了：${secs} 秒没动静，这一轮已中断`,
-          steps: (msg?.steps ?? []).map((s) =>
-            s?.status === 'running'
-              ? { ...s, status: 'error', error: '心跳断了，这一步中断' }
-              : s,
-          ),
-        },
-        { silent: false },
-      );
-    }
-    // ③ 让该知道的人知道，并请它重新安排
-    this.escalate({
-      roomId,
-      fromBotId: botId,
-      reason: `心跳断了：已经 ${secs} 秒没动静，这一轮中断了`,
-      prefer: 'lead',
-    }).catch((err) => log('上报中断失败：', err?.message || err));
+  /** 收尾：捣掉这一轮 + 把它正在写的消息结掉（不收的话客户端永远转圈） */
+  #stallCleanup(info) {
+    return stallCleanup({ store })(info);
   }
 
   /**
