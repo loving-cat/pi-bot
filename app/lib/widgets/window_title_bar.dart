@@ -51,14 +51,56 @@ class _WindowTitleBarState extends State<WindowTitleBar> {
 ///   MaterialIcons 字体被 tree-shake 成 1588 字节的空壳，
 ///   用 `Icons.xxx` 会渲染成**空白按钮** —— 按钮在、能点、有 hover 反馈，
 ///   但看不到任何图标（这个 bug 骗了我很久）。
-class WindowControlsOverlay extends StatelessWidget {
+class WindowControlsOverlay extends StatefulWidget {
   const WindowControlsOverlay({super.key});
 
   static bool get isSupported => WindowTitleBar.isSupported;
 
   @override
+  State<WindowControlsOverlay> createState() => _WindowControlsOverlayState();
+}
+
+class _WindowControlsOverlayState extends State<WindowControlsOverlay>
+    with WindowListener {
+  bool _maximized = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (!WindowControlsOverlay.isSupported) return;
+    windowManager.addListener(this);
+    windowManager
+        .isMaximized()
+        .then((m) {
+          if (mounted && m != _maximized) setState(() => _maximized = m);
+        })
+        .catchError((_) {});
+  }
+
+  @override
+  void dispose() {
+    if (WindowControlsOverlay.isSupported) windowManager.removeListener(this);
+    super.dispose();
+  }
+
+  @override
+  void onWindowMaximize() {
+    if (mounted) setState(() => _maximized = true);
+  }
+
+  @override
+  void onWindowUnmaximize() {
+    if (mounted) setState(() => _maximized = false);
+  }
+
+  @override
+  void onWindowRestore() {
+    if (mounted) setState(() => _maximized = false);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    if (!isSupported) return const SizedBox.shrink();
+    if (!WindowControlsOverlay.isSupported) return const SizedBox.shrink();
 
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -68,10 +110,13 @@ class WindowControlsOverlay extends StatelessWidget {
           icon: LucideIcons.minus,
           onTap: () => windowManager.minimize(),
         ),
+        // ★ 全屏之后图标要变成"还原"（两个叠起来的方块）——
+        //   一直是"最大化"的图标，用户按下去会以为又要放大一次。
+        //   状态从窗口事件来（window_manager 的 onWindowMaximize/Restore）。
         _WinBtn(
-          tip: '最大化 / 还原',
-          icon: LucideIcons.square,
-          iconSize: 12,
+          tip: _maximized ? '还原' : '最大化',
+          icon: _maximized ? LucideIcons.copy : LucideIcons.square,
+          iconSize: _maximized ? 13 : 12,
           onTap: () async {
             if (await windowManager.isMaximized()) {
               await windowManager.unmaximize();

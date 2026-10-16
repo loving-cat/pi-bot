@@ -110,6 +110,9 @@ export class ModelGroup {
         api,
         models,
         enabled: input.enabled === undefined ? true : Boolean(input.enabled),
+        // 内置组（从本机已有配置里带出来的，比如我们自己在用的 cline 线路）——
+        // 不给删：它就是当前跑着的配置，删掉等于把自己踢下线。
+        builtin: existing?.builtin ?? Boolean(input.builtin),
         createdAt: existing?.createdAt ?? now(),
         updatedAt: now(),
       }),
@@ -131,6 +134,7 @@ export class ModelGroup {
       api: this.api,
       models: this.models,
       enabled: this.enabled,
+      builtin: Boolean(this.builtin),
       createdAt: this.createdAt,
       updatedAt: this.updatedAt,
     };
@@ -147,6 +151,7 @@ export class ModelGroup {
       keyMasked: maskKey(this.apiKey),
       models: this.models,
       enabled: this.enabled,
+      builtin: Boolean(this.builtin),
       createdAt: this.createdAt,
       updatedAt: this.updatedAt,
     };
@@ -365,6 +370,8 @@ class ModelGroupStore {
 
   remove(id) {
     this.load();
+    const target = this.#groups.find((g) => g.id === id);
+    if (target?.builtin) return false; // 内置的不给删
     const before = this.#groups.length;
     this.#groups = this.#groups.filter((g) => g.id !== id);
     if (this.#groups.length === before) return false;
@@ -380,6 +387,28 @@ class ModelGroupStore {
       out[g.id] = g.toProviderConfig();
     }
     return out;
+  }
+
+  /**
+   * 把"本机已经在用的那套配置"带成一个模型组。
+   *
+   * 用户在 pi 那边早就配好了（~/.pi/agent 里的 provider），App 里却是一张白纸 ——
+   * 所以第一次打开设置时，直接把他正在用的东西摆上去，标成「正在用」，不给删。
+   * 已经存在同 id 的组就不动（用户自己改过的话不能覆盖）。
+   */
+  seedBuiltin({ id, name, baseUrl, apiKey, api, models }) {
+    this.load();
+    if (this.#groups.some((g) => g.id === id)) return null;
+    if (!baseUrl || !Array.isArray(models) || !models.length) return null;
+    const r = ModelGroup.fromInput(
+      { id, name, baseUrl, apiKey, api, models, builtin: true },
+      { existing: null },
+    );
+    if (r.error) return null;
+    this.#groups.push(r.group);
+    this.save();
+    log(`📦 预置模型组：${name}（${models.length} 个模型，正在用，不可删）`);
+    return r.group;
   }
 
   /** 给 model-menu 用 */
