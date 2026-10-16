@@ -6,6 +6,7 @@
  * 所以这里硬性收口成一份小菜单：kimi = k3、glm = 5.3、deepseek = v4.1 flash，
  * 其他一律不许用。同族多个线路时按探活结果自动挑活的。
  */
+import { modelGroups } from './model-groups.js';
 import { log } from './util.js';
 
 export const MODEL_MENU = [
@@ -43,17 +44,30 @@ export const MODEL_MENU = [
   },
 ];
 
+/**
+ * 完整菜单 = 内置白名单 + 用户自己加的模型组。
+ *
+ * 内置那份是"我们探过活、知道能用的"；自定义那份是"用户自己知道能用"。
+ * 分开是为了：内置那几条永远排前面（它们是主力），自定义的跟在后面。
+ */
+export function menuEntries() {
+  return [...MODEL_MENU, ...modelGroups.menuEntries()];
+}
+
 /** 菜单里所有合法 slug（去重） */
 export function menuSlugs() {
-  return [...new Set(MODEL_MENU.flatMap((m) => m.slugs))];
+  return [...new Set(menuEntries().flatMap((m) => m.slugs))];
 }
 
 export function findMenuEntry(input) {
   if (!input) return null;
   const key = String(input).trim().toLowerCase();
+  const all = menuEntries();
   return (
-    MODEL_MENU.find((m) => m.alias.toLowerCase() === key) ??
-    MODEL_MENU.find((m) => m.slugs.some((s) => s.toLowerCase() === key)) ??
+    all.find((m) => m.alias.toLowerCase() === key) ??
+    all.find((m) => m.slugs.some((s) => s.toLowerCase() === key)) ??
+    // 自定义组里的模型也允许直接用 `<组id>/<模型id>` 指定
+    all.find((m) => m.slugs.some((s) => s.toLowerCase().endsWith(`/${key}`))) ??
     null
   );
 }
@@ -73,7 +87,7 @@ export function resolveMenu(input, health) {
 /** 菜单渲染成给主控看的文本 */
 export function menuText(health) {
   const lines = [];
-  for (const entry of MODEL_MENU) {
+  for (const entry of menuEntries()) {
     const resolved = resolveMenu(entry.alias, health);
     const mark = resolved.alive ? '★' : '✗';
     lines.push(
@@ -90,7 +104,7 @@ export function defaultMenuSlug(health) {
     const r = resolveMenu(alias, health);
     if (r?.alive) return r.slug;
   }
-  for (const entry of MODEL_MENU) {
+  for (const entry of menuEntries()) {
     const r = resolveMenu(entry.alias, health);
     if (r) return r.slug;
   }
