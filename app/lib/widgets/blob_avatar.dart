@@ -76,6 +76,14 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
   void initState() {
     super.initState();
     if (!_alive) return;
+    // ★ 眼神跟随和"呼吸"是两件事：
+    //   侧边栏那些头像 animate: false（不呼吸），但也该跟着鼠标看 ——
+    //   跟随只在鼠标动的时候重绘，比常驻动画便宜得多。
+    if (BlobAvatar.animationsEnabled) {
+      AvatarLife.pointer.addListener(_followPointer);
+    }
+    if (!_alive) return;
+
     _rng = math.Random(widget.seed.hashCode);
     _wobble = AnimationController(
       vsync: this,
@@ -90,7 +98,6 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
       duration: const Duration(milliseconds: 380),
     );
     _wake();
-    AvatarLife.pointer.addListener(_followPointer);
   }
 
   /// 醒过来：开始扭动 + 重新排眨眼，并定个"再没动静就睡"的闹钟。
@@ -134,7 +141,7 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
   /// 做成"眼睛黏在鼠标上"反而诡异。
   void _followPointer() {
     final p = AvatarLife.pointer.value;
-    if (!mounted || !_alive || p == null) return;
+    if (!mounted || !BlobAvatar.animationsEnabled || p == null) return;
     final box = context.findRenderObject() as RenderBox?;
     if (box == null || !box.hasSize) return;
     final next = eyeOffsetToward(
@@ -155,6 +162,7 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    // 没注册过也安全（removeListener 对未注册的是 no-op）
     AvatarLife.pointer.removeListener(_followPointer);
     _blinkTimer?.cancel();
     _settleTimer?.cancel();
@@ -231,7 +239,16 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
           ),
         );
 
-    if (!_alive || _wobble == null) return paint(0, 0, 0, _gaze.value);
+    if (!_alive || _wobble == null) {
+      // 不呼吸的头像也要跟着鼠标看 —— 所以这里得订阅 _gaze，
+      // 否则 _gaze 变了也不会重绘（侧边栏那种就是这条路）。
+      return RepaintBoundary(
+        child: ValueListenableBuilder<Offset>(
+          valueListenable: _gaze,
+          builder: (context, gaze, _) => paint(0, 0, 0, gaze),
+        ),
+      );
+    }
 
     return RepaintBoundary(
       child: AnimatedBuilder(

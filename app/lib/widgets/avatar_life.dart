@@ -25,15 +25,24 @@ class AvatarLife {
   static Widget watchPointer({required Widget child}) {
     return MouseRegion(
       opaque: false,
-      onHover: (e) => pointer.value = e.position,
+      onHover: (e) => _update(e.position),
       onExit: (_) => pointer.value = null,
       child: Listener(
         behavior: HitTestBehavior.translucent,
-        onPointerMove: (e) => pointer.value = e.position,
-        onPointerDown: (e) => pointer.value = e.position,
+        onPointerMove: (e) => _update(e.position),
+        onPointerDown: (e) => _update(e.position),
         child: child,
       ),
     );
+  }
+
+  /// 鼠标事件频率很高，而每个头像都要据此重绘一次 ——
+  /// 位移不到 2px 就不发通知（这种微动眼睛也看不出来）。
+  /// 一屏十几个头像时，这条过滤能省掉相当一部分重绘。
+  static void _update(Offset p) {
+    final last = pointer.value;
+    if (last != null && (p - last).distanceSquared < 4) return;
+    pointer.value = p;
   }
 
 }
