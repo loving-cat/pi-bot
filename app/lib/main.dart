@@ -24,6 +24,7 @@ Future<void> main() async {
   if (WindowTitleBar.isSupported) {
     await windowManager.ensureInitialized();
     const options = WindowOptions(
+      // 注意：这里的 size 是**逻辑像素**，最终物理尺寸 = size × 系统缩放
       size: Size(1180, 760),
       minimumSize: Size(760, 520),
       center: true,

@@ -185,6 +185,7 @@ class Bot {
     this.role = 'member',
     this.model,
     this.thinking,
+    this.tagline = '',
     this.persona = '',
     this.enabled = true,
   });
@@ -195,6 +196,9 @@ class Bot {
   String role; // main | member
   String? model;
   String? thinking;
+
+  /// 给用户看的一句话简介（persona 是给模型的系统提示，不能直接展示）
+  String tagline;
   String persona;
   bool enabled;
 

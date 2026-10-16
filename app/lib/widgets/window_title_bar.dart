@@ -2,19 +2,12 @@ import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:window_manager/window_manager.dart';
 
-import '../theme.dart';
-
-/// 无边框窗口的自定义标题栏。
+/// 无边框窗口顶部的**拖拽条**。
 ///
-/// 同类客户端 那种：整条透明可拖拽，右上角三个小按钮（最小化/最大化/关闭），
-/// 左边不放产品名（App 自己会显示内容，重复写一遍很土）。
-///
-/// 刻意用最朴素的 widget（Container + GestureDetector），
-/// 不用 Tooltip / MouseRegion / AnimatedContainer —— 在无边框窗口里踩过坑，
-/// 这些组合会让内容不渲染。
+/// 只负责拖拽（和双击最大化/还原）—— 窗口控制按钮统一由
+/// `WindowControlsOverlay` 画在右上角，避免出现两套按钮。
 class WindowTitleBar extends StatefulWidget {
   const WindowTitleBar({super.key, this.height = 36});
 
@@ -27,37 +20,7 @@ class WindowTitleBar extends StatefulWidget {
   State<WindowTitleBar> createState() => _WindowTitleBarState();
 }
 
-class _WindowTitleBarState extends State<WindowTitleBar> with WindowListener {
-  bool _maximized = false;
-  int _hover = -1;
-
-  @override
-  void initState() {
-    super.initState();
-    if (WindowTitleBar.isSupported) {
-      windowManager.addListener(this);
-      windowManager.isMaximized().then((v) {
-        if (mounted) setState(() => _maximized = v);
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    if (WindowTitleBar.isSupported) windowManager.removeListener(this);
-    super.dispose();
-  }
-
-  @override
-  void onWindowMaximize() {
-    if (mounted) setState(() => _maximized = true);
-  }
-
-  @override
-  void onWindowUnmaximize() {
-    if (mounted) setState(() => _maximized = false);
-  }
-
+class _WindowTitleBarState extends State<WindowTitleBar> {
   @override
   Widget build(BuildContext context) {
     if (!WindowTitleBar.isSupported) return const SizedBox.shrink();
@@ -65,170 +28,71 @@ class _WindowTitleBarState extends State<WindowTitleBar> with WindowListener {
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
       onPanStart: (_) => windowManager.startDragging(),
-      onDoubleTap: _toggleMaximize,
+      onDoubleTap: () async {
+        if (await windowManager.isMaximized()) {
+          await windowManager.unmaximize();
+        } else {
+          await windowManager.maximize();
+        }
+      },
       child: SizedBox(
-      height: widget.height,
-      child: Row(
-        children: [
-          const Spacer(),
-          _Ctrl(
-            icon: LucideIcons.minus,
-            label: '最小化',
-            hovered: _hover == 0,
-            onHover: (v) => setState(() => _hover = v ? 0 : -1),
-            onTap: () => windowManager.minimize(),
-          ),
-          _Ctrl(
-            icon: _maximized ? LucideIcons.copy : LucideIcons.square,
-            label: _maximized ? '还原' : '最大化',
-            hovered: _hover == 1,
-            onHover: (v) => setState(() => _hover = v ? 1 : -1),
-            onTap: _toggleMaximize,
-          ),
-          _Ctrl(
-            icon: LucideIcons.x,
-            label: '关闭',
-            hovered: _hover == 2,
-            danger: true,
-            onHover: (v) => setState(() => _hover = v ? 2 : -1),
-            onTap: () => windowManager.close(),
-          ),
-          const SizedBox(width: 4),
-        ],
-      ),
-      ),
-    );
-  }
-
-  void _toggleMaximize() {
-    if (_maximized) {
-      windowManager.unmaximize();
-    } else {
-      windowManager.maximize();
-    }
-  }
-}
-
-class _Ctrl extends StatelessWidget {
-  const _Ctrl({
-    required this.icon,
-    required this.label,
-    required this.hovered,
-    required this.onHover,
-    required this.onTap,
-    this.danger = false,
-  });
-
-  final IconData icon;
-  final String label;
-  final bool hovered;
-  final ValueChanged<bool> onHover;
-  final VoidCallback onTap;
-  final bool danger;
-
-  @override
-  Widget build(BuildContext context) {
-    final bg = danger && hovered
-        ? const Color(0xFFE5484D)
-        : (hovered ? PB.bgActive : Colors.transparent);
-
-    return Semantics(
-      label: label,
-      button: true,
-      child: MouseRegion(
-        cursor: SystemMouseCursors.basic,
-        onEnter: (_) => onHover(true),
-        onExit: (_) => onHover(false),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: onTap,
-          child: Container(
-            width: 46,
-            height: 30,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(7)),
-            child: Icon(
-              icon,
-              size: 15,
-              color: danger && hovered ? Colors.white : PB.textSecondary,
-            ),
-          ),
-        ),
+        height: widget.height,
+        width: double.infinity,
+        // 拖拽区不画任何东西，避免和右上角的按钮重叠
       ),
     );
   }
 }
 
-/// 三个窗口控制按钮（单独抽出来，方便塞进任意 AppBar 的 actions 里）。
+/// 右上角的窗口控制按钮：最小化 / 最大化 / 关闭。
 ///
-/// 之所以不只放在顶部拖拽条里：无边框窗口下那条区域在某些 DWM 组合下
-/// 不渲染子组件，放进 AppBar 更稳。
-class WindowControls extends StatefulWidget {
-  const WindowControls({super.key});
+/// 用最朴素的 IconButton —— 之前封装成带 MouseRegion/GestureDetector 的
+/// 自定义组件时，在无边框窗口下整个子树不渲染（排查了很久）。
+class WindowControlsOverlay extends StatelessWidget {
+  const WindowControlsOverlay({super.key});
 
-  @override
-  State<WindowControls> createState() => _WindowControlsState();
-}
-
-class _WindowControlsState extends State<WindowControls> with WindowListener {
-  bool _maximized = false;
-  int _hover = -1;
-
-  @override
-  void initState() {
-    super.initState();
-    if (WindowTitleBar.isSupported) {
-      windowManager.addListener(this);
-      windowManager.isMaximized().then((v) {
-        if (mounted) setState(() => _maximized = v);
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    if (WindowTitleBar.isSupported) windowManager.removeListener(this);
-    super.dispose();
-  }
-
-  @override
-  void onWindowMaximize() {
-    if (mounted) setState(() => _maximized = true);
-  }
-
-  @override
-  void onWindowUnmaximize() {
-    if (mounted) setState(() => _maximized = false);
-  }
+  static bool get isSupported => WindowTitleBar.isSupported;
 
   @override
   Widget build(BuildContext context) {
-    if (!WindowTitleBar.isSupported) return const SizedBox.shrink();
+    if (!isSupported) return const SizedBox.shrink();
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        _Ctrl(
-          icon: LucideIcons.minus,
-          label: '最小化',
-          hovered: _hover == 0,
-          onHover: (v) => setState(() => _hover = v ? 0 : -1),
-          onTap: () => windowManager.minimize(),
+        IconButton(
+          tooltip: '最小化',
+          iconSize: 15,
+          padding: EdgeInsets.zero,
+          visualDensity: VisualDensity.compact,
+          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          onPressed: () => windowManager.minimize(),
+          icon: const Icon(Icons.remove_rounded, size: 15),
         ),
-        _Ctrl(
-          icon: _maximized ? LucideIcons.copy : LucideIcons.square,
-          label: _maximized ? '还原' : '最大化',
-          hovered: _hover == 1,
-          onHover: (v) => setState(() => _hover = v ? 1 : -1),
-          onTap: () => _maximized ? windowManager.unmaximize() : windowManager.maximize(),
+        IconButton(
+          tooltip: '最大化 / 还原',
+          iconSize: 14,
+          padding: EdgeInsets.zero,
+          visualDensity: VisualDensity.compact,
+          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          onPressed: () async {
+            if (await windowManager.isMaximized()) {
+              await windowManager.unmaximize();
+            } else {
+              await windowManager.maximize();
+            }
+          },
+          icon: const Icon(Icons.crop_square_rounded, size: 13),
         ),
-        _Ctrl(
-          icon: LucideIcons.x,
-          label: '关闭',
-          hovered: _hover == 2,
-          danger: true,
-          onHover: (v) => setState(() => _hover = v ? 2 : -1),
-          onTap: () => windowManager.close(),
+        IconButton(
+          tooltip: '关闭',
+          iconSize: 15,
+          padding: EdgeInsets.zero,
+          visualDensity: VisualDensity.compact,
+          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          onPressed: () => windowManager.close(),
+          icon: const Icon(Icons.close_rounded, size: 15),
         ),
+        const SizedBox(width: 6),
       ],
     );
   }
