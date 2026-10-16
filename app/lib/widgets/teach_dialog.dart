@@ -22,11 +22,7 @@ Future<void> showTeachDialog(BuildContext context, Bot bot) async {
   final saved = await showDialog<bool>(
     context: context,
     barrierColor: Colors.black.withValues(alpha: 0.6),
-    builder: (ctx) => _TeachDialog(
-      bot: bot,
-      title: title,
-      howto: howto,
-    ),
+    builder: (ctx) => _TeachDialog(bot: bot, title: title, howto: howto),
   );
 
   if (saved != true) return;
@@ -58,7 +54,8 @@ class _TeachDialog extends StatefulWidget {
 
 class _TeachDialogState extends State<_TeachDialog> {
   bool get _ready =>
-      widget.title.text.trim().isNotEmpty && widget.howto.text.trim().isNotEmpty;
+      widget.title.text.trim().isNotEmpty &&
+      widget.howto.text.trim().isNotEmpty;
 
   @override
   void initState() {
@@ -103,11 +100,7 @@ class _TeachDialogState extends State<_TeachDialog> {
             children: [
               Row(
                 children: [
-                  const Icon(
-                    LucideIcons.target,
-                    size: 17,
-                    color: PB.danger,
-                  ),
+                  const Icon(LucideIcons.target, size: 17, color: PB.danger),
                   const SizedBox(width: 9),
                   Expanded(
                     child: Text(
@@ -136,7 +129,8 @@ class _TeachDialogState extends State<_TeachDialog> {
               const SizedBox(height: 14),
               _field(
                 label: '具体怎么做',
-                hint: '例：先读 data/ 下本周的 csv，算涨跌幅和成交额，'
+                hint:
+                    '例：先读 data/ 下本周的 csv，算涨跌幅和成交额，'
                     '生成一张对比表，再发一条带表格的消息到群里。',
                 controller: widget.howto,
                 maxLines: 6,
@@ -151,7 +145,10 @@ class _TeachDialogState extends State<_TeachDialog> {
                     borderRadius: BorderRadius.circular(PB.rXl),
                     onTap: () => Navigator.pop(context, false),
                     child: const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 10,
+                      ),
                       child: Text(
                         '取消',
                         style: TextStyle(

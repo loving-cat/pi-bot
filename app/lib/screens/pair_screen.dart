@@ -8,6 +8,7 @@ import 'scan_screen.dart';
 import '../api.dart';
 import '../scope.dart';
 import '../theme.dart';
+
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 class PairScreen extends StatefulWidget {
@@ -43,22 +44,25 @@ class _PairScreenState extends State<PairScreen> {
 
   /// PI_BOT_FAKE_SCAN 是给桌面端截图预览用的（桌面没有 mobile_scanner 实现）
   bool get _canScan =>
-      const bool.fromEnvironment('PI_BOT_FAKE_SCAN') || (!kIsWeb && (Platform.isAndroid || Platform.isIOS));
+      const bool.fromEnvironment('PI_BOT_FAKE_SCAN') ||
+      (!kIsWeb && (Platform.isAndroid || Platform.isIOS));
 
   /// 扫码 → 自动填地址和配对码 → 直接连
   Future<void> _scan() async {
-    final result = await Navigator.of(context).push<PairPayload>(
-      MaterialPageRoute(builder: (_) => const ScanScreen()),
-    );
+    final result = await Navigator.of(
+      context,
+    ).push<PairPayload>(MaterialPageRoute(builder: (_) => const ScanScreen()));
     if (result == null || !mounted) return;
     setState(() {
-      if (result.url != null && result.url!.isNotEmpty) _urlController.text = result.url!;
+      if (result.url != null && result.url!.isNotEmpty)
+        _urlController.text = result.url!;
       if (result.code != null && result.code!.isNotEmpty) {
         _secretController.text = result.code!;
         _useToken = false;
       }
     });
-    if (_urlController.text.trim().isNotEmpty && _secretController.text.trim().isNotEmpty) {
+    if (_urlController.text.trim().isNotEmpty &&
+        _secretController.text.trim().isNotEmpty) {
       await _connect();
     }
   }
@@ -153,15 +157,22 @@ class _PairScreenState extends State<PairScreen> {
                     const SizedBox(height: 18),
                     Row(
                       children: [
-                        const Expanded(child: Divider(color: PB.borderTertiary)),
+                        const Expanded(
+                          child: Divider(color: PB.borderTertiary),
+                        ),
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 12),
                           child: Text(
                             '或者手动填',
-                            style: TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
+                            style: TextStyle(
+                              fontSize: PB.fsXxs,
+                              color: PB.textQuaternary,
+                            ),
                           ),
                         ),
-                        const Expanded(child: Divider(color: PB.borderTertiary)),
+                        const Expanded(
+                          child: Divider(color: PB.borderTertiary),
+                        ),
                       ],
                     ),
                     const SizedBox(height: 18),
@@ -277,7 +288,10 @@ class _PairScreenState extends State<PairScreen> {
                         const SizedBox(height: 12),
                         const _Step(index: '1', text: '电脑上启动服务端（终端会直接打印一个二维码）'),
                         const _Code('cd D:\\pi-bot\\server\nnode src/index.js'),
-                        const _Step(index: '2', text: '用上面的「扫码配对」扫它，地址和配对码会自动填好'),
+                        const _Step(
+                          index: '2',
+                          text: '用上面的「扫码配对」扫它，地址和配对码会自动填好',
+                        ),
                         const _Code(
                           'http://192.168.1.100:8787  (以太网)\n★ 配对码：482913',
                         ),
@@ -349,14 +363,21 @@ class _ScanButton extends StatelessWidget {
                 ),
                 const SizedBox(width: 10),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 7,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.white.withValues(alpha: 0.18),
                     borderRadius: BorderRadius.circular(PB.rFull),
                   ),
                   child: const Text(
                     '推荐',
-                    style: TextStyle(fontSize: PB.fsXxs, color: Colors.white, fontWeight: FontWeight.w600),
+                    style: TextStyle(
+                      fontSize: PB.fsXxs,
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ],
@@ -480,7 +501,8 @@ class _Code extends StatelessWidget {
       child: Text(
         text,
         style: const TextStyle(
-          fontFamily: 'monospace',
+          fontFamily: PB.monoFamily,
+          fontFamilyFallback: PB.monoFallback,
           fontSize: PB.fsXxs,
           color: PB.textSecondary,
           height: 1.6,

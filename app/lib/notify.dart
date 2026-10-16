@@ -7,11 +7,13 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 ///
 /// 不走 FCM（国内不稳），靠常驻前台服务保住 WebSocket，收到消息自己弹通知。
 class Notifier {
-  static final FlutterLocalNotificationsPlugin _plugin = FlutterLocalNotificationsPlugin();
+  static final FlutterLocalNotificationsPlugin _plugin =
+      FlutterLocalNotificationsPlugin();
   static bool _ready = false;
   static void Function(String? roomId)? onTap;
 
-  static bool get _supported => !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+  static bool get _supported =>
+      !kIsWeb && (Platform.isAndroid || Platform.isIOS);
 
   static Future<void> init() async {
     if (_ready || !_supported) return;
@@ -20,11 +22,15 @@ class Notifier {
       const ios = DarwinInitializationSettings();
       await _plugin.initialize(
         const InitializationSettings(android: android, iOS: ios),
-        onDidReceiveNotificationResponse: (response) => onTap?.call(response.payload),
+        onDidReceiveNotificationResponse: (response) =>
+            onTap?.call(response.payload),
       );
 
       if (Platform.isAndroid) {
-        final android = _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+        final android = _plugin
+            .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin
+            >();
         await android?.requestNotificationsPermission();
       }
       _ready = true;

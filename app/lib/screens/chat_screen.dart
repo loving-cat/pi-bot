@@ -1450,7 +1450,8 @@ class _Steps extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          fontFamily: 'monospace',
+                          fontFamily: PB.monoFamily,
+                          fontFamilyFallback: PB.monoFallback,
                           fontSize: PB.fsXxs,
                           color: step.status == 'running'
                               ? PB.accent
