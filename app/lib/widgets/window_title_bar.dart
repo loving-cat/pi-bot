@@ -357,6 +357,16 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
   /// 差这么小就直接吸附（否则永远差半个像素、Ticker 停不下来）
   static const _snap = 0.75;
 
+  /// 两次 setBounds 之间至少隔这么久。
+  ///
+  /// ★ 这是"拖动卡"的关键一条：Ticker 跑 60fps，如果每帧都发一次 setBounds，
+  ///   就等于**我们主动每秒发起 60 次整窗重排 + 全量重光栅**（Windows 的尺寸
+  ///   变化没有增量路径，每次都整窗重来）。窗口越大越卡。
+  ///   限到 ~30 次/秒之后重排少一半，而视觉上完全看不出差别 ——
+  ///   因为我们永远发的是**最新位置**（合并，不排队），不会落后。
+  static const _minSendGap = Duration(milliseconds: 28);
+  DateTime? _lastSend;
+
   @override
   void initState() {
     _ticker = createTicker(_onTick);
@@ -412,14 +422,22 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
   /// 上一发还没落地就跳过 —— 堆起来只会抖，不会更快。
   void _send(Rect r) {
     if (_sending) return;
+    final now = DateTime.now();
+    final last = _lastSend;
+    if (last != null && now.difference(last) < _minSendGap) {
+      // 还太密 —— 这一帧不发。Ticker 还在跑，_current/_target 一直在更新，
+      // 下一次 tick 会带着**最新的**位置发出去（所以不会积压、不会落后）
+      return;
+    }
+    _lastSend = now;
     // 尺寸几乎没变就别发 —— 每次 setBounds 都是一次平台往返 + 一次整窗重建，
     // 亚像素级别的抖动不值得那个代价（在窗口缩放这种高频路径上尤其）
-    final last = _lastBounds;
-    if (last != null &&
-        (r.left - last.left).abs() < 0.5 &&
-        (r.top - last.top).abs() < 0.5 &&
-        (r.width - last.width).abs() < 0.5 &&
-        (r.height - last.height).abs() < 0.5) {
+    final prev = _lastBounds;
+    if (prev != null &&
+        (r.left - prev.left).abs() < 0.5 &&
+        (r.top - prev.top).abs() < 0.5 &&
+        (r.width - prev.width).abs() < 0.5 &&
+        (r.height - prev.height).abs() < 0.5) {
       return;
     }
     _sending = true;
@@ -538,10 +556,16 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
   /// （实测拉伸时 raster 5~8ms、20~30% 的帧超过 16ms 预算，拖起来就是"不丝滑"）。
   /// 改成自己算：每个 pointer 事件算一次矩形交给 setBounds，节奏跟着 Flutter
   /// 的帧走，不跟系统消息队列赛跑。
+  /// 松手：把间隔闸清掉，让最后一个位置马上落定（不然会慢半拍）
+  void _endDrag() {
+    _lastSend = null;
+  }
+
   Future<void> _beginDrag(ResizeEdge edge, DragStartDetails d) async {
     _edge = edge;
     _startPointer = d.globalPosition;
     _lastBounds = null;
+    _lastSend = null;
     try {
       _startBounds = await windowManager.getBounds();
       _lastBounds = _startBounds;
@@ -599,6 +623,8 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
           behavior: HitTestBehavior.translucent,
           onPanStart: (d) => _beginDrag(edge, d),
           onPanUpdate: _dragTo,
+          onPanEnd: (_) => _endDrag(),
+          onPanCancel: _endDrag,
         ),
       ),
     );
