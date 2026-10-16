@@ -424,6 +424,48 @@ await test('web: 多余空白被压掉（省 token）', () => {
 });
 
 // ---------------------------------------------------------------------------
+// 群聊轮次预算
+//   用户要的是"能配，避免 bot 解不了就一直去聊"。这几个数是防无限互吹的闸门，
+//   配错了（比如填 0 或负数）会把整个群锁死 —— 所以校验必须钉住。
+// ---------------------------------------------------------------------------
+
+await test('store: 轮次预算有默认值（老状态文件没有这一项也能用）', () => {
+  const l = store.groupLimits();
+  assert.equal(l.leadTurns, 4);
+  assert.equal(l.memberTurns, 2);
+  assert.equal(l.maxRuns, 10);
+  assert.equal(l.maxSteps, 30);
+  assert.equal(l.turnMaxMs, 300_000);
+});
+
+await test('store: 轮次预算能改，并且只认已知的键', () => {
+  const l = store.updateGroupLimits({ leadTurns: 6, maxRuns: 3, 乱写的键: 999 });
+  assert.equal(l.leadTurns, 6);
+  assert.equal(l.maxRuns, 3);
+  assert.equal(l.乱写的键, undefined, '不认识的键不该被存下来');
+  // 改回去，别影响后面的用例
+  store.updateGroupLimits({ leadTurns: 4, maxRuns: 10 });
+});
+
+await test('★ store: 非法值（0/负数/NaN）被挡掉 —— 否则群会被锁死', () => {
+  const before = store.groupLimits();
+  for (const bad of [0, -1, 'abc', null, undefined]) {
+    store.updateGroupLimits({ leadTurns: bad });
+    assert.equal(
+      store.groupLimits().leadTurns,
+      before.leadTurns,
+      '填了 ' + String(bad) + ' 应该保持原值而不是变成 0',
+    );
+  }
+});
+
+await test('store: 小数会被取整（轮次没有半轮）', () => {
+  const l = store.updateGroupLimits({ memberTurns: 2.7 });
+  assert.equal(l.memberTurns, 2);
+  store.updateGroupLimits({ memberTurns: 2 });
+});
+
+// ---------------------------------------------------------------------------
 // model-menu：模型白名单
 // ---------------------------------------------------------------------------
 const { resolveMenu, defaultMenuSlug, menuSlugs, MODEL_MENU } = await import('../src/model-menu.js');
