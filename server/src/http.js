@@ -165,6 +165,8 @@ export function createHttpServer({ runner, pairing }) {
           context: runner.contextUsage(),
           // 用户自己配的模型组（**key 已打码**，真 key 不出服务端）
           modelGroups: modelGroups.listPublic(),
+          // 群聊轮次预算（防止 bot 解不了就互相聊个没完）
+          groupLimits: store.groupLimits(),
           pairing: config.staticToken ? null : pairing.snapshot(),
         });
       }
@@ -230,6 +232,20 @@ export function createHttpServer({ runner, pairing }) {
         const r = store.deleteBot(botMatch[1]);
         if (!r) return send(res, 400, { error: '删不了（不存在或它是主控）' });
         return send(res, 200, r);
+      }
+
+      // ---------- 群聊轮次预算 ----------
+      if (pathname === '/api/group-limits' && req.method === 'GET') {
+        return send(res, 200, { limits: store.groupLimits() });
+      }
+      if (pathname === '/api/group-limits' && req.method === 'PATCH') {
+        const body = await readBody(req);
+        const limits = store.updateGroupLimits(body);
+        log(
+          `⚙️  群聊轮次改为：老大 ${limits.leadTurns} 轮 / 成员 ${limits.memberTurns} 轮 / ` +
+            `单条消息最多 ${limits.maxRuns} 次`,
+        );
+        return send(res, 200, { limits });
       }
 
       // ---------- 模型组（用户自己配的 baseUrl/key/模型）----------

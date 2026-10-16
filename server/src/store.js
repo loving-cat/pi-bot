@@ -21,6 +21,34 @@ const ROOMS_DIR = path.join(config.dataDir, 'rooms');
 const STATE_VERSION = 2;
 
 /** 正整数字符串/数字 → 正整数；其他（含空、null、负数、小数）→ null（= 用上层默认） */
+/**
+ * 群聊的"轮次预算"默认值。
+ *
+ * 为什么要有这层：这几个数以前只写在环境变量里（config.groupTurns*），
+ * 但它们是**用户会想按群调的东西** —— 有的群就是需要多来几轮，有的群
+ * 吵起来没完。所以搬到 store 里（落盘 + 能改），config 只当默认值。
+ *
+ * 目的很实际：**防止 bot 解不了就互相聊个没完**。
+ */
+export const GROUP_LIMITS_DEFAULT = {
+  /** 部门老大每次发言最多跑几轮 */
+  leadTurns: 4,
+  /** 普通成员每次发言最多跑几轮 */
+  memberTurns: 2,
+  /** 一条用户消息最多触发几次 bot 运行（防无限互吹） */
+  maxRuns: 10,
+  /** 部门里单次最多动手几步 */
+  maxSteps: 30,
+  /** 部门单轮最长跑多久（毫秒） */
+  turnMaxMs: 300_000,
+};
+
+function positiveIntOrDefault(v, fallback) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.floor(n);
+}
+
 function positiveOrNull(v) {
   const n = Number(v);
   if (!Number.isFinite(n) || n <= 0) return null;
@@ -230,6 +258,8 @@ export class Store {
       thinking: patch.thinking || config.thinking,
       // 用户手把手教给它的做法（SOP）。会拼进系统提示词，让 bot 真的"学会"。
       skills: [],
+      // 群聊轮次预算（全局一份，用户可在设置里改）
+      groupLimits: { ...GROUP_LIMITS_DEFAULT },
       // 上下文预算：null = 用全局默认（config.reserveTokens / keepRecentTokens），
       // 而全局默认是 null 时就用 pi 自带的 16384 / 20000。
       reserveTokens: null,
@@ -318,6 +348,31 @@ export class Store {
     this.scheduleSave();
     bus.emit('event', { t: 'bot.deleted', botId: id });
     return { id };
+  }
+
+  // ---------- 群聊轮次预算 ----------
+
+  /** 当前的轮次预算（缺项用默认值补齐，老状态文件也能直接用） */
+  groupLimits() {
+    const saved = this.state.groupLimits ?? {};
+    const out = {};
+    for (const [k, def] of Object.entries(GROUP_LIMITS_DEFAULT)) {
+      out[k] = positiveIntOrDefault(saved[k], def);
+    }
+    return out;
+  }
+
+  /** 改轮次预算。只认已知的键，值必须是正数，否则保持原样。 */
+  updateGroupLimits(patch = {}) {
+    const next = this.groupLimits();
+    for (const k of Object.keys(GROUP_LIMITS_DEFAULT)) {
+      if (patch[k] === undefined) continue;
+      next[k] = positiveIntOrDefault(patch[k], next[k]);
+    }
+    this.state.groupLimits = next;
+    this.scheduleSave();
+    bus.emit('event', { t: 'groupLimits.updated', limits: next });
+    return next;
   }
 
   // ---------- 房间 ----------
