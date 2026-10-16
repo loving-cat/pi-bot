@@ -1103,6 +1103,85 @@ await test('调度决策：没轮到的名单要把名字翻出来（日志要�
   assert.deepEqual(leftBehind([{ botId: 'b1' }, { botId: 'b2' }], (id) => names[id]), ['甲', '乙']);
 });
 
+
+// ---------------------------------------------------------------------------
+// 群聊会话层（group-prompt.js）：谁先开口 / 提示词里有什么
+// ---------------------------------------------------------------------------
+const { departmentOf, openingSpeakers, composeGroupPrompt } = await import('../src/group-prompt.js');
+
+await test('会话层：老大的 id 不在名单里 → 退回第一个，别把 group 搞成没头', () => {
+  const a = store.createBot({ name: '会话甲' });
+  const b = store.createBot({ name: '会话乙' });
+  const room = { id: 'r_x', botIds: [a.id, b.id], leadBotId: '不存在的id' };
+  const { members, leadId } = departmentOf(room);
+  assert.equal(members.length, 2);
+  assert.equal(leadId, a.id);
+});
+
+await test('会话层：没人 @ 就老大先接', () => {
+  const a = store.createBot({ name: '会话头' });
+  const b = store.createBot({ name: '会话兵' });
+  const room = { id: 'r_y', botIds: [a.id, b.id], leadBotId: a.id };
+  assert.deepEqual(openingSpeakers(room, { text: '干点活' }), [a.id]);
+});
+
+await test('会话层：@点名 → 只叫被点名的', () => {
+  const a = store.createBot({ name: '会话头' });
+  const b = store.createBot({ name: '会话兵' });
+  const room = { id: 'r_z', botIds: [a.id, b.id], leadBotId: a.id };
+  assert.deepEqual(openingSpeakers(room, { text: '@会话兵 你看下' }), [b.id]);
+});
+
+await test('会话层：@all → 除说话人外全员', () => {
+  const a = store.createBot({ name: '会话头' });
+  const b = store.createBot({ name: '会话兵' });
+  const room = { id: 'r_w', botIds: [a.id, b.id], leadBotId: a.id };
+  assert.deepEqual(openingSpeakers(room, { text: '@all 都来', openerBotId: a.id }), [b.id]);
+});
+
+await test('★ 会话层：老大的提示词里有"验收标准"，成员的没有', () => {
+  const lead = { id: 'l1', name: '头儿', emoji: '🧭' };
+  const mate = { id: 'm1', name: '小兵', emoji: '🔧' };
+  const room = { name: '测试组', topic: '干活' };
+  const members = [lead, mate];
+
+  const leadPrompt = composeGroupPrompt(room, lead, [], {
+    isLead: true,
+    reason: '用户发了新消息',
+    members,
+    leadId: lead.id,
+    order: { index: 1 },
+  });
+  assert.match(leadPrompt, /部门老大/);
+  assert.match(leadPrompt, /验收标准/, '★ 派活三样必须写进老大提示词');
+  assert.match(leadPrompt, /第 1 个/, '要说清发言顺序');
+  assert.match(leadPrompt, /同时开干/, '要说清是并行的，不然它以为要排队');
+
+  const matePrompt = composeGroupPrompt(room, mate, [], {
+    isLead: false,
+    members,
+    leadId: lead.id,
+  });
+  assert.match(matePrompt, /不是老大/);
+  assert.ok(!/验收标准/.test(matePrompt), '成员不需要派活规矩');
+});
+
+await test('会话层：补给的记录带发言人，超长会截断', () => {
+  const lead = { id: 'l2', name: '头儿' };
+  const mate = { id: 'm2', name: '小兵' };
+  const prompt = composeGroupPrompt(
+    { name: '测试组' },
+    mate,
+    [
+      { authorType: 'user', authorName: '我', text: '干这个', status: 'done' },
+      { authorType: 'bot', authorName: '同事', text: 'x'.repeat(3000), status: 'done' },
+    ],
+    { isLead: false, members: [lead, mate], leadId: lead.id },
+  );
+  assert.match(prompt, /用户: 干这个/);
+  assert.match(prompt, /同事: x+…/, '超长的记录要截断，别把上下文撑爆');
+});
+
 const passed = results.filter((r) => r.ok).length;
 
 console.log('\n================ 单元测试 ================');
