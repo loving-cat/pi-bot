@@ -383,6 +383,18 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// 改会话属性（置顶 / 隐藏 / 标为未读 / 改名）。
+  /// 改完拉一次全量 —— 置顶会改变排序，只打补丁的话列表顺序会不对。
+  Future<void> updateRoom(String roomId, Map<String, dynamic> patch) async {
+    try {
+      await api?.patch('/api/rooms/$roomId', patch);
+      await refresh();
+    } catch (err) {
+      lastError = '$err';
+      _notify();
+    }
+  }
+
   Future<void> deleteRoom(String roomId) async {
     try {
       await api?.delete('/api/rooms/$roomId');

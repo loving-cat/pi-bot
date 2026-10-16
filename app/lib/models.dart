@@ -151,6 +151,9 @@ class Room {
     this.lastMessageAt = 0,
     this.lastMessage,
     this.messageCount = 0,
+    this.pinned = false,
+    this.hidden = false,
+    this.unread = false,
   });
 
   final String id;
@@ -167,6 +170,15 @@ class Room {
   int lastMessageAt;
   Msg? lastMessage;
   int messageCount;
+
+  /// 右键菜单里的「置顶」—— 排在最前面
+  final bool pinned;
+
+  /// 「从侧边栏隐藏」—— 列表里不显示（底部留一个入口能翻出来）
+  final bool hidden;
+
+  /// 「标为未读」—— 纯手动标记，只是提醒自己回头看
+  final bool unread;
 
   bool get isGroup => kind == 'group';
 
@@ -189,6 +201,9 @@ class Room {
         ? Msg.fromJson(json['lastMessage'] as Map<String, dynamic>)
         : null,
     messageCount: _asInt(json['messageCount']),
+    pinned: json['pinned'] as bool? ?? false,
+    hidden: json['hidden'] as bool? ?? false,
+    unread: json['unread'] as bool? ?? false,
   );
 }
 
