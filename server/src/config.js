@@ -84,6 +84,16 @@ export const config = {
   /** 单轮 agent 运行的硬超时（毫秒），0 = 不限 */
   runTimeoutMs: Number(process.env.PI_BOT_RUN_TIMEOUT_MS || 10 * 60 * 1000),
   hostname: os.hostname(),
+  /**
+   * 用户自己叫什么。
+   *
+   * 为什么要这个东西：bot 需要知道**在跟谁说话** —— 不然它只能从人设里猜，
+   * 或者干脆不称呼你。而且在群里，它得知道"哪条消息是人发的"。
+   * 同类客户端里这件事做得很自然：bot 就是在跟你汇报工作，知道你是谁。
+   *
+   * 默认取系统用户名，用户可以在设置里改（改的是 store 那份，不是这里）。
+   */
+  userName: process.env.PI_BOT_USER_NAME || os.userInfo().username || '我',
 };
 
 export function describeConfig() {
