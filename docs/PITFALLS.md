@@ -41,9 +41,9 @@ const fail = (text, details = {}) => ({ content: [{ type: 'text', text }], detai
 
 ## 3. 模型探活：`maxTokens` 给太小会被推理吃光 → 误判"模型挂了"
 
-**症状**：cline-pass 的模型明明能用，探活却报"空回复"。
+**症状**：模型明明能用，探活却报"空回复"。
 
-**根因**：探活用 `maxTokens: 24`，推理型模型的思考内容先把额度用完了，剩下的正文是空。另一个坑：`glm-5.3` 不允许关闭思考，传 `reasoning: 'off'` 直接 400。
+**根因**：探活用 `maxTokens: 24`，推理型模型的思考内容先把额度用完了，剩下的正文是空。另一个坑：有些推理模型不允许关闭思考，传 `reasoning: 'off'` 直接 400。
 
 **修法**：`{ maxTokens: 512, reasoning: 'low' }`。
 
