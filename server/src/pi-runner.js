@@ -105,6 +105,88 @@ function throttle(fn, ms) {
   return wrapped;
 }
 /**
+ * 把某个 bot 的上下文预算套到会话上。
+ *
+ * 触发线 = contextWindow - reserveTokens 用满就自动压缩；
+ * 压缩时保留最近 keepRecentTokens 不总结。
+ *
+ * 三层回退：bot 上单独设的 → 全局 config（环境变量）→ pi 自带默认（16384 / 20000）。
+ * 任何一层是 null 就不覆盖，交给下一层。
+ */
+export function applyCompactionBudget(session, bot = {}) {
+  const sm = session?.settingsManager;
+  if (!sm || typeof sm.applyOverrides !== 'function') return null;
+
+  const reserve = positiveOrNull(bot.reserveTokens) ?? config.reserveTokens ?? null;
+  const keep = positiveOrNull(bot.keepRecentTokens) ?? config.keepRecentTokens ?? null;
+  const overrides = {};
+  if (reserve != null) overrides.reserveTokens = reserve;
+  if (keep != null) overrides.keepRecentTokens = keep;
+  if (!config.autoCompact) overrides.enabled = false;
+  if (Object.keys(overrides).length === 0) return null;
+  try {
+    sm.applyOverrides({ compaction: overrides });
+    return overrides;
+  } catch (err) {
+    log('⚠️  设置上下文预算失败：', err?.message || err);
+    return null;
+  }
+}
+
+/**
+ * 读一个会话的上下文占用。
+ *
+ * 返回 null 表示"现在还不知道"（比如刚压缩完、还没等到下一次回复）——
+ * 这时候界面该显示"—"而不是 0%，否则用户会以为上下文是空的。
+ */
+export function readContext(session) {
+  try {
+    const u = session?.getContextUsage?.();
+    if (!u) return null;
+    return {
+      tokens: u.tokens ?? null,
+      contextWindow: u.contextWindow ?? null,
+      percent: u.percent ?? null,
+      compacting: Boolean(session.isCompacting),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 把 bot 上设的 contextWindow / maxTokens 盖到模型对象上。
+ *
+ * ★ 只影响这一个会话 —— 不去改 pi 的 models.json。那是全局的，改了连用户在终端里
+ *   用的 pi 一起变；而且"每个 bot 一套预算"本来就该是会话级的事。
+ * 典型场景：模型标称 1M 上下文 / 32k 输出，但用户知道它实际能出 161k。
+ */
+export function withCapacity(model, bot = {}) {
+  const cw = positiveOrNull(bot.contextWindow);
+  const mt = positiveOrNull(bot.maxTokens);
+  if (cw == null && mt == null) return model;
+  return {
+    ...model,
+    ...(cw != null ? { contextWindow: cw } : {}),
+    ...(mt != null ? { maxTokens: mt } : {}),
+  };
+}
+
+/** 和 store 里那个同名助手一个意思：正数才要，其他一律 null */
+function positiveOrNull(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.floor(n);
+}
+
+/** 把一个会话的上下文占用推给界面（每轮结束、以及压缩前后都会调） */
+function emitContext(roomId, botId, session) {
+  const u = readContext(session);
+  if (!u) return;
+  bus.emit('event', { t: 'context', roomId, botId, ...u });
+}
+
+/**
  * 拼一个 bot 的 appendSystemPrompt。
  *
  * 单独抽出来是为了能单测：这是全项目**最容易悄悄写坏、又最难发现**的地方 ——
@@ -234,6 +316,20 @@ export class PiRunner {
     return this.model ? `${this.model.provider}/${this.model.id}` : null;
   }
 
+  /**
+   * 当前所有活着的会话的上下文占用，形如 `{ '房间:bot': {tokens, contextWindow, percent, compacting} }`。
+   * /api/state 带上它，App 一进来就能把每个 bot 的占用画出来。
+   */
+  contextUsage() {
+    const out = {};
+    for (const [key, entry] of this.sessions) {
+      if (!entry.session) continue;
+      const u = readContext(entry.session);
+      if (u) out[key] = u;
+    }
+    return out;
+  }
+
   // ---------------------------------------------------------------- 会话
 
   #key(roomId, botId) {
@@ -281,8 +377,9 @@ export class PiRunner {
         customTools,
       };
       const botModel = bot.model ? this.resolveModel(bot.model) : null;
-      if (botModel) options.model = botModel;
-      else if (this.model) options.model = this.model;
+      const picked = botModel ?? this.model;
+      // 容量覆盖：bot 上设过的 contextWindow / maxTokens 盖在模型自带值之上
+      if (picked) options.model = withCapacity(picked, bot);
       if (bot.thinking) {
         // 已知这个模型在这个档位会返回空 → 自动换一个能用的
         const modelSlug = botModel ? `${botModel.provider}/${botModel.id}` : this.modelLabel();
@@ -291,6 +388,11 @@ export class PiRunner {
 
       const { session, modelFallbackMessage } = await createAgentSession(options);
       if (modelFallbackMessage) log(`[${bot.name}] 模型回退：${modelFallbackMessage}`);
+
+      // 上下文预算：bot 自己设过的优先，其次全局默认，都没有就听 pi 的。
+      // 用 applyOverrides 而不是去写 settings.json —— 那个是全局的，
+      // 而"每个 bot 一套预算"必须在会话级别生效。
+      applyCompactionBudget(session, bot);
 
       if (session.sessionFile && session.sessionFile !== savedFile) {
         store.setSessionFile(roomId, botId, session.sessionFile);
@@ -798,6 +900,29 @@ export class PiRunner {
 
     const onEvent = (event) => {
       switch (event.type) {
+        // ★ 上下文撞阈值，pi 正在把老消息总结掉。必须告诉用户 ——
+        //   不告诉的话，界面上就是"bot 突然不动了"，看着像卡死。
+        case 'compaction_start':
+          bus.emit('event', {
+            t: 'bot.compacting',
+            roomId,
+            botId: bot.id,
+            active: true,
+            reason: event.reason,
+          });
+          log(`[${bot.name}] 上下文压缩开始（${event.reason}）`);
+          break;
+        case 'compaction_end':
+          bus.emit('event', {
+            t: 'bot.compacting',
+            roomId,
+            botId: bot.id,
+            active: false,
+            reason: event.reason,
+            error: event.errorMessage || null,
+          });
+          log(`[${bot.name}] 上下文压缩结束（${event.reason}）`);
+          break;
         case 'message_start':
           if (event.message?.role === 'assistant') buffer = '';
           break;
@@ -1026,6 +1151,9 @@ export class PiRunner {
       entry.unsubscribe = null;
       entry.busy = false;
       bus.emit('event', { t: 'typing', roomId, botId: bot.id, active: false });
+      // 每轮结束报一次上下文占用 —— 放在 finally 里，成功/出错都会报，
+      // 否则出错那轮的数字会一直停在旧值上。
+      emitContext(roomId, bot.id, entry.session);
     }
   }
 
@@ -1073,6 +1201,31 @@ export class PiRunner {
   }
 
   /** 换模型/改人设后，把该 bot 的所有会话作废 */
+  /**
+   * 只把内存里的会话丢掉，**保留会话文件** —— 下次开跑时按新配置重建，
+   * 但对话历史还在。
+   *
+   * 和 resetSessionForBot 的区别很重要：那个会 clearSessionFile（等于让 bot 失忆），
+   * 用在"换模型/开新会话"上是对的；而调上下文预算不该失忆 ——
+   * 用户只是想让它"能装更多"，不是想让它忘掉刚才做的事。
+   */
+  reloadSessionForBot(botId) {
+    let n = 0;
+    for (const [key, entry] of [...this.sessions]) {
+      if (!key.endsWith(`:${botId}`)) continue;
+      try {
+        entry.unsubscribe?.();
+        entry.session?.dispose();
+      } catch {
+        /* ignore */
+      }
+      this.sessions.delete(key);
+      n++;
+    }
+    if (n) log(`${store.getBot(botId)?.name ?? botId} 的会话已按新预算重建（历史保留）`);
+    return n;
+  }
+
   resetSessionForBot(botId) {
     let n = 0;
     for (const [key, entry] of [...this.sessions]) {
