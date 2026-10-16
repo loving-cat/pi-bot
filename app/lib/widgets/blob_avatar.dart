@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../theme.dart';
 
-/// 会呼吸的彩色 blob 头像 —— 照 同类客户端 那套做的。
+/// 会呼吸的彩色 blob 头像。
 ///
 /// 每个 bot 由 id 决定：颜色、blob 轮廓（三阶谐波）、眼睛位置。
 /// 动画分两层：轮廓缓慢扭动（像水母），眼睛偶尔眨一下。
@@ -156,7 +156,7 @@ class _Harmonic {
 
 /// 头像轮廓的四种形状。
 ///
-/// 照 同类客户端 那套：**每只 bot 的形状不一样**（有的圆胖、有的圆角方、有的六边形、
+/// **每只 bot 的形状不一样**（有的圆胖、有的圆角方、有的六边形、
 /// 有的胶囊）。以前全项目只有一种"有机 blob"，一屏十几个头像看过去像同一块橡皮泥
 /// 捏出来的 —— 只靠换颜色区分，越看越廉价。
 enum _ShapeKind {
@@ -252,7 +252,7 @@ class _BlobPainter extends CustomPainter {
 
   /// 按形状种类采样轮廓点（都绕中心一圈，角度递增）。
   ///
-  /// 只有 blob 用 phase（会扭动）；其余三种是静的 —— 参考 的圆角方/六边形/胶囊
+  /// 只有 blob 用 phase（会扭动）；其余三种是静的 —— 静止的形状更像"印章"，
   /// 也不动，动了反而像果冻，廉价。
   List<Offset> _outline(Offset center, double baseRadius) {
     switch (shape.kind) {
@@ -372,7 +372,7 @@ class _BlobPainter extends CustomPainter {
     // ★ 这里以前还叠了「径向渐变落影 + 径向高光 + 渐变描边」，加上主体一共
     //   4 个 shader —— 每个头像每帧 4 次 createShader + 4 层抗锯齿填充。
     //   一屏十几个头像（群头像还是 2~4 个叠一起）全在吃光栅时间，而实测帧采样里
-    //   raster 一直是瓶颈。同类客户端 那套头像本来就是**接近平涂**的饱和色块，
+    //   raster 一直是瓶颈。这类头像本来就该是**接近平涂**的饱和色块，
     //   没有落影也没有高光 —— 砍掉之后既更像它，也更省。
     canvas.drawPath(
       path,
@@ -383,7 +383,7 @@ class _BlobPainter extends CustomPainter {
               end: Alignment.bottomRight,
               // ★ 以前是 white 0.30 → 黑 0.26，再叠一层 white 0.26 高光 +
               //   white 0.30 描边 —— 四层白下来，调色板里的饱和色全被洗成粉彩，
-              //   一屏头像看着发灰。参考 是接近平涂的饱和色，这里只留一点体积感。
+              //   一屏头像看着发灰。这里只留一点体积感。
               colors: [
                 Color.lerp(color, Colors.white, 0.12)!,
                 color,
@@ -417,7 +417,7 @@ class _BlobPainter extends CustomPainter {
     // ★ 这里以前是「有 emoji 就画 emoji，不画眼睛」。
     //   结果是每个 bot 都是「一块饱和色 + 一张全彩 emoji 贴纸」——
     //   emoji 自带的白/橙/紫和 blob 的颜色互相打架，像贴歪了的贴纸。
-    //   同类客户端 的头像就是纯色块 + 两只眼睛，干净得多；emoji 降级成小角标。
+    //   纯色块 + 两只眼睛干净得多；emoji 降级成小角标。
     //
     // 眼睛：两个圆角竖条，眨眼时压扁
     final eyeW = size.shortestSide * 0.112;
@@ -449,7 +449,7 @@ class _BlobPainter extends CustomPainter {
       old.shape != shape;
 }
 
-/// 群头像：2-4 个小 blob 叠在一起（照 同类客户端 那个群头像）
+/// 群头像：2-4 个小 blob 叠在一起
 class GroupBlobAvatar extends StatelessWidget {
   const GroupBlobAvatar({
     super.key,

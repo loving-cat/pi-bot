@@ -25,7 +25,7 @@ Future<void> main() async {
   FrameLog.start();
 
 
-  // 桌面端：无边框窗口（像 同类客户端 那样），控制按钮由 App 自己画在右上角
+  // 桌面端：无边框窗口，控制按钮由 App 自己画在右上角
   if (WindowTitleBar.isSupported) {
     await windowManager.ensureInitialized();
     const options = WindowOptions(
