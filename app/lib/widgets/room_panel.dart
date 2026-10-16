@@ -6,6 +6,7 @@ import '../scope.dart';
 import '../theme.dart';
 import 'attachment_view.dart';
 import 'blob_avatar.dart';
+import 'bot_run_section.dart';
 
 /// 点聊天顶部的胶囊 → 从右边滑出来的面板。
 ///
@@ -217,9 +218,23 @@ class _RoomPanelState extends State<RoomPanel> {
                   '（${(ctx.percent ?? 0).round()}%）'
                   '${ctx.compacting ? ' · 正在压缩' : ''}',
             ),
+          // ★ 就地改运行参数（用户：“不是应该在胶囊点击后的右侧侧边栏 有一个
+          //   可以调模型 上下文窗口 思考等级之类的吗？”）。
+          //   谁说了算：私聊是对方，群聊是负责人 —— 就是替这个会话拍板的那个 bot。
+          if (_primaryBot(room) case final bot?)
+            BotRunSection(bot: bot),
         ],
       ),
     );
+  }
+
+  /// 这个会话里“说了算”的那个 bot：私聊是唯一成员，群聊是负责人
+  Bot? _primaryBot(Room room) {
+    final state = AppScope.of(context);
+    final id = room.isGroup
+        ? (room.leadBotId ?? room.botIds.firstOrNull)
+        : room.botIds.firstOrNull;
+    return id == null ? null : state.botById(id);
   }
 
   String _timeText(int ms) {
