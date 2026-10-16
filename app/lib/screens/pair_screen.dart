@@ -42,10 +42,20 @@ class _PairScreenState extends State<PairScreen> {
     super.dispose();
   }
 
+  /// 扫码入口**暂时关掉**（用户：“这个扫码暂时取消掉 先用code连接”）。
+  ///
+  /// 原因：真机上相机起不来（权限给了也不弹预览），而扫码页的布局在真机上
+  /// 也是错位的（内容堆在屏幕最上面）。先把主路改回“手填地址 + 配对码”——
+  /// 这条路本来就能用（配对页是 Center + SingleChildScrollView，怎么都摆得下）。
+  ///
+  /// 想重新打开：把这里改成 true（代码都留着，没删）。
+  static const _scanEnabled = false;
+
   /// PI_BOT_FAKE_SCAN 是给桌面端截图预览用的（桌面没有 mobile_scanner 实现）
   bool get _canScan =>
-      const bool.fromEnvironment('PI_BOT_FAKE_SCAN') ||
-      (!kIsWeb && (Platform.isAndroid || Platform.isIOS));
+      _scanEnabled &&
+      (const bool.fromEnvironment('PI_BOT_FAKE_SCAN') ||
+          (!kIsWeb && (Platform.isAndroid || Platform.isIOS)));
 
   /// 扫码 → 自动填地址和配对码 → 直接连
   Future<void> _scan() async {
@@ -290,7 +300,7 @@ class _PairScreenState extends State<PairScreen> {
                         const _Code('cd D:\\pi-bot\\server\nnode src/index.js'),
                         const _Step(
                           index: '2',
-                          text: '用上面的「扫码配对」扫它，地址和配对码会自动填好',
+                          text: '把它打印的地址和配对码填到上面（就在这一页）',
                         ),
                         const _Code(
                           'http://192.168.1.100:8787  (以太网)\n★ 配对码：482913',
