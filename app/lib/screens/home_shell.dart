@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
@@ -80,6 +82,26 @@ class _HomeShellState extends State<HomeShell> {
 
     if (!wide) return RoomsScreen(initialRoomId: widget.initialRoomId);
 
+    // ★ 渲染前先把两栏宽度夹进"当前窗口放得下"的范围。
+    //
+    //   以前只在**拖动分隔条**时 clamp —— 于是"先把分隔条拖宽、再把窗口缩小"时，
+    //   两栏的固定宽度会超过窗口总宽：Expanded 拿到负空间，整个布局崩坏，
+    //   而且会**一直保持**（不把分隔条拖回来就恢复不了）。
+    //   用户报的"偶发会整个布局混乱"就是这个。
+    //   _leftWidth/_rightWidth 仍然是用户的偏好值，只是显示时按可用宽度夹一下。
+    final total = width;
+    final panelW = panelOpen ? _rightWidth : 0.0;
+    final maxLeft = math.max(
+      _leftMin,
+      math.min(_leftMax, total - _chatMin - panelW - 12),
+    );
+    final leftW = _leftWidth.clamp(_leftMin, maxLeft);
+    final maxRight = math.max(
+      _rightMin,
+      math.min(_rightMax, total - _chatMin - leftW - 12),
+    );
+    final rightW = panelOpen ? _rightWidth.clamp(_rightMin, maxRight) : 0.0;
+
     Room? selected;
     for (final room in state.rooms) {
       if (room.id == _selectedId) selected = room;
@@ -109,12 +131,12 @@ class _HomeShellState extends State<HomeShell> {
                     if (resizing) {
                       return Row(
                         children: [
-                          Container(width: _leftWidth, color: PB.bgApp),
+                          Container(width: leftW, color: PB.bgApp),
                           Container(width: 1, color: PB.borderTertiary),
                           const Expanded(child: SizedBox()),
                           if (panelOpen) ...[
                             Container(width: 1, color: PB.borderTertiary),
-                            Container(width: _rightWidth, color: PB.bgPane),
+                            Container(width: rightW, color: PB.bgPane),
                           ],
                         ],
                       );
@@ -129,7 +151,7 @@ class _HomeShellState extends State<HomeShell> {
                       //   开着右侧面板时尤其明显（用户报的"打开新组件后拖动非常卡"）。
                       RepaintBoundary(
                         child: SizedBox(
-                          width: _leftWidth,
+                          width: leftW,
                           child: RoomsScreen(
                             embedded: true,
                             selectedId: selected?.id,
@@ -191,7 +213,7 @@ class _HomeShellState extends State<HomeShell> {
                           curve: Curves.easeOutCubic,
                           tween: Tween(begin: 0.0, end: 1.0),
                           builder: (context, t, child) => SizedBox(
-                            width: _rightWidth * t,
+                            width: rightW * t,
                             child: ClipRect(
                               child: OverflowBox(
                                 alignment: Alignment.centerLeft,
