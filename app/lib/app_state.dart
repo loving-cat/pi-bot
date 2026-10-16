@@ -422,6 +422,18 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// 测一下这套 baseUrl + key 通不通（学 CC Switch 那种"先测一下"）。
+  /// 返回服务端给的结果：{ok, ms, via, count, models, note, error}
+  Future<Map<String, dynamic>> testModelGroup(
+    Map<String, dynamic> body,
+  ) async {
+    try {
+      return await api?.post('/api/model-groups/test', body) ?? {};
+    } catch (err) {
+      return {'ok': false, 'error': '$err'};
+    }
+  }
+
   Future<void> deleteModelGroup(String id) async {
     try {
       await api?.delete('/api/model-groups/\$id');
