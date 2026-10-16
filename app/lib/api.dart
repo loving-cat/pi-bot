@@ -51,6 +51,31 @@ class Api {
     return body;
   }
 
+  /// 取文件的**原始字节**。下载、文本预览都要用它 ——
+  /// 别的接口都只回 JSON，这个不一样。
+  ///
+  /// [maxBytes] 用来挡住"预览一个 200MB 的日志"这种事：
+  /// 超了就直接说超了，别把内存吃光。
+  Future<List<int>> bytes(String path, {int? maxBytes}) async {
+    final res = await http
+        .get(
+          _uri(path),
+          headers: {
+            if (token != null && token!.isNotEmpty)
+              'authorization': 'Bearer $token',
+          },
+        )
+        .timeout(const Duration(seconds: 60));
+    if (res.statusCode >= 400) {
+      throw ApiException('HTTP ${res.statusCode}', status: res.statusCode);
+    }
+    final body = res.bodyBytes;
+    if (maxBytes != null && body.length > maxBytes) {
+      throw ApiException('文件太大（${body.length ~/ 1024}KB），不适合直接预览');
+    }
+    return body;
+  }
+
   Future<Map<String, dynamic>> get(
     String path, {
     Map<String, String>? query,
