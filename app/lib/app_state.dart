@@ -423,6 +423,25 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// 把一个 bot 移出群。
+  ///
+  /// 服务端的 updateRoom 收 botIds 时会顺手把老大改掉（如果被移走的正好是老大），
+  /// 所以这里只要把"去掉他之后的名单"发过去就行。
+  Future<void> removeBotFromRoom(String roomId, String botId) async {
+    try {
+      final room = rooms.firstWhere(
+        (r) => r.id == roomId,
+        orElse: () => Room(id: '', name: '', kind: '', botIds: const []),
+      );
+      final next = room.botIds.where((id) => id != botId).toList();
+      await api?.patch('/api/rooms/$roomId', {'botIds': next});
+      await refresh();
+    } catch (err) {
+      lastError = '$err';
+      _notify();
+    }
+  }
+
   /// 改群聊轮次预算。服务端会挡掉非法值（0/负数会被保持原值），
   /// 所以这里不用自己校验，改完拉一次就是真值。
   Future<void> saveGroupLimits(Map<String, dynamic> patch) async {
