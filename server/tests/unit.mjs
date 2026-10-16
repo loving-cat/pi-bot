@@ -361,6 +361,69 @@ await test('store: 四个预算数字能改，非法值退回 null', () => {
 });
 
 // ---------------------------------------------------------------------------
+// 联网：HTML → 可读文本
+//   搜索/抓取要真发网络请求，不适合放单测；但"把网页变成文本"这步是纯函数，
+//   而且是最容易出错的一步（噪音没去干净 = 白喂一堆 token 给模型）。
+// ---------------------------------------------------------------------------
+const { readable } = await import('../src/web.js');
+
+await test('web: 去掉脚本和样式（不然全是 JS 噪音）', () => {
+  const { text } = readable(`
+    <html><head><style>body{color:red}</style><script>var x=1;</script></head>
+    <body><p>真正的正文</p></body></html>`);
+  assert.match(text, /真正的正文/);
+  assert.ok(!text.includes('var x=1'), '脚本内容不该进来');
+  assert.ok(!text.includes('color:red'), '样式不该进来');
+});
+
+await test('web: 去掉导航/页脚/侧栏这些壳', () => {
+  const { text } = readable(`
+    <body>
+      <nav>首页 产品 关于</nav>
+      <header>站点标题</header>
+      <main><p>正文在这里</p></main>
+      <aside>相关推荐</aside>
+      <footer>版权所有</footer>
+    </body>`);
+  assert.match(text, /正文在这里/);
+  for (const noise of ['首页', '站点标题', '相关推荐', '版权所有']) {
+    assert.ok(!text.includes(noise), noise + ' 是壳，不该进正文');
+  }
+});
+
+await test('web: 有 article 就优先取 article，不取整个 body', () => {
+  const { text } = readable(`
+    <body>
+      <div>页面上的其他东西</div>
+      <article><p>文章本体</p></article>
+    </body>`);
+  assert.match(text, /文章本体/);
+  assert.ok(!text.includes('页面上的其他东西'));
+});
+
+await test('web: 块级元素之间补换行（否则整页挤成一行）', () => {
+  const { text } = readable(
+    '<body><p>第一段</p><p>第二段</p><li>列表项</li></body>',
+  );
+  assert.match(text, /第一段\n+第二段/);
+});
+
+await test('web: 超长会截断，并且告诉调用方截断了', () => {
+  const long = '<body>' + '<p>' + 'x'.repeat(50) + '</p>'.repeat(1) + 'y'.repeat(500) + '</body>';
+  const r = readable(long, { maxChars: 100 });
+  assert.equal(r.text.length, 100);
+  assert.equal(r.truncated, true);
+  const ok2 = readable('<body><p>短</p></body>', { maxChars: 100 });
+  assert.equal(ok2.truncated, false);
+});
+
+await test('web: 多余空白被压掉（省 token）', () => {
+  const { text } = readable('<body><p>  一堆     空格   </p>\n\n\n\n<p>下一段</p></body>');
+  assert.ok(!/ {2,}/.test(text), '不该有连续空格');
+  assert.ok(!/\n{3,}/.test(text), '不该有连续空行');
+});
+
+// ---------------------------------------------------------------------------
 // model-menu：模型白名单
 // ---------------------------------------------------------------------------
 const { resolveMenu, defaultMenuSlug, menuSlugs, MODEL_MENU } = await import('../src/model-menu.js');
