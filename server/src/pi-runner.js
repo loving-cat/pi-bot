@@ -42,6 +42,7 @@ import {
   readContext,
   withCapacity,
 } from './context-budget.js';
+import { disposeAll, disposeMatching, evictIdle } from './session-pool.js';
 import {
   composeGroupPrompt,
   departmentOf,
@@ -691,23 +692,7 @@ export class PiRunner {
    * 房间一多内存会一直涨。超过上限就释放最久没用且不忙的那些。
    */
   #evictSessions() {
-    const cap = config.maxSessions;
-    if (this.sessions.size <= cap) return;
-    const idle = [...this.sessions.entries()]
-      .filter(([, e]) => e.session && !e.busy)
-      .sort((a, b) => (a[1].lastUsed ?? 0) - (b[1].lastUsed ?? 0));
-    let released = 0;
-    while (this.sessions.size > cap && idle.length) {
-      const [key, entry] = idle.shift();
-      try {
-        entry.unsubscribe?.();
-        entry.session?.dispose();
-      } catch {
-        /* ignore */
-      }
-      this.sessions.delete(key);
-      released++;
-    }
+    const released = evictIdle(this.sessions, config.maxSessions);
     if (released) log(`会话 LRU 释放 ${released} 个（当前 ${this.sessions.size}）`);
   }
 
@@ -1718,18 +1703,7 @@ export class PiRunner {
    * 用户只是想让它"能装更多"，不是想让它忘掉刚才做的事。
    */
   reloadSessionForBot(botId) {
-    let n = 0;
-    for (const [key, entry] of [...this.sessions]) {
-      if (!key.endsWith(`:${botId}`)) continue;
-      try {
-        entry.unsubscribe?.();
-        entry.session?.dispose();
-      } catch {
-        /* ignore */
-      }
-      this.sessions.delete(key);
-      n++;
-    }
+    const n = disposeMatching(this.sessions, (key) => key.endsWith(`:${botId}`)).length;
     if (n) log(`${store.getBot(botId)?.name ?? botId} 的会话已按新预算重建（历史保留）`);
     return n;
   }
@@ -1751,21 +1725,12 @@ export class PiRunner {
   }
 
   resetSessionForBot(botId) {
-    let n = 0;
-    for (const [key, entry] of [...this.sessions]) {
-      if (!key.endsWith(`:${botId}`)) continue;
-      try {
-        entry.unsubscribe?.();
-        entry.session?.dispose();
-      } catch {
-        /* ignore */
-      }
-      this.sessions.delete(key);
+    const removed = disposeMatching(this.sessions, (key) => key.endsWith(`:${botId}`));
+    for (const key of removed) {
       const [roomId] = key.split(':');
       store.clearSessionFile(roomId, botId);
-      n++;
     }
-    return n;
+    return removed.length;
   }
 
   /**
@@ -1776,50 +1741,22 @@ export class PiRunner {
    * （对话历史保留，只是会话本身重新开一个。）
    */
   applyPolicyChange() {
-    let n = 0;
-    for (const [key, entry] of [...this.sessions]) {
-      if (entry.busy) continue; // 正在跑的这轮不打断，它结束后下次自然重建
-      try {
-        entry.unsubscribe?.();
-        entry.session?.dispose();
-      } catch {
-        /* ignore */
-      }
-      this.sessions.delete(key);
-      n++;
-    }
+    // 正在跑的这轮不打断，它结束后下次自然重建
+    const n = disposeMatching(this.sessions, (_key, entry) => !entry.busy).length;
     if (n) log(`⚙️ 部门规矩变了 → 作废 ${n} 个空闲会话（下次跑会用新规矩重建）`);
     return n;
   }
 
   /** 重开某个会话里所有 bot 的记忆 */
   resetRoomSessions(roomId) {
-    let n = 0;
-    for (const [key, entry] of [...this.sessions]) {
-      if (!key.startsWith(`${roomId}:`)) continue;
-      const botId = key.slice(roomId.length + 1);
-      try {
-        entry.unsubscribe?.();
-        entry.session?.dispose();
-      } catch {
-        /* ignore */
-      }
-      this.sessions.delete(key);
-      store.clearSessionFile(roomId, botId);
-      n++;
+    const removed = disposeMatching(this.sessions, (key) => key.startsWith(`${roomId}:`));
+    for (const key of removed) {
+      store.clearSessionFile(roomId, key.slice(roomId.length + 1));
     }
-    return n;
+    return removed.length;
   }
 
   disposeAll() {
-    for (const entry of this.sessions.values()) {
-      try {
-        entry.unsubscribe?.();
-        entry.session?.dispose();
-      } catch {
-        /* ignore */
-      }
-    }
-    this.sessions.clear();
+    disposeAll(this.sessions);
   }
 }
