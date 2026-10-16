@@ -784,6 +784,31 @@ await test('插队：多条同时在写（部门场景）→ 插在最前面那�
   assert.equal(insertionPoint(list), 1);
 });
 
+
+// ---------------------------------------------------------------------------
+// 自称：必须用用户起的名字，不许拿内部角色词当名字
+// ---------------------------------------------------------------------------
+await test('自称：提示里写明用"用户给它起的名字"', () => {
+  const p = buildAppendSystemPrompt(
+    { name: 'Arill', persona: '你是负责人' },
+    { userName: 'Alex' },
+  ).join('\n');
+  assert.match(p, /【怎么自称】/);
+  assert.match(p, /「Arill」/, '必须把名字带进去');
+  assert.match(p, /不要拿它们当自称/, '要明说角色词不能当自称');
+});
+
+await test('自称：主控人设不再把人写成"总经理"', async () => {
+  const { MAIN_PERSONA } = await import('../src/store.js');
+  const text = MAIN_PERSONA;
+  assert.doesNotMatch(
+    text,
+    /你是[^\n]*总经理/,
+    '不许把人设写成"你是总经理"——它会照抄成自称',
+  );
+  assert.match(text, /用自己的名字自称/);
+});
+
 const passed = results.filter((r) => r.ok).length;
 
 console.log('\n================ 单元测试 ================');
