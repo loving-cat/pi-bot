@@ -642,6 +642,19 @@ export class PiRunner {
         resourceLoader,
         tools: [...baseTools, ...customTools.map((t) => t.name)],
         customTools,
+        // ★★★ 把我们自己的 model runtime 传进去。
+        //
+        //   不传的话，pi 会**另造一个** runtime（默认只认 ~/.pi/agent/auth.json
+        //   和 models.json）—— 而用户在 App 里配的模型组（baseUrl + key + 模型名）
+        //   是**运行时注册到我们这个 runtime 上**的，那个新造的 runtime 根本不知道。
+        //
+        //   症状就是这个反复出现的报错：
+        //       No API key found for local_cline.
+        //   而且很骗人 —— 探活/模型菜单（走我们的 runtime）一直显示 ★ 可用，
+        //   一到真跑就找不到 key。用户"每次重启、重组队伍都不行"就是这个。
+        //   （cline 能用是因为 pi 自己会从 ~/.pi/agent/extensions 加载那个扩展，
+        //    而用户在 App 里配的模型组没有对应的扩展文件。）
+        modelRuntime: this.modelRuntime,
       };
       const botModel = bot.model ? this.resolveModel(bot.model) : null;
       const picked = botModel ?? this.model;
