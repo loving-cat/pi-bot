@@ -255,7 +255,8 @@ await test('store: SOP 条数和长度都会截断（别把系统提示词撑爆
   const s = store.getBot(bot.id).skills;
   assert.equal(s.length, 40, '最多 40 条');
   assert.equal(s[0].title.length, 80, 'title 截到 80');
-  assert.equal(s[0].howto.length, 2000, 'howto 截到 2000');
+  // 4000：自动挂上来的「工程基线」本身就长（十几条铁律），2000 会被截断
+  assert.equal(s[0].howto.length, 4000, 'howto 截到 4000');
 });
 
 await test('store: avatarColor 归一化成 #RRGGBB', () => {
@@ -988,6 +989,36 @@ await test('打断：同级同事叫它 → 不打断（排队，否则群里互
 
 await test('打断：它自己叫什么（不该发生）→ 不打断', () => {
   assert.equal(isSuperiorCall({ fromId: 'me', fromRole: 'bot', selfId: 'me', leadId: 'me' }), false);
+});
+
+
+// ---------------------------------------------------------------------------
+// 工程基线：谁算"开发类"bot（命中才自动挂）
+// ---------------------------------------------------------------------------
+const { isCodingRole, CODING_BASELINE_HOWTO, CODING_BASELINE_TITLE } =
+  await import('../src/coding-baseline.js');
+
+await test('★ 工程基线：开发类 bot 认得出（中英都认）', () => {
+  assert.equal(isCodingRole({ name: '平台开发工程师' }), true);
+  assert.equal(isCodingRole({ name: 'Backend Engineer' }), true);
+  assert.equal(isCodingRole({ name: '前端' }), true);
+  assert.equal(isCodingRole({ persona: '负责重构和调试' }), true);
+  assert.equal(isCodingRole({ name: 'DevOps' }), true);
+});
+
+await test('工程基线：非开发类不挂（别给文案/法务塞工程纪律）', () => {
+  assert.equal(isCodingRole({ name: '文案编辑' }), false);
+  assert.equal(isCodingRole({ name: '法务顾问', persona: '看合同' }), false);
+  assert.equal(isCodingRole({ name: '市场分析师' }), false);
+});
+
+await test('★ 工程基线是通用英文的，且不含本机痕迹', () => {
+  assert.match(CODING_BASELINE_TITLE, /Engineering/);
+  // 关键是"能读"：正文必须是英文的（模型对工程纪律的英文表述最稳）
+  assert.ok(/Read before you write/.test(CODING_BASELINE_HOWTO));
+  assert.ok(/Kill processes by PID/.test(CODING_BASELINE_HOWTO));
+  // 脱敏：不能出现盘符/用户名/密钥/内网地址
+  assert.doesNotMatch(CODING_BASELINE_HOWTO, /[A-Za-z]:\|Users\|sk-[A-Za-z0-9]{8}|192\.168\./);
 });
 
 const passed = results.filter((r) => r.ok).length;
