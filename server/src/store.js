@@ -90,6 +90,9 @@ export const MAIN_PERSONA = [
   '1. 用户提需求 → 判断这事该谁干：',
   '   · 已有合适部门 → dispatch_to_department 下达任务，部门老大接着接单。',
   '   · 没有合适的人 → create_department 一次建好（造人 + 建部门 + 指定老大 + 发开工说明），或 create_bot 招一个人。',
+  '     造**开发类**（工程/前端/后端/架构/测试/运维/脚本…）的 bot 时，系统会自动给它挂上',
+  '     「Engineering baseline」这份工程铁律 —— 你不用自己写，但**要在开工说明里点它一句**：',
+  '     照基线干活（先读再改、破坏性操作先问、跑完测试再说完、不许静默丢活、提交要写清为什么）。',
   '   · 一件小事只找一个人 → message_bot。',
   '2. 用户问进展 → read_department 去看，然后给用户一个结论。',
   '3. 用户对部门结果不满意 → 带着具体要求再 dispatch_to_department，别自己去干。',
@@ -114,6 +117,21 @@ export const MAIN_PERSONA = [
   '【风格】直接、简短、不废话。先说结论再说过程。不要复述用户的指令。',
   '派完活用一两句话交代“交给谁了、在干什么、什么时候有结果”，不要把别人的长输出再抄一遍。',
 ].join('\n');
+
+
+/** 技能（SOP）规范化 —— create 和 update 两条路必须产出同样的形状 */
+function normalizeSkills(list) {
+  if (!Array.isArray(list)) return [];
+  return list
+    .slice(0, 40)
+    .map((s) => ({
+      id: String(s?.id || newId('sk_')),
+      title: String(s?.title || '').slice(0, 80),
+      howto: String(s?.howto || '').slice(0, 4000),
+      createdAt: s?.createdAt || now(),
+    }))
+    .filter((s) => s.title.trim());
+}
 
 export class Store {
   constructor() {
@@ -261,8 +279,9 @@ export class Store {
       avatarColor: normalizeHex(patch.avatarColor),
       model: patch.model || null,
       thinking: patch.thinking || config.thinking,
-      // 用户手把手教给它的做法（SOP）。会拼进系统提示词，让 bot 真的"学会"。
-      skills: [],
+      // 技能（SOP）。会拼进系统提示词，让 bot 真的"学会"。
+      // 造开发类 bot 时，create_bot 会塞一条"工程基线"进来（coding-baseline.js）。
+      skills: normalizeSkills(patch.skills),
       // 群聊轮次预算（全局一份，用户可在设置里改）
       groupLimits: { ...GROUP_LIMITS_DEFAULT },
       // 用户自己是谁（bot 要知道在跟谁说话）
@@ -298,16 +317,8 @@ export class Store {
     if (patch.avatarShape !== undefined)
       next.avatarShape = Number.isInteger(patch.avatarShape) ? patch.avatarShape : null;
     if (patch.avatarColor !== undefined) next.avatarColor = normalizeHex(patch.avatarColor);
-    if (patch.skills !== undefined && Array.isArray(patch.skills)) {
-      next.skills = patch.skills
-        .slice(0, 40)
-        .map((s) => ({
-          id: String(s?.id || newId('sk_')),
-          title: String(s?.title || '').slice(0, 80),
-          howto: String(s?.howto || '').slice(0, 2000),
-          createdAt: s?.createdAt || now(),
-        }))
-        .filter((s) => s.title.trim());
+    if (patch.skills !== undefined) {
+      next.skills = normalizeSkills(patch.skills);
     }
     if (patch.reserveTokens !== undefined)
       next.reserveTokens = positiveOrNull(patch.reserveTokens);
