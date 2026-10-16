@@ -13,6 +13,7 @@ import 'package:pi_bot/models.dart';
 import 'package:pi_bot/scope.dart';
 import 'package:pi_bot/screens/rooms_screen.dart';
 import 'package:pi_bot/widgets/blob_avatar.dart';
+import 'package:pi_bot/widgets/md_text.dart';
 import 'package:pi_bot/widgets/floating_menu.dart';
 
 Room _room(
@@ -263,5 +264,48 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('解散这个群'), findsOneWidget);
     expect(find.text('删除这个 Bot'), findsNothing);
+  });
+
+  testWidgets('@ 提及：只点击跳转，不做悬停卡、不给"可拖"的指针', (tester) async {
+    // 用户明确要求过：悬停卡浮出来会挡住旁边正在读的字，而且鼠标变手型
+    // 看着像"可以拖"。这里把两条都钉住 —— 这种"多出来的东西"很容易被
+    // 后来的人好心加回去。
+    var tapped = '';
+    tester.view.physicalSize = const Size(700, 500);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MdText(
+            '@测试工程师 你好',
+            mentions: const ['测试工程师'],
+            selectable: false,
+            onMentionTap: (n) => tapped = n,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    // 指针是普通箭头（不是 click/hand）
+    final regions = tester.widgetList<MouseRegion>(find.byType(MouseRegion));
+    expect(
+      regions.any((m) => m.cursor == SystemMouseCursors.click),
+      isFalse,
+      reason: '不该给"可拖/可点"的手型暗示',
+    );
+
+    // 悬停一会儿，也不该浮出任何卡片（浮层里没有额外文字）
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await gesture.addPointer(location: tester.getCenter(find.byType(MdText)));
+    await gesture.moveBy(const Offset(2, 0));
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.textContaining('点一下开私聊'), findsNothing);
+
+    // 点一下要跳
+    await tester.tap(find.byType(MdText));
+    await tester.pump();
+    expect(tapped, '测试工程师');
   });
 }

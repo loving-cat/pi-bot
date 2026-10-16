@@ -1,7 +1,5 @@
 import 'package:flutter/gestures.dart';
 
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -9,7 +7,6 @@ import 'package:url_launcher/url_launcher.dart';
 import '../text_utils.dart';
 import '../theme.dart';
 import 'blob_avatar.dart';
-import 'floating_menu.dart';
 
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
@@ -765,10 +762,13 @@ class MentionInfo {
 ///
 /// 比纯文字高亮多花不了几个像素，但一眼就能认出是谁；一串 @ 排在一起时差别很明显。
 ///
-/// 鼠标悬上去会浮出一张小卡（头像 + 名字 + 一句话简介 + "点开私聊"）——
-/// 不用点进去就能知道这是谁、干什么的。悬停卡由 [showHoverCard] 画，
-/// 它不吃鼠标事件，所以指针一移开卡就收。
-class _MentionChip extends StatefulWidget {
+/// **只做一件事：点一下跳到那个人的私聊。**
+/// 曾经在它上面挂过悬停信息卡，结果：
+///   · 卡片浮出来挡住旁边正在读的字
+///   · 鼠标移上去变手型，看着像"可以拖"
+///   · 而它比点击只多了"提前看到一句话简介"这点信息 —— 不划算
+/// 所以去掉了。要看他是谁，点进去就是了。
+class _MentionChip extends StatelessWidget {
   const _MentionChip({required this.name, this.info, this.onTap});
 
   final String name;
@@ -776,114 +776,22 @@ class _MentionChip extends StatefulWidget {
   final VoidCallback? onTap;
 
   @override
-  State<_MentionChip> createState() => _MentionChipState();
-}
-
-class _MentionChipState extends State<_MentionChip> {
-  Timer? _delay;
-  VoidCallback? _close;
-  bool _hover = false;
-
-  String get _seed => widget.info?.seed ?? widget.name;
-
-  @override
-  void dispose() {
-    _delay?.cancel();
-    _close?.call();
-    super.dispose();
-  }
-
-  void _enter(PointerEnterEvent e) {
-    setState(() => _hover = true);
-    // 稍微等一下再弹：鼠标只是划过不该弹卡（划过一串 @ 会闪个不停）
-    _delay?.cancel();
-    _delay = Timer(const Duration(milliseconds: 220), () {
-      if (!mounted) return;
-      _close = showHoverCard(context: context, at: e.position, child: _card());
-    });
-  }
-
-  void _exit(PointerExitEvent e) {
-    _delay?.cancel();
-    _close?.call();
-    _close = null;
-    if (mounted) setState(() => _hover = false);
-  }
-
-  Widget _card() {
-    final color = PB.colorFor(_seed);
-    final sub = widget.info?.subtitle?.trim() ?? '';
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: PB.bgElevated,
-        borderRadius: BorderRadius.circular(PB.rXl),
-        border: Border.all(color: PB.borderSecondary),
-        boxShadow: PB.shadow(y: 8, blur: 24, alpha: 0.5),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          BlobAvatar(seed: _seed, color: color, size: 34, animate: false),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  widget.name,
-                  style: const TextStyle(
-                    fontSize: PB.fsSm,
-                    fontWeight: FontWeight.w600,
-                    color: PB.textPrimary,
-                  ),
-                ),
-                if (sub.isNotEmpty) ...[
-                  const SizedBox(height: 3),
-                  Text(
-                    sub,
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: PB.fsXs,
-                      color: PB.textTertiary,
-                      height: 1.35,
-                    ),
-                  ),
-                ],
-                if (widget.onTap != null) ...[
-                  const SizedBox(height: 6),
-                  const Text(
-                    '点一下开私聊',
-                    style: TextStyle(fontSize: PB.fsXxs, color: PB.accent),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final color = PB.colorFor(_seed);
-    final chip = AnimatedContainer(
-      duration: const Duration(milliseconds: 120),
+    final seed = info?.seed ?? name;
+    final color = PB.colorFor(seed);
+    final chip = Container(
       padding: const EdgeInsets.fromLTRB(3, 2, 7, 2),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: _hover ? 0.28 : 0.16),
+        color: color.withValues(alpha: 0.16),
         borderRadius: BorderRadius.circular(PB.rFull),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          BlobAvatar(seed: _seed, color: color, size: 15, animate: false),
+          BlobAvatar(seed: seed, color: color, size: 15, animate: false),
           const SizedBox(width: 5),
           Text(
-            widget.name,
+            name,
             style: const TextStyle(
               fontSize: PB.fsXs,
               fontWeight: FontWeight.w600,
@@ -894,14 +802,11 @@ class _MentionChipState extends State<_MentionChip> {
         ],
       ),
     );
-
-    return MouseRegion(
-      cursor: widget.onTap == null
-          ? SystemMouseCursors.basic
-          : SystemMouseCursors.click,
-      onEnter: _enter,
-      onExit: _exit,
-      child: GestureDetector(onTap: widget.onTap, child: chip),
+    if (onTap == null) return chip;
+    return GestureDetector(
+      onTap: onTap,
+      // 普通箭头：这里只是"点一下"，不该给出"能拖"的暗示
+      child: MouseRegion(cursor: SystemMouseCursors.basic, child: chip),
     );
   }
 }
