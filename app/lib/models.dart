@@ -106,6 +106,9 @@ class Msg {
   bool get isUser => authorType == 'user';
   bool get isStreaming => status == 'streaming';
   bool get isRef => kind == 'ref' && refs.isNotEmpty;
+
+  /// 上下文压缩的提示条（服务端在压缩成功后写一条 kind='compact'）
+  bool get isCompact => kind == 'compact';
   bool get wasSteer => meta?['queued'] != null;
 
   factory Msg.fromJson(Map<String, dynamic> json) => Msg(
@@ -251,6 +254,44 @@ class Bot {
         .map((e) => BotSkill.fromJson(e.cast<String, dynamic>()))
         .toList(),
     enabled: json['enabled'] as bool? ?? true,
+  );
+}
+
+/// 一个 (会话 × bot) 的上下文占用情况。
+///
+/// `tokens == null` 表示"现在还不知道"（刚压缩完、或者还没轮到它说话）——
+/// 这时候界面该显示"—"而不是 0%，否则用户会以为上下文是空的。
+class ContextInfo {
+  ContextInfo({
+    this.tokens,
+    this.contextWindow,
+    this.percent,
+    this.compacting = false,
+  });
+
+  final int? tokens;
+  final int? contextWindow;
+
+  /// 0..100
+  final double? percent;
+
+  /// 正在压缩上下文
+  final bool compacting;
+
+  bool get known => tokens != null && (contextWindow ?? 0) > 0;
+
+  factory ContextInfo.fromJson(Map<String, dynamic> json) => ContextInfo(
+    tokens: (json['tokens'] as num?)?.toInt(),
+    contextWindow: (json['contextWindow'] as num?)?.toInt(),
+    percent: (json['percent'] as num?)?.toDouble(),
+    compacting: json['compacting'] as bool? ?? false,
+  );
+
+  ContextInfo copyWith({bool? compacting}) => ContextInfo(
+    tokens: tokens,
+    contextWindow: contextWindow,
+    percent: percent,
+    compacting: compacting ?? this.compacting,
   );
 }
 
