@@ -270,6 +270,22 @@ Rect resizeBy({
   return Rect.fromLTRB(l, t, r, b);
 }
 
+/// 把"视口内的指针位移"换算成**屏幕上的**指针位移。
+///
+/// ★ 这是拖动缩放的经典陷阱：`DragUpdateDetails.globalPosition` 是
+/// **窗口内容区**里的坐标，不是屏幕坐标。而拖上边/左边时**窗口自己会移动** ——
+/// 窗口一移，同一个屏幕位置在窗口内的坐标就变了，于是：
+///   算出来的位移 ≈ 0 → 窗口弹回原尺寸 → 下一次算出来又反向 → 来回抽搐。
+/// 用户报的"从上方拉伸会不断抽搐"就是这个。
+///
+/// 补偿办法：我们知道窗口被自己移动了多少（那正是我们设进去的 bounds），
+/// 把它加回去就是屏幕位移。
+Offset screenDelta({
+  required Offset viewDelta,
+  required Rect startBounds,
+  required Rect lastBounds,
+}) => viewDelta + (lastBounds.topLeft - startBounds.topLeft);
+
 /// 无边框窗口的**八向缩放热区**。
 ///
 /// `setAsFrameless()` 去掉了系统标题栏，Windows 的窗口过程就不再给边框做命中
@@ -316,6 +332,10 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
   Rect? _startBounds;
   Offset? _startPointer;
   ResizeEdge? _edge;
+
+  /// 上一次我们自己设进去的矩形 —— 拿它的左上角当"窗口现在在哪"。
+  /// 拖上边/左边时要靠它把窗口自身的位移补偿掉（见 screenDelta）。
+  Rect? _lastBounds;
 
   @override
   void initState() {
@@ -446,8 +466,10 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
   Future<void> _beginDrag(ResizeEdge edge, DragStartDetails d) async {
     _edge = edge;
     _startPointer = d.globalPosition;
+    _lastBounds = null;
     try {
       _startBounds = await windowManager.getBounds();
+      _lastBounds = _startBounds;
     } catch (_) {
       _startBounds = null; // 拿不到就不拖，别乱跳
     }
@@ -458,16 +480,19 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
     final from = _startPointer;
     final edge = _edge;
     if (start == null || from == null || edge == null) return;
-    unawaited(
-      windowManager.setBounds(
-        resizeBy(
-          start: start,
-          delta: d.globalPosition - from,
-          edge: edge,
-          minSize: kWindowMinSize,
-        ),
+    final next = resizeBy(
+      start: start,
+      // 用补偿过的位移：窗口自己移动了多少要加回去，否则拖上/左边会抽搐
+      delta: screenDelta(
+        viewDelta: d.globalPosition - from,
+        startBounds: start,
+        lastBounds: _lastBounds ?? start,
       ),
+      edge: edge,
+      minSize: kWindowMinSize,
     );
+    _lastBounds = next;
+    unawaited(windowManager.setBounds(next));
   }
 
   Widget _zone({
