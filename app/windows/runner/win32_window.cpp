@@ -4,7 +4,6 @@
 #include <flutter_windows.h>
 #include <windowsx.h>
 #include <cstdio>  // GET_X_LPARAM / GET_Y_LPARAM
-#include <fstream>
 
 #include "resource.h"
 
@@ -143,10 +142,6 @@ bool Win32Window::Create(const std::wstring& title,
   // 样式不用动：Windows 在 CreateWindow 时会把 WS_CAPTION 补回来，
   // 真正去掉标题栏靠 flutter_window.cpp 里的 WM_NCCALCSIZE 返回 0。
   const DWORD window_style = WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN;
-  {
-    std::ofstream probe("D:/pi-bot/probe.txt", std::ios::app);
-    probe << "[want] 0x" << std::hex << window_style << std::dec << "\n";
-  }
 
   HWND window = CreateWindow(
       window_class, title.c_str(), window_style,
@@ -157,11 +152,6 @@ bool Win32Window::Create(const std::wstring& title,
   if (!window) {
     return false;
   }
-  {
-    std::ofstream probe("D:/pi-bot/probe.txt", std::ios::app);
-    probe << "[got]  0x" << std::hex << (unsigned long)GetWindowLong(window, GWL_STYLE) << std::dec << "\n";
-  }
-
 
 
   UpdateTheme(window);

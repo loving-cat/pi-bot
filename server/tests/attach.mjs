@@ -3,6 +3,7 @@
  *   node tests/attach.mjs
  */
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
 import * as XLSX from 'xlsx';
@@ -12,8 +13,8 @@ const token = process.argv[3] ?? '';
 const roomName = process.argv[4] || 'Pi';
 const auth = token ? { authorization: (token ? `Bearer ${token}` : '') } : {};
 
-// 造一个 xlsx
-const dir = 'D:/pi-bot/server/data';
+// 造一个 xlsx（只是暂存，传完就删 —— 用系统临时目录，别写死谁机器上的路径）
+const dir = path.join(os.tmpdir(), 'pi-bot-attach-test');
 fs.mkdirSync(dir, { recursive: true });
 const wb = XLSX.utils.book_new();
 XLSX.utils.book_append_sheet(
