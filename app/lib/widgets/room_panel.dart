@@ -14,12 +14,16 @@ import 'blob_avatar.dart';
 ///
 /// 群聊多一个「成员」页：那是唯一能**把某个 bot 移出群**的地方，
 /// 所以要给它一个显眼的位置（用户明确提过这个需求）。
+/// 窄屏（手机）用：面板作为一整页滑进来。
+/// 宽屏不要用这个 —— 那边它是**布局里的一栏**（见 HomeShell），
+/// 不该有遮罩、也不该盖住聊天（用户："应该跟我其他区域同级别的侧边栏，
+/// 而不是一个有遮罩的二级菜单"）。
 Future<void> showRoomPanel(BuildContext context, Room room) async {
   await Navigator.of(context).push(
     PageRouteBuilder(
       opaque: false,
       barrierColor: Colors.black.withValues(alpha: 0.35),
-      pageBuilder: (ctx, _, __) => _RoomPanel(room: room),
+      pageBuilder: (ctx, _, __) => RoomPanel(room: room, width: 380),
       transitionsBuilder: (ctx, anim, _, child) => SlideTransition(
         position: Tween(
           begin: const Offset(1, 0),
@@ -31,16 +35,20 @@ Future<void> showRoomPanel(BuildContext context, Room room) async {
   );
 }
 
-class _RoomPanel extends StatefulWidget {
-  const _RoomPanel({required this.room});
+/// 面板本体（宽屏直接当布局的一栏用，窄屏包在路由里）。
+class RoomPanel extends StatefulWidget {
+  const RoomPanel({super.key, required this.room, this.width});
 
   final Room room;
 
+  /// 给宽（null = 撑满可用宽度，宽屏当一栏时用）
+  final double? width;
+
   @override
-  State<_RoomPanel> createState() => _RoomPanelState();
+  State<RoomPanel> createState() => _RoomPanelState();
 }
 
-class _RoomPanelState extends State<_RoomPanel> {
+class _RoomPanelState extends State<RoomPanel> {
   /// 0 = 详情，1 = 成员（只有群才有）
   int _tab = 0;
 
@@ -61,7 +69,7 @@ class _RoomPanelState extends State<_RoomPanel> {
         // Overlay/路由里没有 Material 祖先的话，Flutter 会给文字画黄色双下划线
         type: MaterialType.transparency,
         child: Container(
-          width: 380,
+          width: widget.width,
           height: double.infinity,
           decoration: BoxDecoration(
             color: PB.bgPane,
@@ -95,7 +103,16 @@ class _RoomPanelState extends State<_RoomPanel> {
             alignment: Alignment.centerRight,
             child: IconButton(
               tooltip: '关闭',
-              onPressed: () => Navigator.of(context).pop(),
+              // 宽屏是布局里的一栏 —— 关它要走 AppState；
+              // 窄屏是路由 —— 关它是 pop。两个都做，哪条路都成立。
+              onPressed: () {
+                final st = AppScope.read(context);
+                if (st.panelOpen) {
+                  st.closePanel();
+                } else {
+                  Navigator.of(context).maybePop();
+                }
+              },
               icon: const Icon(LucideIcons.x, size: 18),
             ),
           ),

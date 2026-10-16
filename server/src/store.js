@@ -260,6 +260,8 @@ export class Store {
       skills: [],
       // 群聊轮次预算（全局一份，用户可在设置里改）
       groupLimits: { ...GROUP_LIMITS_DEFAULT },
+      // 用户自己是谁（bot 要知道在跟谁说话）
+      userName: config.userName,
       // 上下文预算：null = 用全局默认（config.reserveTokens / keepRecentTokens），
       // 而全局默认是 null 时就用 pi 自带的 16384 / 20000。
       reserveTokens: null,
@@ -348,6 +350,30 @@ export class Store {
     this.scheduleSave();
     bus.emit('event', { t: 'bot.deleted', botId: id });
     return { id };
+  }
+
+  // ---------- 用户身份 ----------
+
+  /**
+   * 用户叫什么。
+   * 没设过就用 config 的默认值（环境变量 / 系统用户名）。
+   * 空字符串等于没设 —— 界面上会退回默认，不会出现"bot 不知道你是谁"。
+   */
+  userName() {
+    const v = String(this.state.userName ?? '').trim();
+    return v || config.userName;
+  }
+
+  updateUserName(name) {
+    const v = String(name ?? '').trim().slice(0, 40);
+    this.state.userName = v;
+    this.scheduleSave();
+    bus.emit('event', { t: 'user.updated', user: this.userSummary() });
+    return this.userSummary();
+  }
+
+  userSummary() {
+    return { name: this.userName() };
   }
 
   // ---------- 群聊轮次预算 ----------
