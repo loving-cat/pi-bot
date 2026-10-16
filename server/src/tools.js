@@ -17,6 +17,7 @@ import { config } from './config.js';
 import { store } from './store.js';
 import { menuText, resolveMenu, MODEL_MENU } from './model-menu.js';
 import { extractText } from './extract.js';
+import { webSearch, webFetch } from './web.js';
 import { log, now } from './util.js';
 
 /** 同一个 bot 连着私信多个人时，多久以内的引用气泡合并成一个（ms） */
@@ -117,6 +118,66 @@ function deptLine(room) {
 
 export function buildCommonTools({ runner, roomId, botId }) {
   return [
+    defineTool({
+      name: 'web_search',
+      label: '上网搜',
+      description:
+        '上网搜东西。**凡是"可能已经变了"的都该用它**：版本号、库的用法、报错信息、' +
+        '某产品现在长什么样、价格、新闻、别人的做法。不要凭记忆答这些 —— 记忆是会过期的。' +
+        '搜到想要的之后，用 web_fetch 打开链接看正文。',
+      parameters: Type.Object({
+        query: Type.String({ description: '搜索词，用关键词不要整句话' }),
+        limit: Type.Optional(
+          Type.Number({ description: '要几条结果，默认 6，最多 12' }),
+        ),
+      }),
+      execute: async (_toolCallId, { query, limit }) => {
+        const n = Math.min(Math.max(Math.round(Number(limit) || 6), 1), 12);
+        try {
+          const { provider, results } = await webSearch(query, { limit: n });
+          const body = results
+            .map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`)
+            .join('\n\n');
+          return ok(
+            `搜到 ${results.length} 条（来源：${provider}）：\n\n${body}\n\n` +
+              '想看哪条的正文就用 web_fetch 打开它的链接。',
+            { count: results.length, provider },
+          );
+        } catch (err) {
+          // ★ 搜不到时最危险的是模型开始编。这里把话说死。
+          return fail(
+            `没搜成：${err?.message || err}\n` +
+              '**不要凭记忆编答案**。要么跟用户说"我这边搜不了"，要么换个关键词再试一次。',
+          );
+        }
+      },
+    }),
+
+    defineTool({
+      name: 'web_fetch',
+      label: '打开网页',
+      description:
+        '打开一个网址把正文读出来（HTML 会转成文本，太长的会截断）。' +
+        '接口返回的 JSON 会原样给你 —— 很多 API 直接返回 JSON，那正是你要的。',
+      parameters: Type.Object({
+        url: Type.String({ description: '完整网址，http/https 开头' }),
+      }),
+      execute: async (_toolCallId, { url }) => {
+        try {
+          const r = await webFetch(url);
+          const head = r.title ? `《${r.title}》\n` : '';
+          const tail = r.truncated ? '\n\n_（内容太长已截断）_' : '';
+          return ok(`${head}${r.url}\n\n${r.text}${tail}`, {
+            url: r.url,
+            truncated: r.truncated,
+            contentType: r.contentType,
+          });
+        } catch (err) {
+          return fail(`打不开：${err?.message || err}`);
+        }
+      },
+    }),
+
     defineTool({
       name: 'list_bots',
       label: '看花名册',
