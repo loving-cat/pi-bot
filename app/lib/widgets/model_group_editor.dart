@@ -195,6 +195,10 @@ class _EditorState extends State<_Editor> {
   String? _error;
   bool _saving = false;
 
+  /// 连通性测试的结果（null = 还没测过）
+  Map<String, dynamic>? _test;
+  bool _testing = false;
+
   @override
   void initState() {
     super.initState();
@@ -208,6 +212,29 @@ class _EditorState extends State<_Editor> {
     _key.dispose();
     _models.dispose();
     super.dispose();
+  }
+
+  Future<void> _runTest() async {
+    setState(() {
+      _testing = true;
+      _test = null;
+    });
+    // 有 id 的话把 id 也带上：key 留空时服务端会拿存着的那份补全
+    final r = await AppScope.read(context).testModelGroup({
+      if (widget.group != null) 'id': widget.group!.id,
+      'baseUrl': _baseUrl.text.trim(),
+      if (_key.text.trim().isNotEmpty) 'apiKey': _key.text.trim(),
+      'api': _api,
+      'model': _models.text
+          .split('\n')
+          .map((l) => l.trim())
+          .firstWhere((l) => l.isNotEmpty, orElse: () => ''),
+    });
+    if (!mounted) return;
+    setState(() {
+      _testing = false;
+      _test = r;
+    });
   }
 
   Future<void> _save() async {
@@ -306,6 +333,36 @@ class _EditorState extends State<_Editor> {
                 '模型名要跟接口那边完全一致。填完保存就能在给 bot 选模型时看到。',
                 style: TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
               ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: _testing ? null : _runTest,
+                    icon: _testing
+                        ? const SizedBox(
+                            width: 13,
+                            height: 13,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(LucideIcons.plugZap, size: 15),
+                    label: Text(_testing ? '正在测…' : '测试连通性'),
+                  ),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      '先测一下再保存，省得配错了还得回来查',
+                      style: TextStyle(
+                        fontSize: PB.fsXxs,
+                        color: PB.textQuaternary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              if (_test != null) ...[
+                const SizedBox(height: 8),
+                _testResult(_test!),
+              ],
               if (_error != null) ...[
                 const SizedBox(height: 10),
                 Text(
@@ -327,6 +384,64 @@ class _EditorState extends State<_Editor> {
           child: Text(_saving ? '保存中…' : '保存'),
         ),
       ],
+    );
+  }
+
+  /// 测试结果 —— 成功/失败要给**不同的话**，不能让用户去猜该改哪儿
+  Widget _testResult(Map<String, dynamic> r) {
+    final ok = r['ok'] == true;
+    final ms = r['ms'];
+    final lines = <String>[
+      if (ok)
+        [
+          '通了',
+          if (ms != null) '${ms}ms',
+          if (r['via'] != null) '经 ${r['via']}',
+          if ((r['count'] as num?) != null &&
+              (r['count'] as num).toInt() > 0)
+            '发现 ${r['count']} 个模型',
+        ].join(' · ')
+      else
+        '${r['error'] ?? '没通'}',
+      if (r['note'] != null) '${r['note']}',
+    ];
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: (ok ? PB.success : PB.danger).withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(PB.rLg),
+        border: Border.all(
+          color: (ok ? PB.success : PB.danger).withValues(alpha: 0.35),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            ok ? LucideIcons.circleCheck : LucideIcons.circleAlert,
+            size: 15,
+            color: ok ? PB.success : PB.danger,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (final l in lines)
+                  Text(
+                    l,
+                    style: TextStyle(
+                      fontSize: PB.fsXs,
+                      height: 1.5,
+                      color: ok ? PB.textSecondary : PB.textPrimary,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 

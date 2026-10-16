@@ -193,6 +193,119 @@ export class ModelGroup {
 }
 
 // ---------------------------------------------------------------------------
+// 连通性测试
+// ---------------------------------------------------------------------------
+
+/**
+ * 测一下这套 baseUrl + key 通不通。
+ *
+ * 思路（学 CC Switch 那种"先测一下"）：**能用不花钱的方式测就别花钱**。
+ *   1. 先打 `GET /models` —— 标准 OpenAI 兼容接口都有，不消耗 token，还能顺便
+ *      拿到模型列表（用户就不用一个个手打了）
+ *   2. 有些中转站没实现 /models，才退回一次最小 chat 请求（max_tokens=1）
+ *
+ * 返回 `{ ok, ms, via, models?, error? }` —— **error 要写人话**：
+ * 401 和"地址打不开"是两件事，用户要能一眼知道该改哪个字段。
+ */
+export async function testModelGroup({
+  baseUrl,
+  apiKey,
+  api = 'openai-completions',
+  model,
+} = {}) {
+  const base = String(baseUrl || '').trim().replace(/\/+$/, '');
+  if (!/^https?:\/\//i.test(base)) {
+    return { ok: false, error: 'baseUrl 要以 http:// 或 https:// 开头' };
+  }
+  const key = String(apiKey || '').trim();
+  const headers = {
+    'user-agent': 'pi-bot/1.0',
+    ...(key ? { authorization: `Bearer ${key}` } : {}),
+  };
+  const t0 = Date.now();
+
+  const withTimeout = async (url, init = {}, ms = 12_000) => {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(new Error('超时')), ms);
+    try {
+      return await fetch(url, { ...init, signal: ac.signal, redirect: 'follow' });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  const explain = (status) => {
+    if (status === 401 || status === 403) {
+      return `认证没过（HTTP ${status}）—— key 填错了，或者这个接口不吃 Bearer`;
+    }
+    if (status === 404) return `地址不对（HTTP 404）—— 检查 baseUrl 是不是缺/多了一段路径`;
+    if (status === 429) return `被限流了（HTTP 429）—— 说明地址和 key 是对的，只是现在太快`;
+    return `接口回了 HTTP ${status}`;
+  };
+
+  // ① GET /models：不花 token
+  let netError = null;
+  try {
+    const res = await withTimeout(`${base}/models`, { headers });
+    if (res.ok) {
+      const json = await res.json().catch(() => null);
+      const ids = (json?.data ?? json?.models ?? [])
+        .map((m) => m?.id ?? m?.name)
+        .filter((x) => typeof x === 'string' && x.trim());
+      return {
+        ok: true,
+        ms: Date.now() - t0,
+        via: '/models',
+        count: ids.length,
+        models: ids.slice(0, 60),
+        // ★ 实测踩到的：有些中转站的 /models **不校验 key**（假 key 也返回 200
+        //   和一大堆模型名）。所以"通了"只说明地址和网络没问题，
+        //   不等于 key 有效 —— 这句话必须传给用户，否则他会以为配好了。
+        note: '地址通了。注意：部分中转站的 /models 不校验 key，所以这里通过 ≠ key 一定有效',
+      };
+    }
+    if (res.status === 401 || res.status === 403) {
+      return { ok: false, ms: Date.now() - t0, error: explain(res.status) };
+    }
+    // 其他状态（404/405…）继续往下试 chat
+  } catch (err) {
+    netError = err?.message || String(err);
+  }
+
+  // ② 最小 chat 请求（一些中转站没有 /models）
+  const mid = String(model || '').trim() || 'gpt-4o-mini';
+  try {
+    const res = await withTimeout(`${base}/chat/completions`, {
+      method: 'POST',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: mid,
+        messages: [{ role: 'user', content: 'hi' }],
+        max_tokens: 1,
+        stream: false,
+      }),
+    });
+    if (res.ok) {
+      return {
+        ok: true,
+        ms: Date.now() - t0,
+        via: `chat（用了 ${mid}）`,
+      };
+    }
+    return { ok: false, ms: Date.now() - t0, error: explain(res.status) };
+  } catch (err) {
+    const e = err?.message || String(err);
+    return {
+      ok: false,
+      ms: Date.now() - t0,
+      error: netError
+        ? `连不上：${netError}`
+        : `连不上：${e}（地址打不开 / 不是 OpenAI 兼容接口 / 需要代理）`,
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 注册表（落盘 + CRUD）
 // ---------------------------------------------------------------------------
 
