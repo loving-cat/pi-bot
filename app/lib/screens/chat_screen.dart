@@ -207,6 +207,11 @@ class _ChatScreenState extends State<ChatScreen> {
       12.0,
       (MediaQuery.sizeOf(context).width - 1180) / 2,
     );
+    // ★ 群里左边要**减掉头像列**（34+8=42）。
+    //   头像列是内容的一部分；如果两边留白一样大，群里的气泡会整体右移 42px ——
+    //   肉眼看就是"群聊的列比私聊窄了一截"（用户报的）。
+    //   减掉之后，气泡的左右边缘在私聊和群聊里落在同一个位置。
+    final leftPad = room.isGroup ? math.max(12.0, sidePad - 42) : sidePad;
 
     return Scaffold(
       backgroundColor: PB.bgPane,
@@ -348,11 +353,12 @@ class _ChatScreenState extends State<ChatScreen> {
                       ExcludeFocus(
                         child: ListView.builder(
                           controller: _scroll,
-                          // ★ 居中限宽：窗口拉宽时，左右留白跟着长（最多到 940），
-                          //   气泡就不会被吸附到窗口两边 —— 和 bot 的对话始终
-                          //   保持在一个容易读的列宽里。
+                          // ★ 居中限宽：窗口拉宽时左右留白跟着长（内容列最多 1180），
+                          //   气泡就不会被吸附到窗口两边。
+                          //   左边用 leftPad：群里减掉头像列那 42px，
+                          //   这样气泡的左右边缘在私聊/群聊里落在同一位置。
                           padding: EdgeInsets.fromLTRB(
-                            sidePad,
+                            leftPad,
                             20,
                             sidePad,
                             20,
