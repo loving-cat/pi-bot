@@ -12,6 +12,7 @@ import 'package:pi_bot/models.dart';
 import 'package:pi_bot/scope.dart';
 import 'package:pi_bot/screens/chat_screen.dart';
 import 'package:pi_bot/screens/home_shell.dart';
+import 'package:pi_bot/screens/rooms_screen.dart';
 import 'package:pi_bot/widgets/blob_avatar.dart';
 
 Room _room(String id, String name) =>
@@ -81,5 +82,54 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(tester.widget<ChatScreen>(find.byType(ChatScreen)).room.id, 'r2');
+  });
+
+  testWidgets('★ 先把左栏拖宽、再把窗口缩小 —— 布局不能崩', (tester) async {
+    // 用户报的"偶发会整个布局混乱"。原因：两栏宽度**只在拖动分隔条时**被
+    // 夹进合法范围 —— 于是"先拖宽、再缩小窗口"时，固定宽度会超过窗口总宽，
+    // Expanded 拿到负空间，整个布局崩坏，而且**一直保持**（不拖回去恢复不了）。
+    // 现在改成渲染前按可用宽度夹一次。
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final state = _stateWith([_room('r1', '甲'), _room('r2', '乙')]);
+    addTearDown(state.dispose);
+    await tester.pumpWidget(
+      AppScope(state: state, child: const MaterialApp(home: HomeShell())),
+    );
+    await tester.pump();
+
+    // 抓住左边那条分隔条，往右拖 300px（想把它拖到 480 的上限）
+    final handle = find
+        .byWidgetPredicate(
+          (w) => w is MouseRegion && w.cursor == SystemMouseCursors.resizeLeftRight,
+        )
+        .first;
+    await tester.drag(handle, const Offset(300, 0));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(tester.takeException(), isNull);
+
+    // 再把右侧面板打开（点顶部胶囊）—— 左栏 480 + 面板 340 = 820，
+    // 这时候窗口一缩就必然超宽
+    await tester.tap(find.text('甲').last);
+    await tester.pumpAndSettle();
+
+    // 缩小到 800 逻辑宽（仍在分栏阈值 760 之上）：
+    // 480 + 6 + 6 + 340 = 832 > 800 → 不夹的话必然溢出
+    tester.view.physicalSize = const Size(800, 700);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // ★ 关键断言：不能出现布局溢出
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: '缩窗口后固定宽度超了总宽 → 会报 RenderFlex overflow（布局崩坏）',
+    );
+
+    // 而且缩回去之后左栏不该还赖着 480
+    final sidebar = tester.getSize(find.byType(RoomsScreen).first);
+    expect(sidebar.width, lessThan(560), reason: '左栏要按可用宽度让出来（不能还赖着 480）');
   });
 }
