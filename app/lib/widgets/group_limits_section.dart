@@ -23,6 +23,9 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
   final _member = TextEditingController();
   final _runs = TextEditingController();
   final _steps = TextEditingController();
+
+  /// 单轮最长几分钟（存的是毫秒，界面给人看分钟 —— 用户报的"为什么会有超过 300 秒中断"）
+  final _turnMin = TextEditingController();
   bool _dirty = false;
   bool _saving = false;
 
@@ -32,6 +35,7 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
     _member.dispose();
     _runs.dispose();
     _steps.dispose();
+    _turnMin.dispose();
     super.dispose();
   }
 
@@ -41,6 +45,8 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
     _member.text = '${l['memberTurns'] ?? 2}';
     _runs.text = '${l['maxRuns'] ?? 10}';
     _steps.text = '${l['maxSteps'] ?? 30}';
+    final ms = l['turnMaxMs'] ?? 600000;
+    _turnMin.text = '${(ms / 60000).round()}';
   }
 
   Future<void> _save() async {
@@ -50,6 +56,8 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
       'memberTurns': int.tryParse(_member.text.trim()) ?? 0,
       'maxRuns': int.tryParse(_runs.text.trim()) ?? 0,
       'maxSteps': int.tryParse(_steps.text.trim()) ?? 0,
+      // 界面填分钟，服务端收毫秒
+      'turnMaxMs': (int.tryParse(_turnMin.text.trim()) ?? 10) * 60000,
     });
     if (!mounted) return;
     setState(() {
@@ -127,6 +135,24 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
                   const SizedBox(width: 10),
                   _num('单次最多来回几轮', _steps, '30'),
                 ],
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  _num('单轮最长几分钟', _turnMin, '10'),
+                  const SizedBox(width: 10),
+                  const Expanded(child: SizedBox()),
+                ],
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                '一个成员一轮最多跑这么久，到点收住交给别人 —— 防止一个人把整个部门卡住。'
+                '写代码这类慢活可以调大（比如 20）。',
+                style: TextStyle(
+                  fontSize: PB.fsXxs,
+                  color: PB.textQuaternary,
+                  height: 1.6,
+                ),
               ),
             ],
           ),
