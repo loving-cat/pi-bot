@@ -355,7 +355,7 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
   bool _sending = false;
 
   /// 每帧朝目标靠多少：越大越跟手，越小越飘
-  static const _follow = 0.38;
+  static const _follow = 0.55;
 
   /// 差这么小就直接吸附（否则永远差半个像素、Ticker 停不下来）
   static const _snap = 0.75;
@@ -367,8 +367,22 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
   ///   变化没有增量路径，每次都整窗重来）。窗口越大越卡。
   ///   限到 ~30 次/秒之后重排少一半，而视觉上完全看不出差别 ——
   ///   因为我们永远发的是**最新位置**（合并，不排队），不会落后。
-  static const _minSendGap = Duration(milliseconds: 28);
-  DateTime? _lastSend;
+  /// 限流放宽到 12ms（≈每帧一发）。
+  ///
+  /// 原来设 28ms（~30 次/秒）是为了省掉"每秒 60 次整窗重排"。但那是**内容没降级**
+  /// 时候的账 —— 现在拖动期间内容已经冻成骨架，每帧只要 ~6-7ms（实测），
+  /// 平台完全撑得住 60 次/秒。
+  /// 而 30 次/秒的代价是"窗口几何一秒只更新 30 次"，快速拖动时每步跨很大，
+  /// 看着就是一顿一顿（用户报的"不丝滑、卡卡的"）。
+  /// 所以：**留着限流当保险（防止平台真的顶不住时堆积），但把闸门放到几乎不生效**。
+  static const _minSendGap = Duration(milliseconds: 12);
+
+  /// 上一次发送的**帧时间戳**（不是墙钟时间）。
+  ///
+  /// 为什么用帧时钟：限流的本质是"别让一帧里发多次"，而帧时钟正是这件事的标尺；
+  /// 墙钟（DateTime.now）在单测里还会骗人 —— `pump(16ms)` 推进的是假时钟，
+  /// 墙钟只走了几毫秒，于是 12 帧全被拒掉（我就是这么发现的）。
+  Duration? _lastSendAt;
 
   @override
   void initState() {
@@ -409,10 +423,10 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
     //   然后一帧跳一大截 —— 看着就是一顿一顿的（和"闪"混在一起）。
     //   小幅度微调用插值（丝滑），大幅度直接跟手。
     final far =
-        (target.left - cur.left).abs() > 60 ||
-        (target.top - cur.top).abs() > 60 ||
-        (target.right - cur.right).abs() > 60 ||
-        (target.bottom - cur.bottom).abs() > 60;
+        (target.left - cur.left).abs() > 80 ||
+        (target.top - cur.top).abs() > 80 ||
+        (target.right - cur.right).abs() > 80 ||
+        (target.bottom - cur.bottom).abs() > 80;
     if (far) {
       _current = target;
       _send(target);
@@ -441,14 +455,14 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
   /// 上一发还没落地就跳过 —— 堆起来只会抖，不会更快。
   void _send(Rect r) {
     if (_sending) return;
-    final now = DateTime.now();
-    final last = _lastSend;
-    if (last != null && now.difference(last) < _minSendGap) {
+    final now = SchedulerBinding.instance.currentFrameTimeStamp;
+    final last = _lastSendAt;
+    if (last != null && now - last < _minSendGap) {
       // 还太密 —— 这一帧不发。Ticker 还在跑，_current/_target 一直在更新，
       // 下一次 tick 会带着**最新的**位置发出去（所以不会积压、不会落后）
       return;
     }
-    _lastSend = now;
+    _lastSendAt = now;
     // 尺寸几乎没变就别发 —— 每次 setBounds 都是一次平台往返 + 一次整窗重建，
     // 亚像素级别的抖动不值得那个代价（在窗口缩放这种高频路径上尤其）
     final prev = _lastBounds;
@@ -595,7 +609,7 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
 
   /// 松手：清掉间隔闸（让最后落点立刻生效）+ 结束降级渲染
   void _endDrag() {
-    _lastSend = null;
+    _lastSendAt = null;
     _resizeQuiet?.cancel();
     _resizeQuiet = Timer(const Duration(milliseconds: 140), () {
       if (mounted) appResizing.value = false;
@@ -606,7 +620,7 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
     _edge = edge;
     _startPointer = d.globalPosition;
     _lastBounds = null;
-    _lastSend = null;
+    _lastSendAt = null;
     _markResizing();
     try {
       _startBounds = await windowManager.getBounds();
