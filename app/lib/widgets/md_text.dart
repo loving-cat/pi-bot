@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../text_utils.dart';
+import '../highlight.dart';
 import '../theme.dart';
 import 'blob_avatar.dart';
 
@@ -512,6 +513,31 @@ List<_Block> _parse(String src) {
 // 代码块 / 表格
 // ---------------------------------------------------------------------------
 
+
+/// 语法着色的调色板。
+///
+/// 只用设计系统里已有的令牌（不另造颜色）—— 聊天窗口里代码块不该比正文更花。
+/// 未知/纯文本不染色，交给基础样式（也就是"看起来没高亮"，但那是对的）。
+TextStyle? _syntaxStyle(TokKind kind, TextStyle base) {
+  switch (kind) {
+    case TokKind.keyword:
+      return base.copyWith(color: PB.accent, fontWeight: FontWeight.w500);
+    case TokKind.str:
+      return base.copyWith(color: PB.success);
+    case TokKind.comment:
+      return base.copyWith(color: PB.textQuaternary, fontStyle: FontStyle.italic);
+    case TokKind.number:
+      return base.copyWith(color: PB.accentBright);
+    case TokKind.type:
+      return base.copyWith(color: PB.textPrimary, fontWeight: FontWeight.w500);
+    case TokKind.fn:
+      return base.copyWith(color: PB.accentBright);
+    case TokKind.punct:
+    case TokKind.plain:
+      return null;
+  }
+}
+
 class _CodeBlock extends StatelessWidget {
   const _CodeBlock({
     required this.language,
@@ -577,7 +603,17 @@ class _CodeBlock extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
-              child: SelectableText(code.trimRight(), style: style),
+              // 自己写的小分词器上色（见 lib/highlight.dart）：
+              // 认不出的语言一律当纯文本，绝不猜；纯文本时行为和以前一样。
+              child: SelectableText.rich(
+                TextSpan(
+                  children: [
+                    for (final t in highlightCode(code.trimRight(), language))
+                      TextSpan(text: t.text, style: _syntaxStyle(t.kind, style)),
+                  ],
+                ),
+                style: style,
+              ),
             ),
           ),
         ],
