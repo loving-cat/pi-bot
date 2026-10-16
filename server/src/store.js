@@ -50,6 +50,49 @@ export const GROUP_LIMITS_DEFAULT = {
   turnMaxMs: 600_000,
 };
 
+/**
+ * 部门规矩（行为约束，和上面的预算分开）。
+ *
+ * 预算管的是"能跑多久/几轮"；规矩管的是"能不能拆家"。
+ * 预算全是数字，规矩不是 —— 所以存在单独一份，不要往 GROUP_LIMITS_DEFAULT 里塞。
+ */
+export const POLICY_DEFAULT = {
+  /**
+   * 危险动作：allow = 照常；deny = 不给改文件/跑命令的工具（只读部门）。
+   *
+   * 这是**能真拦住的**那一种约束：不给工具，它就干不了。
+   * （"需要批准"那一档要接审批闸门，等有真实需求再做。）
+   */
+  dangerous: 'allow',
+  /** 交付必须附证据：命令输出 / 文件路径 / 测试结果，而不是一句"改好了" */
+  requireProof: false,
+};
+
+function normalizePolicy(patch = {}, base = POLICY_DEFAULT) {
+  return {
+    dangerous: patch.dangerous === 'deny' ? 'deny' : patch.dangerous === 'allow' ? 'allow' : base.dangerous,
+    requireProof:
+      patch.requireProof === undefined ? base.requireProof : Boolean(patch.requireProof),
+  };
+}
+
+/**
+ * 只读部门要拿掉哪些工具。
+ * read/ls/find/grep 留着（看还是能看的），改东西和跑命令的一律收走。
+ */
+export const MUTATING_TOOLS = ['write', 'edit', 'bash', 'powershell'];
+
+/**
+ * 按部门规矩算出这个会话真正拿得到的工具集。
+ *
+ * 抽成纯函数是为了能单测：这条判断决定"bot 能不能拆家"，
+ * 写错了（比如只读部门还留着 bash）从界面上根本看不出来。
+ */
+export function toolsForPolicy(baseTools = [], policy = POLICY_DEFAULT) {
+  if (policy?.dangerous !== 'deny') return [...baseTools];
+  return baseTools.filter((t) => !MUTATING_TOOLS.includes(t));
+}
+
 function positiveIntOrDefault(v, fallback) {
   const n = Number(v);
   if (!Number.isFinite(n) || n <= 0) return fallback;
@@ -421,6 +464,20 @@ export class Store {
     this.state.groupLimits = next;
     this.scheduleSave();
     bus.emit('event', { t: 'groupLimits.updated', limits: next });
+    return next;
+  }
+
+  /** 当前的部门规矩 */
+  policy() {
+    return normalizePolicy(this.state.policy ?? {}, POLICY_DEFAULT);
+  }
+
+  /** 改部门规矩。改完会广播，正在跑的会话下一轮就会拿到新的工具集 */
+  updatePolicy(patch = {}) {
+    const next = normalizePolicy(patch, this.policy());
+    this.state.policy = next;
+    this.scheduleSave();
+    bus.emit('event', { t: 'policy.updated', policy: next });
     return next;
   }
 

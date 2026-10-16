@@ -9,7 +9,7 @@ import { lanAddresses } from './pairing.js';
 import { modelGroups, testModelGroup } from './model-groups.js';
 import { store } from './store.js';
 import { metaFor, pathFor, saveBuffer } from './attachments.js';
-import { timingSafeEqual } from './util.js';
+import { timingSafeEqual, log } from './util.js';
 
 function send(res, status, body) {
   const payload = JSON.stringify(body ?? {});
@@ -154,6 +154,7 @@ export function createHttpServer({ runner, pairing }) {
           modelGroups: modelGroups.listPublic(),
           // 群聊轮次预算（防止 bot 解不了就互相聊个没完）
           groupLimits: store.groupLimits(),
+          policy: store.policy(),
           // 用户自己是谁（bot 要知道在跟谁说话）
           user: store.userSummary(),
           pairing: config.staticToken ? null : pairing.snapshot(),
@@ -242,6 +243,19 @@ export function createHttpServer({ runner, pairing }) {
       // ---------- 群聊轮次预算 ----------
       if (pathname === '/api/group-limits' && req.method === 'GET') {
         return send(res, 200, { limits: store.groupLimits() });
+      }
+      // ---------- 部门规矩（危险动作 / 交付要附证据）----------
+      if (pathname === '/api/policy' && req.method === 'GET') {
+        return send(res, 200, { policy: store.policy() });
+      }
+      if (pathname === '/api/policy' && req.method === 'PATCH') {
+        const body = await readBody(req);
+        const policy = store.updatePolicy(body);
+        log(
+          `⚙️  部门规矩改为：危险动作 ${policy.dangerous === 'deny' ? '只读（不给改文件/跑命令的工具）' : '允许'} / ` +
+            `交付${policy.requireProof ? '必须附证据' : '不强求证据'}`,
+        );
+        return send(res, 200, { policy });
       }
       if (pathname === '/api/group-limits' && req.method === 'PATCH') {
         const body = await readBody(req);
