@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -142,6 +143,61 @@ class _WinBtnState extends State<_WinBtn> {
   }
 }
 
+/// 算出"拖动之后窗口该是哪块矩形"（逻辑像素）。
+///
+/// 抽成纯函数是为了能单测：这段数学错了的表现是"某个方向拖起来不对劲"，
+/// 手感问题最难靠肉眼定位，而这里一行 assert 就能钉死。
+///
+/// 约定：start 是拖动开始时的窗口矩形，delta 是鼠标相对起点的位移，
+/// edge 是抓的哪条边/哪个角。只有被抓住的那些边会跟着动。
+Rect resizeBy({
+  required Rect start,
+  required Offset delta,
+  required ResizeEdge edge,
+  required Size minSize,
+}) {
+  var l = start.left;
+  var t = start.top;
+  var r = start.right;
+  var b = start.bottom;
+
+  const leftEdges = {ResizeEdge.left, ResizeEdge.topLeft, ResizeEdge.bottomLeft};
+  const rightEdges = {
+    ResizeEdge.right,
+    ResizeEdge.topRight,
+    ResizeEdge.bottomRight,
+  };
+  const topEdges = {ResizeEdge.top, ResizeEdge.topLeft, ResizeEdge.topRight};
+  const bottomEdges = {
+    ResizeEdge.bottom,
+    ResizeEdge.bottomLeft,
+    ResizeEdge.bottomRight,
+  };
+
+  if (leftEdges.contains(edge)) l += delta.dx;
+  if (rightEdges.contains(edge)) r += delta.dx;
+  if (topEdges.contains(edge)) t += delta.dy;
+  if (bottomEdges.contains(edge)) b += delta.dy;
+
+  // 顶到最小尺寸时，只把"正在被拖的那条边"卡住，另一条边不许动 ——
+  // 否则窗口会自己往反方向漂（拖右下角拖过头，左上角会跟着跑）。
+  if (r - l < minSize.width) {
+    if (leftEdges.contains(edge)) {
+      l = r - minSize.width;
+    } else {
+      r = l + minSize.width;
+    }
+  }
+  if (b - t < minSize.height) {
+    if (topEdges.contains(edge)) {
+      t = b - minSize.height;
+    } else {
+      b = t + minSize.height;
+    }
+  }
+  return Rect.fromLTRB(l, t, r, b);
+}
+
 /// 无边框窗口的**八向缩放热区**。
 ///
 /// `setAsFrameless()` 去掉了系统标题栏，Windows 的窗口过程就不再给边框做命中
@@ -171,6 +227,11 @@ class WindowResizeOverlay extends StatefulWidget {
 class _WindowResizeOverlayState extends State<WindowResizeOverlay>
     with WindowListener {
   bool _maximized = false;
+
+  // 拖动过程中的基准：起点矩形 + 起点鼠标位置 + 抓的是哪条边
+  Rect? _startBounds;
+  Offset? _startPointer;
+  ResizeEdge? _edge;
 
   @override
   void initState() {
@@ -287,6 +348,40 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
     );
   }
 
+  /// 拖动开始：记下窗口当前的矩形和鼠标位置。
+  ///
+  /// 这里**不用** windowManager.startResizing —— 那条路会进 Windows 的原生
+  /// 模态缩放循环，WM_SIZE 按消息速率猛刷，每一发都要把整个窗口重新光栅化一遍
+  /// （实测拉伸时 raster 5~8ms、20~30% 的帧超过 16ms 预算，拖起来就是"不丝滑"）。
+  /// 改成自己算：每个 pointer 事件算一次矩形交给 setBounds，节奏跟着 Flutter
+  /// 的帧走，不跟系统消息队列赛跑。
+  Future<void> _beginDrag(ResizeEdge edge, DragStartDetails d) async {
+    _edge = edge;
+    _startPointer = d.globalPosition;
+    try {
+      _startBounds = await windowManager.getBounds();
+    } catch (_) {
+      _startBounds = null; // 拿不到就不拖，别乱跳
+    }
+  }
+
+  void _dragTo(DragUpdateDetails d) {
+    final start = _startBounds;
+    final from = _startPointer;
+    final edge = _edge;
+    if (start == null || from == null || edge == null) return;
+    unawaited(
+      windowManager.setBounds(
+        resizeBy(
+          start: start,
+          delta: d.globalPosition - from,
+          edge: edge,
+          minSize: kWindowMinSize,
+        ),
+      ),
+    );
+  }
+
   Widget _zone({
     double? left,
     double? top,
@@ -308,7 +403,8 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
         cursor: cursor,
         child: GestureDetector(
           behavior: HitTestBehavior.translucent,
-          onPanStart: (_) => windowManager.startResizing(edge),
+          onPanStart: (d) => _beginDrag(edge, d),
+          onPanUpdate: _dragTo,
         ),
       ),
     );
