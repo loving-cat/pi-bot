@@ -24,6 +24,8 @@ dependencies:
   window_manager: ^0.5.2
   # 拿显示器可用区域（拖动时把窗口夹在当前屏内，避免跨屏触发 DPI 重缩放）
   screen_retriever: ^0.2.2
+  # 桌面端：把附件（pdf/word/图片…）直接拖进聊天框
+  desktop_drop: ^0.5.0
 
 dev_dependencies:
   flutter_test:
