@@ -674,8 +674,11 @@ class _BlobPainter extends CustomPainter {
     //   emoji 自带的白/橙/紫和 blob 的颜色互相打架，像贴歪了的贴纸。
     //   纯色块 + 两只眼睛干净得多；emoji 降级成小角标。
     //
-    // 眼睛：两个圆角竖条，眨眼时压扁
-    final eyeW = size.shortestSide * 0.112;
+    // 眼睛：两个圆角竖条，眨眼时压扁。
+    // 侧看的时候再横向压扁一点（真实的脸转过去时眼白就是变窄的）——
+    // 这一下比单纯平移更能让人感觉到"它在看着你"。
+    final side = (gaze.dx / (size.shortestSide * 0.16)).clamp(-1.0, 1.0);
+    final eyeW = size.shortestSide * 0.112 * (1 - 0.22 * side.abs());
     final eyeH = size.shortestSide * 0.195 * (1 - blink * 0.84);
     final eyePaint = Paint()
       ..color = Color.lerp(color, Colors.black, 0.84)!.withValues(alpha: 0.95);
