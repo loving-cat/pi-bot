@@ -1374,6 +1374,124 @@ await test('看门狗：start 是幂等的，不会起两个定时器', () => {
   assert.equal(wd.running, false);
 });
 
+
+// ---------------------------------------------------------------------------
+// 附件输入拼装（prompt-input.js）+ 自动附图（image-watch.js）
+// ---------------------------------------------------------------------------
+const { createBuildInput } = await import('../src/prompt-input.js');
+const { snapshotImages, diffImages, collectNewImages } = await import('../src/image-watch.js');
+
+await test('拼输入：只有文字 → 原样给它', async () => {
+  const build = createBuildInput({
+    workspace: '/ws',
+    metaFor: () => null,
+    inboxPath: () => null,
+    attachmentBlock: async () => '',
+  });
+  const r = await build('帮我看下', []);
+  assert.equal(r.promptText, '帮我看下');
+  assert.deepEqual(r.imageIds, []);
+});
+
+await test('拼输入：图片走视觉，不抽正文', async () => {
+  let called = 0;
+  const build = createBuildInput({
+    workspace: '/ws',
+    metaFor: (id) => ({ id, name: 'a.png', kind: 'image' }),
+    inboxPath: () => '/ws/_inbox/a.png',
+    attachmentBlock: async () => {
+      called++;
+      return '';
+    },
+  });
+  const r = await build('', ['f1']);
+  assert.deepEqual(r.imageIds, ['f1']);
+  assert.equal(called, 0, '图片不该走正文提取');
+  assert.match(r.promptText, /用户发了 1 张图/);
+});
+
+await test('拼输入：文档抽出正文 + 告诉它原文件在哪', async () => {
+  const build = createBuildInput({
+    workspace: '/ws',
+    metaFor: (id) => ({ id, name: '报表.xlsx', kind: 'doc' }),
+    inboxPath: (id) => `/ws/_inbox/${id}.xlsx`,
+    attachmentBlock: async () => '【报表.xlsx 的正文】\n数字',
+  });
+  const r = await build('看看这个', ['f9']);
+  assert.match(r.promptText, /看看这个/);
+  assert.match(r.promptText, /报表.xlsx 的正文/);
+  assert.match(r.promptText, /_inbox\/f9.xlsx/, '要告诉它原文件在工作目录哪');
+  assert.match(r.promptText, /extract_file/, '要告诉它重读时用哪个工具');
+});
+
+await test('拼输入：附件拿不到元数据就跳过，不炸', async () => {
+  const build = createBuildInput({
+    workspace: '/ws',
+    metaFor: () => null,
+    inboxPath: () => null,
+    attachmentBlock: async () => 'x',
+  });
+  const r = await build('', ['不存在']);
+  assert.equal(r.promptText, '');
+});
+
+await test('★ 自动附图：截图只认工作目录里的图，跳过 node_modules 和点目录', () => {
+  const root = 'D:\pi-bot\server\data\_unit_test\iwatch';
+  fs.rmSync(root, { recursive: true, force: true });
+  fs.mkdirSync(path.join(root, 'out'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'node_modules'), { recursive: true });
+  fs.mkdirSync(path.join(root, '.cache'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'out', 'a.png'), 'x');
+  fs.writeFileSync(path.join(root, 'out', 'b.txt'), 'x');
+  fs.writeFileSync(path.join(root, 'node_modules', 'c.png'), 'x');
+  fs.writeFileSync(path.join(root, '.cache', 'd.png'), 'x');
+
+  const snap = snapshotImages(root);
+  const names = [...snap.keys()].map((f) => path.basename(f));
+  assert.deepEqual(names, ['a.png'], '只该看到 out/a.png');
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+await test('★ 自动附图：刚写出来的算新，没动过的算旧', () => {
+  const root = 'D:\pi-bot\server\data\_unit_test\iwatch2';
+  fs.rmSync(root, { recursive: true, force: true });
+  fs.mkdirSync(root, { recursive: true });
+  const oldFile = path.join(root, 'old.png');
+  fs.writeFileSync(oldFile, 'x');
+  const before = snapshotImages(root);
+
+  fs.writeFileSync(path.join(root, 'new.png'), 'y');
+  // 同名覆盖：把时间戳明确往后拨（5ms 容差是故意的，防文件系统抖动 ——
+  // 所以"刚刚重写"未必算新，但"明显变新"必须算）
+  const later = new Date(Date.now() + 60_000);
+  fs.utimesSync(oldFile, later, later);
+  const fresh = diffImages(root, before).map((f) => path.basename(f.file));
+  assert.ok(fresh.includes('new.png'), '新出现的要认出来');
+  assert.ok(fresh.includes('old.png'), '明显变新的也要认出来（同名覆盖）');
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+await test('自动附图：单张保存失败不影响其它张', () => {
+  const root = 'D:\pi-bot\server\data\_unit_test\iwatch3';
+  fs.rmSync(root, { recursive: true, force: true });
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(path.join(root, 'a.png'), 'x');
+  fs.writeFileSync(path.join(root, 'b.png'), 'y');
+  const before = new Map();
+  let n = 0;
+  const out = collectNewImages(root, before, {
+    save: (file) => {
+      n++;
+      if (file.endsWith('a.png')) throw new Error('存不下');
+      return { id: 'i' + n, name: 'b.png', mime: 'image/png', kind: 'image', size: 1 };
+    },
+    onError: () => {},
+  });
+  assert.equal(out.length, 1, '坏的那张跳过，好的那张照样收');
+  assert.equal(out[0].name, 'b.png');
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
 const passed = results.filter((r) => r.ok).length;
 
 console.log('\n================ 单元测试 ================');
