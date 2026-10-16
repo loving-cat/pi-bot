@@ -309,36 +309,48 @@ class _ChatScreenState extends State<ChatScreen> {
                 ? _EmptyHint(room: room, lead: lead)
                 : Stack(
                     children: [
-                      ListView.builder(
-                        controller: _scroll,
-                        padding: const EdgeInsets.fromLTRB(12, 16, 12, 16),
-                        itemCount: msgs.length,
-                        itemBuilder: (ctx, i) {
-                          final msg = msgs[i];
-                          final prev = i > 0 ? msgs[i - 1] : null;
-                          final newAuthor =
-                              prev == null ||
-                              prev.authorId != msg.authorId ||
-                              prev.authorType != msg.authorType ||
-                              (msg.createdAt - prev.createdAt) > 5 * 60 * 1000;
-                          // 不居中：整行铺满，bot 贴左、我贴右
-                          return _Appear(
-                            key: ValueKey(msg.id),
-                            child: _MessageRow(
-                              msg: msg,
-                              showAuthor: newAuthor,
-                              bot: state.botById(msg.authorId),
-                              isGroup: room.isGroup,
-                              mentions: room.botNames,
-                              isLead:
-                                  room.isGroup &&
-                                  msg.authorId != null &&
-                                  msg.authorId == room.leadBotId,
-                              onLongPress: () =>
-                                  showMessageActions(context, msg),
-                            ),
-                          );
-                        },
+                      // ★ 消息列表整块**不许抢焦点**。
+                      //
+                      //   列表里每条消息的 MdText 默认 selectable: true，底层是
+                      //   SelectableText.rich —— 它会自己建 FocusNode。而流式输出时
+                      //   消息每 80ms 重建一次，这些节点就在焦点竞争里把焦点从输入框
+                      //   拽走：用户打字打一半断掉，得重新点一下输入框。
+                      //
+                      //   ExcludeFocus 从根上关掉这条路。代价是消息里不能再用键盘
+                      //   Ctrl+C —— 但每条消息长按有「复制」菜单，功能没丢。
+                      ExcludeFocus(
+                        child: ListView.builder(
+                          controller: _scroll,
+                          padding: const EdgeInsets.fromLTRB(12, 16, 12, 16),
+                          itemCount: msgs.length,
+                          itemBuilder: (ctx, i) {
+                            final msg = msgs[i];
+                            final prev = i > 0 ? msgs[i - 1] : null;
+                            final newAuthor =
+                                prev == null ||
+                                prev.authorId != msg.authorId ||
+                                prev.authorType != msg.authorType ||
+                                (msg.createdAt - prev.createdAt) >
+                                    5 * 60 * 1000;
+                            // 不居中：整行铺满，bot 贴左、我贴右
+                            return _Appear(
+                              key: ValueKey(msg.id),
+                              child: _MessageRow(
+                                msg: msg,
+                                showAuthor: newAuthor,
+                                bot: state.botById(msg.authorId),
+                                isGroup: room.isGroup,
+                                mentions: room.botNames,
+                                isLead:
+                                    room.isGroup &&
+                                    msg.authorId != null &&
+                                    msg.authorId == room.leadBotId,
+                                onLongPress: () =>
+                                    showMessageActions(context, msg),
+                              ),
+                            );
+                          },
+                        ),
                       ),
                       // 顶部渐变：消息滚上去时柔和淡出，而不是被标题栏硬切
                       Positioned(
@@ -776,6 +788,10 @@ class _ComposerState extends State<_Composer> {
                       child: TextField(
                         controller: controller,
                         focusNode: widget.focus,
+                        // ★ 进会话就聚焦输入框 —— 用户不用先点一下才能打字。
+                        //   ChatScreen 按房间 id 加了 key，切到任意 bot 都会重建一次，
+                        //   autofocus 跟着再触发一次，行为一致。
+                        autofocus: true,
                         minLines: 1,
                         maxLines: 6,
                         keyboardType: TextInputType.multiline,
@@ -1062,13 +1078,17 @@ class _MessageRow extends StatelessWidget {
     return Padding(
       padding: EdgeInsets.only(top: showAuthor ? 16 : 3),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        // ★ 头像**贴底**，不是贴顶 —— 这样气泡就落在头像的右上方，
+        //   同时名字/职位在气泡的左上方。三者的相对位置一眼看清是谁在说。
+        //   （以前是 CrossAxisAlignment.start，头像顶在最上面，名字反而跑到它右边。）
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           if (showAvatar) ...[
             SizedBox(
               width: 34,
               child: Padding(
-                padding: const EdgeInsets.only(top: 2),
+                // 往下留一点，别和气泡的最后一行贴死
+                padding: const EdgeInsets.only(bottom: 2),
                 child: BlobAvatar(
                   seed: msg.authorId ?? displayName,
                   color: accent,
