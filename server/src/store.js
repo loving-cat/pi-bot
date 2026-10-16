@@ -598,6 +598,135 @@ export class Store {
 
   // ---------- 会话文件 ----------
 
+  /**
+   * 造一帮人 + 开一个部门（原本写在主控的 create_department 工具里）。
+   *
+   * 抽进 store 是因为现在有两条路要用同一套逻辑：主控现凑班子、照模板开张。
+   * 两边行为必须一致（重名复用、老大按名字匹配…），否则模板开出来的部门
+   * 和手工建的总会差一点。
+   */
+  createDepartment({ name, topic = '', members = [], lead = null, createdBy = null }) {
+    const created = [];
+    for (const m of members.filter((x) => x?.name)) {
+      const dup = this.listBots().find((b) => b.name === m.name);
+      if (dup) {
+        created.push(dup);
+        continue;
+      }
+      created.push(
+        this.createBot({
+          name: m.name,
+          persona: m.persona,
+          emoji: m.emoji,
+          tagline: m.tagline,
+          model: m.model ?? null,
+          thinking: m.thinking ?? undefined,
+          skills: m.skills,
+          createdBy: createdBy ?? 'chief',
+        }),
+      );
+    }
+    // 老大按名字匹配；匹配不上就退回第一个（宁可开出来没老大，也别开不出来）
+    const leadBot = lead ? created.find((b) => b.name === lead) : null;
+    const room = this.createGroup({
+      name,
+      topic,
+      botIds: created.map((b) => b.id),
+      leadBotId: leadBot?.id ?? created[0]?.id,
+      createdBy,
+    });
+    return { room, bots: created };
+  }
+
+  // ---------- 部门模板 ----------
+
+  /** 这台机器上存着的部门模板 */
+  templates() {
+    return Array.isArray(this.state.templates) ? this.state.templates : [];
+  }
+
+  /**
+   * 从现成的部门存一份模板。
+   *
+   * 只存"班子"（人 + 人设 + 模型 + 技能）和谁当老大；
+   * **不存**消息、不存会话 —— 模板要能反复用，带上历史就变成快照了。
+   */
+  saveTemplateFromRoom(roomId, { name = '' } = {}) {
+    const room = this.getRoom(roomId);
+    if (!room) return { error: '部门不存在' };
+    const members = room.botIds
+      .map((id) => this.getBot(id))
+      .filter(Boolean)
+      .map((b) => ({
+        name: b.name,
+        emoji: b.emoji ?? null,
+        tagline: b.tagline ?? '',
+        persona: b.persona ?? '',
+        model: b.model ?? null,
+        thinking: b.thinking ?? null,
+        skills: Array.isArray(b.skills) ? b.skills : [],
+      }));
+    if (!members.length) return { error: '这个部门里没人' };
+    return this.createTemplate({
+      name: name || room.name,
+      topic: room.topic ?? '',
+      lead: this.getBot(room.leadBotId)?.name ?? members[0].name,
+      members,
+    });
+  }
+
+  createTemplate({ name, topic = '', lead = null, members = [] } = {}) {
+    const clean = String(name || '').trim();
+    if (!clean) return { error: '模板得有个名字' };
+    const list = this.templates();
+    // 同名就覆盖（想"拿这个部门更新一下模板"时不用先删）
+    const kept = list.filter((t) => t.name !== clean);
+    const tpl = {
+      id: list.find((t) => t.name === clean)?.id ?? newId('tpl_'),
+      name: clean.slice(0, 60),
+      topic: String(topic || '').slice(0, 200),
+      lead: lead && members.some((m) => m.name === lead) ? lead : (members[0]?.name ?? null),
+      members: members.slice(0, 12).map((m) => ({
+        name: String(m.name || '').slice(0, 40),
+        emoji: m.emoji || null,
+        tagline: String(m.tagline || '').slice(0, 60),
+        persona: String(m.persona || '').slice(0, 4000),
+        model: m.model || null,
+        thinking: m.thinking || null,
+        skills: Array.isArray(m.skills) ? m.skills.slice(0, 40) : [],
+      })),
+      createdAt: now(),
+    };
+    this.state.templates = [...kept, tpl];
+    this.scheduleSave();
+    bus.emit('event', { t: 'templates.updated', templates: this.state.templates });
+    return { template: tpl };
+  }
+
+  deleteTemplate(id) {
+    const list = this.templates();
+    const next = list.filter((t) => t.id !== id);
+    if (next.length === list.length) return { error: '没有这个模板' };
+    this.state.templates = next;
+    this.scheduleSave();
+    bus.emit('event', { t: 'templates.updated', templates: next });
+    return { ok: true };
+  }
+
+  /** 照模板开一个部门（重名的人复用现成的，不重复造） */
+  applyTemplate(id, { name = '' } = {}) {
+    const tpl = this.templates().find((t) => t.id === id || t.name === id);
+    if (!tpl) return { error: '没有这个模板' };
+    const { room, bots } = this.createDepartment({
+      name: String(name || tpl.name).trim().slice(0, 60),
+      topic: tpl.topic,
+      members: tpl.members,
+      lead: tpl.lead,
+      createdBy: 'template',
+    });
+    return { room, bots, template: tpl };
+  }
+
   sessionFileFor(roomId, botId) {
     return this.state.sessions[`${roomId}:${botId}`] ?? null;
   }
