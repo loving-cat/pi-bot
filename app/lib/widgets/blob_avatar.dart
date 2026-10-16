@@ -289,17 +289,36 @@ class _Harmonic {
 /// 有的胶囊）。以前全项目只有一种"有机 blob"，一屏十几个头像看过去像同一块橡皮泥
 /// 捏出来的 —— 只靠换颜色区分，越看越廉价。
 enum _ShapeKind {
-  /// 有机 blob（三阶谐波，会缓慢扭动 —— 只有它是"活的"）
-  blob,
+  /// 正圆 —— 最中性，但单独用会显得偷懒，所以权重给得低
+  circle,
 
   /// 超椭圆（iOS 图标那种圆角方）
   squircle,
 
-  /// 圆角六边形
+  /// 圆角方再圆一档（介于圆和 squircle 之间）
+  cushion,
+
+  /// 正六边形（圆角）
   hexagon,
 
-  /// 胶囊（横向长一点的圆角矩形）
+  /// 胶囊（横向）
   pill,
+
+  /// 蛋形（下宽上窄，左右对称）
+  egg,
+
+  /// 菱形（圆角）
+  diamond,
+
+  /// 拱形（上圆下平）
+  arch,
+
+  /// 水滴（上尖下圆）
+  drop,
+
+  /// 有机 blob —— 留着这一个"活的"（会缓慢扭动），但幅度收得很小，
+  /// 只是"没那么死板"，不是歪瓜裂枣
+  blob,
 }
 
 /// 由 id 决定的形状参数：形状种类 + 三阶谐波 + 眼睛位置 + 倾角
@@ -325,39 +344,51 @@ class _BlobShape {
   factory _BlobShape.fromSeed(String seed) {
     final rng = math.Random(seed.hashCode & 0x7fffffff);
     double range(double a, double b) => a + rng.nextDouble() * (b - a);
-    // blob 占多数（只有它会扭动，是这套头像的"主调"），另外三种负责变化
-    final roll = rng.nextDouble();
-    final kind = roll < 0.40
-        ? _ShapeKind.blob
-        : roll < 0.63
-        ? _ShapeKind.squircle
-        : roll < 0.84
-        ? _ShapeKind.hexagon
-        : _ShapeKind.pill;
+    // ★ 形状从固定集合里挑，**不再用随机谐波生成轮廓**。
+    //   以前每个 bot 的轮廓是三阶正弦叠加算出来的 —— 每个都不一样，但每个
+    //   都"歪七扭八"：看不出是什么形状，也就没有辨识度（用户报的）。
+    //   现在十种规整对称的形状按权重分：圆的权重最低（太普通），
+    //   有性格的（蛋形/菱形/拱形/水滴/胶囊）权重高一些。
+    const weighted = <_ShapeKind>[
+      _ShapeKind.circle,
+      _ShapeKind.squircle,
+      _ShapeKind.squircle,
+      _ShapeKind.cushion,
+      _ShapeKind.cushion,
+      _ShapeKind.hexagon,
+      _ShapeKind.hexagon,
+      _ShapeKind.pill,
+      _ShapeKind.pill,
+      _ShapeKind.egg,
+      _ShapeKind.egg,
+      _ShapeKind.diamond,
+      _ShapeKind.arch,
+      _ShapeKind.drop,
+      _ShapeKind.blob,
+    ];
+    final kind = weighted[rng.nextInt(weighted.length)];
     return _BlobShape(
       kind,
+      // 只有 blob 用这几个谐波（幅度都收小了：最多 ±4%，只是"不那么死板"）
       [
         _Harmonic(
           2,
-          range(0.05, 0.12),
+          range(0.015, 0.035),
           rng.nextDouble() * 6.28,
           range(0.5, 1.0),
         ),
         _Harmonic(
           3,
-          range(0.03, 0.085),
+          range(0.01, 0.025),
           rng.nextDouble() * 6.28,
           range(-0.9, -0.4),
         ),
-        _Harmonic(
-          4,
-          range(0.015, 0.045),
-          rng.nextDouble() * 6.28,
-          range(0.7, 1.4),
-        ),
       ],
-      range(0.40, 0.48),
-      range(0.19, 0.235),
+      range(0.41, 0.48),
+      // ★ 眼睛间距比之前收一点（0.19~0.235 → 0.175~0.21）：
+      //   形状改成规整的之后，水滴/拱形这类在眼睛那一行比较窄，
+      //   原来的间距会让眼睛压到边缘。
+      range(0.175, 0.21),
       range(-0.16, 0.16),
       range(-0.22, 0.22),
     );
@@ -387,48 +418,114 @@ class _BlobPainter extends CustomPainter {
   final Offset gaze;
   final bool ring;
 
-  /// 按形状种类采样轮廓点（都绕中心一圈，角度递增）。
+  /// 按形状种类采样轮廓点（绕中心一圈，角度递增）。
   ///
-  /// 只有 blob 用 phase（会扭动）；其余三种是静的 —— 静止的形状更像"印章"，
-  /// 也不动，动了反而像果冻，廉价。
+  /// 全部**几何定义、左右对称**，没有随机扭曲 —— 随机谐波出来的轮廓
+  /// 每个都"不一样但都不像什么"，看着乱、也没有辨识度。
+  /// 只有 blob 那一种用 phase（唯一会动的），其余都是静态的：静止才像"印章"。
   List<Offset> _outline(Offset center, double baseRadius) {
+    final r = baseRadius;
     switch (shape.kind) {
+      case _ShapeKind.circle:
+        return _superellipse(center, r, r, 2.0);
+
+      case _ShapeKind.squircle:
+        return _superellipse(center, r, r, 4.2);
+
+      case _ShapeKind.cushion:
+        return _superellipse(center, r, r, 3.0);
+
+      case _ShapeKind.pill:
+        // 宽一点、扁一点 + 比 squircle 圆得多 → 一眼就是颗胶囊
+        return _superellipse(center, r * 1.12, r * 0.84, 2.8);
+
+      case _ShapeKind.hexagon:
+        // 平顶正六边形（旋转 90°，视觉上比尖顶更稳）；平滑那步会把角磨圆
+        return _rotate([
+          for (var i = 0; i < 6; i++)
+            () {
+              final t = i / 6 * 2 * math.pi;
+              return Offset(math.sin(t) * r, -math.cos(t) * r);
+            }(),
+        ], center);
+
+      case _ShapeKind.diamond:
+        // 四点朝上下左右；平滑之后是个圆角菱形
+        return [
+          for (var i = 0; i < 4; i++)
+            () {
+              final t = i / 4 * 2 * math.pi;
+              return center + Offset(math.cos(t) * r, math.sin(t) * r);
+            }(),
+        ];
+
+      case _ShapeKind.egg:
+        // 蛋形：左右对称，下半比上半宽 —— 靠"同一个 y 上 x 的缩放"做出来，
+        // 不用谐波（谐波会带来上下左右都不对称的抖动）
+        const steps = 48;
+        return [
+          for (var i = 0; i < steps; i++)
+            () {
+              final t = i / steps * 2 * math.pi;
+              final x = math.cos(t);
+              final y = math.sin(t);
+              // y > 0（下半）横向放大，y < 0（上半）横向收窄
+              final wide = 1 + 0.10 * y;
+              return center + Offset(x * r * wide, y * r);
+            }(),
+        ];
+
+      case _ShapeKind.arch:
+        // 拱形：上半圆 + 下半直边 + 平底
+        const steps = 48;
+        return [
+          for (var i = 0; i < steps; i++)
+            () {
+              final t = i / steps * 2 * math.pi;
+              final x = math.cos(t);
+              final y = math.sin(t);
+              if (y <= 0) return center + Offset(x * r, y * r);
+              // 下半：竖直下来，底部保持平的（稍微收一点角）
+              final k = y / 0.60;
+              return center +
+                  Offset(x * r * math.max(0.0, 1 - k * 0.06), r * 0.72);
+            }(),
+        ];
+
+      case _ShapeKind.drop:
+        // 水滴：下半圆 + 上半收成尖（顶点在上）
+        const steps = 48;
+        return [
+          for (var i = 0; i < steps; i++)
+            () {
+              final t = i / steps * 2 * math.pi;
+              final x = math.cos(t);
+              final y = math.sin(t);
+              // 上尖下圆：y<0 时横向收窄得越来越厉害
+              // 上尖下圆。收得太狠眼睛会跑到形状外面，0.55 是试出来的上限
+              final taper = y < 0 ? (1 + y * 0.55) : 1.0;
+              return center + Offset(x * r * taper, y * r * 1.06);
+            }(),
+        ];
+
       case _ShapeKind.blob:
-        const steps = 32;
+        // 唯一保留的一点"有机感"：谐波幅度已经收得很小（±4%），
+        // 看着是"没那么死板的圆"，不是歪瓜裂枣
+        const steps = 40;
         return [
           for (var i = 0; i < steps; i++)
             () {
               final theta = i / steps * 2 * math.pi;
-              var r = 1.0;
+              var rr = 1.0;
               for (final h in shape.harmonics) {
-                r +=
+                rr +=
                     h.amp *
                     math.sin(h.freq * theta + h.phase + phase * h.speed);
               }
               return center +
-                  Offset(
-                    math.cos(theta) * baseRadius * r,
-                    math.sin(theta) * baseRadius * r,
-                  );
+                  Offset(math.cos(theta) * r * rr, math.sin(theta) * r * rr);
             }(),
         ];
-
-      case _ShapeKind.squircle:
-        return _superellipse(center, baseRadius, baseRadius, 4.2);
-
-      case _ShapeKind.pill:
-        // 宽一点、扁一点 + 比 squircle 圆得多 → 看着就是颗胶囊
-        return _superellipse(center, baseRadius * 1.10, baseRadius * 0.88, 2.9);
-
-      case _ShapeKind.hexagon:
-        // 正六边形；顶点稍多留一点，平滑那一步会把角磨圆
-        return _rotate([
-          for (var i = 0; i < 6; i++)
-            () {
-              final t = i / 6 * 2 * math.pi + math.pi / 6;
-              return Offset(math.cos(t) * baseRadius, math.sin(t) * baseRadius);
-            }(),
-        ], center);
     }
   }
 
@@ -518,10 +615,13 @@ class _BlobPainter extends CustomPainter {
               // ★ 以前是 white 0.30 → 黑 0.26，再叠一层 white 0.26 高光 +
               //   white 0.30 描边 —— 四层白下来，调色板里的饱和色全被洗成粉彩，
               //   一屏头像看着发灰。这里只留一点体积感。
+              // 立体感就靠这一条渐变（**只开这一个 shader**）：
+              // 左上提亮一点点、右下压深一点点 —— 看着有体积，但整体仍然是
+              // "一块纯色"。四层 shader 那版是 2 倍光栅开销，这个只有 1/4。
               colors: [
-                Color.lerp(color, Colors.white, 0.12)!,
+                Color.lerp(color, Colors.white, 0.18)!,
                 color,
-                Color.lerp(color, Colors.black, 0.16)!,
+                Color.lerp(color, Colors.black, 0.22)!,
               ],
               stops: const [0.0, 0.52, 1.0],
             ).createShader(
@@ -535,7 +635,7 @@ class _BlobPainter extends CustomPainter {
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = math.max(1, size.shortestSide * 0.022)
-        ..color = Colors.white.withValues(alpha: 0.14),
+        ..color = Colors.white.withValues(alpha: 0.22),
     );
 
     if (ring) {
