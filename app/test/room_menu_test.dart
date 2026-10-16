@@ -15,17 +15,25 @@ import 'package:pi_bot/screens/rooms_screen.dart';
 import 'package:pi_bot/widgets/blob_avatar.dart';
 import 'package:pi_bot/widgets/floating_menu.dart';
 
-Room _room(String id, String name, {bool hidden = false}) => Room(
+Room _room(
+  String id,
+  String name, {
+  bool hidden = false,
+  List<String> botIds = const [],
+}) => Room(
   id: id,
   name: name,
   kind: 'dm',
-  botIds: const [],
+  // 注意要给可变列表：Room.botIds 是 final 但元素可变，
+  // 传 const [] 进去再 add 会抛 UnsupportedError
+  botIds: [...botIds],
   hidden: hidden,
 );
 
-AppState _stateWith(List<Room> rooms) {
+AppState _stateWith(List<Room> rooms, {List<Bot> bots = const []}) {
   final s = AppState();
   s.rooms = rooms;
+  s.bots = bots;
   return s;
 }
 
@@ -195,5 +203,65 @@ void main() {
         reason: '$label 被加了下划线',
       );
     }
+  });
+
+  testWidgets('私聊菜单能删掉这个 bot（但要二次确认）', (tester) async {
+    // 「删对话」和「删 bot」是两件事：前者清聊天记录（人还在），
+    // 后者把人从花名册除名。用户明确要后者也能在菜单里点到。
+    final state = _stateWith(
+      [_room('r1', '甲', botIds: const ['b1'])],
+      bots: [Bot(id: 'b1', name: '甲', role: 'member')],
+    );
+    await _pump(tester, state);
+
+    await tester.tapAt(
+      tester.getCenter(find.text('甲')),
+      buttons: kSecondaryButton,
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('删除这个对话'), findsOneWidget);
+    expect(find.text('删除这个 Bot'), findsOneWidget);
+
+    await tester.tap(find.text('删除这个 Bot'));
+    await tester.pumpAndSettle();
+    // 二级确认
+    expect(find.text('确认删除'), findsOneWidget);
+    expect(find.textContaining('撤不回来'), findsOneWidget,
+        reason: '要把后果说清楚：学过的东西和记忆都会没');
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(state.bots.length, 1, reason: '取消了就不该动数据');
+  });
+
+  testWidgets('主控不给删（服务端也挡，界面就别给这个选项）', (tester) async {
+    final state = _stateWith(
+      [_room('r1', 'Pi', botIds: const ['chief'])],
+      bots: [Bot(id: 'chief', name: 'Pi', role: 'main')],
+    );
+    await _pump(tester, state);
+
+    await tester.tapAt(
+      tester.getCenter(find.text('Pi')),
+      buttons: kSecondaryButton,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('删除这个对话'), findsOneWidget);
+    expect(find.text('删除这个 Bot'), findsNothing);
+  });
+
+  testWidgets('群没有"这一个 bot"可删', (tester) async {
+    final state = _stateWith([
+      Room(id: 'g1', name: '开发组', kind: 'group', botIds: ['b1']),
+    ], bots: [Bot(id: 'b1', name: '甲')]);
+    await _pump(tester, state);
+
+    await tester.tapAt(
+      tester.getCenter(find.text('开发组')),
+      buttons: kSecondaryButton,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('解散这个群'), findsOneWidget);
+    expect(find.text('删除这个 Bot'), findsNothing);
   });
 }
