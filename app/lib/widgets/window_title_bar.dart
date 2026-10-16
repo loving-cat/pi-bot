@@ -412,6 +412,16 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
   /// 上一发还没落地就跳过 —— 堆起来只会抖，不会更快。
   void _send(Rect r) {
     if (_sending) return;
+    // 尺寸几乎没变就别发 —— 每次 setBounds 都是一次平台往返 + 一次整窗重建，
+    // 亚像素级别的抖动不值得那个代价（在窗口缩放这种高频路径上尤其）
+    final last = _lastBounds;
+    if (last != null &&
+        (r.left - last.left).abs() < 0.5 &&
+        (r.top - last.top).abs() < 0.5 &&
+        (r.width - last.width).abs() < 0.5 &&
+        (r.height - last.height).abs() < 0.5) {
+      return;
+    }
     _sending = true;
     // ★ 补偿量必须跟着"**真的发出去**的那个矩形"走，不能跟着目标走。
     //   插值意味着窗口要几帧才走到目标；如果拿目标去补偿，补偿就超前了 ——
