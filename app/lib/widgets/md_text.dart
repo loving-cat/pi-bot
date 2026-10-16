@@ -1,4 +1,7 @@
 import 'package:flutter/gestures.dart';
+
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -6,6 +9,8 @@ import 'package:url_launcher/url_launcher.dart';
 import '../text_utils.dart';
 import '../theme.dart';
 import 'blob_avatar.dart';
+import 'floating_menu.dart';
+
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 /// Markdown 渲染（面向 agent 输出，流式友好）。
@@ -23,7 +28,7 @@ class MdText extends StatefulWidget {
     this.compact = false,
     this.mentions = const [],
     this.onMentionTap,
-    this.mentionSeedOf,
+    this.mentionOf,
   });
 
   final String text;
@@ -39,10 +44,9 @@ class MdText extends StatefulWidget {
   /// 传了就把提及变成可点链接（跳到那个 bot 的私聊），不传则只是高亮。
   final void Function(String name)? onMentionTap;
 
-  /// 把 @ 的名字映射成"稳定的种子"（一般是 botId）。
-  /// 头像颜色按种子算 —— 用名字当种子的话，同一个 bot 在花名册里和消息里
-  /// 会长得不一样，那头像就白画了。
-  final String Function(String name)? mentionSeedOf;
+  /// 把 @ 的名字映射成 chip 要用的信息（种子 + 一句话简介）。
+  /// 传了的话，鼠标悬在 @ 上会浮出一张小卡。
+  final MentionInfo? Function(String name)? mentionOf;
 
   @override
   State<MdText> createState() => _MdTextState();
@@ -219,32 +223,47 @@ class _MdTextState extends State<MdText> {
     );
     var i = 0;
     for (final match in re.allMatches(source)) {
-      if (match.start > i) spans.add(TextSpan(text: source.substring(i, match.start)));
+      if (match.start > i)
+        spans.add(TextSpan(text: source.substring(i, match.start)));
       final token = match.group(0)!;
       if (token.startsWith('`')) {
-        spans.add(TextSpan(
-          text: token.substring(1, token.length - 1),
-          style: code.copyWith(backgroundColor: PB.bgActive),
-        ));
+        spans.add(
+          TextSpan(
+            text: token.substring(1, token.length - 1),
+            style: code.copyWith(backgroundColor: PB.bgActive),
+          ),
+        );
       } else if (token.startsWith('**')) {
-        spans.add(TextSpan(
-          text: token.substring(2, token.length - 2),
-          style: base.copyWith(fontWeight: FontWeight.w700),
-        ));
+        spans.add(
+          TextSpan(
+            text: token.substring(2, token.length - 2),
+            style: base.copyWith(fontWeight: FontWeight.w700),
+          ),
+        );
       } else if (token.startsWith('~~')) {
-        spans.add(TextSpan(
-          text: token.substring(2, token.length - 2),
-          style: base.copyWith(decoration: TextDecoration.lineThrough, color: PB.textTertiary),
-        ));
+        spans.add(
+          TextSpan(
+            text: token.substring(2, token.length - 2),
+            style: base.copyWith(
+              decoration: TextDecoration.lineThrough,
+              color: PB.textTertiary,
+            ),
+          ),
+        );
       } else if (token.startsWith('[')) {
         final m = RegExp(r'^\[([^\]]+)\]\(([^)\s]+)\)$').firstMatch(token);
         final label = m?.group(1) ?? token;
         final url = m?.group(2) ?? '';
-        spans.add(TextSpan(
-          text: label,
-          style: base.copyWith(color: PB.accentBright, decoration: TextDecoration.underline),
-          recognizer: _recognizer(url).value,
-        ));
+        spans.add(
+          TextSpan(
+            text: label,
+            style: base.copyWith(
+              color: PB.accentBright,
+              decoration: TextDecoration.underline,
+            ),
+            recognizer: _recognizer(url).value,
+          ),
+        );
       } else if (token.startsWith('@')) {
         // @提及：画成「小头像 + 名字」的 chip。
         //
@@ -252,19 +271,25 @@ class _MdTextState extends State<MdText> {
         // 群里一串 @ 排在一起时，"这活到底派给谁了"要能扫一眼看出来。
         final name = cleanMentionName(token);
         final onTap = widget.onMentionTap;
+        final info = widget.mentionOf?.call(name);
         spans.add(
           WidgetSpan(
             alignment: PlaceholderAlignment.middle,
             child: _MentionChip(
               name: name.isEmpty ? token : name,
-              seed: widget.mentionSeedOf?.call(name) ?? name,
+              info: info,
               onTap: onTap == null ? null : () => onTap(name),
             ),
           ),
         );
       } else {
         final inner = token.substring(1, token.length - 1);
-        spans.add(TextSpan(text: inner, style: base.copyWith(fontStyle: FontStyle.italic)));
+        spans.add(
+          TextSpan(
+            text: inner,
+            style: base.copyWith(fontStyle: FontStyle.italic),
+          ),
+        );
       }
       i = match.end;
     }
@@ -642,7 +667,8 @@ class _TableView extends StatelessWidget {
         //   单列上限 55%：防止一列超长文本把别的列挤成一条缝。
         final cap = avail * 0.55;
         final flex = [
-          for (final w in natural) w.clamp(_minCol, cap < _minCol ? _minCol : cap),
+          for (final w in natural)
+            w.clamp(_minCol, cap < _minCol ? _minCol : cap),
         ];
         return _build(
           columns,
@@ -707,41 +733,151 @@ class _TableView extends StatelessWidget {
             : renderInline(
                 text,
                 style,
-                style.copyWith(fontFamily: 'monospace', fontSize: style.fontSize),
+                style.copyWith(
+                  fontFamily: 'monospace',
+                  fontSize: style.fontSize,
+                ),
               ),
       ),
     );
   }
 }
 
+/// @ 提及 chip 要用的信息。
+class MentionInfo {
+  const MentionInfo({required this.seed, this.subtitle, this.emoji});
+
+  /// 稳定种子（一般是 botId）—— 颜色按它算，保证和花名册/头像一致
+  final String seed;
+
+  /// 一句话简介（职位/在做什么），悬停卡里显示
+  final String? subtitle;
+  final String? emoji;
+}
 
 /// 回复气泡里的「@某人」—— 小头像 + 名字。
 ///
-/// 比纯文字高亮多花不了几个像素，但一眼就能认出是谁；
-/// 一串 @ 排在一起时差别很明显。
-class _MentionChip extends StatelessWidget {
-  const _MentionChip({required this.name, required this.seed, this.onTap});
+/// 比纯文字高亮多花不了几个像素，但一眼就能认出是谁；一串 @ 排在一起时差别很明显。
+///
+/// 鼠标悬上去会浮出一张小卡（头像 + 名字 + 一句话简介 + "点开私聊"）——
+/// 不用点进去就能知道这是谁、干什么的。悬停卡由 [showHoverCard] 画，
+/// 它不吃鼠标事件，所以指针一移开卡就收。
+class _MentionChip extends StatefulWidget {
+  const _MentionChip({required this.name, this.info, this.onTap});
 
   final String name;
-  final String seed;
+  final MentionInfo? info;
   final VoidCallback? onTap;
 
   @override
+  State<_MentionChip> createState() => _MentionChipState();
+}
+
+class _MentionChipState extends State<_MentionChip> {
+  Timer? _delay;
+  VoidCallback? _close;
+  bool _hover = false;
+
+  String get _seed => widget.info?.seed ?? widget.name;
+
+  @override
+  void dispose() {
+    _delay?.cancel();
+    _close?.call();
+    super.dispose();
+  }
+
+  void _enter(PointerEnterEvent e) {
+    setState(() => _hover = true);
+    // 稍微等一下再弹：鼠标只是划过不该弹卡（划过一串 @ 会闪个不停）
+    _delay?.cancel();
+    _delay = Timer(const Duration(milliseconds: 220), () {
+      if (!mounted) return;
+      _close = showHoverCard(context: context, at: e.position, child: _card());
+    });
+  }
+
+  void _exit(PointerExitEvent e) {
+    _delay?.cancel();
+    _close?.call();
+    _close = null;
+    if (mounted) setState(() => _hover = false);
+  }
+
+  Widget _card() {
+    final color = PB.colorFor(_seed);
+    final sub = widget.info?.subtitle?.trim() ?? '';
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: PB.bgElevated,
+        borderRadius: BorderRadius.circular(PB.rXl),
+        border: Border.all(color: PB.borderSecondary),
+        boxShadow: PB.shadow(y: 8, blur: 24, alpha: 0.5),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          BlobAvatar(seed: _seed, color: color, size: 34, animate: false),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  widget.name,
+                  style: const TextStyle(
+                    fontSize: PB.fsSm,
+                    fontWeight: FontWeight.w600,
+                    color: PB.textPrimary,
+                  ),
+                ),
+                if (sub.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    sub,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: PB.fsXs,
+                      color: PB.textTertiary,
+                      height: 1.35,
+                    ),
+                  ),
+                ],
+                if (widget.onTap != null) ...[
+                  const SizedBox(height: 6),
+                  const Text(
+                    '点一下开私聊',
+                    style: TextStyle(fontSize: PB.fsXxs, color: PB.accent),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final color = PB.colorFor(seed);
-    final chip = Container(
+    final color = PB.colorFor(_seed);
+    final chip = AnimatedContainer(
+      duration: const Duration(milliseconds: 120),
       padding: const EdgeInsets.fromLTRB(3, 2, 7, 2),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.16),
+        color: color.withValues(alpha: _hover ? 0.28 : 0.16),
         borderRadius: BorderRadius.circular(PB.rFull),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          BlobAvatar(seed: seed, color: color, size: 15, animate: false),
+          BlobAvatar(seed: _seed, color: color, size: 15, animate: false),
           const SizedBox(width: 5),
           Text(
-            name,
+            widget.name,
             style: const TextStyle(
               fontSize: PB.fsXs,
               fontWeight: FontWeight.w600,
@@ -752,10 +888,14 @@ class _MentionChip extends StatelessWidget {
         ],
       ),
     );
-    if (onTap == null) return chip;
-    return GestureDetector(
-      onTap: onTap,
-      child: MouseRegion(cursor: SystemMouseCursors.click, child: chip),
+
+    return MouseRegion(
+      cursor: widget.onTap == null
+          ? SystemMouseCursors.basic
+          : SystemMouseCursors.click,
+      onEnter: _enter,
+      onExit: _exit,
+      child: GestureDetector(onTap: widget.onTap, child: chip),
     );
   }
 }

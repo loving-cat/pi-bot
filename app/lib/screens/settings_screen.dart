@@ -8,6 +8,7 @@ import '../native.dart';
 import '../notify.dart';
 import '../scope.dart';
 import '../theme.dart';
+import '../widgets/window_title_bar.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 /// 设置页。
@@ -67,6 +68,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             },
             icon: const Icon(LucideIcons.refreshCw, size: 20),
           ),
+          // 别让"刷新"顶到窗口控制按钮下面去
+          const WindowControlsSpacer(),
           const SizedBox(width: 8),
         ],
       ),
