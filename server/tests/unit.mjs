@@ -901,6 +901,60 @@ await test('isBusyError：只认"忙"这一类', () => {
   assert.equal(isBusyError(null), false);
 });
 
+
+// ---------------------------------------------------------------------------
+// 心跳断了该谁知晓（"组长 / 部长级别"）
+// ---------------------------------------------------------------------------
+const { pickEscalationHost } = await import('../src/util.js');
+
+await test('★ 中断：部门里的活先找组长', () => {
+  const r = pickEscalationHost({
+    roomKind: 'group',
+    leadBotId: 'lead',
+    fromBotId: 'member',
+    chiefId: 'chief',
+  });
+  assert.equal(r.role, 'lead');
+  assert.equal(r.hostId, 'lead');
+});
+
+await test('中断：私聊没有组长 → 找主控', () => {
+  const r = pickEscalationHost({
+    roomKind: 'dm',
+    leadBotId: null,
+    fromBotId: 'member',
+    chiefId: 'chief',
+  });
+  assert.equal(r.role, 'chief');
+  assert.equal(r.hostId, 'chief');
+});
+
+await test('中断：出事的那个自己就是组长 → 抬给主控', () => {
+  const r = pickEscalationHost({
+    roomKind: 'group',
+    leadBotId: 'lead',
+    fromBotId: 'lead',
+    chiefId: 'chief',
+  });
+  assert.equal(r.hostId, 'chief');
+});
+
+await test('中断：派活失败要直接找主控（prefer=chief）', () => {
+  const r = pickEscalationHost({
+    roomKind: 'group',
+    leadBotId: 'lead',
+    fromBotId: 'member',
+    chiefId: 'chief',
+    prefer: 'chief',
+  });
+  assert.equal(r.hostId, 'chief');
+});
+
+await test('中断：没地方可报时返回空（不要瞎叫一个人）', () => {
+  const r = pickEscalationHost({ roomKind: 'dm', fromBotId: 'chief', chiefId: 'chief' });
+  assert.equal(r.hostId, null);
+});
+
 const passed = results.filter((r) => r.ok).length;
 
 console.log('\n================ 单元测试 ================');
