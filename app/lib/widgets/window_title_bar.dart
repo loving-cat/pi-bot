@@ -30,17 +30,29 @@ class _WindowTitleBarState extends State<WindowTitleBar> {
   Widget build(BuildContext context) {
     if (!WindowTitleBar.isSupported) return const SizedBox.shrink();
 
-    return GestureDetector(
-      behavior: HitTestBehavior.translucent,
-      onPanStart: (_) => windowManager.startDragging(),
-      onDoubleTap: () async {
-        if (await windowManager.isMaximized()) {
-          await windowManager.unmaximize();
-        } else {
-          await windowManager.maximize();
-        }
-      },
-      child: SizedBox(height: widget.height, width: double.infinity),
+    return SizedBox(
+      height: widget.height,
+      child: Row(
+        children: [
+          // 左边整块是拖拽区（双击 = 最大化 / 还原），和 Windows 原生一样
+          Expanded(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onPanStart: (_) => windowManager.startDragging(),
+              onDoubleTap: () async {
+                if (await windowManager.isMaximized()) {
+                  await windowManager.unmaximize();
+                } else {
+                  await windowManager.maximize();
+                }
+              },
+              child: const SizedBox.expand(),
+            ),
+          ),
+          // 右边是控制按钮 —— 它们**住在这一条里**，不再浮在页面内容上面
+          const WindowControlsOverlay(),
+        ],
+      ),
     );
   }
 }
@@ -133,25 +145,6 @@ class _WindowControlsOverlayState extends State<WindowControlsOverlay>
         ),
       ],
     );
-  }
-}
-
-/// 给"右上角窗口控制按钮"让位的占位块 —— 各页面的 AppBar actions 末尾都该放一个。
-///
-/// 控制按钮是**画在整个窗口右上角**的（无边框窗口，见 [WindowControlsOverlay]），
-/// 而 AppBar 的 actions 也在右上角 —— 两者会叠在一起。
-/// 用户截图里"设置页的刷新和关闭叠在一块"就是这么来的。没让位的页面全中招。
-class WindowControlsSpacer extends StatelessWidget {
-  const WindowControlsSpacer({super.key});
-
-  /// 三个按钮 × 44
-  static const double width = 132;
-
-  @override
-  Widget build(BuildContext context) {
-    // 手机/网页上没有自绘的窗口按钮，不用留
-    if (!WindowTitleBar.isSupported) return const SizedBox.shrink();
-    return const SizedBox(width: width);
   }
 }
 
