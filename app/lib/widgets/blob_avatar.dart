@@ -179,6 +179,12 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
     if (!BlobAvatar.animationsEnabled || !widget.followPointer) return;
     AvatarLife.pointer.addListener(_followPointer);
     _following = true;
+    // ★ 挂上监听之后**立刻按当前位置算一次**。
+    //   不这么做的话：眼睛的偏移只在"鼠标移动"时才更新，而"鼠标进到这一行"
+    //   那一下不会触发移动事件 → 必须再动一下才跟随。用户鼠标停在行上不动时
+    //   眼睛就是呆的（这是他三次报"只在头像内部跟随"的真正原因：
+    //   鼠标在头像里时本来就在动，所以看着反而像"只有头像内部才跟随"）。
+    _followPointer();
     _wake(); // 顺便眨个眼/动一下，像注意到你了
   }
 
