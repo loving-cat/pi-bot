@@ -367,28 +367,13 @@ class _BlobPainter extends CustomPainter {
     final baseRadius = size.shortestSide / 2 * 0.9;
     final path = _blobPath(center, baseRadius);
 
-    // 1) 落影：让它"浮"起来
-    // ★ 这里以前用 MaskFilter.blur —— 那是每帧重算的卷积模糊，
-    //   一屏 15 个头像 = 每帧 15 次模糊，直接掉到 20 帧。
-    //   换成径向渐变的椭圆（纯光栅化，快一个数量级），视觉上几乎看不出差别。
-    final shadowRect = Rect.fromCenter(
-      center: center.translate(0, size.shortestSide * 0.085),
-      width: baseRadius * 1.78,
-      height: baseRadius * 1.12,
-    );
-    canvas.drawOval(
-      shadowRect,
-      Paint()
-        ..shader = RadialGradient(
-          colors: [
-            Colors.black.withValues(alpha: 0.40),
-            Colors.black.withValues(alpha: 0.0),
-          ],
-          stops: const [0.42, 1.0],
-        ).createShader(shadowRect),
-    );
-
-    // 2) 主体：左上到右下的渐变
+    // 1) 主体：左上到右下的渐变
+    //
+    // ★ 这里以前还叠了「径向渐变落影 + 径向高光 + 渐变描边」，加上主体一共
+    //   4 个 shader —— 每个头像每帧 4 次 createShader + 4 层抗锯齿填充。
+    //   一屏十几个头像（群头像还是 2~4 个叠一起）全在吃光栅时间，而实测帧采样里
+    //   raster 一直是瓶颈。同类客户端 那套头像本来就是**接近平涂**的饱和色块，
+    //   没有落影也没有高光 —— 砍掉之后既更像它，也更省。
     canvas.drawPath(
       path,
       Paint()
@@ -410,31 +395,13 @@ class _BlobPainter extends CustomPainter {
             ),
     );
 
-    // 3) 左上柔光
-    canvas.drawPath(
-      path,
-      Paint()
-        ..shader = RadialGradient(
-          center: const Alignment(-0.5, -0.55),
-          radius: 1.0,
-          colors: [Colors.white.withValues(alpha: 0.10), Colors.transparent],
-        ).createShader(Rect.fromCircle(center: center, radius: baseRadius)),
-    );
-
-    // 4) 边缘反光（很细的一圈，出立体感）
+    // 2) 边缘反光（很细的一圈，出立体感）—— 纯色描边，不再开渐变 shader
     canvas.drawPath(
       path,
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = math.max(1, size.shortestSide * 0.022)
-        ..shader = LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            Colors.white.withValues(alpha: 0.16),
-            Colors.white.withValues(alpha: 0.0),
-          ],
-        ).createShader(Rect.fromCircle(center: center, radius: baseRadius)),
+        ..color = Colors.white.withValues(alpha: 0.14),
     );
 
     if (ring) {
