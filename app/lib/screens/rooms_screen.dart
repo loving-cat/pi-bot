@@ -923,6 +923,17 @@ class _RoomRowState extends State<_RoomRow> {
             if (context.mounted) await state.deleteRoom(room.id);
           },
         ),
+        // ★ 「删对话」和「删 bot」是两件事，分开放：
+        //   前者只是清掉聊天记录（人还在，下次点它还能聊），
+        //   后者是把这个同事**从花名册里除名**。
+        //   群没有"这一个 bot"可删；主控也删不了（服务端也挡）。
+        if (!room.isGroup && bot != null && !bot.isMain)
+          FloatingMenuEntry(
+            icon: LucideIcons.userMinus,
+            label: '删除这个 Bot',
+            danger: true,
+            onTap: () => _confirmDeleteBot(context, bot),
+          ),
       ],
     );
   }
@@ -946,6 +957,48 @@ class _RoomRowState extends State<_RoomRow> {
   }
 
   /// 删除前必须问一次 —— 这个动作没有撤销。
+  /// 删除 bot 要**二级确认**，而且话说死：它忘掉的东西找不回来。
+  Future<void> _confirmDeleteBot(BuildContext context, Bot bot) async {
+    final state = widget.state;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: PB.bgElevated,
+        title: Text(
+          '把 ${bot.emoji ?? ''}${bot.name} 删掉？',
+          style: const TextStyle(fontSize: PB.fsLg),
+        ),
+        content: Text(
+          '它会从这个花名册里消失，和它的对话也一起清掉。\n\n'
+          '它学过的东西（你教过的做法）、跟它有关的会话记忆都会没有 —— '
+          '**这个操作撤不回来**。\n\n'
+          '只是想清掉聊天记录的话，用上面那个「删除这个对话」就行。',
+          style: const TextStyle(
+            fontSize: PB.fsSm,
+            color: PB.textSecondary,
+            height: 1.6,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: PB.danger),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('确认删除'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !context.mounted) return;
+    await state.deleteBot(bot.id);
+    if (!context.mounted) return;
+    ScaffoldMessenger.maybeOf(context)
+        ?.showSnackBar(SnackBar(content: Text('已删除 ${bot.name}')));
+  }
+
   Future<bool> _confirmDelete(BuildContext context, Room room) async {
     final isGroup = room.isGroup;
     final name = room.name;
