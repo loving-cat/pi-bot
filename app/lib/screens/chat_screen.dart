@@ -360,7 +360,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
     return Scaffold(
       backgroundColor: PB.bgPane,
-      // ★ 顶部是**浮在上面的小胶囊**（参考 / ds-bot 那种），不是一整条 AppBar：
+      // ★ 顶部是**浮在上面的小胶囊**，不是一整条 AppBar：
       //   透明背景 + 居中的圆角胶囊（头像 + 会话名），左右各留出返回 / 更多。
       //   整条工具栏是透明的，所以看上去就是"顶上浮了一个小椭圆"。
       appBar: AppBar(
@@ -372,7 +372,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         titleSpacing: 0,
         centerTitle: true,
         // 居中的小胶囊：头像 + 会话名（状态只在"干活/压缩"时露出来，
-        // 平时保持安静 —— 参考 / ds-bot 那种感觉）
+        // 平时保持安静）
         // 点胶囊 → 右侧面板（这个会话是谁 / 里面有谁 / 上下文用得怎么样）。
         // 宽屏它是布局里的一栏（和左边同级，没遮罩）；窄屏才走整页滑入。
         // 鼠标移上去会**浮起来**、右边冒出一个 `>` —— 告诉用户"这里能点开"。
@@ -1366,7 +1366,7 @@ class _MessageRow extends StatelessWidget {
 
     return AvatarHoverScope(
       child: Padding(
-        // ★ 气泡之间的呼吸（照 参考 那种节奏）：换个人发言 26px，
+        // ★ 气泡之间的呼吸：换个人发言 26px，
         //   同一个人连着说 6px。以前是 16 / 3 —— 谁跟谁说的都黏成一坨。
         padding: EdgeInsets.only(top: showAuthor ? 26 : 6),
         child: Row(

@@ -38,7 +38,7 @@ export const config = {
   serverName: process.env.PI_BOT_NAME || 'pi-bot',
   /** 固定 token：设了就跳过配对码（自用/服务器部署方便） */
   staticToken: process.env.PI_BOT_TOKEN || null,
-  /** 形如 cline-pass/deepseek-v4.1-flash；不设则用 pi 默认模型 */
+  /** 形如 provider/model-id；不设则用 pi 的默认模型 */
   model: process.env.PI_BOT_MODEL || null,
   thinking: process.env.PI_BOT_THINKING || 'medium',
   tools,
