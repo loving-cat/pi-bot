@@ -103,7 +103,9 @@ export class ModelGroup {
 
     return {
       group: new ModelGroup({
-        id: existing?.id ?? newId('mg_'),
+        // ★ 优先用调用方给的 id（seedBuiltin 要一个稳定 id，否则每次重启都会
+        //   预置出一份新的同内容组）；没给才随机生成。
+        id: existing?.id ?? (str(input.id, 60) || newId('mg_')),
         name,
         baseUrl,
         apiKey,
@@ -398,7 +400,7 @@ class ModelGroupStore {
    */
   seedBuiltin({ id, name, baseUrl, apiKey, api, models }) {
     this.load();
-    if (this.#groups.some((g) => g.id === id)) return null;
+    if (this.#groups.some((g) => g.id === id || g.name === name)) return null;
     if (!baseUrl || !Array.isArray(models) || !models.length) return null;
     const r = ModelGroup.fromInput(
       { id, name, baseUrl, apiKey, api, models, builtin: true },
