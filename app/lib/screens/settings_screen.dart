@@ -9,6 +9,7 @@ import '../notify.dart';
 import '../scope.dart';
 import '../theme.dart';
 import '../widgets/group_limits_section.dart';
+import '../widgets/user_name_section.dart';
 import '../widgets/model_group_editor.dart';
 
 import 'package:lucide_icons_flutter/lucide_icons.dart';
@@ -123,7 +124,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           Text(
                             '${pairing['code']}',
                             style: const TextStyle(
-                              fontFamily: 'monospace',
+                              fontFamily: PB.monoFamily,
+                              fontFamilyFallback: PB.monoFallback,
                               fontSize: 30,
                               fontWeight: FontWeight.w700,
                               letterSpacing: 7,
@@ -197,7 +199,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 child: SelectableText(
                                   '${(addr as Map)['url']}',
                                   style: const TextStyle(
-                                    fontFamily: 'monospace',
+                                    fontFamily: PB.monoFamily,
+                                    fontFamilyFallback: PB.monoFallback,
                                     fontSize: PB.fsXs,
                                     color: PB.textSecondary,
                                   ),
@@ -222,6 +225,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     '服务端配的是固定 token（PI_BOT_TOKEN），没有二维码。手机端在「固定 token」页填那个 token 就行。',
                   ),
                 ),
+
+              const SizedBox(height: 22),
+              // 我是谁（bot 会用它称呼你）
+              const UserNameSection(),
 
               const SizedBox(height: 22),
               // 用户自己配的模型组（baseUrl + key + 一组模型名）
@@ -536,7 +543,8 @@ class _InfoRow extends StatelessWidget {
               style: const TextStyle(
                 fontSize: PB.fsXs,
                 color: PB.textSecondary,
-                fontFamily: 'monospace',
+                fontFamily: PB.monoFamily,
+                fontFamilyFallback: PB.monoFallback,
               ),
             ),
           ),

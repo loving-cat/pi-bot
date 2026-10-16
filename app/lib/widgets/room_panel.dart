@@ -4,6 +4,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../models.dart';
 import '../scope.dart';
 import '../theme.dart';
+import 'attachment_view.dart';
 import 'blob_avatar.dart';
 
 /// 点聊天顶部的胶囊 → 从右边滑出来的面板。
@@ -49,7 +50,7 @@ class RoomPanel extends StatefulWidget {
 }
 
 class _RoomPanelState extends State<RoomPanel> {
-  /// 0 = 详情，1 = 成员（只有群才有）
+  /// 0 = 详情，1 = 资料库，2 = 成员（只有群才有）
   int _tab = 0;
 
   @override
@@ -82,9 +83,11 @@ class _RoomPanelState extends State<RoomPanel> {
               _tabs(isGroup),
               Container(height: 1, color: PB.borderTertiary),
               Expanded(
-                child: _tab == 0
-                    ? _detail(room, ctxInfo)
-                    : _members(context, room),
+                child: switch (_tab) {
+                  0 => _detail(room, ctxInfo),
+                  1 => _Library(room: room),
+                  _ => _members(context, room),
+                },
               ),
             ],
           ),
@@ -156,7 +159,7 @@ class _RoomPanelState extends State<RoomPanel> {
   }
 
   Widget _tabs(bool isGroup) {
-    final tabs = <String>['详情', if (isGroup) '成员'];
+    final tabs = <String>['详情', '资料库', if (isGroup) '成员'];
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 18),
       child: Row(
@@ -362,6 +365,150 @@ class _MemberRow extends StatelessWidget {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// 「资料库」：这个会话里出现过的**所有附件**，按"谁给的"分两组。
+///
+/// 为什么值得单独一栏：聊到第三天，用户要的是"上周那份 PPT 在哪"，
+/// 而不是"翻聊天记录一行行找"。附件是这条对话流里最容易丢的东西 ——
+/// 消息会被刷走，资料不该。
+///
+/// 数据不用服务端帮忙：附件本来就挂在每条消息上（msg.attachments），
+/// 按作者是不是人分两组就行。
+class _Library extends StatelessWidget {
+  const _Library({required this.room});
+
+  final Room room;
+
+  @override
+  Widget build(BuildContext context) {
+    final state = AppScope.of(context);
+    final msgs = state.messages[room.id] ?? const <Msg>[];
+
+    // 谁给的：用户发的 / bot 产出的。倒序遍历 —— 新的排在前面。
+    final fromUser = <Attachment>[];
+    final fromBot = <Attachment>[];
+    for (final m in msgs.reversed) {
+      if (m.attachments.isEmpty) continue;
+      (m.isUser ? fromUser : fromBot).addAll(m.attachments);
+    }
+
+    if (fromUser.isEmpty && fromBot.isEmpty) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text(
+            '这个会话里还没有文件。\n\n你发的、bot 产出的，都会收在这里。',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: PB.fsXs,
+              color: PB.textQuaternary,
+              height: 1.7,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
+      children: [
+        if (fromUser.isNotEmpty) ...[
+          _groupTitle('你发的', fromUser.length),
+          for (final a in fromUser) _item(context, a),
+          const SizedBox(height: 16),
+        ],
+        if (fromBot.isNotEmpty) ...[
+          _groupTitle('bot 产出的', fromBot.length),
+          for (final a in fromBot) _item(context, a),
+        ],
+      ],
+    );
+  }
+
+  Widget _groupTitle(String text, int n) => Padding(
+    padding: const EdgeInsets.only(bottom: 8),
+    child: Text(
+      '$text（$n）',
+      style: const TextStyle(
+        fontSize: PB.fsXxs,
+        fontWeight: FontWeight.w600,
+        color: PB.textTertiary,
+      ),
+    ),
+  );
+
+  Widget _item(BuildContext context, Attachment a) {
+    final state = AppScope.of(context);
+    final url = state.fileUrl(a.id);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(PB.rLg),
+        // 图片直接看图，其他弹站内预览（都是消息里那套，行为一致）
+        onTap: url == null
+            ? null
+            : () => a.isImage
+                  ? showImageViewer(context, url, a.name)
+                  : showFilePreview(context, file: a, url: url),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
+          decoration: BoxDecoration(
+            color: PB.bgActive,
+            borderRadius: BorderRadius.circular(PB.rLg),
+            border: Border.all(color: PB.borderTertiary),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                a.isImage ? LucideIcons.image : LucideIcons.fileText,
+                size: 16,
+                color: PB.textTertiary,
+              ),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      a.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: PB.fsXs,
+                        color: PB.textPrimary,
+                      ),
+                    ),
+                    if (a.sizeText.isNotEmpty)
+                      Text(
+                        a.sizeText,
+                        style: const TextStyle(
+                          fontSize: PB.fsXxs,
+                          color: PB.textQuaternary,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              // 下载就在这儿 —— 不用点进去再找
+              if (url != null)
+                IconButton(
+                  tooltip: '下载',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () =>
+                      downloadAttachment(context, file: a, url: url),
+                  icon: const Icon(
+                    LucideIcons.download,
+                    size: 15,
+                    color: PB.textTertiary,
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }

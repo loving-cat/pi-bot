@@ -522,7 +522,8 @@ class _FilePreviewState extends State<_FilePreview> {
                 style: const TextStyle(
                   fontSize: PB.fsXs,
                   height: 1.5,
-                  fontFamily: 'monospace',
+                  fontFamily: PB.monoFamily,
+                  fontFamilyFallback: PB.monoFallback,
                   color: PB.textSecondary,
                 ),
               ),

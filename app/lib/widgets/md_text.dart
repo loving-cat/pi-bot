@@ -71,7 +71,8 @@ class _MdTextState extends State<MdText> {
     final code =
         widget.mono ??
         base.copyWith(
-          fontFamily: 'monospace',
+          fontFamily: PB.monoFamily,
+          fontFamilyFallback: PB.monoFallback,
           fontSize: (base.fontSize ?? 14) - 1,
           height: 1.45,
           color: PB.textPrimary,
@@ -544,7 +545,8 @@ class _CodeBlock extends StatelessWidget {
                     style: const TextStyle(
                       fontSize: PB.fsXxs,
                       color: PB.textQuaternary,
-                      fontFamily: 'monospace',
+                      fontFamily: PB.monoFamily,
+                      fontFamilyFallback: PB.monoFallback,
                     ),
                   ),
                 ),
@@ -737,7 +739,8 @@ class _TableView extends StatelessWidget {
                 text,
                 style,
                 style.copyWith(
-                  fontFamily: 'monospace',
+                  fontFamily: PB.monoFamily,
+                  fontFamilyFallback: PB.monoFallback,
                   fontSize: style.fontSize,
                 ),
               ),
