@@ -130,7 +130,7 @@ class _BotRow extends StatelessWidget {
         child: InkWell(
           borderRadius: BorderRadius.circular(12),
           onTap: () => _openBotSheet(context, bot),
-          child: Padding(
+          child: AvatarHoverScope(child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
             child: Row(
               children: [
@@ -226,7 +226,7 @@ class _BotRow extends StatelessWidget {
                 ),
               ],
             ),
-          ),
+          )),
         ),
       ),
     );
