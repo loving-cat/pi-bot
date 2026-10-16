@@ -31,7 +31,10 @@ class Native {
   static Future<bool> isIgnoringBatteryOptimizations() async {
     if (!_isAndroid) return true;
     try {
-      return await _channel.invokeMethod<bool>('isIgnoringBatteryOptimizations') ?? false;
+      return await _channel.invokeMethod<bool>(
+            'isIgnoringBatteryOptimizations',
+          ) ??
+          false;
     } catch (_) {
       return false;
     }

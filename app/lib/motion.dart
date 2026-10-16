@@ -110,7 +110,8 @@ class _HoverTapState extends State<HoverTap> with TickerProviderStateMixin {
     super.dispose();
   }
 
-  bool get _interactive => widget.enabled && (widget.onTap != null || widget.onLongPress != null);
+  bool get _interactive =>
+      widget.enabled && (widget.onTap != null || widget.onLongPress != null);
 
   void _setHover(bool on) {
     if (!_interactive) return;
@@ -222,7 +223,8 @@ class HoverIconButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final fg = color ?? (danger ? PB.danger : PB.textSecondary);
-    final hoverBg = hoverColor ?? (danger ? const Color(0x22FB4B58) : PB.bgHover);
+    final hoverBg =
+        hoverColor ?? (danger ? const Color(0x22FB4B58) : PB.bgHover);
     final base = active ? PB.bgActive : Colors.transparent;
 
     Widget btn = HoverTap(
@@ -235,7 +237,9 @@ class HoverIconButton extends StatelessWidget {
       child: SizedBox(
         width: size,
         height: size,
-        child: Center(child: Icon(icon, size: iconSize, color: fg)),
+        child: Center(
+          child: Icon(icon, size: iconSize, color: fg),
+        ),
       ),
     );
 
@@ -348,7 +352,10 @@ class _PopInState extends State<PopIn> with SingleTickerProviderStateMixin {
       child: widget.child,
       builder: (context, child) {
         final t = Motion.pop.transform(_c.value.clamp(0.0, 1.0));
-        return Transform.scale(scale: widget.scale + (1 - widget.scale) * t, child: child);
+        return Transform.scale(
+          scale: widget.scale + (1 - widget.scale) * t,
+          child: child,
+        );
       },
     );
   }

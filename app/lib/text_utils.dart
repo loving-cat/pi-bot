@@ -10,9 +10,14 @@ String stripMarkdown(String input) {
   s = s.replaceAll('```', '');
 
   // 表格分隔行（| --- | --- |）整行丢掉
-  s = s.replaceAll(RegExp(r'^[ \t]*\|?[ \t:|-]*-[ \t:|-]*\|[ \t:|-]*$', multiLine: true), '');
+  s = s.replaceAll(
+    RegExp(r'^[ \t]*\|?[ \t:|-]*-[ \t:|-]*\|[ \t:|-]*$', multiLine: true),
+    '',
+  );
   // 表格数据行 → 用 · 连接单元格
-  s = s.replaceAllMapped(RegExp(r'^[ \t]*\|(.+)\|[ \t]*$', multiLine: true), (m) {
+  s = s.replaceAllMapped(RegExp(r'^[ \t]*\|(.+)\|[ \t]*$', multiLine: true), (
+    m,
+  ) {
     final cells = m
         .group(1)!
         .split('|')
@@ -24,19 +29,34 @@ String stripMarkdown(String input) {
   // 标题 / 引用 / 分割线 / 列表符号
   s = s.replaceAll(RegExp(r'^[ \t]{0,3}#{1,6}[ \t]+', multiLine: true), '');
   s = s.replaceAll(RegExp(r'^[ \t]{0,3}>[ \t]?', multiLine: true), '');
-  s = s.replaceAll(RegExp(r'^[ \t]*([-*_])[ \t]*\1[ \t]*\1[ \t]*$', multiLine: true), '');
+  s = s.replaceAll(
+    RegExp(r'^[ \t]*([-*_])[ \t]*\1[ \t]*\1[ \t]*$', multiLine: true),
+    '',
+  );
   s = s.replaceAll(RegExp(r'^[ \t]*[-*+][ \t]+', multiLine: true), '');
   s = s.replaceAll(RegExp(r'^[ \t]*\d+[.)][ \t]+', multiLine: true), '');
 
   // 行内标记
-  s = s.replaceAllMapped(RegExp(r'!\[([^\]]*)\]\([^)]*\)'), (m) => m.group(1) ?? '');
-  s = s.replaceAllMapped(RegExp(r'\[([^\]]*)\]\([^)]*\)'), (m) => m.group(1) ?? '');
+  s = s.replaceAllMapped(
+    RegExp(r'!\[([^\]]*)\]\([^)]*\)'),
+    (m) => m.group(1) ?? '',
+  );
+  s = s.replaceAllMapped(
+    RegExp(r'\[([^\]]*)\]\([^)]*\)'),
+    (m) => m.group(1) ?? '',
+  );
   s = s.replaceAllMapped(RegExp(r'\*\*([^*\n]+)\*\*'), (m) => m.group(1)!);
   s = s.replaceAllMapped(RegExp(r'__([^_\n]+)__'), (m) => m.group(1)!);
   s = s.replaceAllMapped(RegExp(r'~~([^~\n]+)~~'), (m) => m.group(1)!);
   s = s.replaceAllMapped(RegExp(r'`([^`\n]+)`'), (m) => m.group(1)!);
-  s = s.replaceAllMapped(RegExp(r'(?<![\w*])\*([^*\n]+)\*(?![\w*])'), (m) => m.group(1)!);
-  s = s.replaceAllMapped(RegExp(r'(?<![\w_])_([^_\n]+)_(?![\w_])'), (m) => m.group(1)!);
+  s = s.replaceAllMapped(
+    RegExp(r'(?<![\w*])\*([^*\n]+)\*(?![\w*])'),
+    (m) => m.group(1)!,
+  );
+  s = s.replaceAllMapped(
+    RegExp(r'(?<![\w_])_([^_\n]+)_(?![\w_])'),
+    (m) => m.group(1)!,
+  );
 
   // 收尾：换行/多余空白压成一个空格，去掉残留的孤立标记
   s = s.replaceAll(RegExp(r'[ \t]*\n[ \t]*'), ' ');
