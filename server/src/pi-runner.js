@@ -35,7 +35,7 @@ import { defaultMenuSlug, logMenu, menuSlugs, resolveMenu } from './model-menu.j
 import { attachmentBlock } from './extract.js';
 import { inboxPath, metaFor, readForModel, saveFromPath } from './attachments.js';
 import { parseMentions, rosterLine } from './mentions.js';
-import { log } from './util.js';
+import { log, pickEscalationHost } from './util.js';
 
 const MAX_STEP_TEXT = 200;
 
@@ -252,10 +252,144 @@ export class PiRunner {
     this.routerModel = null;
     this.availableModels = [];
     this.initNote = null;
+    /** 心跳看门狗（一个进程只需要一个） */
+    this.watchdog = null;
+  }
+
+  /**
+   * 心跳机制 —— 给干活的 bot 们装上“我还活着”。
+   *
+   * 用户原话：“做个心跳机制可以给工程师 bot 们，这样如果任务中断了，
+   * 组长 / 部长级别的知晓。”
+   *
+   * 为什么不能只看“进程还在不在”：最常见的卡死是**进程好好的、但那一轮
+   * 再也不出声了**（工具挂住、socket 半死）。外面看到的就是永远转圈。
+   *
+   * 所以这里做两件事：
+   *   · 每 config.heartbeatMs 报一次“还活着，最后一次动静是 N 秒前”；
+   *   · 超过 config.stallMs 没动静 → 判为中断：收尾那一轮，并**上报组长**。
+   */
+  startWatchdog() {
+    if (this.watchdog) return;
+    this.watchdog = setInterval(
+      () => this.#beatAll(),
+      Math.max(5_000, config.heartbeatMs),
+    );
+    // 别因为这个定时器把进程吊着不退
+    this.watchdog.unref?.();
+    log(
+      `💓 心跳看门狗已启动：每 ${Math.round(Math.max(5_000, config.heartbeatMs) / 1000)}s 报一次，` +
+        `超过 ${Math.round(config.stallMs / 1000)}s 没动静就判为中断并上报组长`,
+    );
+  }
+
+  #beatAll() {
+    const nowMs = Date.now();
+    for (const [key, entry] of this.sessions) {
+      if (!entry.busy) continue;
+      const sep = key.indexOf(':');
+      const roomId = key.slice(0, sep);
+      const botId = key.slice(sep + 1);
+      const ageMs = nowMs - (entry.progressAt ?? entry.startedAt ?? nowMs);
+      bus.emit('event', {
+        t: 'bot.heartbeat',
+        roomId,
+        botId,
+        ageMs,
+        startedAt: entry.startedAt ?? null,
+      });
+      if (ageMs < config.stallMs || entry.stallNotified) continue;
+      entry.stallNotified = true;
+      this.#onStall(roomId, botId, entry, ageMs);
+    }
+  }
+
+  /** 心跳断了：收尾这一轮 + 让组长知道 */
+  #onStall(roomId, botId, entry, ageMs) {
+    const bot = store.getBot(botId);
+    const secs = Math.round(ageMs / 1000);
+    log(`💔 ${bot?.name ?? botId} 已经 ${secs}s 没动静 —— 判为中断，收尾并上报`);
+    // ① 把这一轮捣掉（它已经没动静了）
+    entry.session?.abort?.().catch(() => {});
+    // ② 正在写的那条消息得收尾 —— 不收的话客户端永远转圈
+    const msgId = entry.liveMsgId;
+    if (msgId) {
+      const msg = store.getMessage(roomId, msgId);
+      store.updateMessage(
+        roomId,
+        msgId,
+        {
+          status: 'error',
+          error: `心跳断了：${secs} 秒没动静，这一轮已中断`,
+          steps: (msg?.steps ?? []).map((s) =>
+            s?.status === 'running'
+              ? { ...s, status: 'error', error: '心跳断了，这一步中断' }
+              : s,
+          ),
+        },
+        { silent: false },
+      );
+    }
+    // ③ 让该知道的人知道，并请它重新安排
+    this.escalate({
+      roomId,
+      fromBotId: botId,
+      reason: `心跳断了：已经 ${secs} 秒没动静，这一轮中断了`,
+      prefer: 'lead',
+    }).catch((err) => log('上报中断失败：', err?.message || err));
+  }
+
+  /**
+   * 有活卡住 / 没派出去 → 让“该知道的人”知晓，并请它重新安排。
+   *
+   * prefer='lead'：群里的活先找**组长**（用户说的“组长 / 部长级别”）；
+   *               没有组长（私聊）就找主控。
+   * prefer='chief'：直接找主控（派活失败时用）。
+   */
+  async escalate({ roomId, fromBotId, reason, task = '', attempts = 0, why = '', prefer = 'lead' }) {
+    const room = store.getRoom(roomId);
+    const chief = store.mainBot();
+    const target = pickEscalationHost({
+      roomKind: room?.kind,
+      leadBotId: room?.leadBotId ?? null,
+      fromBotId,
+      chiefId: chief?.id ?? null,
+      prefer,
+    });
+    if (!target.hostId) return null;
+    const host = store.getBot(target.hostId);
+    if (!host) return null;
+    // 组长：就在群里说（用户也看得见“这单断了”）；主控：在它的私聊里说
+    const inRoom = target.role === 'lead' ? roomId : store.ensureDm(host.id)?.id ?? null;
+    if (!inRoom) return null;
+
+    const from = store.getBot(fromBotId);
+    const note =
+      `[这单断了] ${from?.name ?? fromBotId}：${reason}` +
+      (attempts ? `（试了 ${attempts} 次，${why}）` : '') +
+      (task ? `\n\n原任务：${task.slice(0, 600)}` : '') +
+      `\n\n请你重新安排：换个人，或者再派一次。`;
+    store.appendMessage({
+      roomId: inRoom,
+      authorType: 'system',
+      authorId: host.id,
+      authorName: '中断回执',
+      text: note,
+      status: 'done',
+      meta: { via: 'escalate', aboutBotId: fromBotId },
+    });
+    // 光留一条消息它不会自己动 —— 顺手叫醒它，让它当场重新安排
+    this.run(inRoom, host.id, `【系统】${note}`, {
+      skipUserMessage: true,
+      timeoutMs: 300_000,
+    }).catch((err) => log('叫醒失败：', err?.message || err));
+    return { hostId: host.id, roomId: inRoom };
   }
 
   async init() {
     this.modelRuntime = await ModelRuntime.create();
+    // 心跳看门狗：发现的“卡死不动”由它负责收尾 + 上报
+    this.startWatchdog();
 
     for (const [providerId, providerConfig] of Object.entries(loadExtraProviders())) {
       try {
@@ -947,6 +1081,14 @@ export class PiRunner {
     }
 
     entry.lastUsed = Date.now();
+    // ★ 心跳：这一轮从什么时候开始、最后一次动静是什么时候、
+    //   以及它正在写的是哪条消息（卡死时要拿这个收尾）。
+    entry.startedAt = Date.now();
+    entry.progressAt = entry.startedAt;
+    entry.stallNotified = false;
+    const beat = () => {
+      entry.progressAt = Date.now();
+    };
     const bot = entry.bot;
     const botMsg = store.appendMessage({
       roomId,
@@ -958,6 +1100,8 @@ export class PiRunner {
       status: 'streaming',
       meta,
     });
+    entry.liveMsgId = botMsg.id;
+    beat();
     bus.emit('event', { t: 'typing', roomId, botId: bot.id, active: true });
 
     const committed = [];
@@ -971,9 +1115,11 @@ export class PiRunner {
       return parts.join('\n\n');
     };
     const pushDelta = throttle(() => {
+      beat();
       bus.emit('event', { t: 'msg.delta', roomId, msgId: botMsg.id, text: render() });
     }, 80);
     const pushSteps = () => {
+      beat();
       bus.emit('event', { t: 'msg.steps', roomId, msgId: botMsg.id, steps: [...steps] });
       store.updateMessage(roomId, botMsg.id, { steps: [...steps] }, { silent: true });
     };
@@ -1271,6 +1417,8 @@ export class PiRunner {
       unsubscribe?.();
       entry.unsubscribe = null;
       entry.busy = false;
+      entry.liveMsgId = null;
+      entry.startedAt = null;
       bus.emit('event', { t: 'typing', roomId, botId: bot.id, active: false });
       // 每轮结束报一次上下文占用 —— 放在 finally 里，成功/出错都会报，
       // 否则出错那轮的数字会一直停在旧值上。

@@ -136,45 +136,20 @@ export function buildCommonTools({ runner, roomId, botId }) {
    * 一次，要重试 3 次至少。"
    *
    * 为什么不能只把失败写进工具返回值：截屏里那个 bot 的结论是
-   * "私聊派活这条路也不通 —— 这次我直接自己上"。也就是说它会自作主张把活
-   * 抢过来干（往往是它最不擅长的事）。这条路必须把它抬到主控那儿，
-   * 由主控重新派人。
-   *
-   * 两条防环：主控自己派的活它已经能看到失败信息（不用再拐一圈）；
-   * 主控也不在的话就只写一条消息，不硬叫醒。
+   * "私聊派活这条路也不通 —— 这次我直接自己上"。它会自作主张把活抢过来干
+   * （往往是它最不擅长的活）。这条路必须抬到主控那儿。具体怎么抬
+   * （写哪条消息、叫醒谁）都在 runner.escalate 里，和"心跳断了"共用一套。
    */
   function reportDispatchFailure({ targetName, task, reason, attempts, why }) {
-    try {
-      const chief = store.mainBot();
-      if (!chief || chief.id === botId) return;
-      const dm = store.ensureDm(chief.id);
-      if (!dm) return;
-      store.appendMessage({
-        roomId: dm.id,
-        authorType: 'system',
-        authorId: botId,
-        authorName: '派活回执',
-        text:
-          `[派活没送出去] 给「${targetName}」的活没碰上去：${reason}` +
-          `（重试 ${attempts} 次，${why}）。\n\n原任务：${task.slice(0, 600)}\n\n` +
-          '请你重新安排：换个人，或者再派一次。',
-        status: 'done',
-        meta: { via: 'dispatch_failed', targetName },
-      });
-      // 光留一条消息它是不会自己动的 —— 顺手把它叫醒，让它当场重新派人
-      runner
-        .run(
-          dm.id,
-          chief.id,
-          `【系统】刚有件活没派出去：给「${targetName}」的任务失败了：${reason}` +
-            `（已重试 ${attempts} 次）。\n\n原任务：${task.slice(0, 800)}\n\n` +
-            '请你重新安排：换一个合适的 bot，或者再派一次。',
-          { skipUserMessage: true, timeoutMs: 300_000 },
-        )
-        .catch((err) => log('叫醒主控失败：', err?.message || err));
-    } catch (err) {
-      log('上报派活失败时出错：', err?.message || err);
-    }
+    return runner.escalate({
+      roomId,
+      fromBotId: botId,
+      reason: `给「${targetName}」的活没送出去：${reason}`,
+      task,
+      attempts,
+      why,
+      prefer: 'chief',
+    });
   }
 
   return [
