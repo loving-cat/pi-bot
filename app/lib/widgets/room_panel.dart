@@ -98,7 +98,7 @@ class _RoomPanelState extends State<RoomPanel> {
 
   Widget _header(BuildContext context, Room room) {
     final lead = room.leadName;
-    return Padding(
+    return AvatarHoverScope(child: Padding(
       padding: const EdgeInsets.fromLTRB(18, 18, 10, 14),
       child: Column(
         children: [
@@ -155,7 +155,7 @@ class _RoomPanelState extends State<RoomPanel> {
           ],
         ],
       ),
-    );
+    ));
   }
 
   Widget _tabs(bool isGroup) {
@@ -330,7 +330,7 @@ class _MemberRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final b = bot;
     if (b == null) return const SizedBox.shrink();
-    return Padding(
+    return AvatarHoverScope(child: Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Row(
         children: [
@@ -366,7 +366,7 @@ class _MemberRow extends StatelessWidget {
             ),
         ],
       ),
-    );
+    ));
   }
 }
 
