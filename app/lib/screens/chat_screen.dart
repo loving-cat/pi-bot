@@ -12,12 +12,14 @@ import '../scope.dart';
 import '../text_utils.dart';
 import '../theme.dart';
 import '../widgets/attachment_view.dart';
+import '../widgets/avatar_life.dart';
 import '../widgets/blob_avatar.dart';
 import '../widgets/floating_menu.dart';
 import '../widgets/md_text.dart';
 import '../widgets/msg_ref_chip.dart';
 import '../widgets/message_actions.dart';
 import '../widgets/teach_dialog.dart';
+
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -206,8 +208,10 @@ class _ChatScreenState extends State<ChatScreen> {
         titleSpacing: widget.embedded ? 14 : 0,
         title: Row(
           children: [
+            // ★ 头部这个头像要"活"：bot 在干活时视线抬起来（一眼看出它在想），
+            //   闲着的时候眼睛跟着鼠标看。它是整个会话里最该有生命感的一个。
             if (room.isGroup)
-              GroupBlobAvatar(seeds: room.botIds, size: 32, animate: false)
+              GroupBlobAvatar(seeds: room.botIds, size: 32, animate: busy)
             else
               BlobAvatar(
                 seed: room.botIds.isNotEmpty ? room.botIds.first : room.id,
@@ -216,7 +220,8 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
                 emoji: lead?.emoji,
                 size: 32,
-                animate: false,
+                animate: true,
+                mood: busy ? AvatarMood.busy : AvatarMood.idle,
               ),
             const SizedBox(width: 11),
             Expanded(
@@ -324,7 +329,8 @@ class _ChatScreenState extends State<ChatScreen> {
                               showAuthor: newAuthor,
                               bot: state.botById(msg.authorId),
                               mentions: room.botNames,
-                              isLead: room.isGroup &&
+                              isLead:
+                                  room.isGroup &&
                                   msg.authorId != null &&
                                   msg.authorId == room.leadBotId,
                               onLongPress: () =>
@@ -345,7 +351,10 @@ class _ChatScreenState extends State<ChatScreen> {
                               gradient: LinearGradient(
                                 begin: Alignment.topCenter,
                                 end: Alignment.bottomCenter,
-                                colors: [PB.bgPane, PB.bgPane.withValues(alpha: 0)],
+                                colors: [
+                                  PB.bgPane,
+                                  PB.bgPane.withValues(alpha: 0),
+                                ],
                               ),
                             ),
                           ),
@@ -388,7 +397,8 @@ class _ChatScreenState extends State<ChatScreen> {
             uploading: _uploading,
             onPickImages: _pickImages,
             onPickFiles: _pickFiles,
-            onTeach: () => showTeachDialog(context, state.mainBot ?? state.bots.first),
+            onTeach: () =>
+                showTeachDialog(context, state.mainBot ?? state.bots.first),
             onRemovePending: (att) =>
                 setState(() => _pending.removeWhere((a) => a.id == att.id)),
             onSend: _send,
@@ -426,6 +436,8 @@ class _EmptyHint extends StatelessWidget {
                 emoji: lead?.emoji,
                 size: 64,
                 animate: true,
+                // 空会话里这个大头像是"孤零零挂着"的，戳一下挤一下不会抢谁的点击
+                interactive: true,
               ),
             const SizedBox(height: 20),
             Text(
@@ -1009,11 +1021,7 @@ class _MessageRow extends StatelessWidget {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(
-                        LucideIcons.zap,
-                        size: 11,
-                        color: PB.accent,
-                      ),
+                      const Icon(LucideIcons.zap, size: 11, color: PB.accent),
                       const SizedBox(width: 3),
                       Text(
                         msg.meta?['queued'] == 'followUp' ? '已排队' : '已插话引导',
@@ -1149,8 +1157,6 @@ class _MessageRow extends StatelessWidget {
       ),
     );
   }
-
-
 }
 
 class _Steps extends StatelessWidget {
@@ -1180,9 +1186,7 @@ class _Steps extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(
-                    running
-                        ? LucideIcons.loader
-                        : LucideIcons.circleCheck,
+                    running ? LucideIcons.loader : LucideIcons.circleCheck,
                     size: 11,
                     color: running ? PB.accent : PB.textQuaternary,
                   ),
