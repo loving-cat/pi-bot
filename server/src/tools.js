@@ -19,7 +19,7 @@ import { store } from './store.js';
 import { menuText, resolveMenu, menuEntries } from './model-menu.js';
 import { extractText } from './extract.js';
 import { webSearch, webFetch } from './web.js';
-import { log, now } from './util.js';
+import { log, now, isBusyError, planDispatchRetry } from './util.js';
 
 /** 同一个 bot 连着私信多个人时，多久以内的引用气泡合并成一个（ms） */
 export const REF_MERGE_MS = 180_000;
@@ -129,6 +129,54 @@ function deptLine(room) {
 // ---------------------------------------------------------------------------
 
 export function buildCommonTools({ runner, roomId, botId }) {
+  /**
+   * 派活真没送出去 → **报给主控**，让主控重新派人。
+   *
+   * 用户原话："发现不通，就立马反馈给 mainbot，main bot 再去把任务交接给 bot
+   * 一次，要重试 3 次至少。"
+   *
+   * 为什么不能只把失败写进工具返回值：截屏里那个 bot 的结论是
+   * "私聊派活这条路也不通 —— 这次我直接自己上"。也就是说它会自作主张把活
+   * 抢过来干（往往是它最不擅长的事）。这条路必须把它抬到主控那儿，
+   * 由主控重新派人。
+   *
+   * 两条防环：主控自己派的活它已经能看到失败信息（不用再拐一圈）；
+   * 主控也不在的话就只写一条消息，不硬叫醒。
+   */
+  function reportDispatchFailure({ targetName, task, reason, attempts, why }) {
+    try {
+      const chief = store.mainBot();
+      if (!chief || chief.id === botId) return;
+      const dm = store.ensureDm(chief.id);
+      if (!dm) return;
+      store.appendMessage({
+        roomId: dm.id,
+        authorType: 'system',
+        authorId: botId,
+        authorName: '派活回执',
+        text:
+          `[派活没送出去] 给「${targetName}」的活没碰上去：${reason}` +
+          `（重试 ${attempts} 次，${why}）。\n\n原任务：${task.slice(0, 600)}\n\n` +
+          '请你重新安排：换个人，或者再派一次。',
+        status: 'done',
+        meta: { via: 'dispatch_failed', targetName },
+      });
+      // 光留一条消息它是不会自己动的 —— 顺手把它叫醒，让它当场重新派人
+      runner
+        .run(
+          dm.id,
+          chief.id,
+          `【系统】刚有件活没派出去：给「${targetName}」的任务失败了：${reason}` +
+            `（已重试 ${attempts} 次）。\n\n原任务：${task.slice(0, 800)}\n\n` +
+            '请你重新安排：换一个合适的 bot，或者再派一次。',
+          { skipUserMessage: true, timeoutMs: 300_000 },
+        )
+        .catch((err) => log('叫醒主控失败：', err?.message || err));
+    } catch (err) {
+      log('上报派活失败时出错：', err?.message || err);
+    }
+  }
+
   return [
     defineTool({
       name: 'ask_user',
@@ -309,14 +357,58 @@ export function buildCommonTools({ runner, roomId, botId }) {
         if (target.id === botId) return fail('不能给自己发私信');
         const dm = store.ensureDm(target.id);
         if (!dm) return fail('开不了私信会话');
-        const result = await runner.runBotOnce({
-          roomId: dm.id,
-          botId: target.id,
-          prompt: params.task,
-          timeoutMs: params.timeoutMs ?? 300_000,
-          meta: { via: 'message_bot', from: botId },
-        });
-        if (!result.ok) return fail(`${target.name} 没跑成：${result.error}`);
+
+        // ★ 排一下队，而不是一碰“正忙”就宣布“这条路不通”。
+        //
+        //   用户报的原话：“发现不通，就立马反馈给 mainbot，main bot 再去把任务
+        //   交接给 bot 一次，要重试 3 次至少。”
+        //   以前是立刻失败：三个成员同时在群里干活时，第二个私信直接被打回，
+        //   主控看到的就是“私聊派活这条路也不通 —— 这次我直接自己上”。其实
+        //   对方只是还在忙。
+        let result = null;
+        let waitedMs = 0;
+        let lastWhy = '';
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          result = await runner.runBotOnce({
+            roomId: dm.id,
+            botId: target.id,
+            prompt: params.task,
+            timeoutMs: params.timeoutMs ?? 300_000,
+            meta: { via: 'message_bot', from: botId, attempt },
+          });
+          if (result.ok) break;
+          const plan = planDispatchRetry({
+            attempt,
+            error: result.error,
+            waitedMs,
+          });
+          lastWhy = plan.why;
+          if (!plan.retry) break;
+          // ★ 不是"睡固定时长再看"，而是**等它真的空下来** ——
+          //   它那一轮可能还要跑好几分钟，睡 5 秒醒来当然还是忙。
+          const deadline = Date.now() + plan.waitMs;
+          log(`${target.name} 还在忙，等它空下来再派（第 ${attempt + 1} 次，最多等 ${Math.round(plan.waitMs / 1000)}s）`);
+          while (runner.isBusy(dm.id, target.id) && Date.now() < deadline) {
+            await new Promise((r) => setTimeout(r, 2000));
+          }
+          waitedMs += Date.now() - (deadline - plan.waitMs);
+        }
+
+        if (!result?.ok) {
+          const reason = result?.error || '没跑成';
+          // 真没派出去 → 报给主控（而不是让派活的那个 bot 自己上手）。
+          // 用户要的就是这个：不通就往上抬，让主控重新派人。
+          reportDispatchFailure({
+            targetName: target.name,
+            task: params.task,
+            reason,
+            attempts: 3,
+            why: lastWhy,
+          });          return fail(
+            `${target.name} 没跑成：${reason}（已重试 3 次：${lastWhy}）。` +
+              '我已经把这件事报给主控了，**你不用自己上手** —— 主控会重新派人。',
+          );
+        }
 
         // ★ 在来源房间留一条可点击的引用记录。
         //   没有这一步，用户只看到"我发了"，永远不知道它把活派给了谁、
