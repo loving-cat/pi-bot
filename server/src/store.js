@@ -612,7 +612,7 @@ export class Store {
 
   reapStaleStreaming() {
     let n = 0;
-    for (const [, list] of this.messages) {
+    for (const [roomId, list] of this.messages) {
       for (const msg of list) {
         if (msg.status === 'streaming') {
           msg.status = msg.text ? 'done' : 'error';
