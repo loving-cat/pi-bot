@@ -275,6 +275,65 @@ await test('★★ 并发：组长 @ 三个人 → 三个人**同时**开干（�
   );
 });
 
+await test('★★ 竞态：两个人同时 @ 同一个人 → 只起一轮，不报 "already processing"', async () => {
+  // 真事：用户看到红字
+  //   Agent is already processing. Specify streamingBehavior ('steer' or 'followUp')…
+  // 成因：并行之后，两个成员**同时**回复、同时 @ 了同一个人 ——
+  // 它们各自算的"队列里有没有它"都还是旧的，于是同一个人被排进两次；
+  // 而 run() 是异步的，等它设 busy 已经晚了，两个 prompt() 撞在同一个 session 上。
+  const { room, lead, member } = makeDept('H');
+  const mate = store.createBot({ name: '同事H', persona: '干活' });
+  const target = store.createBot({ name: '被叫H', persona: '干活' });
+  store.updateRoom(room.id, {
+    botIds: [lead.id, member.id, mate.id, target.id],
+  });
+  const runner = new PiRunner();
+
+  let targetRuns = 0;
+  const steered = [];
+  const followed = [];
+  runner.sessions.set(`${room.id}:${target.id}`, {
+    busy: true,
+    bot: target,
+    session: {
+      steer: async (t) => { steered.push(t); },
+      followUp: async (t) => { followed.push(t); },
+    },
+  });
+
+  PiRunner.prototype.run = async (_roomId, botId) => {
+    if (botId === lead.id) {
+      return {
+        ok: true,
+        text: `@${member.name} @${mate.name} 你们上`,
+        messageId: 'stub-lead',
+        ms: 1,
+      };
+    }
+    if (botId === target.id) targetRuns++;
+    if (botId === member.id || botId === mate.id) {
+      await sleep(30); // 让它俩几乎同时回复
+      return {
+        ok: true,
+        text: `@${target.name} 帮我看下`,
+        messageId: `stub-${botId}`,
+        ms: 1,
+      };
+    }
+    return { ok: true, text: '好', messageId: `stub-${botId}`, ms: 1 };
+  };
+
+  await runner.runRound(room.id, { openerText: '干活', openerBotId: null, openerName: '用户' });
+  PiRunner.prototype.run = ORIGINAL_RUN;
+
+  assert.equal(targetRuns, 0, `★ 它本来就忙，不该被再起一轮（实际 ${targetRuns}）`);
+  assert.ok(
+    steered.length + followed.length >= 1,
+    '★ 消息必须送到（打断或投递都行），不能丢',
+  );
+  assert.equal(runner.dispatching.size, 0, '占位要还回去，不然这个人永远“忙”');
+});
+
 let failed = 0;
 for (const r of results) {
   if (r.ok) console.log(`  ✓ ${r.name}`);
