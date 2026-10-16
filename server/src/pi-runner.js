@@ -36,6 +36,7 @@ import { attachmentBlock } from './extract.js';
 import { inboxPath, metaFor, readForModel, saveFromPath } from './attachments.js';
 import { parseMentions, rosterLine } from './mentions.js';
 import { log, pickEscalationHost, isSuperiorCall } from './util.js';
+import { planItem, shouldStopRound, leftBehind } from './group-round.js';
 
 const MAX_STEP_TEXT = 200;
 
@@ -1076,25 +1077,58 @@ export class PiRunner {
     //   队列空了就等这一波落地 —— 它们回复里 @ 的人会补进队列，
     //   于是自然形成“一波接一波”，而不是一串排队。
     const pending = [];
-    while ((queue.length || pending.length) && runs < limits.maxRuns) {
+    // 循环出口统一交给 shouldStopRound：终止、队列空了且没人在跑、预算用完，
+    // 三种"不继续"的理由在一个地方说了算（以前散在循环条件和几处 break 里）。
+    for (;;) {
+      const stop = shouldStopRound({
+        queueLen: queue.length,
+        pendingLen: pending.length,
+        runs,
+        maxRuns: limits.maxRuns,
+        aborting: this.aborting.has(roomId),
+      });
+      if (stop.stop) {
+        if (queue.length) {
+          // 不管是终止还是预算掐断，都要留痕 —— 用户报过"组长明明 @ 了，
+          // 怎么只有一个 bot 动起来"，而以前这类出口全是静默的。
+          log(
+            stop.why === '已终止'
+              ? `【${room.name}】⏹ 已终止，剩下的 ${queue.length} 个人不再派`
+              : `【${room.name}】⚠️ ${stop.why}，还有 ${queue.length} 个人没轮到：` +
+                  leftBehind(queue, (id) => store.getBot(id)?.name ?? id).join('、'),
+          );
+        }
+        if (stop.why === '已终止') queue.length = 0;
+        break;
+      }
       if (!queue.length) {
         await Promise.allSettled(pending.splice(0));
         continue;
-      }
-      // ★ 用户按了终止就立刻收手（不再往下派下一个成员）。
-      //   没有这一条的话：当前那个 session 被捣掉之后，循环会把下一个成员
-      //   派出去 —— 用户看到的就是"点了终止还在跑"。
-      if (this.aborting.has(roomId)) {
-        log(`【${room.name}】⏹ 已终止，剩下的 ${queue.length} 个人不再派`);
-        queue.length = 0;
-        break;
       }
       const item = queue.shift();
       const bot = store.getBot(item.botId);
       if (!bot) continue;
       const done = used.get(item.botId) ?? 0;
-      if (done >= budget(item.botId)) {
-        log(`【${room.name}】${bot.name} 这轮已说过 ${done} 次 → 不再叫它`);
+      const busyNow = this.isBusy(roomId, bot.id);
+      const superior = isSuperiorCall({
+        fromId: item.fromId,
+        fromRole: item.fromId ? 'bot' : 'user',
+        leadId,
+        chiefId,
+        selfId: bot.id,
+      });
+      // 决策交给纯函数（group-round.js）：那边只回答"该做什么"，
+      // 这边只负责执行 —— 行动作一个字节没改，变的只是判断从哪来。
+      const plan = planItem({
+        item,
+        name: bot.name,
+        done,
+        budget: budget(bot.id),
+        busy: busyNow,
+        superior,
+      });
+      if (plan.kind === 'skip') {
+        log(`【${room.name}】${plan.why} → 不再叫它`);
         continue;
       }
       // ★ 上级叫它 → 无论多忙都要**停下来听**。
@@ -1107,16 +1141,9 @@ export class PiRunner {
       //   把上级那句“先停下、先报进度、再按新要求干”直接插进它正在跑的那一轮。
       //      · 是上级 / 用户 → 打断（steer）
       //      · 只是同级同事 → 不打断，排队等它忙完（不然群里会互相擂断）
-      if (this.isBusy(roomId, bot.id)) {
-        const superior = isSuperiorCall({
-          fromId: item.fromId,
-          fromRole: item.fromId ? 'bot' : 'user',
-          leadId,
-          chiefId,
-          selfId: bot.id,
-        });
+      if (plan.kind === 'interrupt' || plan.kind === 'queue') {
         const entry = this.sessions.get(this.#key(roomId, bot.id));
-        if (superior && entry?.session) {
+        if (plan.kind === 'interrupt' && entry?.session) {
           const steered =
             `【${item.fromName || '上级'} 叫停】先把你手上正在做的事停一下。\n\n` +
             `${item.fromName || '上级'} 刚刚说：\n` +
@@ -1264,16 +1291,6 @@ export class PiRunner {
     }
     // 收尾：还在跑的人别被丢下（它们的 @ 已经在上面补进队列了）
     await Promise.allSettled(pending);
-
-    // ★ 排到一半被预算掐断，也必须留痕。
-    //   用户报过"组长明明 @ 了，怎么只有一个 bot 动起来" —— 以前这类出口
-    //   全是静默的，日志里只看到"首发：某某"，后面什么都没有，根本查不出为什么。
-    if (queue.length) {
-      log(
-        `【${room.name}】⚠️ 还有 ${queue.length} 个人在排队但预算用完了` +
-          `（本轮到上限 ${limits.maxRuns} 次）：${queue.map((q) => store.getBot(q.botId)?.name ?? q.botId).join('、')}`,
-      );
-    }
 
     // 没被叫到的成员也算「看过这条了」，避免下次一次性倒一堆旧账
     const lastId = this.#lastMessageId(roomId);
