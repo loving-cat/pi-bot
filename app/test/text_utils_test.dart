@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:pi_bot/text_utils.dart';
 
 void main() {
+  _mentionTests();
   group('stripMarkdown', () {
     test('去掉粗体标记', () {
       expect(stripMarkdown('**结论：已交付**'), '结论：已交付');
@@ -94,5 +95,15 @@ void main() {
     test('preview = 去 markdown + 截断', () {
       expect(preview('**很长**的标题内容', 4), '很长的标…');
     });
+  });
+}
+
+void _mentionTests() {
+  test('cleanMentionName 剥掉 @ 和夹在中间的 emoji', () {
+    expect(cleanMentionName('@🎨UI设计师'), 'UI设计师');
+    expect(cleanMentionName('@后端工程师'), '后端工程师');
+    expect(cleanMentionName('@🍊技术负责人'), '技术负责人');
+    expect(cleanMentionName('@all'), 'all');
+    expect(cleanMentionName('  名字  '), '名字');
   });
 }

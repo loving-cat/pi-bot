@@ -13,8 +13,11 @@ import '../text_utils.dart';
 import '../theme.dart';
 import '../widgets/attachment_view.dart';
 import '../widgets/blob_avatar.dart';
+import '../widgets/floating_menu.dart';
 import '../widgets/md_text.dart';
+import '../widgets/msg_ref_chip.dart';
 import '../widgets/message_actions.dart';
+import '../widgets/teach_dialog.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -390,6 +393,7 @@ class _ChatScreenState extends State<ChatScreen> {
             uploading: _uploading,
             onPickImages: _pickImages,
             onPickFiles: _pickFiles,
+            onTeach: () => showTeachDialog(context, state.mainBot ?? state.bots.first),
             onRemovePending: (att) =>
                 setState(() => _pending.removeWhere((a) => a.id == att.id)),
             onSend: _send,
@@ -531,6 +535,7 @@ class _Composer extends StatefulWidget {
     required this.uploading,
     required this.onPickImages,
     required this.onPickFiles,
+    required this.onTeach,
     required this.onRemovePending,
     required this.onSend,
     required this.onStop,
@@ -544,6 +549,9 @@ class _Composer extends StatefulWidget {
   final bool uploading;
   final VoidCallback onPickImages;
   final VoidCallback onPickFiles;
+
+  /// 「教它做一项任务」——把用户口述的做法存成 bot 的技能
+  final VoidCallback onTeach;
   final void Function(Attachment) onRemovePending;
   final VoidCallback onSend;
   final VoidCallback onStop;
@@ -554,6 +562,36 @@ class _Composer extends StatefulWidget {
 
 class _ComposerState extends State<_Composer> {
   bool _hasText = false;
+
+  /// 悬浮菜单锚在 "+" 按钮上
+  final GlobalKey _plusKey = GlobalKey();
+
+  void _openMenu() {
+    showFloatingMenu(
+      context: context,
+      anchorKey: _plusKey,
+      entries: [
+        FloatingMenuEntry(
+          icon: LucideIcons.image,
+          label: '添加附件',
+          hint: '可多选',
+          onTap: widget.onPickImages,
+        ),
+        FloatingMenuEntry(
+          icon: LucideIcons.paperclip,
+          label: '上传文件',
+          hint: 'PDF/表格',
+          onTap: widget.onPickFiles,
+        ),
+        FloatingMenuEntry(
+          icon: LucideIcons.target,
+          label: '教它做一项任务',
+          iconColor: PB.danger,
+          onTap: widget.onTeach,
+        ),
+      ],
+    );
+  }
 
   @override
   void initState() {
@@ -707,16 +745,11 @@ class _ComposerState extends State<_Composer> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                _RoundButton(
-                  icon: LucideIcons.plus,
-                  color: PB.bgActive,
-                  iconColor: PB.textSecondary,
-                  tooltip: '加附件',
-                  onTap: () => _showAttachSheet(
-                    context,
-                    widget.onPickImages,
-                    widget.onPickFiles,
-                  ),
+                PlusTriggerButton(
+                  anchorKey: _plusKey,
+                  size: 40,
+                  tooltip: '附件 / 教它做任务',
+                  onTap: _openMenu,
                 ),
                 const SizedBox(width: 8),
                 Expanded(
@@ -827,61 +860,6 @@ class _ComposerState extends State<_Composer> {
   }
 }
 
-Future<void> _showAttachSheet(
-  BuildContext context,
-  VoidCallback onPickImages,
-  VoidCallback onPickFiles,
-) async {
-  await showModalBottomSheet<void>(
-    context: context,
-    backgroundColor: PB.bgElevated,
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(PB.r3xl)),
-    ),
-    builder: (ctx) => SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const SizedBox(height: 10),
-          Container(
-            width: 36,
-            height: 4,
-            decoration: BoxDecoration(
-              color: PB.borderPrimary,
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          ListTile(
-            leading: const Icon(LucideIcons.image, size: 20),
-            title: const Text('照片', style: TextStyle(fontSize: PB.fsSm)),
-            subtitle: const Text(
-              '支持多选',
-              style: TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
-            ),
-            onTap: () {
-              Navigator.pop(ctx);
-              onPickImages();
-            },
-          ),
-          ListTile(
-            leading: const Icon(LucideIcons.fileUp, size: 20),
-            title: const Text('文件', style: TextStyle(fontSize: PB.fsSm)),
-            subtitle: const Text(
-              'PDF / Excel / Word / CSV / MD / HTML …会解析出正文给 bot',
-              style: TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
-            ),
-            onTap: () {
-              Navigator.pop(ctx);
-              onPickFiles();
-            },
-          ),
-          const SizedBox(height: 8),
-        ],
-      ),
-    ),
-  );
-}
-
 class _RoundButton extends StatelessWidget {
   const _RoundButton({
     required this.icon,
@@ -981,6 +959,9 @@ class _MessageRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 引用行（bot 私信了别的 bot）不画气泡，只渲染一个可点的小浮动条。
+    if (msg.isRef) return MsgRefChip(refs: msg.refs);
+
     final isUser = msg.isUser;
     final streaming = msg.isStreaming;
     final accent = PB.colorFor(msg.authorId ?? msg.authorName);
@@ -1039,6 +1020,7 @@ class _MessageRow extends StatelessWidget {
                         MdText(
                           msg.text,
                           selectable: true,
+                          onMentionTap: (name) => openBotDm(context, name),
                           style: const TextStyle(
                             fontSize: PB.fsBase,
                             height: 1.45,
@@ -1164,6 +1146,8 @@ class _MessageRow extends StatelessWidget {
                           MdText(
                             streaming ? '${msg.text}▍' : msg.text,
                             selectable: !streaming,
+                            onMentionTap: (name) => openBotDm(context, name),
+                            mentions: mentions,
                             style: const TextStyle(
                               fontSize: PB.fsBase,
                               height: 1.5,
@@ -1357,4 +1341,24 @@ class _TypingDotsState extends State<_TypingDots>
       ),
     );
   }
+}
+
+/// 点 @提及 → 跳到那个 bot 的私聊。
+///
+/// agent 之间在群里互相 @ 派活时，用户能一键跟过去看它们私下说了什么。
+/// 名字对不上就静默忽略（模型偶尔会 @ 一个不存在的名字，不该弹错）。
+Future<void> openBotDm(BuildContext context, String name) async {
+  if (name.isEmpty) return;
+  final state = AppScope.of(context);
+  Bot? target;
+  for (final b in state.bots) {
+    if (b.name == name) {
+      target = b;
+      break;
+    }
+  }
+  if (target == null) return;
+  final room = await state.ensureDm(target.id);
+  if (room == null) return;
+  state.openRoom(room.id);
 }
