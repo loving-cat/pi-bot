@@ -955,6 +955,41 @@ await test('中断：没地方可报时返回空（不要瞎叫一个人）', ()
   assert.equal(r.hostId, null);
 });
 
+
+// ---------------------------------------------------------------------------
+// 上级 @ 它要能打断（"无论多忙都要停下来听"）
+// ---------------------------------------------------------------------------
+const { isSuperiorCall } = await import('../src/util.js');
+
+await test('★ 打断：用户叫它 → 必须停', () => {
+  assert.equal(isSuperiorCall({ fromRole: 'user', selfId: 'me' }), true);
+});
+
+await test('★ 打断：组长叫成员 → 必须停（用户原话"组长 部长 自己上级@"）', () => {
+  assert.equal(
+    isSuperiorCall({ fromId: 'lead', fromRole: 'bot', leadId: 'lead', chiefId: 'chief', selfId: 'me' }),
+    true,
+  );
+});
+
+await test('★ 打断：主控叫它 → 必须停', () => {
+  assert.equal(
+    isSuperiorCall({ fromId: 'chief', fromRole: 'bot', leadId: 'lead', chiefId: 'chief', selfId: 'me' }),
+    true,
+  );
+});
+
+await test('打断：同级同事叫它 → 不打断（排队，否则群里互相掐断）', () => {
+  assert.equal(
+    isSuperiorCall({ fromId: 'peer', fromRole: 'bot', leadId: 'lead', chiefId: 'chief', selfId: 'me' }),
+    false,
+  );
+});
+
+await test('打断：它自己叫什么（不该发生）→ 不打断', () => {
+  assert.equal(isSuperiorCall({ fromId: 'me', fromRole: 'bot', selfId: 'me', leadId: 'me' }), false);
+});
+
 const passed = results.filter((r) => r.ok).length;
 
 console.log('\n================ 单元测试 ================');
