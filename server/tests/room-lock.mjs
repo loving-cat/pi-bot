@@ -238,6 +238,43 @@ await test('★ 终止：当场停住，不再往下派下一个人（用户："
   assert.ok(!runner.aborting.has(room.id), '★ 新消息必须把终止标记清掉，否则房间永久卡死');
 });
 
+await test('★★ 并发：组长 @ 三个人 → 三个人**同时**开干（不是排队）', async () => {
+  // 用户："我要的是 群组内有多少人 就要多少个 并发，可以让组长自行决定先后"
+  // 以前是 await 一个一个来 —— 六个人就是六倍时长，界面上永远"只有一个在跑"。
+  const { room, lead, member } = makeDept('G');
+  const m2 = store.createBot({ name: '乙G', persona: '干活' });
+  const m3 = store.createBot({ name: '丙G', persona: '干活' });
+  store.updateRoom(room.id, { botIds: [lead.id, member.id, m2.id, m3.id] });
+  const runner = new PiRunner();
+
+  let active = 0;
+  let maxActive = 0;
+  PiRunner.prototype.run = async (_roomId, botId) => {
+    if (botId === lead.id) {
+      return {
+        ok: true,
+        text: `@${member.name} @${m2.name} @${m3.name} 你们仨上`,
+        messageId: 'stub-lead',
+        ms: 1,
+      };
+    }
+    active++;
+    maxActive = Math.max(maxActive, active);
+    await sleep(150); // 假装在干活
+    active--;
+    return { ok: true, text: '干完了', messageId: `stub-${botId}`, ms: 1 };
+  };
+
+  await runner.runRound(room.id, { openerText: '干活', openerBotId: null, openerName: '用户' });
+  PiRunner.prototype.run = ORIGINAL_RUN;
+
+  assert.equal(
+    maxActive,
+    3,
+    `★ 三个人必须同时开干（实际最大并发 ${maxActive}）—— 1 就是又变回排队了`,
+  );
+});
+
 let failed = 0;
 for (const r of results) {
   if (r.ok) console.log(`  ✓ ${r.name}`);
