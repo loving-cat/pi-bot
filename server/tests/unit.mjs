@@ -161,6 +161,68 @@ await test('store: 脏房间追踪（避免全量重写）', () => {
 });
 
 // ---------------------------------------------------------------------------
+// store：用户教的 SOP（skills）+ 形象（avatarShape / avatarColor）
+// ---------------------------------------------------------------------------
+
+await test('store: 用户教的 SOP 会存下来，id 自动生成', () => {
+  const bot = store.createBot({ name: '教学对象' });
+  store.updateBot(bot.id, {
+    skills: [
+      { title: '发日报', howto: '每天 18:00 把当天改动整理成 markdown 发到群里' },
+      { title: '改样式', howto: '先看 design/ 里的规范，再动代码' },
+    ],
+  });
+  const next = store.getBot(bot.id);
+  assert.equal(next.skills.length, 2);
+  assert.equal(next.skills[0].title, '发日报');
+  assert.match(next.skills[0].howto, /18:00/);
+  assert.ok(next.skills[0].id.startsWith('sk_'), 'id 该自动生成');
+});
+
+await test('store: 没写标题的 SOP 会被丢掉（别让空行进提示词）', () => {
+  const bot = store.createBot({ name: '教学对象2' });
+  store.updateBot(bot.id, {
+    skills: [
+      { title: '   ', howto: '只有空格' },
+      { title: '有效', howto: 'ok' },
+      { howto: '压根没 title' },
+    ],
+  });
+  const s = store.getBot(bot.id).skills;
+  assert.equal(s.length, 1);
+  assert.equal(s[0].title, '有效');
+});
+
+await test('store: SOP 条数和长度都会截断（别把系统提示词撑爆）', () => {
+  const bot = store.createBot({ name: '教学对象3' });
+  store.updateBot(bot.id, {
+    skills: Array.from({ length: 60 }, (_, i) => ({
+      title: `T${i}`.padEnd(200, 'x'),
+      howto: 'y'.repeat(5000),
+    })),
+  });
+  const s = store.getBot(bot.id).skills;
+  assert.equal(s.length, 40, '最多 40 条');
+  assert.equal(s[0].title.length, 80, 'title 截到 80');
+  assert.equal(s[0].howto.length, 2000, 'howto 截到 2000');
+});
+
+await test('store: avatarColor 归一化成 #RRGGBB', () => {
+  const bot = store.createBot({ name: '上色对象' });
+  store.updateBot(bot.id, { avatarColor: 'e93' });
+  assert.equal(store.getBot(bot.id).avatarColor, '#EE9933', '三位缩写要展开');
+  store.updateBot(bot.id, { avatarColor: '#a1b2c3' });
+  assert.equal(store.getBot(bot.id).avatarColor, '#A1B2C3', '统一大写带 #');
+});
+
+await test('store: 非法颜色 / 非法形状退回 null（让客户端按 id 自己算）', () => {
+  const bot = store.createBot({ name: '上色对象2' });
+  store.updateBot(bot.id, { avatarColor: 'javascript:alert(1)', avatarShape: '3' });
+  assert.equal(store.getBot(bot.id).avatarColor, null);
+  assert.equal(store.getBot(bot.id).avatarShape, null, '字符串 "3" 不算合法形状');
+});
+
+// ---------------------------------------------------------------------------
 // model-menu：模型白名单
 // ---------------------------------------------------------------------------
 const { resolveMenu, defaultMenuSlug, menuSlugs, MODEL_MENU } = await import('../src/model-menu.js');
@@ -282,6 +344,113 @@ await test('attachments: 复制进工作目录 _inbox', () => {
   const p = inboxPath(meta.id);
   assert.ok(p && fs.existsSync(p));
   assert.match(p, /_inbox/);
+});
+
+// ---------------------------------------------------------------------------
+// ref：跨会话引用气泡（bot 私信同事时，在来源房间留的小浮动条）
+//   时间窗口是时间敏感逻辑，写错了只会表现为「界面偶尔刷屏」，人工点不出来 → 必须单测。
+// ---------------------------------------------------------------------------
+const { planRefBubble, REF_MERGE_MS } = await import('../src/tools.js');
+
+/** 造一条"上一条消息"：默认就是同一个人刚发的 ref 气泡 */
+const prevRef = (over = {}) => ({
+  id: 'm1',
+  kind: 'ref',
+  authorId: 'b1',
+  createdAt: 1_000_000,
+  refs: [{ botId: 'old', roomId: 'dm_old', at: 1_000_000 }],
+  ...over,
+});
+
+await test('ref: 没有上一条消息 → 新建气泡', () => {
+  const p = planRefBubble({ last: undefined, botId: 'b1', targetBotId: 'b2', dmRoomId: 'dm2', at: 1_000_000 });
+  assert.equal(p.mode, 'append');
+  assert.deepEqual(p.ref, { botId: 'b2', roomId: 'dm2', at: 1_000_000 });
+});
+
+await test('ref: 同一个 bot 180s 内连着私信 → 合并成一个气泡', () => {
+  const p = planRefBubble({
+    last: prevRef(), botId: 'b1', targetBotId: 'b2', dmRoomId: 'dm2', at: 1_000_060, nowMs: 1_060_000,
+  });
+  assert.equal(p.mode, 'merge');
+  assert.deepEqual(p.refs.map((r) => r.botId), ['old', 'b2'], '老的留着，新的接在后面');
+});
+
+await test('ref: 超过 180s 就不再合并（别把一小时前派的人也算进来）', () => {
+  const p = planRefBubble({
+    last: prevRef(), botId: 'b1', targetBotId: 'b2', dmRoomId: 'dm2',
+    at: 1_000_000 + REF_MERGE_MS + 1, nowMs: 1_000_000 + REF_MERGE_MS + 1,
+  });
+  assert.equal(p.mode, 'append');
+});
+
+await test('ref: 换个 bot 说话 → 不合并（各人一个气泡）', () => {
+  const p = planRefBubble({
+    last: prevRef({ authorId: 'b9' }), botId: 'b1', targetBotId: 'b2', dmRoomId: 'dm2', at: 1_001_000, nowMs: 1_001_000,
+  });
+  assert.equal(p.mode, 'append');
+});
+
+await test('ref: 上一条是普通聊天 → 不合并', () => {
+  const p = planRefBubble({
+    last: prevRef({ kind: 'text' }), botId: 'b1', targetBotId: 'b2', dmRoomId: 'dm2', at: 1_001_000, nowMs: 1_001_000,
+  });
+  assert.equal(p.mode, 'append');
+});
+
+await test('ref: 同一个同事重复私信 → 去重，不出现两个同名气泡', () => {
+  const p = planRefBubble({
+    last: prevRef({ refs: [{ botId: 'b2', roomId: 'dm2', at: 999_000 }] }),
+    botId: 'b1', targetBotId: 'b2', dmRoomId: 'dm2', at: 1_001_000, nowMs: 1_001_000,
+  });
+  assert.equal(p.mode, 'merge');
+  assert.equal(p.refs.filter((r) => r.botId === 'b2').length, 1);
+});
+
+// ---------------------------------------------------------------------------
+// prompt：appendSystemPrompt 的拼装
+//   这是全项目最容易悄悄写坏、又最难发现的地方 —— 提示词错了不报错，
+//   只是 bot 突然开始念配置表，或者把用户教过的 SOP 忘了。
+// ---------------------------------------------------------------------------
+const { buildAppendSystemPrompt } = await import('../src/pi-runner.js');
+
+await test('prompt: 人设排在最前面', () => {
+  const p = buildAppendSystemPrompt({ persona: '你是资深设计师' });
+  assert.equal(p[0], '你是资深设计师');
+});
+
+await test('prompt: 没教过就不出现「用户教过你的做法」', () => {
+  const p = buildAppendSystemPrompt({ persona: '你是设计师' }).join('\n');
+  assert.ok(!p.includes('用户教过你的做法'));
+});
+
+await test('prompt: 教过就按序号拼进去（bot 才真的"学会"）', () => {
+  const p = buildAppendSystemPrompt({
+    skills: [
+      { title: '发日报', howto: '18:00 整理当天改动' },
+      { title: '改样式', howto: '先看 design/ 规范' },
+    ],
+  }).join('\n');
+  assert.match(p, /【用户教过你的做法】/);
+  assert.match(p, /1\. 发日报：18:00 整理当天改动/);
+  assert.match(p, /2\. 改样式：先看 design\/ 规范/);
+});
+
+await test('prompt: 空标题的 skill 不会拼出「1. ：」这种残句', () => {
+  const p = buildAppendSystemPrompt({
+    skills: [{ title: '', howto: 'x' }, { title: 'ok', howto: 'y' }],
+  }).join('\n');
+  assert.ok(!/^\d+\. ：/m.test(p), '不该出现空标题的残句');
+  assert.match(p, /1\. ok：y/);
+});
+
+await test('prompt: 说话规矩永远在（禁止念模型名/思考等级/token/id）', () => {
+  const p = buildAppendSystemPrompt({}).join('\n');
+  assert.match(p, /【说话规矩】/);
+  assert.match(p, /模型名/);
+  assert.match(p, /思考等级/);
+  assert.match(p, /token 用量/);
+  assert.match(p, /«»/, '内部参数的约定要写清楚');
 });
 
 // ---------------------------------------------------------------------------
