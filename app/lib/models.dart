@@ -338,6 +338,7 @@ class ModelGroup {
     this.keyMasked = '',
     List<ModelSpec>? models,
     this.enabled = true,
+    this.builtin = false,
   }) : models = models ?? [];
 
   final String id;
@@ -351,6 +352,9 @@ class ModelGroup {
   List<ModelSpec> models;
   bool enabled;
 
+  /// 从本机已有配置带出来的（我们自己在用的那套）—— 不给删
+  final bool builtin;
+
   /// 给模型选择器用：`<组id>/<模型id>` —— 和 pi 的 slug 格式一致
   String slugFor(String modelId) => '$id/$modelId';
 
@@ -362,6 +366,7 @@ class ModelGroup {
     hasKey: json['hasKey'] as bool? ?? false,
     keyMasked: json['keyMasked'] as String? ?? '',
     enabled: json['enabled'] as bool? ?? true,
+    builtin: json['builtin'] as bool? ?? false,
     models: ((json['models'] as List?) ?? const [])
         .whereType<Map>()
         .map((e) => ModelSpec.fromJson(e.cast<String, dynamic>()))

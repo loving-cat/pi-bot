@@ -11,7 +11,6 @@ import '../models.dart';
 import '../scope.dart';
 import '../text_utils.dart';
 import '../theme.dart';
-import '../widgets/window_title_bar.dart';
 import '../widgets/attachment_view.dart';
 import '../widgets/avatar_life.dart';
 import '../widgets/ask_card.dart';
@@ -310,12 +309,7 @@ class _ChatScreenState extends State<ChatScreen> {
               const PopupMenuItem(value: 'reload', child: Text('重新拉取消息')),
             ],
           ),
-          // ★ 放在 actions **最后**：这里面最后一个才是贴着右边的。
-          //   聊天区右边缘正好在窗口右上角底下（那里是自绘的控制按钮），
-          //   不让位的话"…"会和"关闭"叠在一起。
-          //   宽度精确等于控制按钮（3×44），**不再额外留 6px** ——
-          //   多那一截看着就像"…"被缩进了。
-          const WindowControlsSpacer(),
+          const SizedBox(width: 6),
         ],
       ),
       body: Column(
