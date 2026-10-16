@@ -337,12 +337,25 @@ class _ChatScreenState extends State<ChatScreen> {
                                 prev.authorType != msg.authorType ||
                                 (msg.createdAt - prev.createdAt) >
                                     5 * 60 * 1000;
+                            // 同一个人连着发好几条时，头像挂在**最后一条**上 ——
+                            // 这样整串气泡都在头像的右上方，头像在底部托着。
+                            // （挂在第一条的话，头像会卡在整串中间，很怪。）
+                            final next = i + 1 < msgs.length
+                                ? msgs[i + 1]
+                                : null;
+                            final endOfRun =
+                                next == null ||
+                                next.authorId != msg.authorId ||
+                                next.authorType != msg.authorType ||
+                                (next.createdAt - msg.createdAt) >
+                                    5 * 60 * 1000;
                             // 不居中：整行铺满，bot 贴左、我贴右
                             return _Appear(
                               key: ValueKey(msg.id),
                               child: _MessageRow(
                                 msg: msg,
                                 showAuthor: newAuthor,
+                                showAvatar: endOfRun,
                                 bot: state.botById(msg.authorId),
                                 isGroup: room.isGroup,
                                 mentions: room.botNames,
@@ -957,6 +970,7 @@ class _MessageRow extends StatelessWidget {
   const _MessageRow({
     required this.msg,
     required this.showAuthor,
+    required this.showAvatar,
     required this.bot,
     required this.isGroup,
     required this.onLongPress,
@@ -967,6 +981,9 @@ class _MessageRow extends StatelessWidget {
 
   final Msg msg;
   final bool showAuthor;
+
+  /// 是不是"这个作者连续发言的最后一条" —— 头像挂在这一条上
+  final bool showAvatar;
   final Bot? bot;
 
   /// 群聊还是私聊 —— 决定要不要画头像
@@ -1001,7 +1018,7 @@ class _MessageRow extends StatelessWidget {
 
     // 私聊里每条都是同一个人，头像和头部重复 —— 不画（顺便收掉左边那条留白，
     // 气泡能贴左一点）。
-    final showAvatar = showAuthor && isGroup;
+    final avatar = showAvatar && isGroup;
     // 群聊里主控（总经理）不标名字：它是"你这边的人"，标出来只是噪音。
     // 头像还留着 —— 一眼能看出"这条是它说的"。
     final showName = showAuthor && !(isGroup && bot?.isMain == true);
@@ -1104,7 +1121,7 @@ class _MessageRow extends StatelessWidget {
         //   （以前是 CrossAxisAlignment.start，头像顶在最上面，名字反而跑到它右边。）
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          if (showAvatar) ...[
+          if (avatar) ...[
             SizedBox(
               width: 34,
               child: Padding(
