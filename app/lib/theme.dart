@@ -11,6 +11,11 @@ import 'package:flutter/material.dart';
 /// 不然会出现"宽屏下点了跳转却 push 出一个整页聊天"。
 const double kTwoPaneMinWidth = 760;
 
+/// 窗口最小尺寸（逻辑像素）。
+/// main.dart 建窗口和 WindowResizeOverlay 自己算缩放都要用同一个数 ——
+/// 两边写两份的话，拖到最小尺寸时窗口会抖（一边卡住一边还在缩）。
+const Size kWindowMinSize = Size(760, 520);
+
 class PB {
   // ---- 背景层次
   static const bgApp = Color(0xFF0E0E0E);
