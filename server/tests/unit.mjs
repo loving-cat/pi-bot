@@ -451,13 +451,18 @@ await test('prompt: 系统提示里明确写了"在跟谁说话"', async () => {
   const p = buildAppendSystemPrompt({}, { userName: '小陈' }).join('\n');
   assert.match(p, /在跟谁说话/);
   assert.match(p, /小陈/);
-  assert.match(p, /只有它一个真人/, '要说清群里其余都是同事');
+  assert.match(p, /唯一的真人/, '要说清这是唯一的人，其余都是同事');
+  assert.match(
+    p,
+    /唯一的决策者|最高权威/,
+    '★ 还要说清它的分量 —— 不说的话模型会把用户当成"又一个来插话的同事"',
+  );
 });
 
 await test('prompt: 没传用户名也不能拼出"跟 说话"这种残句', async () => {
   const { buildAppendSystemPrompt } = await import('../src/pi-runner.js');
   const p = buildAppendSystemPrompt({}, {}).join('\n');
-  assert.match(p, /跟你说话的人叫「用户」/);
+  assert.match(p, /叫「用户」/);
 });
 
 // ---------------------------------------------------------------------------
