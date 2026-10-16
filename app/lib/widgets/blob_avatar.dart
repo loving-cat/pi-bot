@@ -193,8 +193,10 @@ class _BlobPainter extends CustomPainter {
   final bool ring;
 
   /// 采样轮廓点，再用二次贝塞尔穿过中点 —— 比直接 lineTo 顺得多
+  /// ★ steps 从 48 降到 32：动画时每帧都要重算整条路径，48 段在列表里是纯浪费，
+  ///   32 段在 44px 的尺寸下肉眼看不出区别。
   Path _blobPath(Offset center, double baseRadius) {
-    const steps = 48;
+    const steps = 32;
     final points = <Offset>[];
     for (var i = 0; i < steps; i++) {
       final theta = i / steps * 2 * math.pi;
@@ -235,18 +237,25 @@ class _BlobPainter extends CustomPainter {
     final path = _blobPath(center, baseRadius);
 
     // 1) 落影：让它"浮"起来
-    canvas.save();
-    canvas.translate(0, size.shortestSide * 0.055);
-    canvas.drawPath(
-      path,
-      Paint()
-        ..color = Colors.black.withValues(alpha: 0.42)
-        ..maskFilter = MaskFilter.blur(
-          BlurStyle.normal,
-          size.shortestSide * 0.11,
-        ),
+    // ★ 这里以前用 MaskFilter.blur —— 那是每帧重算的卷积模糊，
+    //   一屏 15 个头像 = 每帧 15 次模糊，直接掉到 20 帧。
+    //   换成径向渐变的椭圆（纯光栅化，快一个数量级），视觉上几乎看不出差别。
+    final shadowRect = Rect.fromCenter(
+      center: center.translate(0, size.shortestSide * 0.085),
+      width: baseRadius * 1.78,
+      height: baseRadius * 1.12,
     );
-    canvas.restore();
+    canvas.drawOval(
+      shadowRect,
+      Paint()
+        ..shader = RadialGradient(
+          colors: [
+            Colors.black.withValues(alpha: 0.40),
+            Colors.black.withValues(alpha: 0.0),
+          ],
+          stops: const [0.42, 1.0],
+        ).createShader(shadowRect),
+    );
 
     // 2) 主体：左上到右下的渐变
     canvas.drawPath(

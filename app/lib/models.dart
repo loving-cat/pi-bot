@@ -74,6 +74,8 @@ class Msg {
     this.authorEmoji,
     this.steps = const [],
     this.attachments = const [],
+    this.kind = 'text',
+    this.refs = const [],
     this.error,
     this.usage,
     this.meta,
@@ -90,12 +92,20 @@ class Msg {
   final int createdAt;
   List<ToolStep> steps;
   List<Attachment> attachments;
+
+  /// 'text' = 普通消息；'ref' = 不画气泡，只渲染"已发送给 XX"的小浮动条
+  final String kind;
+
+  /// 跨会话引用（bot 给别的 bot 发了私信时留在来源房间的指针）
+  final List<MsgRef> refs;
+
   String? error;
   Map<String, dynamic>? usage;
   Map<String, dynamic>? meta;
 
   bool get isUser => authorType == 'user';
   bool get isStreaming => status == 'streaming';
+  bool get isRef => kind == 'ref' && refs.isNotEmpty;
   bool get wasSteer => meta?['queued'] != null;
 
   factory Msg.fromJson(Map<String, dynamic> json) => Msg(
@@ -115,6 +125,11 @@ class Msg {
     attachments: ((json['attachments'] as List?) ?? const [])
         .whereType<Map<String, dynamic>>()
         .map(Attachment.fromJson)
+        .toList(),
+    kind: json['kind'] as String? ?? 'text',
+    refs: ((json['refs'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => MsgRef.fromJson(e.cast<String, dynamic>()))
         .toList(),
     error: json['error'] as String?,
     usage: json['usage'] as Map<String, dynamic>?,
@@ -187,8 +202,9 @@ class Bot {
     this.thinking,
     this.tagline = '',
     this.persona = '',
+    List<BotSkill>? skills,
     this.enabled = true,
-  });
+  }) : skills = skills ?? [];
 
   final String id;
   String name;
@@ -200,6 +216,9 @@ class Bot {
   /// 给用户看的一句话简介（persona 是给模型的系统提示，不能直接展示）
   String tagline;
   String persona;
+
+  /// 用户手把手教给它的做法（SOP）。服务端会拼进系统提示词，让 bot 真的"学会"。
+  List<BotSkill> skills;
   bool enabled;
 
   bool get isMain => role == 'main';
@@ -212,7 +231,46 @@ class Bot {
     model: json['model'] as String?,
     thinking: json['thinking'] as String?,
     persona: json['persona'] as String? ?? '',
+    skills: ((json['skills'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => BotSkill.fromJson(e.cast<String, dynamic>()))
+        .toList(),
     enabled: json['enabled'] as bool? ?? true,
+  );
+}
+
+/// 一条"教它做一项任务"的记录。
+class BotSkill {
+  BotSkill({required this.id, required this.title, required this.howto});
+
+  final String id;
+  String title;
+  String howto;
+
+  factory BotSkill.fromJson(Map<String, dynamic> json) => BotSkill(
+    id: json['id'] as String? ?? '',
+    title: json['title'] as String? ?? '',
+    howto: json['howto'] as String? ?? '',
+  );
+
+  Map<String, dynamic> toJson() => {'id': id, 'title': title, 'howto': howto};
+}
+
+/// 跨会话引用：bot 给别的 bot 发了私信，在**来源房间**留下一个指针。
+///
+/// 用户因此能看到“它把活派给了谁”，点开还能看他们聊了什么。
+class MsgRef {
+  MsgRef({required this.botId, required this.roomId});
+
+  /// 收信方的 bot id
+  final String botId;
+
+  /// 他们俩那个私聊房间的 id（点开看聊天记录用）
+  final String roomId;
+
+  factory MsgRef.fromJson(Map<String, dynamic> json) => MsgRef(
+    botId: json['botId'] as String? ?? '',
+    roomId: json['roomId'] as String? ?? '',
   );
 }
 

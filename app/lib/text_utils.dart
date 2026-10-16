@@ -62,3 +62,20 @@ String truncate(String input, int max) {
 
 /// 列表/通知用的一行摘要：先去 markdown，再截断
 String preview(String input, int max) => truncate(stripMarkdown(input), max);
+
+/// 把 `@🎨UI设计师` 洗成 `UI设计师`。
+///
+/// bot 写提及时常把 emoji 夹在 `@` 和名字之间（`@🎨UI设计师`），
+/// 直接拿去匹配花名册会对不上，所以统一在这里剥掉 @、空白和 emoji。
+String cleanMentionName(String raw) {
+  var s = raw.trim();
+  if (s.startsWith('@')) s = s.substring(1);
+  // 只剥掉**开头**的 emoji/空白/标点（bot 习惯写 `@🎨UI设计师`），
+  // 名字内部原样保留 —— 可能有「-」「·」这类合法字符，不能一刀切。
+  // 用显式码点范围而不是 \p{Extended_Pictographic}：后者会让分析器误报 valid_regexps。
+  s = s.replaceFirst(
+    RegExp(r'^[^A-Za-z0-9_\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]+'),
+    '',
+  );
+  return s.trim();
+}
