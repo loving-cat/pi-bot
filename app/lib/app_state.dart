@@ -26,6 +26,7 @@ class AppState extends ChangeNotifier {
   ServerInfo? serverInfo;
   List<Room> rooms = const [];
   List<Bot> bots = const [];
+
   /// 用户自己配的模型组（key 是打码的 —— 真 key 不出服务端）
   List<ModelGroup> modelGroups = const [];
   final Map<String, List<Msg>> messages = {};
@@ -36,6 +37,9 @@ class AppState extends ChangeNotifier {
 
   /// 上下文占用，key 是 `房间:bot`（服务端 /api/state 和 context 事件都按这个格式给）
   final Map<String, ContextInfo> contexts = {};
+
+  /// 群聊轮次预算（防止 bot 解不了就互相聊个没完）
+  Map<String, int> groupLimits = const {};
 
   /// App 是不是在前台（不在前台才弹通知）
   bool foreground = true;
@@ -57,7 +61,8 @@ class AppState extends ChangeNotifier {
   /// 本机模式：桌面端直连 127.0.0.1，服务端信任 loopback，不需要 token
   bool localMode = false;
 
-  bool get paired => serverUrl != null && (localMode || (token ?? '').isNotEmpty);
+  bool get paired =>
+      serverUrl != null && (localMode || (token ?? '').isNotEmpty);
 
   /// 已配对的远程设备（设置页用）
   List<Map<String, dynamic>> devices = const [];
@@ -176,6 +181,9 @@ class AppState extends ChangeNotifier {
           .whereType<Map<String, dynamic>>()
           .map(ModelGroup.fromJson)
           .toList();
+      groupLimits = ((res['groupLimits'] as Map?) ?? const {}).map(
+        (k, v) => MapEntry('$k', (v as num?)?.toInt() ?? 0),
+      );
       final ctx = (res['context'] as Map?)?.cast<String, dynamic>() ?? const {};
       contexts
         ..clear()
@@ -415,6 +423,18 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// 改群聊轮次预算。服务端会挡掉非法值（0/负数会被保持原值），
+  /// 所以这里不用自己校验，改完拉一次就是真值。
+  Future<void> saveGroupLimits(Map<String, dynamic> patch) async {
+    try {
+      await api?.patch('/api/group-limits', patch);
+      await refresh();
+    } catch (err) {
+      lastError = '$err';
+      _notify();
+    }
+  }
+
   // ---------------------------------------------------------------- 模型组
 
   /// 新增或更新一个模型组。`id` 为空 = 新增。
@@ -438,9 +458,7 @@ class AppState extends ChangeNotifier {
 
   /// 测一下这套 baseUrl + key 通不通（学 CC Switch 那种"先测一下"）。
   /// 返回服务端给的结果：{ok, ms, via, count, models, note, error}
-  Future<Map<String, dynamic>> testModelGroup(
-    Map<String, dynamic> body,
-  ) async {
+  Future<Map<String, dynamic>> testModelGroup(Map<String, dynamic> body) async {
     try {
       return await api?.post('/api/model-groups/test', body) ?? {};
     } catch (err) {
@@ -597,12 +615,13 @@ class AppState extends ChangeNotifier {
         break;
 
       case 'msg.updated':
-      case 'msg.done': {
-        final msg = Msg.fromJson((ev['msg'] as Map).cast<String, dynamic>());
-        _replace((ev['msg'] as Map).cast<String, dynamic>());
-        _maybeNotify(msg);
-        break;
-      }
+      case 'msg.done':
+        {
+          final msg = Msg.fromJson((ev['msg'] as Map).cast<String, dynamic>());
+          _replace((ev['msg'] as Map).cast<String, dynamic>());
+          _maybeNotify(msg);
+          break;
+        }
 
       case 'msg.error':
         final roomId = ev['roomId'] as String?;
@@ -627,19 +646,26 @@ class AppState extends ChangeNotifier {
         }
         break;
 
-      case 'context': {
-        // 每轮结束（以及压缩前后）服务端都会报一次
-        final key = '${ev['roomId']}:${ev['botId']}';
-        contexts[key] = ContextInfo.fromJson(ev.cast<String, dynamic>());
+      case 'groupLimits.updated':
+        groupLimits = ((ev['limits'] as Map?) ?? const {}).map(
+          (k, v) => MapEntry('$k', (v as num?)?.toInt() ?? 0),
+        );
         break;
-      }
-      case 'bot.compacting': {
-        final key = '${ev['roomId']}:${ev['botId']}';
-        final prev = contexts[key];
-        final active = ev['active'] as bool? ?? false;
-        contexts[key] = (prev ?? ContextInfo()).copyWith(compacting: active);
-        break;
-      }
+      case 'context':
+        {
+          // 每轮结束（以及压缩前后）服务端都会报一次
+          final key = '${ev['roomId']}:${ev['botId']}';
+          contexts[key] = ContextInfo.fromJson(ev.cast<String, dynamic>());
+          break;
+        }
+      case 'bot.compacting':
+        {
+          final key = '${ev['roomId']}:${ev['botId']}';
+          final prev = contexts[key];
+          final active = ev['active'] as bool? ?? false;
+          contexts[key] = (prev ?? ContextInfo()).copyWith(compacting: active);
+          break;
+        }
       case 'typing':
         typing[ev['roomId'] as String] = ev['active'] as bool? ?? false;
         if (ev['active'] != true) queued.remove(ev['roomId']);
