@@ -17,7 +17,38 @@ import { config } from './config.js';
 import { store } from './store.js';
 import { menuText, resolveMenu, MODEL_MENU } from './model-menu.js';
 import { extractText } from './extract.js';
-import { log } from './util.js';
+import { log, now } from './util.js';
+
+/** 同一个 bot 连着私信多个人时，多久以内的引用气泡合并成一个（ms） */
+export const REF_MERGE_MS = 180_000;
+
+/**
+ * 决定「来源房间里那条引用气泡」该新建还是合并。
+ *
+ * bot 给同事发私信时，用户只在来源房间看到「我发了」，永远不知道活派给了谁。
+ * 所以要在来源房间留一条 kind='ref' 的指针（同类客户端 那种小浮动条）。
+ * 同一个 bot 连着私信好几个人时不该刷屏 → 180s 窗口内合并成一个气泡「已发送给 A 和 B」。
+ *
+ * 抽成纯函数是为了能单测：合并窗口是时间敏感的，写错了只会表现为「界面偶尔刷屏」，
+ * 人工点不出来。
+ *
+ * @returns {{mode:'merge', refs:Array}|{mode:'append', ref:Object}}
+ */
+export function planRefBubble({ last, botId, targetBotId, dmRoomId, at = now(), nowMs = at }) {
+  const ref = { botId: targetBotId, roomId: dmRoomId, at };
+  const mergeable =
+    Boolean(last) &&
+    last.kind === 'ref' &&
+    // 只有同一个 bot 自己的气泡能合并；换个 bot 说话就要新开一条
+    last.authorId === botId &&
+    nowMs - Number(last.createdAt || 0) < REF_MERGE_MS;
+  if (!mergeable) return { mode: 'append', ref };
+  return {
+    mode: 'merge',
+    // 去重：同一个同事重复私信不该出现两个同名气泡
+    refs: [...(last.refs || []).filter((r) => r.botId !== targetBotId), ref],
+  };
+}
 
 const THINKING_LEVELS = ['off', 'low', 'medium', 'high', 'max'];
 
@@ -59,23 +90,25 @@ function botLine(bot) {
   const depts = store
     .listRooms()
     .filter((r) => r.kind === 'group' && r.botIds.includes(bot.id))
-    .map((r) => `${r.name}${r.leadBotId === bot.id ? '(老大)' : ''}`);
-  const tags = [
-    bot.role === 'main' ? '总经理' : '成员',
+    .map((r) => `${r.name}${r.leadBotId === bot.id ? '(负责)' : ''}`);
+  // ★ 末尾 «» 里是内部参数，只给模型自己挑模型用。
+  //   以前这些直接裸拼在行里，模型会原样念给用户听（“他用 ctyun/glm-5.3-oc，thinking high”）——
+  //   用户要的是个同事，不是一份配置清单。
+  const internal = [
     bot.model ?? '默认模型',
     `thinking ${bot.thinking}`,
     depts.length ? `部门：${depts.join('、')}` : '',
   ].filter(Boolean);
   const duty = String(bot.persona ?? '').split('\n').find((l) => l.trim())?.slice(0, 60) ?? '';
-  return `${bot.id}  ${bot.emoji ?? ''}${bot.name}  [${tags.join(' / ')}]${duty ? `  ${duty}` : ''}`;
+  return `${bot.id}  ${bot.emoji ?? ''}${bot.name}${duty ? `  ${duty}` : ''}  «${internal.join(' / ')}»`;
 }
 
 function deptLine(room) {
   const names = room.botIds.map((id) => {
     const b = store.getBot(id);
-    return b ? `${b.emoji ?? ''}${b.name}${id === room.leadBotId ? '(老大)' : ''}` : id;
+    return b ? `${b.emoji ?? ''}${b.name}` : id;
   });
-  return `${room.id}  ${room.name}${room.topic ? ` —— ${room.topic}` : ''}\n    成员：${names.join('、') || '（空）'}`;
+  return `${room.id}  ${room.name}${room.topic ? ` —— ${room.topic}` : ''}\n    成员：${names.join('、') || '（空）'}\n    «对接人：${store.getBot(room.leadBotId)?.name ?? '（未指定）'}»`;
 }
 
 // ---------------------------------------------------------------------------
@@ -157,6 +190,39 @@ export function buildCommonTools({ runner, roomId, botId }) {
           meta: { via: 'message_bot', from: botId },
         });
         if (!result.ok) return fail(`${target.name} 没跑成：${result.error}`);
+
+        // ★ 在来源房间留一条可点击的引用记录。
+        //   没有这一步，用户只看到"我发了"，永远不知道它把活派给了谁、
+        //   对方回了什么。同类客户端 的做法就是在原地浮一个小气泡。
+        if (roomId && roomId !== dm.id) {
+          const me = store.getBot(botId);
+          const recent = store.listMessages(roomId, { limit: 1 });
+          const last = recent[recent.length - 1];
+          const plan = planRefBubble({
+            last,
+            botId,
+            targetBotId: target.id,
+            dmRoomId: dm.id,
+          });
+          if (plan.mode === 'merge') {
+            // 同一个 bot 连着私信了好几个 → 合并成一个气泡（"已发送给 A 和 B"）
+            store.updateMessage(roomId, last.id, { refs: plan.refs });
+          } else {
+            store.appendMessage({
+              roomId,
+              authorType: 'bot',
+              authorId: botId,
+              authorName: me?.name ?? '',
+              authorEmoji: me?.emoji ?? null,
+              kind: 'ref',
+              refs: [plan.ref],
+              text: '',
+              status: 'done',
+              meta: { via: 'message_bot' },
+            });
+          }
+        }
+
         return ok(`【${target.name} 的回复】\n${result.text}`, { botId: target.id, ms: result.ms });
       },
     }),
@@ -250,7 +316,7 @@ export function buildChiefTools({ runner, health, roomId }) {
           createdBy: 'chief',
         });
         log(`chief 招了：${bot.emoji} ${bot.name} (${bot.model ?? '默认'}/${bot.thinking})`);
-        return ok(`已招到 ${bot.emoji} ${bot.name}（id=${bot.id}，模型 ${bot.model ?? '默认'}，thinking ${bot.thinking}）`, {
+        return ok(`已招到 ${bot.emoji} ${bot.name}（id=${bot.id}）。«内部：${bot.model ?? '默认'}/${bot.thinking}，不要写进给用户看的话»`, {
           botId: bot.id,
         });
       },
@@ -279,7 +345,7 @@ export function buildChiefTools({ runner, health, roomId }) {
         const bot = store.updateBot(target, patch);
         if (!bot) return fail(`找不到 bot ${target}`);
         if (patch.model !== undefined || patch.thinking !== undefined) runner.resetSessionForBot(bot.id);
-        return ok(`已更新 ${bot.emoji ?? ''}${bot.name}（模型 ${bot.model ?? '默认'}，thinking ${bot.thinking}）`);
+        return ok(`已更新 ${bot.emoji ?? ''}${bot.name}。«内部：${bot.model ?? '默认'}/${bot.thinking}»`);
       },
     }),
 
@@ -422,34 +488,34 @@ export function buildChiefTools({ runner, health, roomId }) {
         });
 
         const me = store.mainBot();
+        // ★ 给用户看的公告：像真人老板拉群那样说话。
+        //   不列成员名单、不标谁是老大、不提模型/思考等级 ——
+        //   职位（工程师/设计师/负责人）本身已经说明了分工和分量，
+        //   挨个点评“谁用什么工具、谁当头”只会显得像在念配置表。
+        const announce = [`${room.name} 拉好了。`];
+        if (params.topic) announce.push(`我们要做的事：${params.topic}`);
+        announce.push(
+          `活儿直接发进这个群，先找 ${leadBot?.emoji ?? ''}${leadBot?.name ?? params.lead} 对接。`,
+        );
         store.appendMessage({
           roomId: room.id,
           authorType: 'bot',
           authorId: me?.id ?? 'chief',
           authorName: me?.name ?? 'Pi',
           authorEmoji: me?.emoji ?? 'π',
-          text: [
-            `「${room.name}」已经建好了。`,
-            '',
-            params.topic ? `负责的事：${params.topic}` : '',
-            `负责人：${leadBot?.emoji ?? ''}${leadBot?.name ?? params.lead}${leadBot?.tagline ? `　${leadBot.tagline}` : ''}`,
-            '成员：',
-            ...created
-              .filter((b) => b.id !== leadBot?.id)
-              .map((b) => `· ${b.emoji ?? ''}${b.name}${b.tagline ? `　${b.tagline}` : ''}`),
-            '',
-            '直接把任务发进这个群就行。',
-          ]
-            .filter((l) => l !== '')
-            .join('\n'),
+          text: announce.join('\n\n'),
           status: 'done',
           meta: { via: 'create_department' },
         });
 
         log(`chief 建部门：${room.name}，老大=${leadBot?.name}，${created.length} 人`);
+        // 返回值里的模型/思考等级是给模型自己看的，用 «» 框起来并明说是内部参数，
+        // 否则它会原样转述给用户。
         return ok(
-          `已建部门「${room.name}」(id=${room.id})，老大 **${leadBot?.name}**，成员 ${created.length} 个：\n` +
-            created.map((b) => `  ${b.id}  ${b.emoji ?? ''}${b.name}  ${b.model ?? '默认'}/${b.thinking}`).join('\n'),
+          `已建部门「${room.name}」(roomId=${room.id})，共 ${created.length} 人。\n` +
+            `用户往这个群发消息时，由 ${leadBot?.name} 先接单拆活。\n` +
+            '下面 «» 里是内部参数（只给你自己挑模型/派活用，**不要写进给用户看的话**）：\n' +
+            created.map((b) => `  ${b.id}  ${b.emoji ?? ''}${b.name}  «${b.model ?? '默认'}/${b.thinking}»`).join('\n'),
           { roomId: room.id, leadBotId: leadBot?.id, botIds: created.map((b) => b.id) },
         );
       },
