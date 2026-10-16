@@ -328,6 +328,7 @@ class _ChatScreenState extends State<ChatScreen> {
                               msg: msg,
                               showAuthor: newAuthor,
                               bot: state.botById(msg.authorId),
+                              isGroup: room.isGroup,
                               mentions: room.botNames,
                               isLead:
                                   room.isGroup &&
@@ -925,6 +926,7 @@ class _MessageRow extends StatelessWidget {
     required this.msg,
     required this.showAuthor,
     required this.bot,
+    required this.isGroup,
     required this.onLongPress,
     this.mentions = const [],
     this.isLead = false,
@@ -933,6 +935,9 @@ class _MessageRow extends StatelessWidget {
   final Msg msg;
   final bool showAuthor;
   final Bot? bot;
+
+  /// 群聊还是私聊 —— 决定要不要画头像
+  final bool isGroup;
   final VoidCallback onLongPress;
 
   /// 部门成员名字，用来高亮 @提及
@@ -948,7 +953,22 @@ class _MessageRow extends StatelessWidget {
 
     final isUser = msg.isUser;
     final streaming = msg.isStreaming;
-    final accent = PB.colorFor(msg.authorId ?? msg.authorName);
+
+    // ★ 名字和 emoji 一律**从 authorId 现查**，不信消息里存的那一份。
+    //   消息里的 authorName 是写入时的快照 —— 用户给 bot 改完名字，
+    //   它以前发过的消息就会一直挂着旧名字（改名的经典坑）。
+    //   存着那份只当兜底：bot 被删掉之后，历史消息还得有个署名。
+    final displayName = bot?.name ?? msg.authorName;
+    final displayEmoji = bot?.emoji ?? msg.authorEmoji;
+
+    final accent = PB.colorFor(msg.authorId ?? displayName);
+
+    // 私聊里每条都是同一个人，头像和头部重复 —— 不画（顺便收掉左边那条留白，
+    // 气泡能贴左一点）。
+    final showAvatar = showAuthor && isGroup;
+    // 群聊里主控（总经理）不标名字：它是"你这边的人"，标出来只是噪音。
+    // 头像还留着 —— 一眼能看出"这条是它说的"。
+    final showName = showAuthor && !(isGroup && bot?.isMain == true);
     // 气泡最宽：屏幕 78%，桌面端最多 620，避免一行铺到大半个屏
     final maxBubble = math.min(MediaQuery.sizeOf(context).width * 0.78, 620.0);
 
@@ -1044,33 +1064,33 @@ class _MessageRow extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            width: 34,
-            child: showAuthor
-                ? Padding(
-                    padding: const EdgeInsets.only(top: 2),
-                    child: BlobAvatar(
-                      seed: msg.authorId ?? msg.authorName,
-                      color: accent,
-                      emoji: msg.authorEmoji ?? bot?.emoji,
-                      size: 28,
-                      animate: false,
-                    ),
-                  )
-                : null,
-          ),
-          const SizedBox(width: 8),
+          if (showAvatar) ...[
+            SizedBox(
+              width: 34,
+              child: Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: BlobAvatar(
+                  seed: msg.authorId ?? displayName,
+                  color: accent,
+                  emoji: displayEmoji,
+                  size: 28,
+                  animate: false,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+          ],
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (showAuthor)
+                if (showName)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 5),
                     child: Row(
                       children: [
                         Text(
-                          msg.authorName,
+                          displayName,
                           style: TextStyle(
                             fontSize: PB.fsSm,
                             fontWeight: FontWeight.w600,
