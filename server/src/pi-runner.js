@@ -199,10 +199,16 @@ function emitContext(roomId, botId, session) {
  *   3. 文件规矩 —— 附件在 _inbox/、产出图要 send_image
  *   4. 说话规矩 —— 禁止念模型名/思考等级/token/id、禁止点评谁是老大
  */
-export function buildAppendSystemPrompt(bot = {}) {
+export function buildAppendSystemPrompt(bot = {}, { userName = '' } = {}) {
   const skills = Array.isArray(bot.skills) ? bot.skills.filter((s) => s?.title) : [];
   return [
     ...(bot.persona ? [bot.persona] : []),
+    // ★ 你是谁 / 用户是谁。
+    //   不写这个的话，bot 只能从人设里猜用户身份，或者干脆不称呼 ——
+    //   而在群里它还需要知道"哪条是那个真人发的"（其余都是同事）。
+    `【在跟谁说话】跟你说话的人叫「${userName || '用户'}」，这个会话里只有它一个真人，` +
+      '其他都是你的同事（bot）。直接称呼它，不用问"您是谁"、也不用自我介绍。' +
+      `要提到它的时候就用「${userName || '用户'}」。`,
     // 用户教过它的做法（SOP）：直接当成"你已经会了"，不要每轮重新摸索
     ...(skills.length
       ? [
@@ -417,7 +423,9 @@ export class PiRunner {
       const resourceLoader = new DefaultResourceLoader({
         cwd: config.workspace,
         agentDir: getAgentDir(),
-        appendSystemPrompt: buildAppendSystemPrompt(bot),
+        appendSystemPrompt: buildAppendSystemPrompt(bot, {
+          userName: store.userName(),
+        }),
         noExtensions: config.noExtensions || undefined,
       });
       await resourceLoader.reload();

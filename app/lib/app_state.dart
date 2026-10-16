@@ -41,6 +41,23 @@ class AppState extends ChangeNotifier {
   /// 群聊轮次预算（防止 bot 解不了就互相聊个没完）
   Map<String, int> groupLimits = const {};
 
+  /// 右侧详情面板开着没（点聊天顶部胶囊开的）。
+  ///
+  /// 放 AppState 里是因为它**跨了两个层**：胶囊在 ChatScreen 里，
+  /// 而面板本身是 HomeShell 布局里的一栏 —— 需要一个共同的地方放这个开关。
+  bool panelOpen = false;
+
+  void togglePanel() {
+    panelOpen = !panelOpen;
+    _notify();
+  }
+
+  void closePanel() {
+    if (!panelOpen) return;
+    panelOpen = false;
+    _notify();
+  }
+
   /// App 是不是在前台（不在前台才弹通知）
   bool foreground = true;
 

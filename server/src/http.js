@@ -167,6 +167,8 @@ export function createHttpServer({ runner, pairing }) {
           modelGroups: modelGroups.listPublic(),
           // 群聊轮次预算（防止 bot 解不了就互相聊个没完）
           groupLimits: store.groupLimits(),
+          // 用户自己是谁（bot 要知道在跟谁说话）
+          user: store.userSummary(),
           pairing: config.staticToken ? null : pairing.snapshot(),
         });
       }
@@ -232,6 +234,17 @@ export function createHttpServer({ runner, pairing }) {
         const r = store.deleteBot(botMatch[1]);
         if (!r) return send(res, 400, { error: '删不了（不存在或它是主控）' });
         return send(res, 200, r);
+      }
+
+      // ---------- 用户身份 ----------
+      if (pathname === '/api/user' && req.method === 'GET') {
+        return send(res, 200, { user: store.userSummary() });
+      }
+      if (pathname === '/api/user' && req.method === 'PATCH') {
+        const body = await readBody(req);
+        const user = store.updateUserName(body.name);
+        log(`👤 用户改名叫：${user.name}（bot 的系统提示会跟着变）`);
+        return send(res, 200, { user });
       }
 
       // ---------- 群聊轮次预算 ----------

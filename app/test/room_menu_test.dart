@@ -7,11 +7,13 @@
 // 用组件测试而不是截图：合成鼠标事件要跟 DPI/焦点较劲，而且不防回归。
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pi_bot/app_state.dart';
 import 'package:pi_bot/models.dart';
 import 'package:pi_bot/scope.dart';
 import 'package:pi_bot/screens/chat_screen.dart';
+import 'package:pi_bot/screens/home_shell.dart';
 import 'package:pi_bot/screens/rooms_screen.dart';
 import 'package:pi_bot/widgets/blob_avatar.dart';
 import 'package:pi_bot/widgets/md_text.dart';
@@ -310,9 +312,11 @@ void main() {
     expect(tapped, '测试工程师');
   });
 
-  testWidgets('点顶部胶囊 → 右边滑出面板（群里有成员页，能移除 bot）', (tester) async {
-    // 用户要的：私聊点胶囊看详情；群聊多一个"成员"页，那里能把某个 bot 移出群。
-    tester.view.physicalSize = const Size(1200, 800);
+  testWidgets('宽屏点胶囊 → 右侧多一栏，不是带遮罩的弹层', (tester) async {
+    // 用户："应该跟我其他区域同级别的侧边栏，而不是一个有遮罩的二级菜单"。
+    // 所以这里除了"面板出来了"，还要断言**没有模态遮罩** ——
+    // 有遮罩就说明又变成弹层了。
+    tester.view.physicalSize = const Size(1400, 900);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
     final state = _stateWith(
@@ -321,44 +325,47 @@ void main() {
     );
     addTearDown(state.dispose);
     await tester.pumpWidget(
-      AppScope(
-        state: state,
-        child: MaterialApp(home: ChatScreen(room: state.rooms.first)),
-      ),
+      AppScope(state: state, child: const MaterialApp(home: HomeShell())),
     );
     await tester.pump();
 
-    // ★ 点胶囊要用 .last：Scaffold 的 body 比 appBar **先建树**，
-    //   而空会话的提示里也会显示一次房间名 —— 所以 .first 是中间那个大标题，
-    //   不是顶上那个胶囊（这里踩过：点了半天没反应）。
-    final pill = find.text('开发组').last;
-    expect(
-      tester.getRect(pill).top,
-      lessThan(60),
-      reason: '胶囊应该在顶部（y 很小）',
-    );
-    await tester.tap(pill);
+    expect(find.text('详情'), findsNothing, reason: '默认不开');
+
+    await tester.tap(find.text('开发组').last); // 顶上那个胶囊（body 先于 appBar 建树）
     await tester.pumpAndSettle();
 
     expect(find.text('详情'), findsOneWidget);
     expect(find.text('成员'), findsOneWidget, reason: '群才有这一页');
 
+    // ★ 关键区别：点面板以外的地方**不该关掉它**。
+    //   弹层会（有遮罩、点遮罩就关），侧边栏不会 —— 这是"同级一栏"和
+    //   "二级菜单"最本质的差别，比断言某个 ModalBarrier 存在与否可靠得多
+    //   （每个路由都带一个 ModalBarrier，拿它当判据会误判）。
+    await tester.tapAt(const Offset(500, 500)); // 聊天区
+    await tester.pumpAndSettle();
+    expect(find.text('详情'), findsOneWidget, reason: '点别处不该关掉它（那是弹层的行为）');
+    // 聊天区还在（不是被面板盖住/替换掉）
+    expect(find.textContaining('说点什么'), findsWidgets);
+
+    // 成员页能移除 bot（要二次确认）
     await tester.tap(find.text('成员'));
     await tester.pumpAndSettle();
-    expect(find.text('甲'), findsOneWidget);
-    expect(find.text('乙'), findsOneWidget);
-
-    // 移除要二次确认
+    expect(find.text('甲'), findsWidgets);
     await tester.tap(find.text('移除').first);
     await tester.pumpAndSettle();
     expect(find.textContaining('移出「开发组」'), findsOneWidget);
     await tester.tap(find.text('取消'));
     await tester.pumpAndSettle();
     expect(state.rooms.first.botIds.length, 2, reason: '取消了就不该动数据');
+
+    // 关掉之后那一栏应该消失
+    await tester.tap(find.byIcon(LucideIcons.x).first);
+    await tester.pumpAndSettle();
+    expect(find.text('详情'), findsNothing);
   });
 
-  testWidgets('私聊的面板没有成员页', (tester) async {
-    tester.view.physicalSize = const Size(1200, 800);
+  testWidgets('窄屏（手机）点胶囊才走整页滑入', (tester) async {
+    tester.view.physicalSize = const Size(500, 900);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
     final state = _stateWith([
@@ -366,17 +373,18 @@ void main() {
     ], bots: [Bot(id: 'b1', name: '甲')]);
     addTearDown(state.dispose);
     await tester.pumpWidget(
-      AppScope(
-        state: state,
-        child: MaterialApp(home: ChatScreen(room: state.rooms.first)),
-      ),
+      AppScope(state: state, child: const MaterialApp(home: HomeShell())),
     );
     await tester.pump();
 
-    await tester.tap(find.text('甲').last); // 同上：body 先于 appBar 建树
+    // 窄屏初始是会话列表，先进聊天
+    await tester.tap(find.text('甲').first);
     await tester.pumpAndSettle();
+    await tester.tap(find.text('甲').last);
+    await tester.pumpAndSettle();
+
     expect(find.text('详情'), findsOneWidget);
-    expect(find.text('成员'), findsNothing, reason: '私聊没有"成员"这回事');
+    expect(find.text('成员'), findsNothing, reason: '私聊没有成员页');
   });
 
   testWidgets('私聊里气泡上不挂名字（顶上的胶囊已经说清是谁了）', (tester) async {
