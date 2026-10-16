@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../models.dart';
 import '../scope.dart';
@@ -78,7 +79,7 @@ class _HomeShellState extends State<HomeShell> {
           ),
           // 右上角窗口控制按钮，盖在最上层
           if (WindowControlsOverlay.isSupported)
-            const Positioned(top: 4, right: 4, child: WindowControlsOverlay()),
+            const Positioned(top: 0, right: 0, child: WindowControlsOverlay()),
         ],
       ),
     );
@@ -96,7 +97,7 @@ class _NoSelection extends StatelessWidget {
       child: const Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.forum_outlined, size: 36, color: PB.textQuaternary),
+          Icon(LucideIcons.messageSquare, size: 36, color: PB.textQuaternary),
           SizedBox(height: 14),
           Text('左边选一个会话', style: TextStyle(fontSize: PB.fsSm, color: PB.textTertiary)),
         ],
