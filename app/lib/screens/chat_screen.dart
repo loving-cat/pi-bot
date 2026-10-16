@@ -1478,7 +1478,9 @@ class _Steps extends StatelessWidget {
                         style: TextStyle(
                           fontFamily: PB.monoFamily,
                           fontFamilyFallback: PB.monoFallback,
-                          fontSize: PB.fsXxs,
+                          // 这行是**中英混排**（create_bot  name: 平台开发工程师），
+                          // 10 号在 125% 缩放下是 12.5 个物理像素，中文必糊
+                          fontSize: PB.fsTinyCjk,
                           color: step.status == 'running'
                               ? PB.accent
                               : PB.textQuaternary,

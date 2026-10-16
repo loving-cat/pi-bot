@@ -852,15 +852,20 @@ export class PiRunner {
       } catch (err) {
         throw Object.assign(new Error(`插话失败：${err?.message || err}`), { code: 'STEER_FAILED' });
       }
-      const userMessage = store.appendMessage({
-        roomId,
-        authorType: 'user',
-        authorName: '我',
-        text: clean,
-        status: 'done',
-        meta: { queued: effective, queuedState: queued ?? 'queued' },
-        attachments: hydrate(files),
-      });
+      const userMessage = store.appendMessage(
+        {
+          roomId,
+          authorType: 'user',
+          authorName: '我',
+          text: clean,
+          status: 'done',
+          meta: { queued: effective, queuedState: queued ?? 'queued' },
+          attachments: hydrate(files),
+        },
+        // ★ 插在"它正在写的那条回复"之前 —— 于是这条话后面跟着的就是它的回复，
+        //   用户读到的是「我插的话 → 它的回应」。
+        { beforeStreaming: true },
+      );
       bus.emit('event', {
         t: 'steer.accepted',
         roomId,
