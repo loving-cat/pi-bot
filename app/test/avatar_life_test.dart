@@ -79,14 +79,32 @@ void main() {
       );
     });
 
-    test('越远偏得越多，但增长会收敛', () {
+    test('★ 近距离就要给满偏移（鼠标往往就在同一行里）', () {
+      // 46px 的头像、鼠标在 40px 外（同一行的名字那一带）——
+      // 旧公式只偏 0.06*size（3px），用户感受不到。
+      final o = eyeOffsetToward(
+        avatarCenter: center,
+        pointer: const Offset(140, 100), // 距离 40
+        size: size,
+      );
+      expect(
+        o.distance / size,
+        greaterThan(0.14),
+        reason: '同一行内就该接近满偏移，而不是"越近越不偏"',
+      );
+    });
+
+    test('近处随距离增长，够远就饱和（不再无限增长）', () {
       Offset at(double dx) => eyeOffsetToward(
         avatarCenter: center,
         pointer: Offset(100 + dx, 100),
         size: size,
       );
-      expect(at(20).dx, lessThan(at(80).dx));
-      expect(at(80).dx, lessThan(at(400).dx));
+      // 极近处按比例（"刚好擦到"的感觉）
+      expect(at(4).dx, lessThan(at(12).dx));
+      // 超过 0.3*size 之后给满 —— 同一行内的任何位置都是"满偏"，
+      // 这正是用户要的（鼠标在行里，眼睛就该看着你）
+      expect(at(20).dx, closeTo(at(400).dx, 0.01));
     });
   });
 
