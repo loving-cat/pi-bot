@@ -38,7 +38,7 @@ class BotsScreen extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 6, 12, 14),
                 child: Text(
-                  '${state.bots.length} 个 bot。主控负责造人派活；点任意一个可以改人设、模型和思考等级。',
+                  '${state.bots.length} 个 bot。总经理负责造人派活；点任意一个可以改人设、模型和思考等级。',
                   style: const TextStyle(
                     fontSize: PB.fsXs,
                     color: PB.textQuaternary,
@@ -173,7 +173,7 @@ class _BotRow extends StatelessWidget {
                                 borderRadius: BorderRadius.circular(PB.rSm),
                               ),
                               child: const Text(
-                                'superroot',
+                                '总经理',
                                 style: TextStyle(
                                   fontSize: 9.5,
                                   color: PB.accent,
@@ -278,7 +278,7 @@ class _BotRow extends StatelessWidget {
                               ),
                               const SizedBox(height: 3),
                               Text(
-                                bot.isMain ? '主控（superroot）' : bot.id,
+                                bot.isMain ? '总经理' : bot.id,
                                 style: const TextStyle(
                                   fontSize: PB.fsXxs,
                                   color: PB.textQuaternary,

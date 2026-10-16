@@ -78,7 +78,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             children: [
               _SectionTitle(
                 icon: LucideIcons.smartphone,
-                title: '远程连接',
+                title: '手机连接',
                 subtitle: isHostPlatform
                     ? '手机扫下面的码就能连上这台电脑'
                     : '这台设备是通过配对连上服务端的',
@@ -246,6 +246,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
 
+            // 「后台通知」是手机专属（前台服务 + 电池白名单），桌面端不显示
+            if (isMobilePlatform) ...[
               const SizedBox(height: 22),
               const _SectionTitle(
                 icon: LucideIcons.bellRing,
@@ -293,9 +295,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ],
                 ),
               ),
+            ],
 
-              const SizedBox(height: 22),
-              const _SectionTitle(icon: LucideIcons.slidersHorizontal, title: '操作'),
+            const SizedBox(height: 22),
+            const _SectionTitle(icon: LucideIcons.slidersHorizontal, title: '操作'),
               _Card(
                 child: Column(
                   children: [
