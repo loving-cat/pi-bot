@@ -347,9 +347,7 @@ class _RoomsScreenState extends State<RoomsScreen> {
                         subtitle: Text(
                           bot.isMain
                               ? '总经理'
-                              : (firstLine(bot.persona).isNotEmpty
-                                    ? preview(bot.persona, 34)
-                                    : '成员'),
+                              : (bot.tagline.isNotEmpty ? preview(bot.tagline, 34) : '成员'),
                           style: const TextStyle(
                             fontSize: PB.fsXs,
                             color: PB.textQuaternary,
@@ -639,9 +637,7 @@ class _RoomRowState extends State<_RoomRow> {
         ? (room.topic.isNotEmpty
               ? preview(room.topic, 46)
               : (!room.isGroup && bot != null
-                    ? (firstLine(bot.persona).isNotEmpty
-                          ? preview(bot.persona, 40)
-                          : '还没有消息')
+                    ? (bot.tagline.isNotEmpty ? preview(bot.tagline, 40) : '还没有消息')
                     : (room.isGroup && room.leadName != null
                           ? '负责人 ${room.leadName} · ${room.botIds.length} 人'
                           : '还没有消息')))

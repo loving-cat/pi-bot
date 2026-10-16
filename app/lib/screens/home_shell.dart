@@ -1,6 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:lucide_icons_flutter/lucide_icons.dart';
-import 'package:window_manager/window_manager.dart';
 
 import '../models.dart';
 import '../scope.dart';
@@ -50,7 +48,7 @@ class _HomeShellState extends State<HomeShell> {
         children: [
           Column(
             children: [
-              // 无边框窗口的拖拽条（双击 = 最大化/还原）
+              // 顶部拖拽条（双击 = 最大化 / 还原），本身不画东西
               const WindowTitleBar(),
               Expanded(
                 child: Row(
@@ -78,53 +76,9 @@ class _HomeShellState extends State<HomeShell> {
               ),
             ],
           ),
-          // 窗口控制按钮用固定定位盖在最上层。
-          // 注：试过封装成单独的组件（带 MouseRegion/GestureDetector 的），
-          // 在无边框窗口下整个子树不渲染；内联 IconButton 反而稳定，所以就这样。
-          if (WindowTitleBar.isSupported)
-            Positioned(
-              top: 4,
-              right: 8,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    tooltip: '最小化',
-                    iconSize: 15,
-                    padding: EdgeInsets.zero,
-                    visualDensity: VisualDensity.compact,
-                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                    onPressed: () => windowManager.minimize(),
-                    icon: Icon(LucideIcons.minus, color: PB.textSecondary),
-                  ),
-                  IconButton(
-                    tooltip: '最大化 / 还原',
-                    iconSize: 14,
-                    padding: EdgeInsets.zero,
-                    visualDensity: VisualDensity.compact,
-                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                    onPressed: () async {
-                      if (await windowManager.isMaximized()) {
-                        await windowManager.unmaximize();
-                      } else {
-                        await windowManager.maximize();
-                      }
-                    },
-                    icon: Icon(LucideIcons.square, color: PB.textSecondary),
-                  ),
-                  IconButton(
-                    tooltip: '关闭',
-                    iconSize: 15,
-                    padding: EdgeInsets.zero,
-                    visualDensity: VisualDensity.compact,
-                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                    onPressed: () => windowManager.close(),
-                    icon: Icon(LucideIcons.x, color: PB.textSecondary),
-                  ),
-                  const SizedBox(width: 4),
-                ],
-              ),
-            ),
+          // 右上角窗口控制按钮，盖在最上层
+          if (WindowControlsOverlay.isSupported)
+            const Positioned(top: 4, right: 4, child: WindowControlsOverlay()),
         ],
       ),
     );
@@ -139,15 +93,12 @@ class _NoSelection extends StatelessWidget {
     return Container(
       color: PB.bgPane,
       alignment: Alignment.center,
-      child: Column(
+      child: const Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(LucideIcons.messagesSquare, size: 40, color: PB.textQuaternary),
-          const SizedBox(height: 14),
-          const Text(
-            '左边选一个会话',
-            style: TextStyle(fontSize: PB.fsSm, color: PB.textTertiary),
-          ),
+          Icon(Icons.forum_outlined, size: 36, color: PB.textQuaternary),
+          SizedBox(height: 14),
+          Text('左边选一个会话', style: TextStyle(fontSize: PB.fsSm, color: PB.textTertiary)),
         ],
       ),
     );
