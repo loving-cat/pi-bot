@@ -58,10 +58,25 @@ void main() {
         );
         expect(
           o.distance,
-          lessThanOrEqualTo(size * 0.11 + 0.001),
-          reason: '再远也只能偏这么多',
+          lessThanOrEqualTo(size * 0.16 + 0.001),
+          reason: '再远也只能偏这么多（0.16 是量过的上限：再大窄形状会压到轮廓）',
         );
       }
+    });
+
+    test('★ 幅度要够明显（不然用户"完全感觉不到"）', () {
+      // 常见距离：鼠标离头像 300px。以前这里只偏 0.07*size（46px 的头像 = 3px），
+      // 等于看不见；现在应该到 0.13*size 以上。
+      final o = eyeOffsetToward(
+        avatarCenter: center,
+        pointer: const Offset(400, 100), // 距离 300
+        size: size,
+      );
+      expect(
+        o.distance / size,
+        greaterThan(0.13),
+        reason: '46px 的头像在 300px 距离下至少要偏 6px 才看得出来',
+      );
     });
 
     test('越远偏得越多，但增长会收敛', () {

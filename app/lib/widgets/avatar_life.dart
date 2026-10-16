@@ -62,8 +62,13 @@ Offset eyeOffsetToward({
   final d = pointer - avatarCenter;
   final len = d.distance;
   if (len < 0.5) return Offset.zero;
-  final falloff = len / (len + size * 2.4);
-  final reach = size * 0.11;
+  // ★ 幅度调大了（用户："跟随的幅度太小了，完全感觉不到"）。
+  //   原来是 reach 0.11*size 且衰减分母 2.4*size —— 46px 的头像在常见距离下
+  //   只偏 3px，等于看不出来。现在 0.16*size、分母降到 1.0*size：
+  //   同样的距离偏 7px 左右，一眼能看出它在看你。
+  //   上限 0.16 是量过的：再大，窄形状（水滴/拱形）的眼睛会压到轮廓上。
+  final falloff = len / (len + size * 1.0);
+  final reach = size * 0.16;
   return d * (falloff * reach / len);
 }
 
