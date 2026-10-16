@@ -11,6 +11,7 @@ import '../models.dart';
 import '../scope.dart';
 import '../text_utils.dart';
 import '../theme.dart';
+import '../widgets/window_title_bar.dart';
 import '../widgets/attachment_view.dart';
 import '../widgets/avatar_life.dart';
 import '../widgets/blob_avatar.dart';
@@ -258,6 +259,8 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
         actions: [
+          // 右边要让开窗口控制按钮，否则"…"会和关闭叠在一起
+          const WindowControlsSpacer(),
           PopupMenuButton<String>(
             icon: const Icon(LucideIcons.ellipsis, size: 18),
             padding: EdgeInsets.zero,
@@ -341,6 +344,17 @@ class _ChatScreenState extends State<ChatScreen> {
                                 bot: state.botById(msg.authorId),
                                 isGroup: room.isGroup,
                                 mentions: room.botNames,
+                                // @ 的名字 → 那个 bot（chip 的颜色、悬停卡的内容都靠它）
+                                mentionOf: (name) {
+                                  final b = state.botByName(name);
+                                  return b == null
+                                      ? null
+                                      : MentionInfo(
+                                          seed: b.id,
+                                          subtitle: b.tagline,
+                                          emoji: b.emoji,
+                                        );
+                                },
                                 isLead:
                                     room.isGroup &&
                                     msg.authorId != null &&
@@ -946,6 +960,7 @@ class _MessageRow extends StatelessWidget {
     required this.onLongPress,
     this.mentions = const [],
     this.isLead = false,
+    this.mentionOf,
   });
 
   final Msg msg;
@@ -961,6 +976,9 @@ class _MessageRow extends StatelessWidget {
 
   /// 这条消息的作者是不是这个部门的负责人
   final bool isLead;
+
+  /// @提及 → chip/悬停卡要用的信息（名字换成 bot）
+  final MentionInfo? Function(String name)? mentionOf;
 
   @override
   Widget build(BuildContext context) {
@@ -1041,6 +1059,7 @@ class _MessageRow extends StatelessWidget {
                           msg.text,
                           selectable: true,
                           onMentionTap: (name) => openBotDm(context, name),
+                          mentionOf: mentionOf,
                           style: const TextStyle(
                             fontSize: PB.fsBase,
                             height: 1.45,
@@ -1167,6 +1186,7 @@ class _MessageRow extends StatelessWidget {
                             streaming ? '${msg.text}▍' : msg.text,
                             selectable: !streaming,
                             onMentionTap: (name) => openBotDm(context, name),
+                            mentionOf: mentionOf,
                             mentions: mentions,
                             style: const TextStyle(
                               fontSize: PB.fsBase,
