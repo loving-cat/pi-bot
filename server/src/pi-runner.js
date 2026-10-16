@@ -39,6 +39,7 @@ import {
 import { disposeAll, disposeMatching, evictIdle } from './session-pool.js';
 import { createWatchdog, stallCleanup } from './watchdog.js';
 import { createEscalator } from './escalation.js';
+import { modelLabel, resolveModel, syncModelGroups } from './model-registry.js';
 import { buildAppendSystemPrompt } from './system-prompt.js';
 import { createSessionBuilder } from './session-factory.js';
 import { createBuildInput } from './prompt-input.js';
@@ -340,21 +341,11 @@ export class PiRunner {
 
   /** 宽容解析：支持 "provider/id"、裸 id、以及唯一后缀匹配 */
   resolveModel(slug) {
-    if (!slug || !this.modelRuntime) return null;
-    const idx = slug.indexOf('/');
-    if (idx > 0) {
-      const direct = this.modelRuntime.getModel(slug.slice(0, idx), slug.slice(idx + 1));
-      if (direct) return direct;
-    }
-    const all = this.modelRuntime.getModels();
-    const byId = all.find((m) => m.id === slug);
-    if (byId) return byId;
-    const suffix = all.filter((m) => m.id.endsWith(`/${slug}`) || `${m.provider}/${m.id}` === slug);
-    return suffix.length === 1 ? suffix[0] : null;
+    return resolveModel(this.modelRuntime, slug);
   }
 
   modelLabel() {
-    return this.model ? `${this.model.provider}/${this.model.id}` : null;
+    return modelLabel(this.model);
   }
 
   /**
@@ -398,29 +389,15 @@ export class PiRunner {
    * （选中之后请求发到一个已经没了的 provider，报的错还很难懂）。
    */
   syncModelGroups() {
-    if (!this.modelRuntime) return;
-    this.registeredGroups ??= new Set();
-    const wanted = modelGroups.toProviderConfigs();
-
-    for (const id of [...this.registeredGroups]) {
-      if (wanted[id]) continue;
-      try {
-        this.modelRuntime.unregisterProvider(id);
-        log(`🔌 模型组已移除：${id}`);
-      } catch (err) {
-        log(`⚠️  注销模型组 ${id} 失败：`, err?.message || err);
-      }
-      this.registeredGroups.delete(id);
-    }
-
-    for (const [id, cfg] of Object.entries(wanted)) {
-      try {
-        this.modelRuntime.registerProvider(id, cfg);
-        this.registeredGroups.add(id);
-      } catch (err) {
-        log(`⚠️  注册模型组 ${id} 失败：`, err?.message || err);
-      }
-    }
+    this.registeredGroups = syncModelGroups(
+      this.modelRuntime,
+      this.registeredGroups,
+      modelGroups.toProviderConfigs(),
+      {
+        onLog: log,
+        onError: (id, err) => log(`⚠️  模型组 ${id} 同步失败：`, err?.message || err),
+      },
+    );
   }
 
   /** 改完模型组：重新注册 + 刷新列表，然后广播一声让 App 更新 */
