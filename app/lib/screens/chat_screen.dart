@@ -265,7 +265,8 @@ class _ChatScreenState extends State<ChatScreen> {
         // 平时保持安静 —— 参考 / ds-bot 那种感觉）
         // 点胶囊 → 右侧面板（这个会话是谁 / 里面有谁 / 上下文用得怎么样）。
         // 宽屏它是布局里的一栏（和左边同级，没遮罩）；窄屏才走整页滑入。
-        title: GestureDetector(
+        // 鼠标移上去会**浮起来**、右边冒出一个 `>` —— 告诉用户"这里能点开"。
+        title: _HoverLift(
           onTap: () {
             if (MediaQuery.sizeOf(context).width >= kTwoPaneMinWidth) {
               AppScope.read(context).togglePanel();
@@ -772,9 +773,11 @@ class _ComposerState extends State<_Composer> {
                     const Icon(LucideIcons.zap, size: 12, color: PB.accent),
                     const SizedBox(width: 5),
                     Text(
+                      // 不说"插话引导"这种产品词 —— 就是"它看见了，会照做"。
+                      // 用户在跟人聊天，不是在用一台仪器。
                       queuedCount > 0
-                          ? '已插话 $queuedCount 条，它会在下一步看到'
-                          : '正在干活 —— 现在发送 = 插话引导，不用等',
+                          ? '已经跟它说了 $queuedCount 句，它下一步会看到'
+                          : '正在干活 —— 有话说直接发，它会边干边看',
                       style: const TextStyle(
                         fontSize: PB.fsXxs,
                         color: PB.textTertiary,
@@ -933,7 +936,7 @@ class _ComposerState extends State<_Composer> {
                           height: 1.4,
                         ),
                         decoration: InputDecoration(
-                          hintText: busy ? '插话引导…' : '说点什么',
+                          hintText: '说点什么',
                           hintStyle: const TextStyle(
                             color: PB.textQuaternary,
                             fontSize: PB.fsBase,
@@ -966,25 +969,18 @@ class _ComposerState extends State<_Composer> {
                   icon: busy ? LucideIcons.zap : LucideIcons.arrowUp,
                   color: hasText ? PB.accent : PB.bgActive,
                   iconColor: hasText ? Colors.white : PB.textQuaternary,
-                  tooltip: busy ? '插话引导 (Enter)' : '发送 (Enter)',
+                  tooltip: busy ? '发出去，它会看到 (Enter)' : '发送 (Enter)',
                   onTap: onSend,
                 ),
               ],
             ),
           ),
-          if (hasText)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Text(
-                busy
-                    ? 'Enter 插话 · Shift+Enter 换行'
-                    : 'Enter 发送 · Shift+Enter 换行',
-                style: const TextStyle(
-                  fontSize: PB.fsXxs,
-                  color: PB.textQuaternary,
-                ),
-              ),
-            ),
+          // ★ 这里以前有一行「Enter 发送 · Shift+Enter 换行」的操作说明。
+          //   删除的两个理由：
+          //   1. **没人需要被告知回车能发送** —— 正常聊天软件都不说。
+          //   2. 它是"有字才出现"的，一出现就把整个输入区顶高一行 ——
+          //      用户报的"直接从下面突然出现导致整个界面波动一下"就是它。
+          //   快捷键本身照旧（Enter 发送、Shift+Enter 换行）。
         ],
       ),
     );
@@ -1219,7 +1215,10 @@ class _MessageRow extends StatelessWidget {
                       const Icon(LucideIcons.zap, size: 11, color: PB.accent),
                       const SizedBox(width: 3),
                       Text(
-                        msg.meta?['queued'] == 'followUp' ? '已排队' : '已插话引导',
+                        // 也别用产品词 —— 说"它下一步会看到"就够了
+                        msg.meta?['queued'] == 'followUp'
+                            ? '排在它后面，做完会看'
+                            : '它下一步会看到',
                         style: const TextStyle(
                           fontSize: PB.fsXxs,
                           color: PB.accent,
@@ -1545,4 +1544,66 @@ Future<void> openBotDm(BuildContext context, String name) async {
   //   不发通知；而宽屏分栏的选中项是 HomeShell 自己的状态，压根不看这个字段，
   //   所以点了 @ 什么都不会发生。走统一入口，由 HomeShell 按布局决定怎么切。
   requestRoom(context, room.id);
+}
+
+/// 悬停会"浮起来"的包裹器：上移一点、加点阴影、右边冒出一个 `>`。
+///
+/// 为什么要它：胶囊是**唯一**能打开右侧面板的入口，但上面什么提示都没有 ——
+/// 用户不知道它可点（"现代化交互"里，可点的东西得自己说出来）。
+/// 不做成常驻箭头是因为那会一直占着宽度、看着吵；悬停才出现刚好。
+class _HoverLift extends StatefulWidget {
+  const _HoverLift({required this.child, this.onTap});
+
+  final Widget child;
+  final VoidCallback? onTap;
+
+  @override
+  State<_HoverLift> createState() => _HoverLiftState();
+}
+
+class _HoverLiftState extends State<_HoverLift> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.basic,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 140),
+          curve: Curves.easeOut,
+          // 浮起来：往上挪 1px + 一层柔和的影
+          transform: Matrix4.translationValues(0, _hover ? -1 : 0, 0),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(PB.rFull),
+            boxShadow: _hover
+                ? PB.shadow(y: 3, blur: 12, alpha: 0.36)
+                : const [],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              widget.child,
+              // `>` 悬停才出现，并用宽度动画让胶囊自然变宽（不跳）
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 140),
+                width: _hover ? 16 : 0,
+                child: _hover
+                    ? const Icon(
+                        LucideIcons.chevronRight,
+                        size: 14,
+                        color: PB.textTertiary,
+                      )
+                    : null,
+              ),
+              SizedBox(width: _hover ? 4 : 0),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
