@@ -90,12 +90,35 @@ class ModelGroupsSection extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                g.name,
-                style: const TextStyle(
-                  fontSize: PB.fsSm,
-                  color: PB.textPrimary,
-                ),
+              Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      g.name,
+                      style: const TextStyle(
+                        fontSize: PB.fsSm,
+                        color: PB.textPrimary,
+                      ),
+                    ),
+                  ),
+                  if (g.builtin) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 1,
+                      ),
+                      decoration: BoxDecoration(
+                        color: PB.success.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(PB.rFull),
+                      ),
+                      child: const Text(
+                        '正在用',
+                        style: TextStyle(fontSize: PB.fsXxs, color: PB.success),
+                      ),
+                    ),
+                  ],
+                ],
               ),
               const SizedBox(height: 2),
               Text(
@@ -126,41 +149,46 @@ class ModelGroupsSection extends StatelessWidget {
           onPressed: () => _openEditor(context, group: g),
           child: const Text('编辑', style: TextStyle(fontSize: PB.fsXs)),
         ),
-        TextButton(
-          onPressed: () async {
-            final app = AppScope.read(context);
-            final ok = await showDialog<bool>(
-              context: context,
-              builder: (ctx) => AlertDialog(
-                backgroundColor: PB.bgElevated,
-                title: Text(
-                  '删掉「${g.name}」？',
-                  style: const TextStyle(fontSize: PB.fsLg),
-                ),
-                content: const Text(
-                  '用它跑着的 bot 会退回默认模型。',
-                  style: TextStyle(fontSize: PB.fsSm, color: PB.textSecondary),
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(ctx, false),
-                    child: const Text('取消'),
+        // 内置组（从本机配置带出来的）不给删 —— 删了等于把自己踢下线
+        if (!g.builtin)
+          TextButton(
+            onPressed: () async {
+              final app = AppScope.read(context);
+              final ok = await showDialog<bool>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  backgroundColor: PB.bgElevated,
+                  title: Text(
+                    '删掉「${g.name}」？',
+                    style: const TextStyle(fontSize: PB.fsLg),
                   ),
-                  FilledButton(
-                    style: FilledButton.styleFrom(backgroundColor: PB.danger),
-                    onPressed: () => Navigator.pop(ctx, true),
-                    child: const Text('删除'),
+                  content: const Text(
+                    '用它跑着的 bot 会退回默认模型。',
+                    style: TextStyle(
+                      fontSize: PB.fsSm,
+                      color: PB.textSecondary,
+                    ),
                   ),
-                ],
-              ),
-            );
-            if (ok == true) await app.deleteModelGroup(g.id);
-          },
-          child: const Text(
-            '删除',
-            style: TextStyle(fontSize: PB.fsXs, color: PB.danger),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      child: const Text('取消'),
+                    ),
+                    FilledButton(
+                      style: FilledButton.styleFrom(backgroundColor: PB.danger),
+                      onPressed: () => Navigator.pop(ctx, true),
+                      child: const Text('删除'),
+                    ),
+                  ],
+                ),
+              );
+              if (ok == true) await app.deleteModelGroup(g.id);
+            },
+            child: const Text(
+              '删除',
+              style: TextStyle(fontSize: PB.fsXs, color: PB.danger),
+            ),
           ),
-        ),
       ],
     );
   }
@@ -292,7 +320,9 @@ class _EditorState extends State<_Editor> {
               _field(
                 isNew ? 'API key' : 'API key（留空 = 不改）',
                 _key,
-                isNew ? 'sk-…' : (widget.group!.hasKey ? widget.group!.keyMasked : 'sk-…'),
+                isNew
+                    ? 'sk-…'
+                    : (widget.group!.hasKey ? widget.group!.keyMasked : 'sk-…'),
                 obscure: true,
               ),
               const SizedBox(height: 6),
@@ -304,7 +334,10 @@ class _EditorState extends State<_Editor> {
               DropdownButtonFormField<String>(
                 initialValue: _api,
                 dropdownColor: PB.bgElevated,
-                style: const TextStyle(fontSize: PB.fsSm, color: PB.textPrimary),
+                style: const TextStyle(
+                  fontSize: PB.fsSm,
+                  color: PB.textPrimary,
+                ),
                 items: const [
                   DropdownMenuItem(
                     value: 'openai-completions',
@@ -322,12 +355,7 @@ class _EditorState extends State<_Editor> {
                 onChanged: (v) => setState(() => _api = v ?? _api),
               ),
               const SizedBox(height: 10),
-              _field(
-                '模型名（一行一个）',
-                _models,
-                'gpt-5\ndeepseek-v3',
-                lines: 4,
-              ),
+              _field('模型名（一行一个）', _models, 'gpt-5\ndeepseek-v3', lines: 4),
               const SizedBox(height: 2),
               const Text(
                 '模型名要跟接口那边完全一致。填完保存就能在给 bot 选模型时看到。',
@@ -397,8 +425,7 @@ class _EditorState extends State<_Editor> {
           '通了',
           if (ms != null) '${ms}ms',
           if (r['via'] != null) '经 ${r['via']}',
-          if ((r['count'] as num?) != null &&
-              (r['count'] as num).toInt() > 0)
+          if ((r['count'] as num?) != null && (r['count'] as num).toInt() > 0)
             '发现 ${r['count']} 个模型',
         ].join(' · ')
       else
