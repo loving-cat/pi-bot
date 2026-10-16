@@ -49,6 +49,17 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
     _turnMin.text = '${(ms / 60000).round()}';
   }
 
+  Future<void> _savePolicy(Map<String, dynamic> patch) async {
+    await AppScope.read(context).savePolicy(patch);
+    if (!mounted) return;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      const SnackBar(
+        duration: Duration(milliseconds: 1600),
+        content: Text('已生效（正在跑的会话下次跑就用新规矩）'),
+      ),
+    );
+  }
+
   Future<void> _save() async {
     setState(() => _saving = true);
     await AppScope.read(context).saveGroupLimits({
@@ -72,6 +83,7 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
     _fill(state.groupLimits);
+    final policy = state.policy;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -152,6 +164,69 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
                   fontSize: PB.fsXxs,
                   color: PB.textQuaternary,
                   height: 1.6,
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Divider(height: 1, color: PB.borderTertiary),
+              const SizedBox(height: 14),
+              const Text(
+                '部门规矩',
+                style: TextStyle(
+                  fontSize: PB.fsXs,
+                  fontWeight: FontWeight.w600,
+                  color: PB.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                '预算管的是"能跑多久"；规矩管的是"能不能拆家"。',
+                style: TextStyle(
+                  fontSize: PB.fsXxs,
+                  color: PB.textQuaternary,
+                  height: 1.6,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      '改文件 / 跑命令',
+                      style: TextStyle(fontSize: PB.fsSm, color: PB.textPrimary),
+                    ),
+                  ),
+                  SegmentedButton<String>(
+                    segments: const [
+                      ButtonSegment(value: 'allow', label: Text('允许')),
+                      ButtonSegment(value: 'deny', label: Text('只读')),
+                    ],
+                    selected: {policy['dangerous'] == 'deny' ? 'deny' : 'allow'},
+                    onSelectionChanged: (v) => _savePolicy({'dangerous': v.first}),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                '只读 = 直接不给 bot 改文件和跑命令的工具（看还是能看的）。'
+                '这是唯一真正拦得住的约束 —— 靠提示词里写"请先问"是拦不住的。',
+                style: TextStyle(
+                  fontSize: PB.fsXxs,
+                  color: PB.textQuaternary,
+                  height: 1.6,
+                ),
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                value: policy['requireProof'] == true,
+                onChanged: (v) => _savePolicy({'requireProof': v}),
+                title: const Text(
+                  '交付要附证据',
+                  style: TextStyle(fontSize: PB.fsSm, color: PB.textPrimary),
+                ),
+                subtitle: const Text(
+                  '交活时必须带上命令输出 / 文件路径 / 测试结果，不许只说"改好了"',
+                  style: TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
                 ),
               ),
             ],
