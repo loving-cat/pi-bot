@@ -64,6 +64,15 @@ export const config = {
   /** 主控只有只读文件工具 —— 它是调度者，不是干活的人 */
   chiefTools: (process.env.PI_BOT_CHIEF_TOOLS || 'read,ls,grep,find').split(',').map((s) => s.trim()).filter(Boolean),
   /**
+   * 联网搜索用什么接口。
+   * 不配也能用 —— 默认走搜索引擎的 HTML 端点（不需要 key）。
+   * 想更稳/更干净就填一个正式接口，URL 里用 {q} 占位：
+   *   PI_BOT_SEARCH_URL=https://api.search.brave.com/res/v1/web/search?q={q}&count=8
+   * 配了 key 就带上 Authorization: Bearer。
+   */
+  searchUrl: process.env.PI_BOT_SEARCH_URL || null,
+  searchKey: process.env.PI_BOT_SEARCH_KEY || null,
+  /**
    * 上下文压缩的全局默认（null = 用 pi 自带的默认：reserve 16384 / keepRecent 20000）。
    * 每个 bot 还能各自覆盖（App 的设置里改），所以这里只是"没单独设过时用多少"。
    * 触发条件：contextTokens > contextWindow - reserveTokens。
