@@ -35,3 +35,6 @@ probe.txt
 # 构建产物 / 发布包（走 GitHub Release，不进仓库）
 *.apk
 *.zip
+
+# 单元测试/本地跑起来产生的数据目录
+/data/
