@@ -51,13 +51,18 @@ await test('群聊：连发两条 → 串行两轮，不并发、不丢消息', 
 
   let active = 0;
   let maxActive = 0;
-  const openers = [];
+  let answered = 0;
   PiRunner.prototype.runRound = async (_roomId, opts = {}) => {
     active++;
     maxActive = Math.max(maxActive, active);
-    openers.push(opts.openerText);
+    answered++;
     await sleep(250); // 假装在跑模型
     active--;
+  };
+  // 第二条消息现在走的是「组长当场回一句」（不排队等下一轮），所以也要数上
+  PiRunner.prototype.run = async () => {
+    answered++;
+    return { ok: true, text: '好', messageId: 'stub', ms: 1 };
   };
 
   await runner.send(room.id, '第一件事');
@@ -67,10 +72,11 @@ await test('群聊：连发两条 → 串行两轮，不并发、不丢消息', 
 
   const users = store.listMessages(room.id).filter((m) => m.authorType === 'user');
   assert.equal(users.length, 2, `两条用户消息都应落库，实际 ${users.length}`);
-  assert.equal(maxActive, 1, `同一房间不能并发跑 runRound，实际并发 ${maxActive}`);
-  assert.equal(openers.length, 2, `应有第二轮把排队的那条跑掉，实际 ${openers.length} 轮`);
-  assert.ok(openers[1].includes('第二件事'), `第二轮的首发提示应带上排队消息，实际：${openers[1]}`);
+  assert.equal(maxActive, 1, `同一房间不能并发跑两轮，实际并发 ${maxActive}`);
+  // 用户说话必须有人接：要么开新一轮，要么组长当场回 —— 反正不能没动静
+  assert.equal(answered, 2, `两条消息都该有人接，实际 ${answered}`);
   PiRunner.prototype.runRound = ORIGINAL_RUN_ROUND;
+  PiRunner.prototype.run = ORIGINAL_RUN;
 });
 
 await test('群聊：一轮跑完后锁要释放（第三条消息能正常开新轮）', async () => {
