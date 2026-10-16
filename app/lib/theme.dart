@@ -77,7 +77,11 @@ class PB {
   static const fsXl = 16.0;
   static const fsXxl = 21.0;
 
-  /// 等宽（代码块/终端输出/路径）。
+  /// 工具调用那种小字（10 号）在 125% 缩放下是 **12.5 个物理像素** ——
+  /// 半像素字号本来就不锐，中文字形又比拉丁繁复得多，两个凑一起就是"糊"。
+  /// 这里把用到中文的小字抬到 12（= 15 个物理像素，整像素）——
+  /// 只改"中英混排的那几行"，不动标签类的小字。
+  static const fsTinyCjk = 12.0;
   /// 优先用装了的现代等宽，退回系统自带 —— 同类客户端那套等宽差异都在噪声范围内，
   /// 挑顺眼的就行，不值得为它打包字体。
   static const monoFamily = 'JetBrains Mono';
@@ -88,6 +92,16 @@ class PB {
     'Consolas',
     'Menlo',
     'monospace',
+    // ★ 上面这些**一个中文字形都没有**。不显式列出中文，引擎只能自己挑，
+    //   而它挑到的不一定是屏显黑体 —— 用户看到的就是"工具调用那一行
+    //   英文挺清楚、中文发糊"（`create_bot  name: 平台开发工程师`）。
+    //   中文的兜底必须和正文用同一套。
+    'Microsoft YaHei UI',
+    'Microsoft YaHei',
+    'PingFang SC',
+    'Noto Sans CJK SC',
+    'Noto Sans SC',
+    'Source Han Sans SC',
   ];
 
   /// 正文的等宽样式（md_text 里代码块用）

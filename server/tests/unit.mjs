@@ -746,7 +746,46 @@ await test('prompt: 说话规矩永远在（禁止念模型名/思考等级/toke
 
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// 插队：用户插话时，消息插在哪
+// ---------------------------------------------------------------------------
+const { insertionPoint } = await import('../src/util.js');
+
+await test('插队：落在"正在写的那条回复"之前', () => {
+  const list = [
+    { id: 'u1', status: 'done' },
+    { id: 'b1', status: 'done' },
+    { id: 'b2', status: 'streaming' },
+  ];
+  // 插在 b2 之前 → 读起来才是「我插的话 → 它的回应」
+  assert.equal(insertionPoint(list), 2);
+});
+
+await test('插队：没有正在写的，就按普通追加', () => {
+  assert.equal(insertionPoint([{ status: 'done' }, { status: 'done' }]), 2);
+  assert.equal(insertionPoint([]), 0);
+});
+
+await test('插队：已经说完的消息一个都不许动', () => {
+  // 用户已经看过它们了，再挪位置会让人以为消息在跳
+  const list = [
+    { id: 'a', status: 'done' },
+    { id: 'b', status: 'error' },
+  ];
+  assert.equal(insertionPoint(list), 2, '要追加到最后，不是插到中间');
+});
+
+await test('插队：多条同时在写（部门场景）→ 插在最前面那条之前', () => {
+  const list = [
+    { id: 'u1', status: 'done' },
+    { id: 'b1', status: 'streaming' },
+    { id: 'b2', status: 'streaming' },
+  ];
+  assert.equal(insertionPoint(list), 1);
+});
+
 const passed = results.filter((r) => r.ok).length;
+
 console.log('\n================ 单元测试 ================');
 for (const r of results) {
   console.log(`${r.ok ? '✓' : '✗'} ${r.name}${r.ok ? '' : `\n     ${r.err}`}`);
