@@ -296,7 +296,7 @@ class _PairScreenState extends State<PairScreen> {
                           ],
                         ),
                         const SizedBox(height: 12),
-                        const _Step(index: '1', text: '电脑上启动服务端（终端会直接打印一个二维码）'),
+                        const _Step(index: '1', text: '电脑上启动服务端（终端会直接打印地址和配对码）'),
                         const _Code('cd D:\\pi-bot\\server\nnode src/index.js'),
                         const _Step(
                           index: '2',
@@ -311,7 +311,7 @@ class _PairScreenState extends State<PairScreen> {
                         ),
                         const SizedBox(height: 4),
                         const Text(
-                          '扫不了码？电脑浏览器打开 http://<你的IP>:8787/pair 也有二维码。\n想在外面也能用，就把服务端放到云服务器上。',
+                          '地址和配对码都在电脑终端里；也可以在电脑浏览器打开\nhttp://<你的IP>:8787/pair 看。\n想在外面也能用，就把服务端放到云服务器上。',
                           style: TextStyle(
                             fontSize: PB.fsXs,
                             color: PB.textQuaternary,
