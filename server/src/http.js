@@ -107,23 +107,34 @@ export function createHttpServer({ runner, pairing }) {
           return send(res, 401, { error: '配对码不对或已过期，看服务端控制台最新那 6 位数字' });
         }
         const { token, device } = store.addDevice(body.deviceName);
+        // ★ 一个码只换一次 token。
+        //   以前换完不 rotate：同一个 6 位码在 10 分钟有效期内可以无限次换 token，
+        //   拿到一次码就等于永久接管（配合下面那条「码对谁可见」，这两处是同一个洞）。
+        pairing.rotate({ force: true });
         return send(res, 200, { token, device, serverName: config.serverName, workspace: config.workspace });
       }
 
+      // ---------- 身份 ----------
+      // 只有两种人是主人：本机（回环，PC 端 App 就跑在这台机器上）、带合法 token 的已配对设备。
+      const device = authenticate(req, url);
+
       // ---------- 网页版配对页（手机上打不开相机 App 时用）----------
+      // 页面本身公开（地址不是秘密），但**配对码只给主人看**：
+      // 码是「只能从服务端控制台看到」的凭证，挂到局域网上人人可取就等于没有配对。
       if (pathname === '/pair' && req.method === 'GET') {
-        const snap = config.staticToken ? null : pairing.snapshot();
+        const snap = config.staticToken ? null : pairing.snapshot({ withCode: Boolean(device) });
         const html = pairPage(snap);
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
         return res.end(html);
       }
 
-      // 配对码本来就不是秘密（要拿它配对），公开让配对页能刷新
+      if (!device) return send(res, 401, { error: 'unauthorized' });
+
+      // 配对码 / 已配对设备：都是主人才能看的东西，所以放在鉴权之后
       if (pathname === '/api/pairing' && req.method === 'GET') {
-        return send(res, 200, config.staticToken ? { static: true } : pairing.snapshot());
+        return send(res, 200, config.staticToken ? { static: true } : pairing.snapshot({ withCode: true }));
       }
 
-      // 已配对的远程设备（给 PC 端的「远程连接」页用）
       if (pathname === '/api/devices' && req.method === 'GET') {
         return send(res, 200, {
           devices: store.listDevices().map(({ token, ...rest }) => rest),
@@ -135,10 +146,6 @@ export function createHttpServer({ runner, pairing }) {
       if (deviceMatch && req.method === 'DELETE') {
         return send(res, 200, { revoked: store.revokeDevice(deviceMatch[1]) });
       }
-
-      // ---------- 需要鉴权 ----------
-      const device = authenticate(req, url);
-      if (!device) return send(res, 401, { error: 'unauthorized' });
 
       if (pathname === '/api/state' && req.method === 'GET') {
         return send(res, 200, {
@@ -430,7 +437,12 @@ export function serverInfo(runner) {
   };
 }
 
-/** 网页版配对页：手机上直接打开就能看到地址和配对码（照着填进 App） */
+/**
+ * 网页版配对页：给手机看地址（码只给主人看）。
+ *
+ * 以前这里把码直接印在页面上 —— 而页面是局域网公开的，于是「谁都能拿到码」；
+ * 现在分成两种：本机/已登录 → 照旧显示码；别人打开 → 只显示地址 + 一句提示。
+ */
 function pairPage(snap) {
   const addresses = lanAddresses()
     .map(({ name, address }) => `http://${address}:${config.port}  <span class="dim">(${name})</span>`)
@@ -457,11 +469,16 @@ function pairPage(snap) {
   <p class="dim">在 App 的配对页填下面两项</p>
   <p class="dim">地址</p>
   <div class="code small">${addresses}</div>
-  <p class="dim">配对码</p>
+  ${
+    snap.code
+      ? `<p class="dim">配对码</p>
   <div class="code" id="code">${snap.code}</div>
-  <p class="dim"><span id="ttl">${Math.round(snap.ttlMs / 1000)}</span> 秒后换新码</p>
+  <p class="dim"><span id="ttl">${Math.round(snap.ttlMs / 1000)}</span> 秒后换新码</p>`
+      : `<p class="dim">配对码只在<b>服务端控制台</b>里显示（启动时打印的那 6 位数字），这里不显示 ——
+  否则同一个网络里任何人都能拿到它来接管这台机器。</p>`
+  }
 </div>
-<script>
+${snap.code ? `<script>
   let ttl = ${Math.round(snap.ttlMs / 1000)};
   setInterval(() => {
     ttl--;
@@ -476,7 +493,7 @@ function pairPage(snap) {
       if (d.ttlMs) ttl = Math.round(d.ttlMs / 1000);
     }).catch(() => {});
   }, 30000);
-</script>
+</script>` : ''}
 </body></html>`;
 }
 
