@@ -32,6 +32,8 @@ const STATE_VERSION = 2;
  *
  * 目的很实际：**防止 bot 解不了就互相聊个没完**。
  */
+import { normalizeSkillList, normalizeSkill } from './skills.js';
+
 export const GROUP_LIMITS_DEFAULT = {
   /** 部门老大每次发言最多跑几轮 */
   leadTurns: 4,
@@ -547,6 +549,88 @@ export class Store {
     this.scheduleSave();
     bus.emit('event', { t: 'groupLimits.updated', limits: next });
     return next;
+  }
+
+  // ---------------------------------------------------------------- 技能库
+
+  /**
+   * 全局技能库（所有 bot 共享，存在 state.skills）。
+   *
+   * 和 bot.skills 的区别：bot.skills 是"这个 bot 自己会的事"，全量进提示词；
+   * 这里是库，可以存很多条，按任务挑几条注入。库空着也不影响任何功能。
+   */
+  skillLibrary() {
+    return normalizeSkillList(this.state.skills ?? []);
+  }
+
+  /** 加一条技能（重复标题会被拒，避免用户反复导入同一个文件） */
+  addSkill(raw = {}) {
+    const list = this.skillLibrary();
+    const skill = normalizeSkill({ ...raw, updatedAt: Date.now() });
+    if (!skill) return { error: '技能需要一个标题' };
+    if (list.some((s) => s.title.toLowerCase() === skill.title.toLowerCase())) {
+      return { error: `已经有同名技能「${skill.title}」` };
+    }
+    list.push(skill);
+    this.state.skills = normalizeSkillList(list);
+    this.scheduleSave();
+    bus.emit('event', { t: 'skills.updated', skills: this.skillLibrary() });
+    return { skill };
+  }
+
+  /** 改一条技能 */
+  updateSkill(id, patch = {}) {
+    const list = this.skillLibrary();
+    const idx = list.findIndex((s) => s.id === id);
+    if (idx < 0) return { error: '技能不存在' };
+    const merged = normalizeSkill({ ...list[idx], ...patch, id, updatedAt: Date.now() });
+    if (!merged) return { error: '技能需要一个标题' };
+    // 改名后撞上别的条目也要拦
+    if (list.some((s, i) => i !== idx && s.title.toLowerCase() === merged.title.toLowerCase())) {
+      return { error: `已经有同名技能「${merged.title}」` };
+    }
+    list[idx] = merged;
+    this.state.skills = list;
+    this.scheduleSave();
+    bus.emit('event', { t: 'skills.updated', skills: list });
+    return { skill: merged };
+  }
+
+  /** 删一条技能 */
+  removeSkill(id) {
+    const list = this.skillLibrary();
+    const next = list.filter((s) => s.id !== id);
+    if (next.length === list.length) return { error: '技能不存在' };
+    this.state.skills = next;
+    this.scheduleSave();
+    bus.emit('event', { t: 'skills.updated', skills: next });
+    return { ok: true };
+  }
+
+  /** 批量导入（解析好的技能数组），返回成功/跳过明细 */
+  importSkills(items = []) {
+    const list = this.skillLibrary();
+    const imported = [];
+    const skipped = [];
+    for (const item of Array.isArray(items) ? items : []) {
+      const skill = normalizeSkill(item);
+      if (!skill) {
+        skipped.push({ title: String(item?.title ?? ''), reason: '没有标题' });
+        continue;
+      }
+      if (list.some((s) => s.title.toLowerCase() === skill.title.toLowerCase())) {
+        skipped.push({ title: skill.title, reason: '同名技能已存在' });
+        continue;
+      }
+      list.push(skill);
+      imported.push(skill);
+    }
+    if (imported.length) {
+      this.state.skills = normalizeSkillList(list);
+      this.scheduleSave();
+      bus.emit('event', { t: 'skills.updated', skills: this.skillLibrary() });
+    }
+    return { imported, skipped };
   }
 
   /** 当前的部门规矩 */

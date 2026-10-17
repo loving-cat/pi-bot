@@ -1101,5 +1101,95 @@ export function buildChiefTools({ runner, health, roomId }) {
         return ok(`已发到「${room.name}」`);
       },
     }),
+
+    // ---------------------------------------------------------------- 技能库
+    defineTool({
+      name: 'list_skills',
+      label: '看技能库',
+      description:
+        '看技能库里有哪些现成的做法（用户整理或导入的 SOP）。' +
+        '派活前先看一眼，能把合适的技能交给新人或直接拿来做。',
+      parameters: Type.Object({
+        keyword: Type.Optional(Type.String({ description: '按标题/标签/内容搜，不填就全列' })),
+      }),
+      execute: async (_toolCallId, { keyword }) => {
+        const all = store.skillLibrary();
+        if (!all.length) {
+          return ok('技能库现在是空的。用户可以往库里加，或者导入 SKILL.md。', { total: 0 });
+        }
+        const q = String(keyword ?? '').trim().toLowerCase();
+        const list = q
+          ? all.filter(
+              (s) =>
+                s.title.toLowerCase().includes(q) ||
+                s.summary.toLowerCase().includes(q) ||
+                s.howto.toLowerCase().includes(q) ||
+                s.tags.some((t) => t.toLowerCase().includes(q)),
+            )
+          : all;
+        if (!list.length) return ok(`技能库里没有匹配「${keyword}」的`, { total: all.length });
+        const lines = list.map(
+          (s, i) =>
+            `${i + 1}. ${s.title}${s.summary ? ` —— ${s.summary}` : ''}` +
+            `${s.tags.length ? `\n   标签：${s.tags.join('、')}` : ''}` +
+            `${s.enabled ? '' : '\n   （已停用）'}\n   id: ${s.id}`,
+        );
+        return ok(
+          `技能库共 ${all.length} 条，下面是 ${list.length} 条：\n\n${lines.join('\n')}\n\n` +
+            '要给某个 bot 用，用 assign_skill(botName, skillId)。',
+          { total: all.length, matched: list.length },
+        );
+      },
+    }),
+
+    defineTool({
+      name: 'assign_skill',
+      label: '把技能交给某人',
+      description:
+        '从技能库挑一条，挂到某个 bot 身上（会进它的系统提示，相当于「教会了它」）。' +
+        '技能库是共享的，挂上去不影响别人；同一条可以挂给多人。',
+      parameters: Type.Object({
+        botName: Type.String({ description: '给谁，写名字' }),
+        skillId: Type.String({ description: '技能 id（用 list_skills 查）' }),
+      }),
+      execute: async (_toolCallId, { botName, skillId }) => {
+        const bot = store.listBots().find((b) => b.name === botName);
+        if (!bot) return fail(`找不到叫「${botName}」的 bot`);
+        const skill = store.skillLibrary().find((s) => s.id === skillId);
+        if (!skill) return fail(`技能库里没有 id=${skillId}，用 list_skills 查一下`);
+
+        const own = Array.isArray(bot.skills) ? bot.skills : [];
+        if (own.some((s) => s.title === skill.title)) {
+          return ok(`${bot.name} 已经会「${skill.title}」了，不用重复给`);
+        }
+        const next = [...own, { title: skill.title, howto: skill.howto }];
+        store.updateBot(bot.id, { skills: next });
+        log(`chief 把技能「${skill.title}」交给了 ${bot.name}`);
+        return ok(`已把「${skill.title}」交给 ${bot.emoji} ${bot.name}（它现在会 ${next.length} 项）`);
+      },
+    }),
+
+    defineTool({
+      name: 'create_skill',
+      label: '存一条做法',
+      description:
+        '把一套做法存进技能库（只存文档，不存代码）。以后可以反复分配给不同的人，' +
+        '不用每次重新教。用户手工摸索出来的流程也适合存进来。',
+      parameters: Type.Object({
+        title: Type.String({ description: '技能名，如「线上排查三步」' }),
+        howto: Type.String({ description: '具体怎么做，步骤要能照着执行' }),
+        summary: Type.Optional(Type.String({ description: '一句话说明什么时候用' })),
+        tags: Type.Optional(
+          Type.Array(Type.String(), { description: '标签，如 运维 / 发版 / 数据' }),
+        ),
+      }),
+      execute: async (_toolCallId, { title, howto, summary, tags }) => {
+        const res = store.addSkill({ title, howto, summary, tags });
+        if (res.error) return fail(res.error);
+        return ok(`已存进技能库：「${res.skill.title}」（id=${res.skill.id}）`, {
+          skillId: res.skill.id,
+        });
+      },
+    }),
   ];
 }

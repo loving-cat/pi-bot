@@ -42,6 +42,7 @@ import { createWatchdog, stallCleanup } from './watchdog.js';
 import { createEscalator } from './escalation.js';
 import { modelLabel, resolveModel, syncModelGroups } from './model-registry.js';
 import { buildAppendSystemPrompt } from './system-prompt.js';
+import { selectSkillsFor, skillsPromptLines } from './skills.js';
 import { createSessionBuilder } from './session-factory.js';
 import { createBuildInput } from './prompt-input.js';
 import { collectNewImages, snapshotImages } from './image-watch.js';
@@ -1287,11 +1288,32 @@ export class PiRunner {
       // ★ 兜底：万一还是撞上"这个会话正在处理"（并发下理论上不该有了，
       //   但外部/扩展也能直接调 prompt），**别把红字甩给用户** ——
       //   改成排队投递（followUp），它干完手上的自己会看到。
+      // ★ 技能库按任务挑：库可以很大，但每个 bot 这轮只拿相关的几条。
+      //   不放进 appendSystemPrompt —— 那是建会话时固化的，而"相关不相关"
+      //   取决于这一轮具体要干什么。
+      const withSkills = (text) => {
+        try {
+          const library = store.skillLibrary();
+          if (!library.length) return text;
+          // 用「本轮 prompt + 用户原话」一起匹配：prompt 含大量模板文字，
+          // 纯靠它会稀释信号，所以两段都喂进去。
+          const task = text + "\n" + String(meta?.text ?? "");
+          const picked = selectSkillsFor(library, task, { max: 5 });
+          const lines = skillsPromptLines(picked);
+          return lines.length ? lines.join("\n") + "\n\n" + text : text;
+        } catch (err) {
+          // 技能挑不出来不能影响正常干活
+          log("技能库匹配失败：", err?.message || err);
+          return text;
+        }
+      };
+
       const startTurn = async () => {
         try {
+          const finalPrompt = withSkills(prompt);
           return images.length
-            ? await entry.session.prompt(prompt, { images })
-            : await entry.session.prompt(prompt);
+            ? await entry.session.prompt(finalPrompt, { images })
+            : await entry.session.prompt(finalPrompt);
         } catch (err) {
           const msg = String(err?.message || err);
           if (!/already processing/i.test(msg) || !entry.session.followUp) throw err;
