@@ -32,7 +32,7 @@ const STATE_VERSION = 2;
  *
  * 目的很实际：**防止 bot 解不了就互相聊个没完**。
  */
-import { normalizeSkillList, normalizeSkill } from './skills.js';
+import { normalizeSkillList, normalizeSkill, skillRejectReason } from './skills.js';
 
 export const GROUP_LIMITS_DEFAULT = {
   /** 部门老大每次发言最多跑几轮 */
@@ -566,8 +566,10 @@ export class Store {
   /** 加一条技能（重复标题会被拒，避免用户反复导入同一个文件） */
   addSkill(raw = {}) {
     const list = this.skillLibrary();
+    const reason = skillRejectReason(raw);
+    if (reason) return { error: reason };
     const skill = normalizeSkill({ ...raw, updatedAt: Date.now() });
-    if (!skill) return { error: '技能需要一个标题' };
+    if (!skill) return { error: '技能内容不合法' };
     if (list.some((s) => s.title.toLowerCase() === skill.title.toLowerCase())) {
       return { error: `已经有同名技能「${skill.title}」` };
     }
@@ -583,8 +585,10 @@ export class Store {
     const list = this.skillLibrary();
     const idx = list.findIndex((s) => s.id === id);
     if (idx < 0) return { error: '技能不存在' };
+    const reason = skillRejectReason({ ...list[idx], ...patch });
+    if (reason) return { error: reason };
     const merged = normalizeSkill({ ...list[idx], ...patch, id, updatedAt: Date.now() });
-    if (!merged) return { error: '技能需要一个标题' };
+    if (!merged) return { error: '技能内容不合法' };
     // 改名后撞上别的条目也要拦
     if (list.some((s, i) => i !== idx && s.title.toLowerCase() === merged.title.toLowerCase())) {
       return { error: `已经有同名技能「${merged.title}」` };
@@ -613,9 +617,14 @@ export class Store {
     const imported = [];
     const skipped = [];
     for (const item of Array.isArray(items) ? items : []) {
+      const reason = skillRejectReason(item);
+      if (reason) {
+        skipped.push({ title: String(item?.title ?? ''), reason });
+        continue;
+      }
       const skill = normalizeSkill(item);
       if (!skill) {
-        skipped.push({ title: String(item?.title ?? ''), reason: '没有标题' });
+        skipped.push({ title: String(item?.title ?? ''), reason: '内容不合法' });
         continue;
       }
       if (list.some((s) => s.title.toLowerCase() === skill.title.toLowerCase())) {

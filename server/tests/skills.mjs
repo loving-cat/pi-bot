@@ -8,6 +8,8 @@
  */
 import assert from 'node:assert/strict';
 import {
+  hasBrokenEncoding,
+  skillRejectReason,
   normalizeSkill,
   normalizeSkillList,
   parseSkillMarkdown,
@@ -29,6 +31,31 @@ function test(name, fn) {
     fail++;
   }
 }
+
+test('乱码检测：能认出替换字符', () => {
+  assert.equal(hasBrokenEncoding('正常内容'), false);
+  // U+FFFD 是解码失败时产生的："中文"被错编码再解回来就长这样
+  assert.equal(hasBrokenEncoding('���'), true);
+  assert.equal(hasBrokenEncoding('看着正常但有�坏字节'), true);
+  assert.equal(hasBrokenEncoding(''), false);
+  assert.equal(hasBrokenEncoding(null), false);
+});
+
+test('乱码内容一律拒收，并给出能读懂的原因', () => {
+  const broken = {
+    title: '���',
+    howto: '� server.log',
+  };
+  assert.equal(normalizeSkill(broken), null, '损坏的标题不能入库');
+  assert.match(skillRejectReason(broken), /乱码/);
+
+  // 标题正常但正文坏了，同样要拦
+  assert.equal(normalizeSkill({ title: '正常标题', howto: '�坏' }), null);
+  assert.match(skillRejectReason({ title: '正常标题', howto: '�坏' }), /乱码/);
+
+  // 正常内容不受影响
+  assert.equal(skillRejectReason({ title: '正常', howto: '正常做法' }), null);
+});
 
 test('规范化：标题必填，其余有默认值', () => {
   assert.equal(normalizeSkill({}), null, '没标题就不该收');
