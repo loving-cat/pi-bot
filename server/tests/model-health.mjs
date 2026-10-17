@@ -1,0 +1,131 @@
+/**
+ * 探活缓存过期行为的回归测试。
+ *   node tests/model-health.mjs
+ *
+ * 验的是（2026-10-17 体检第 2 条）：
+ *   ① 结果过期 ≠ 模型挂了：get() 拿不到新结论，但 wasGood() 还记得它能跑；
+ *   ② 过期会**自动**触发一次后台重探（不阻塞调用方）；
+ *   ③ 定时巡检能把过期的补上（服务连跑几天也不会"全员不可用"）；
+ *   ④ stop() 之后不许再偷偷探。
+ *
+ * 用注入的小 TTL 来测 —— 不然这条测试要等 24 小时。
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+
+process.env.PI_BOT_HOME = path.join(process.cwd(), 'data', '_unit_test_health');
+const HOME = process.env.PI_BOT_HOME;
+fs.rmSync(HOME, { recursive: true, force: true });
+
+const { ModelHealth } = await import('../src/model-health.js');
+
+const results = [];
+async function test(name, fn) {
+  try {
+    await fn();
+    results.push({ name, ok: true });
+  } catch (err) {
+    results.push({ name, ok: false, err: err?.message || String(err) });
+  }
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** 探活要 runner，这里只用到 availableModels（重探时枚举）和 resolveModel */
+function fakeRunner(models = []) {
+  return {
+    availableModels: models.map((slug) => {
+      const [provider, ...rest] = slug.split('/');
+      return { provider, id: rest.join('/') };
+    }),
+    resolveModel: () => null,
+    modelRuntime: { completeSimple: async () => ({ content: [] }) },
+  };
+}
+
+function fresh(health, slug, ok = true) {
+  health.results[slug] = { ok, ms: 10, error: ok ? null : '空回复', at: Date.now() };
+}
+
+await test('新鲜结果：get() 拿得到', () => {
+  const h = new ModelHealth(fakeRunner(), { ttlMs: 10_000 });
+  fresh(h, 'a/ok');
+  assert.equal(h.get('a/ok').ok, true);
+  assert.equal(h.hasFresh(), true);
+  assert.equal(h.hasFreshFor(['a/ok']), true);
+  assert.equal(h.anyExpired(), false);
+});
+
+await test('★ 过期结果：get() 拿不到，但不算"挂了"', async () => {
+  const h = new ModelHealth(fakeRunner(), { ttlMs: 30 });
+  fresh(h, 'a/slow');
+  await sleep(60);
+  assert.equal(h.get('a/slow'), null, '过期就不该再当结论用');
+  assert.equal(h.wasGood('a/slow'), true, '但要记得它以前是好的');
+  assert.equal(h.hasFreshFor(['a/slow']), false);
+  assert.equal(h.anyExpired(), true);
+  h.stop();
+});
+
+await test('★ 过期会自己排队重探（攒一批，不是一人一个请求）', async () => {
+  const h = new ModelHealth(fakeRunner(), { ttlMs: 20 });
+  let calls = 0;
+  h.runAll = async () => {
+    calls++;
+    return { skipped: true };
+  };
+  fresh(h, 'a/x');
+  fresh(h, 'a/y');
+  fresh(h, 'a/z');
+  await sleep(40);
+  // 菜单渲染会连着问很多次 —— 三次 get() 只该换来一次重探
+  h.get('a/x');
+  h.get('a/y');
+  h.get('a/z');
+  await sleep(1000);
+  assert.equal(calls, 1, `应该只重探一次，实际 ${calls} 次`);
+  h.stop();
+});
+
+await test('★ 定时巡检：没人问也会把过期的补上', async () => {
+  const h = new ModelHealth(fakeRunner(), { ttlMs: 20 });
+  let calls = 0;
+  h.runAll = async () => {
+    calls++;
+    return { skipped: true };
+  };
+  fresh(h, 'a/tick');
+  await sleep(40);
+  h.startAutoRefresh(50);
+  await sleep(260);
+  h.stop();
+  assert.ok(calls >= 1, '定时器应该至少补探一次');
+  const after = calls;
+  await sleep(160);
+  assert.equal(calls, after, 'stop() 之后不许再探');
+});
+
+await test('没有任何记录时 hasFresh() 是 false（全新安装）', () => {
+  const h = new ModelHealth(fakeRunner(), { ttlMs: 10_000 });
+  assert.equal(h.hasFresh(), false);
+  assert.equal(h.hasFreshFor(['a/none']), false);
+  h.stop();
+});
+
+await test('停过的健康检查不会留下定时器（进程能退出）', () => {
+  const h = new ModelHealth(fakeRunner(), { ttlMs: 10_000 });
+  h.startAutoRefresh(10);
+  h.stop();
+  assert.equal(h.autoTimer, null);
+  assert.equal(h.refreshTimer, null);
+});
+
+const passed = results.filter((r) => r.ok).length;
+console.log('\n================ 探活缓存测试 ================');
+for (const r of results) {
+  console.log(`${r.ok ? '✓' : '✗'} ${r.name}${r.ok ? '' : `\n     ${r.err}`}`);
+}
+console.log(`\n${passed}/${results.length} 通过`);
+fs.rmSync(HOME, { recursive: true, force: true });
+process.exit(passed === results.length ? 0 : 1);
