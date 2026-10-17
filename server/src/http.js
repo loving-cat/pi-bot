@@ -369,6 +369,10 @@ export function createHttpServer({ runner, pairing }) {
         const body = await readBody(req);
         const room = store.ensureDm(body.botId);
         if (!room) return send(res, 404, { error: 'bot 不存在' });
+        // 空私聊 → 让它自己开口（自我介绍 + 询问卡片），不阻塞这次请求
+        runner.greetDm(room.id, body.botId).catch((err) =>
+          log('私聊开场失败：', err?.message || err),
+        );
         return send(res, 200, { room: store.roomSummary(room) });
       }
 
