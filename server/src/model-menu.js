@@ -48,14 +48,26 @@ export function findMenuEntry(input, entries = menuEntries()) {
 
 /**
  * 把别名或 slug 解析成实际可用的 slug：同族里优先取探活通过的。
+ *
+ * ★ 「过期」不等于「挂了」：一条新鲜结论都没有时不能把整个菜单判死
+ *   （否则服务跑满一天，菜单全变 ✗、招人全被拒，用户以为模型坏了）。
+ *   那种情况下有历史结论的就先当能用，后台重探完自然会给出真结论。
  * @returns {{entry:object, slug:string, alive:boolean}|null}
  */
 export function resolveMenu(input, health, entries) {
   const entry = findMenuEntry(input, entries);
   if (!entry) return null;
   const alive = entry.slugs.filter((s) => health?.isKnownGood(s));
-  const slug = alive[0] ?? entry.slugs[0];
-  return { entry, slug, alive: alive.length > 0 || !health };
+  // 这一族现在有没有新鲜结论？有新鲜结论且都不是好的 → 真的不能用（照旧判死）
+  const fresh = health?.hasFreshFor?.(entry.slugs);
+  const staleGood = entry.slugs.filter((s) => health?.wasGood?.(s));
+  // 没有新鲜结论：以前跑通过（或全库都没结论）就先乐观放行，后台重探完会给真结论
+  const optimistic =
+      !alive.length &&
+      fresh !== true &&
+      (staleGood.length > 0 || health?.hasFresh?.() === false);
+  const slug = alive[0] ?? staleGood[0] ?? entry.slugs[0];
+  return { entry, slug, alive: alive.length > 0 || !health || optimistic };
 }
 
 /**

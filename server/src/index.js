@@ -39,10 +39,22 @@ async function banner(pairing, runner) {
 }
 
 async function main() {
+  // ★ 进程级兜底：宁可带病跑，也别整个服务静默消失。
+  //   典型场景：Windows 上落盘撞杀软/备份抛 EPERM —— 以前没人接，
+  //   Node 直接 exit，手机端就永远"离线 · 自动重连中"（而用户根本不知道发生过什么）。
+  process.on('uncaughtException', (err) => {
+    log('‼️  未捕获异常（进程继续跑）：', err?.stack || err?.message || err);
+  });
+  process.on('unhandledRejection', (reason) => {
+    log('‼️  未处理的 Promise 拒绝（进程继续跑）：', reason?.stack || reason?.message || reason);
+  });
+
   const reaped = store.reapStaleStreaming();
   if (reaped) log(`清理了 ${reaped} 条上次遗留的 streaming 消息`);
 
   const runner = await new PiRunner().init();
+  // 探活结果 24 小时过期 —— 服务连跑几天也不会让「全员不可用」这种假结论冻在那儿
+  runner.health?.startAutoRefresh();
   const pairing = new Pairing();
   pairing.onRotate = async (code) => {
     log(`🔑 配对码已轮换：${code}`);
@@ -65,6 +77,7 @@ async function main() {
     closing = true;
     log(`${signal} → 收工`);
     pairing.stop();
+    runner.health?.stop();
     runner.disposeAll();
     store.saveNow();
     server.close(() => process.exit(0));
