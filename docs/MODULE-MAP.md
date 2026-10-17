@@ -36,6 +36,9 @@
 | `change-watch.js` | 工作目录快照与改动对比（本轮改了哪些文件） |
 | `automations.js` | 定时任务：排期计算、校验、调度器（时间逻辑纯函数） |
 | `coding-baseline.js` | 开发类 bot 的工程基线提示 |
+| `relay/frames.js` | 中转帧编解码（base64 + deflateRaw 无损压缩，纯函数） |
+| `relay/server.js` | 云侧中转：按 code 把 HTTP/WS 转给电脑侧（可选，默认不启动） |
+| `relay/agent.js` | 电脑侧外连客户端（可选，`npm run relay-agent`） |
 | `web.js` | 搜索与抓网页 |
 | `util.js` | id/时间/原子写/日志/错误分类 |
 
