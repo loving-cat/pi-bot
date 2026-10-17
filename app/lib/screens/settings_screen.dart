@@ -15,6 +15,7 @@ import '../widgets/model_group_editor.dart';
 import '../widgets/server_config_section.dart';
 import '../widgets/log_section.dart';
 import '../widgets/skills_library.dart';
+import '../widgets/sites_section.dart';
 import '../motion.dart';
 
 import 'package:lucide_icons_flutter/lucide_icons.dart';
@@ -109,6 +110,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       0 => _connectTab,
                       1 => _serverTab,
                       2 => const [SkillsLibrarySection()],
+                      3 => const [SitesSection()],
                       _ => _advancedTab,
                     },
                   ),
@@ -597,6 +599,7 @@ class _SettingsTabs extends StatelessWidget {
     (icon: LucideIcons.smartphone, label: '连接'),
     (icon: LucideIcons.server, label: '服务端'),
     (icon: LucideIcons.sparkles, label: '技能'),
+    (icon: LucideIcons.plug, label: '系统'),
     (icon: LucideIcons.slidersHorizontal, label: '高级'),
   ];
 

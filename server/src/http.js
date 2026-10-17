@@ -16,6 +16,9 @@ import { computeNextRun, validateSchedule } from './automations.js';
 import { VERSION } from './version.js';
 import { checkForUpdate, clearUpdateCache } from './update-checker.js';
 import { parseSkillMarkdown } from './skills.js';
+import { probeLogin } from './site-probe.js';
+import { createSiteRuntime } from './site-runtime.js';
+import { publicSite } from './sites.js';
 import { UploadSessions } from './upload-sessions.js';
 import { loadHooks, saveHooks, validateHook } from './hooks.js';
 
@@ -109,7 +112,7 @@ export function hostAllowed(hostHeader) {
   return lanAddresses().some((a) => String(a.address).toLowerCase() === lower);
 }
 
-export function createHttpServer({ runner, pairing }) {
+export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ log }) }) {
   const uploads = new UploadSessions({
     dir: path.join(config.dataDir, 'uploads', '_partial'),
   });
@@ -382,6 +385,121 @@ export function createHttpServer({ runner, pairing }) {
         const all = runner.availableModels;
         const list = keyword ? all.filter((m) => `${m.provider}/${m.id}`.toLowerCase().includes(keyword)) : all;
         return send(res, 200, { total: list.length, models: list.slice(0, 200) });
+      }
+
+      // ---------- 外部 Web 系统接入 ----------
+      if (pathname === '/api/sites' && req.method === 'GET') {
+        return send(res, 200, {
+          sites: store.siteList().map((s) => publicSite(s, sites.statusOf(s.id))),
+        });
+      }
+
+      // 添加前先探测：确认这个站的登录方式，避免存进去却连不上
+      if (pathname === '/api/sites/probe' && req.method === 'POST') {
+        const body = await readBody(req);
+        const result = await probeLogin({
+          baseUrl: body.baseUrl,
+          account: body.account,
+          password: body.password,
+          accountField: body.accountField ?? '',
+          passwordField: body.passwordField ?? '',
+        });
+        // 不带回 token：探测只回答"能不能连、字段叫什么"
+        return send(res, 200, {
+          ok: result.ok,
+          reason: result.reason,
+          tried: result.tried,
+          auth: result.auth ?? null,
+        });
+      }
+
+      if (pathname === '/api/sites' && req.method === 'POST') {
+        const body = await readBody(req);
+        const r = store.addSite({
+          name: body.name,
+          baseUrl: body.baseUrl,
+          account: body.account,
+          password: body.password,
+          auth: body.auth,
+        });
+        if (r.error) return send(res, 400, { error: r.error });
+        return send(res, 200, { site: publicSite(r.site, sites.statusOf(r.site.id)) });
+      }
+
+      const siteMatch = pathname.match(/^\/api\/sites\/([^/]+)$/);
+      if (siteMatch && req.method === 'PATCH') {
+        const body = await readBody(req);
+        const id = decodeURIComponent(siteMatch[1]);
+        const r = store.updateSite(id, body);
+        if (r.error) return send(res, 404, { error: r.error });
+        // 凭证变了要让缓存失效，否则还用旧 token
+        sites.forget(id);
+        return send(res, 200, { site: publicSite(r.site, sites.statusOf(id)) });
+      }
+      if (siteMatch && req.method === 'DELETE') {
+        const id = decodeURIComponent(siteMatch[1]);
+        const r = store.removeSite(id);
+        if (r.error) return send(res, 404, { error: r.error });
+        sites.forget(id);
+        return send(res, 200, { ok: true });
+      }
+
+      // 为一个系统建团队：建部门 + 把该系统的查询能力交给它
+      const siteTeamMatch = pathname.match(/^\/api\/sites\/([^/]+)\/team$/);
+      if (siteTeamMatch && req.method === 'POST') {
+        const id = decodeURIComponent(siteTeamMatch[1]);
+        const site = store.getSite(id);
+        if (!site) return send(res, 404, { error: '系统不存在' });
+        const body = await readBody(req);
+        const teamName = String(body.name ?? `${site.name} 团队`).slice(0, 40);
+
+        // 已经有团队就直接复用（别重复建部门）
+        if (site.teamRoomId && store.getRoom(site.teamRoomId)) {
+          return send(res, 200, { roomId: site.teamRoomId, reused: true });
+        }
+
+        // 部门只放一个人：它专门负责回答这个系统的事。
+        // 不再自动塞一堆角色 —— 用户要的是"一个系统一个团队"，
+        // 人多了反而互相推诿。
+        const persona =
+          `你负责「${site.name}」这个系统（${site.baseUrl}）。` +
+          `用户在手机上问你跟这个系统有关的事时，你用 query_site 去查真实数据再回答。` +
+          `查之前先用 list_sites 确认系统标识；结果有可能是大 JSON，挑用户关心的说出来，不要整段贴。` +
+          `查不到就直说查不到，不要猜。`;
+        const { room, bots } = store.createDepartment({
+          name: teamName,
+          topic: `接入的外部系统：${site.name}`,
+          members: [
+            {
+              name: `${site.name} 助手`,
+              persona,
+              emoji: '🔌',
+              tagline: `查 ${site.name} 的数据`,
+              skills: [
+                {
+                  title: `查询 ${site.name}`,
+                  howto:
+                    `用 query_site(site="${site.id}", path="/api/...") 查数据。` +
+                    `不确定路径就先查列表接口看结构。`,
+                },
+              ],
+            },
+          ],
+          lead: `${site.name} 助手`,
+          createdBy: 'site',
+        });
+        store.bindSiteTeam(id, room.id);
+        return send(res, 200, { roomId: room.id, botId: bots[0]?.id ?? null, reused: false });
+      }
+
+      // 连一次看看通不通（用户点"测试连接"）
+      const siteTestMatch = pathname.match(/^\/api\/sites\/([^/]+)\/test$/);
+      if (siteTestMatch && req.method === 'POST') {
+        const id = decodeURIComponent(siteTestMatch[1]);
+        const site = store.getSite(id);
+        if (!site) return send(res, 404, { error: '系统不存在' });
+        const r = await sites.ping(site);
+        return send(res, 200, r);
       }
 
       // ---------- 技能库（全局，所有 bot 共享） ----------
