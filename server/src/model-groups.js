@@ -167,14 +167,9 @@ export class ModelGroup {
       apiKey: this.apiKey || 'no-key',
       api: this.api,
       authHeader: true,
-      // ★ 这几行是**照 providers.js 里那份"能用的配置"抄的**。
-      //
-      //   真事：用户报 `No API key found for local_cline.` —— key 明明在库里有、
-      //   也传进来了，可 pi 还是说找不到。原因是模型条目少了 `compat`：
-      //   pi 的 getApiKeyAndHeaders 是靠**模型级**的 compat（authHeader /
-      //   thinkingFormat / supportsReasoningEffort）来决定怎么附带凭据的，
-      //   少了它，provider 级别的 authHeader 形同虚设。
-      //   （对照组：~/.pi 读进来的那份配置一直是好用的，它每个 model 都带 compat。）
+      // 模型级 compat 必填：pi 的 getApiKeyAndHeaders 依据模型上的
+      // authHeader / thinkingFormat / supportsReasoningEffort 决定如何附带凭据，
+      // 仅设置 provider 级 authHeader 不生效。与 providers.js 中的配置保持一致。
       models: this.models.map((m) => ({
         id: m.id,
         name: m.name,

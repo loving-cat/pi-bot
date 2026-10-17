@@ -97,10 +97,8 @@ export const config = {
   /** bot 跑完一轮后，自动把工作目录里新生成的图片附到消息上 */
   autoAttachImages: process.env.PI_BOT_AUTO_ATTACH !== '0',
   /**
-   * 群里要派的活碰上成员正忙 → 最多等它多久（毫秒）。
-   *
-   * 用户报过：负责人一条消息 @ 了四个人，只有一个响应 —— 因为忙的人被
-   * 直接丢掉了。现在改成排队等它，这就是等的上限。
+   * 群内派活遇到成员正忙时的最长等待时间（毫秒）。
+   * 超时后放弃等待，避免整轮被单个成员阻塞。
    */
   groupBusyWaitMs: Number(process.env.PI_BOT_GROUP_BUSY_WAIT_MS || 120_000),
   /** 单轮最长多久没动静就算"断了"（毫秒） */

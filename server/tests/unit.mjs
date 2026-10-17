@@ -599,9 +599,8 @@ await test('model-menu: slug 列表去重', () => {
   assert.equal(new Set(slugs).size, slugs.length);
 });
 
-await test('★ model-menu: 探活结果全过期时不能把菜单判死', () => {
-  // 真事：服务连跑过 24 小时 → 缓存全过期 → 菜单全 ✗ → 招人/建部门全被拒，
-  // 用户以为是模型坏了。过期只是"没有新结论"，不是"线路死了"。
+await test('★ model-menu: 探活结果全过期时视为可用', () => {
+  // 过期表示没有新结论，不等同于线路不可用。
   const stale = {
     isKnownGood: () => false,
     wasGood: (s) => s === 'grp1/flash',
@@ -613,8 +612,8 @@ await test('★ model-menu: 探活结果全过期时不能把菜单判死', () =
   assert.equal(r.slug, 'grp1/flash', '优先选以前跑通过的那条');
 });
 
-await test('★ model-menu: 有新鲜结论且是坏的，就照旧判死', () => {
-  // 现在是真探过、真的不出话 —— 这时候必须拦住，不能乐观
+await test('★ model-menu: 有新鲜结论且不可用时判为不可用', () => {
+  // 已有新鲜探活结论且失败时，不启用乐观回退。
   const freshDead = {
     isKnownGood: () => false,
     wasGood: () => true,
