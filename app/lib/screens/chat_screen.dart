@@ -518,13 +518,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     builder: (_) => TaskBoardSheet(
                       roomName: room.name,
                       tasks: state.tasksFor(room.id),
-                      onToggleDone: (t) => state.updateTask(
-                        t.id,
-                        {'status': t.isDone ? 'open' : 'done', 'read': true},
-                      ),
-                      onTogglePin: (t) => state.updateTask(t.id, {'pinned': !t.isPinned}),
+                      onToggleDone: (t) => state.updateTask(t.id, {
+                        'status': t.isDone ? 'open' : 'done',
+                        'read': true,
+                      }),
+                      onTogglePin: (t) =>
+                          state.updateTask(t.id, {'pinned': !t.isPinned}),
                       onDelete: (t) => state.deleteTask(t.id),
-                      onCreate: (title) => state.createTask(roomId: room.id, title: title),
+                      onCreate: (title) =>
+                          state.createTask(roomId: room.id, title: title),
                     ),
                   );
                 },
@@ -622,7 +624,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             //
                             //   ExcludeFocus 从根上关掉这条路。代价是消息里不能再用键盘
                             //   Ctrl+C —— 但每条消息长按有「复制」菜单，功能没丢。
-                            ExcludeFocus(
+                            RepaintBoundary(
                               child: ListView.builder(
                                 controller: _scroll,
                                 // ★ 居中限宽：窗口拉宽时左右留白跟着长（内容列最多 1180），
@@ -1656,15 +1658,17 @@ class _MessageRow extends StatelessWidget {
                           ),
                         ),
                       if (msg.text.trim().isNotEmpty)
-                        MdText(
-                          msg.text,
-                          selectable: true,
-                          onMentionTap: (name) => openBotDm(context, name),
-                          mentionOf: mentionOf,
-                          style: const TextStyle(
-                            fontSize: PB.fsBase,
-                            height: 1.45,
-                            color: Colors.white,
+                        ExcludeFocus(
+                          child: MdText(
+                            msg.text,
+                            selectable: true,
+                            onMentionTap: (name) => openBotDm(context, name),
+                            mentionOf: mentionOf,
+                            style: const TextStyle(
+                              fontSize: PB.fsBase,
+                              height: 1.45,
+                              color: Colors.white,
+                            ),
                           ),
                         ),
                     ],
@@ -1794,16 +1798,19 @@ class _MessageRow extends StatelessWidget {
                               msg.attachments.isEmpty)
                             const _TypingDots()
                           else if (msg.text.trim().isNotEmpty)
-                            MdText(
-                              streaming ? '${msg.text}▍' : msg.text,
-                              selectable: !streaming,
-                              onMentionTap: (name) => openBotDm(context, name),
-                              mentionOf: mentionOf,
-                              mentions: mentions,
-                              style: const TextStyle(
-                                fontSize: PB.fsBase,
-                                height: 1.5,
-                                color: PB.textPrimary,
+                            ExcludeFocus(
+                              child: MdText(
+                                streaming ? '${msg.text}▍' : msg.text,
+                                selectable: !streaming,
+                                onMentionTap: (name) =>
+                                    openBotDm(context, name),
+                                mentionOf: mentionOf,
+                                mentions: mentions,
+                                style: const TextStyle(
+                                  fontSize: PB.fsBase,
+                                  height: 1.5,
+                                  color: PB.textPrimary,
+                                ),
                               ),
                             ),
                         ],
