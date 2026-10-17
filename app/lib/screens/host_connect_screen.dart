@@ -7,6 +7,7 @@ import '../models.dart';
 import '../platform.dart';
 import '../scope.dart';
 import '../theme.dart';
+import '../widgets/app_logo.dart';
 
 /// 桌面端专用：本机服务端连不上时的兜底页。
 ///
@@ -74,30 +75,9 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Align(
+                  const Align(
                     alignment: Alignment.center,
-                    child: Container(
-                      width: 64,
-                      height: 64,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(18),
-                        gradient: const LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [Color(0xFF3D9BFF), Color(0xFF126FD4)],
-                        ),
-                        boxShadow: PB.glow(PB.accent, blur: 24, alpha: 0.4),
-                      ),
-                      child: const Text(
-                        'π',
-                        style: TextStyle(
-                          fontSize: 30,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
+                    child: AppLogo(size: 64),
                   ),
                   const SizedBox(height: 22),
                   Text(
