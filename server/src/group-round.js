@@ -71,8 +71,7 @@ export function planItem({ item, name = '', done = 0, budget = 0, busy = false, 
 }
 
 /**
- * 队列里还有谁没轮到（预算掐断时用来留痕）。
- * 以前这里什么都不记，日志里只看到"首发：某某"，后面一片空白。
+ * 队列中尚未轮到的成员（预算截断时用于留痕）。
  */
 export function leftBehind(queue = [], nameOf = (id) => id) {
   return queue.map((q) => nameOf(q.botId));

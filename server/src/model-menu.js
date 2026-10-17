@@ -1,20 +1,12 @@
 /**
- * 模型菜单 —— **完全来自用户自己配的模型组**。
+ * 模型菜单：内容来自用户启用的模型组（见 model-groups.js）。
  *
- * 以前这里写着一份内置白名单（"kimi=k3、glm=5.3、deepseek=v4.1 flash"）。
- * 那是**本机的东西**，不该进仓库，也不该是别人的默认：
- *   · 别人 clone 下来根本没有那些线路，菜单全是 ✗
- *   · "我该用哪些模型"本来就该用户自己说了算 ——
- *     App 里配的模型组就是答案（用户原话："每个人用自己配置的，
- *     不然我们要模型组干什么，就是让用户自己配置自己的集合"）。
- *
- * 所以现在：菜单 = 所有**启用的模型组**里的模型（见 model-groups.js）。
- * 一个组都没配 = 空菜单，这里会明确告诉用户去哪儿配。
+ * 未配置任何模型组时返回空菜单，并提示配置入口。
  */
 import { modelGroups } from './model-groups.js';
 import { log } from './util.js';
 
-/** 一个模型组都没配时给 bot（也就是给用户）的提示 */
+/** 未配置模型组时给出的提示文本 */
 export const EMPTY_MENU_HINT = [
   '还没有可用的模型 —— 去 App 的「模型」页加一个模型组：',
   '  1. 填 baseUrl + API key（任何 OpenAI 兼容接口都行）',
@@ -47,11 +39,12 @@ export function findMenuEntry(input, entries = menuEntries()) {
 }
 
 /**
- * 把别名或 slug 解析成实际可用的 slug：同族里优先取探活通过的。
+ * 解析别名或 slug：同族中优先取探活通过的线路。
  *
- * ★ 「过期」不等于「挂了」：一条新鲜结论都没有时不能把整个菜单判死
- *   （否则服务跑满一天，菜单全变 ✗、招人全被拒，用户以为模型坏了）。
- *   那种情况下有历史结论的就先当能用，后台重探完自然会给出真结论。
+ * 判定 alive：
+ *   · 存在新鲜结论且可用 → true；
+ *   · 存在新鲜结论但均不可用 → false；
+ *   · 无新鲜结论（过期或从未探活）→ 有历史可用结论时视为可用，等待后台重探。
  * @returns {{entry:object, slug:string, alive:boolean}|null}
  */
 export function resolveMenu(input, health, entries) {

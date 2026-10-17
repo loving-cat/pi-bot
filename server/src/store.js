@@ -257,8 +257,7 @@ export class Store {
     // 只写有变更的房间：之前是每次变更都把全部房间重写一遍，
     // 房间一多（每个群 500 条消息）就是纯浪费。
     //
-    // 每个房间单独兜底：一个房间写失败（Windows 上 rename 撞杀软/备份抛 EPERM）
-    // 不应该让剩下所有房间都丢掉这次的改动 —— 失败的留在 dirty 里下次再试。
+    // 逐房间独立处理：单个房间写入失败不影响其他房间，失败的保留在 dirty 中重试。
     for (const roomId of [...this.dirtyRooms]) {
       try {
         writeJsonAtomic(path.join(ROOMS_DIR, `${roomId}.json`), this.messages.get(roomId) ?? []);
@@ -615,10 +614,7 @@ export class Store {
     //   注意删的是**这个会话**，不是那个 bot：下次点它 / @它，ensureDm 会重新开一个空的。
     delete this.state.rooms[id];
     this.messages.delete(id);
-    // ★ 磁盘上也要真删。
-    //   以前只删内存和 state 条目，`rooms/<id>.json` 永远留在盘上 ——
-    //   现场跑成 49 个文件 vs 10 个房间（280KB 孤儿，31 个是 2 字节的 `[]`）。
-    //   而且删掉的房间还挂在 dirty 里，下一次落盘会把空数组再写回去。
+    // 同步删除磁盘文件，并从 dirty 集合移除，避免下次落盘重新写出空数组。
     this.dirtyRooms.delete(id);
     this.#removeFile(path.join(ROOMS_DIR, `${id}.json`));
     for (const key of Object.keys(this.state.sessions)) {
