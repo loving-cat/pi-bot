@@ -81,6 +81,25 @@ export function createSessionBuilder({ runner, health, resolveModel, modelLabel 
       agentDir: getAgentDir(),
       // 命令级规矩的拦截点：bash/powershell 调用前按部门规则判定
       extensionFactories: [createPolicyExtension({ roomId, bot })],
+      // ★ 会话里不加载"给终端 agent 省上下文"的那类扩展。
+      //
+      //   context-mode 每建一个会话就会拉起一个 bun 子进程（Windows 上表现为
+      //   控制台窗口一闪一闪）。bot 会话是长驻的、几十个并存，既没必要也吵。
+      //   需要时可以用 PI_BOT_DISABLED_EXTENSIONS 覆盖（逗号分隔，按路径匹配，空=全加载）。
+      extensionsOverride: (base) => {
+        const needles = (process.env.PI_BOT_DISABLED_EXTENSIONS ?? 'context-mode')
+          .split(',')
+          .map((x) => x.trim())
+          .filter(Boolean);
+        if (!needles.length) return base;
+        return {
+          ...base,
+          extensions: base.extensions.filter((ext) => {
+            const where = `${ext.path ?? ''} ${ext.resolvedPath ?? ''}`;
+            return !needles.some((needle) => where.includes(needle));
+          }),
+        };
+      },
       appendSystemPrompt: buildAppendSystemPrompt(bot, {
         userName: store.userName(),
         // 部门规矩跟着会话走：工具集和提示都是建会话时定的，规矩变了会作废重建
