@@ -1,0 +1,22 @@
+README.md
+  s_06973911ad2cd6::t_a75bc5934e8ce8 235
+  s_06973911ad2cd6::t_88468ccd4d93c1 184,217-218,221,224
+docs/MODULE-MAP.md
+  s_06973911ad2cd6::t_88468ccd4d93c1 94-95,100
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "371258939a15c52cf233bb7bc0437d0d1338239e",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
