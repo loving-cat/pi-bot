@@ -113,13 +113,13 @@ const extra = JSON.parse(extraJson || '{}');
 const fd = fs.openSync(logPath, 'a');
 const header = `\n---- ${new Date().toISOString()} 启动: ${entry} (node ${process.version}) ----\n`;
 fs.writeSync(fd, header);
-// 这里两个选项都不能加，否则工具一跑就闪黑框：
-// - 本脚本由 WScript.Shell.Run(...,0) 以隐藏窗口启动，自带一个**隐藏控制台**；
-//   服务端继承它，之后每个工具子进程（rg / fd / git / node）也继承它，
-//   系统就不会再为它们新建控制台窗口。
-// - windowsHide 会把子进程的控制台剥掉（GetConsoleWindow()==0）；
-// - detached 会给子进程 DETACHED_PROCESS，同样没有控制台。
-// 两者都会让服务端的派生链从"共享隐藏控制台"变成"每个子进程新建窗口"。
+// 这里不能加 windowsHide / detached：
+// - 两者都会把继承来的隐藏控制台剥掉（子进程 GetConsoleWindow()==0），
+//   服务端之后派生的每个控制台子进程（rg / fd / git / node）都会被系统
+//   分配一个新控制台窗口，表现为工具一跑就闪黑框；
+// - 实测 detached 还会让服务端起不来。
+// 本脚本由 WScript.Shell.Run(...,0) 以隐藏窗口启动，自带隐藏控制台，
+// 服务端直接继承即可；父进程退出后子进程继续存活，不依赖 detached。
 const child = spawn(node, [entry], {
   cwd,
   stdio: ['ignore', fd, fd],
@@ -128,7 +128,8 @@ const child = spawn(node, [entry], {
 if (pidFile) {
   try { fs.writeFileSync(pidFile, String(child.pid)); } catch {}
 }
-child.unref();
-fs.closeSync(fd);
+// 不关 fd、也不 unref：服务端继承了这份日志句柄，helper 退出时若关掉 fd，
+// 服务端后续写日志会失败并静默退出。这里让 helper 在打印 pid 后自然结束，
+// 句柄由子进程继续持有。
 console.log(`server pid=${child.pid}`);
 ''';
