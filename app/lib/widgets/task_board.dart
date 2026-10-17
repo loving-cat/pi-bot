@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../app_state.dart';
 import '../models.dart';
 import '../theme.dart';
 
@@ -281,4 +282,29 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
       ),
     );
   }
+}
+
+/// 打开某个房间的任务板（装配放在这里，聊天页只留一行调用）。
+Future<void> showTaskBoard(
+  BuildContext context,
+  AppState state,
+  Room room,
+) async {
+  await state.refreshTasks();
+  if (!context.mounted) return;
+  await showModalBottomSheet<void>(
+    context: context,
+    backgroundColor: PB.bgPane,
+    isScrollControlled: true,
+    constraints: const BoxConstraints(maxWidth: 560),
+    builder: (_) => TaskBoardSheet(
+      roomName: room.name,
+      tasks: state.tasksFor(room.id),
+      onToggleDone: (t) =>
+          state.updateTask(t.id, {'status': t.isDone ? 'open' : 'done', 'read': true}),
+      onTogglePin: (t) => state.updateTask(t.id, {'pinned': !t.isPinned}),
+      onDelete: (t) => state.deleteTask(t.id),
+      onCreate: (title) => state.createTask(roomId: room.id, title: title),
+    ),
+  );
 }

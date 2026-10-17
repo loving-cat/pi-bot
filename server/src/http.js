@@ -170,6 +170,8 @@ export function createHttpServer({ runner, pairing }) {
           denials: store.listDenials({ limit: 20 }),
           // 任务板（房间页会按 roomId 过滤）
           tasks: store.listTasks({ limit: 200 }),
+          // 定时任务（房间页按 roomId 过滤）
+          automations: store.listAutomations(),
           templates: store.templates(),
           // 用户自己是谁（bot 要知道在跟谁说话）
           user: store.userSummary(),
