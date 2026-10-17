@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pi_bot/update_info.dart';
+import 'package:pi_bot/widgets/update_prompt.dart';
 
 /// 更新判定的纯逻辑测试。
 ///
@@ -127,6 +128,23 @@ void main() {
       expect(info(assetSize: 2048).sizeLabel, '2.0 KB');
       expect(info(assetSize: 1024 * 1024 * 3).sizeLabel, '3.0 MB');
       expect(info(assetSize: 1024 * 1024 * 1024 * 2).sizeLabel, '2.0 GB');
+    });
+  });
+
+  group('下载地址校验', () {
+    test('只接受 https 直链', () {
+      expect(isSafeDownloadUrl('https://github.com/x/y.exe'), isTrue);
+      expect(isSafeDownloadUrl('http://github.com/x/y.exe'), isFalse, reason: 'http 会被降级');
+      expect(isSafeDownloadUrl('file:///C:/x.exe'), isFalse);
+      expect(isSafeDownloadUrl('https://'), isFalse, reason: '没有主机名');
+      expect(isSafeDownloadUrl(''), isFalse);
+      expect(isSafeDownloadUrl('not a url'), isFalse);
+    });
+
+    test('发布页地址同样校验', () {
+      expect(isSafeWebUrl('https://github.com/a/b/releases'), isTrue);
+      expect(isSafeWebUrl('http://evil.test'), isFalse);
+      expect(isSafeWebUrl('javascript:alert(1)'), isFalse);
     });
   });
 

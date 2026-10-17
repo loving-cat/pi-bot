@@ -61,6 +61,13 @@ export function compareVersions(a, b) {
     // 数字段小于字母段（semver 第 11 条）
     if (nx && !ny) return -1;
     if (!nx && ny) return 1;
+    // 两边都是数字时按**数值**比：字符串比会把 beta.10 判成小于 beta.9
+    if (nx && ny) {
+      const dx = Number.parseInt(x, 10);
+      const dy = Number.parseInt(y, 10);
+      if (dx !== dy) return dx < dy ? -1 : 1;
+      continue;
+    }
     if (x !== y) return x < y ? -1 : 1;
   }
   return 0;
@@ -127,6 +134,23 @@ export function buildUpdateInfo({
   };
 }
 
+/** 更新元数据 / 签名文件：不是安装包，绝不能当成下载目标 */
+const NOT_INSTALLER = /\.(blockmap|ya?ml|txt|sha256|sha512|sig|asc|json)$/i;
+
+/**
+ * 各平台认哪些文件名。
+ *
+ * 平台词必须带分隔符边界（`-win-` / `_win_` / ` win `），
+ * 无锚点的 /win/ 会命中 "darwin"，把 Mac 包推给 Windows 用户。
+ * 不用 .zip 兜底：zip 判不出平台，宁可不给直链让用户去发布页。
+ */
+const PLATFORM_RULES = {
+  win32: [/\.exe$/i, /\.msi$/i, /[-_. ]win(?:32|64|dows)?[-_. ]/i],
+  darwin: [/\.dmg$/i, /\.pkg$/i, /[-_. ](?:mac|osx|darwin)[-_. ]/i],
+  android: [/\.apk$/i, /[-_. ]android[-_. ]/i],
+  linux: [/\.appimage$/i, /\.deb$/i, /[-_. ]linux[-_. ]/i],
+};
+
 /**
  * 从一组下载文件里挑出最适合当前平台的那个。
  *
@@ -138,20 +162,21 @@ export function buildUpdateInfo({
  * @returns {{name:string,url:string,size:number}|null}
  */
 export function pickAssetFor(assets = [], platform = process.platform) {
-  const list = (assets ?? []).filter((a) => a?.url);
-  if (!list.length) return null;
+  const rules = PLATFORM_RULES[platform];
+  if (!rules || !Array.isArray(assets)) return null;
 
-  const rules = {
-    win32: [/\.exe$/i, /win(dows)?/i, /\.msi$/i, /\.zip$/i],
-    darwin: [/\.dmg$/i, /mac|osx|darwin/i, /\.zip$/i],
-    android: [/\.apk$/i, /android/i],
-    linux: [/\.appimage$/i, /\.deb$/i, /linux/i],
-  };
-  const patterns = rules[platform] ?? [];
-
-  for (const re of patterns) {
-    const hit = list.find((a) => re.test(String(a.name ?? '')) || re.test(String(a.url ?? '')));
-    if (hit) return { name: hit.name ?? '', url: hit.url, size: hit.size ?? 0 };
-  }
-  return null;
+  // 只认 https 直链；排除更新元数据（latest.yml / *.blockmap / 校验文件），
+  // 否则它们会因为文件名里带平台词而抢在真正的安装包前面。
+  const candidates = assets.filter(
+    (a) =>
+      a &&
+      typeof a.name === 'string' &&
+      typeof a.url === 'string' &&
+      /^https:\/\//i.test(a.url) &&
+      !NOT_INSTALLER.test(a.name),
+  );
+  // 只按文件名判平台：URL 里可能带 "darwin" 之类的字样，按 URL 匹配会串平台
+  const hit = candidates.find((a) => rules.some((re) => re.test(a.name)));
+  return hit ? { name: hit.name, url: hit.url, size: Number(hit.size) || 0 } : null;
 }
+
