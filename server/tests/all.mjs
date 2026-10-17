@@ -13,6 +13,7 @@ const TESTS = [
   'console-inherit',
   'closing-turn',
   'transcript-budget',
+  'skills',
   'update-check',
   'update-checker',
   'session-resources',
