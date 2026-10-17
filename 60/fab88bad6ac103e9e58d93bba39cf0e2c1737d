@@ -1,0 +1,51 @@
+app/test/server_options_test.dart
+  s_06973911ad2cd6::t_2bb8830f3bb0c8 1-21
+  s_06973911ad2cd6::t_ac7f9650e78d9f 22-24
+app/lib/server/locate.dart
+  s_06973911ad2cd6::t_317700e3095b7b 42,73,149
+  s_06973911ad2cd6::t_81a148d6e19c6f 10,13-16,22,25-27,43,49-66,69-72,74-76,78-79,81-120,123-139,153-154,166-170
+app/lib/server/supervisor.dart
+  s_06973911ad2cd6::t_450ba7d9b44672 16,19-22,49-52,57-58,61,63-66,68-71,73-81,83-97
+  s_06973911ad2cd6::t_fb39ad1c13cd3b 98-102
+app/test/server_bootstrap_test.dart
+  s_06973911ad2cd6::t_2bb8830f3bb0c8 22-42,82-151,157,165,193
+  s_06973911ad2cd6::t_c11f6a3fb57c32 152-156,158-164,166-171,180-185,191-192
+app/test/server_settings_test.dart
+  s_06973911ad2cd6::t_317700e3095b7b 87
+  s_06973911ad2cd6::t_b506554de03658 125-142,175-184
+  s_06973911ad2cd6::t_238e8118042ef3 1-2,4-5,7-8,10-86,88-89,196-197
+  s_06973911ad2cd6::t_41816ba9df7462 3,6,9,90-91,143,154-168,191,193
+  s_06973911ad2cd6::t_f5154cb905630f 92-124,144-153,169-174,185-190,192,194-195
+app/lib/widgets/server_config_section.dart
+  s_06973911ad2cd6::t_41816ba9df7462 108,110,233
+app/lib/app_state.dart
+  s_06973911ad2cd6::t_f5154cb905630f 284-289
+  s_06973911ad2cd6::t_b506554de03658 290-303
+  s_06973911ad2cd6::t_317700e3095b7b 317
+  s_06973911ad2cd6::t_81a148d6e19c6f 219,310-311,313-316,318-323
+app/test/server_supervisor_test.dart
+  s_06973911ad2cd6::t_238e8118042ef3 45-46,79-80,86-90,151-158,169-176,180,182-185
+  s_06973911ad2cd6::t_317700e3095b7b 111-124
+  s_06973911ad2cd6::t_2bb8830f3bb0c8 1-44,47-78,81-85,91-110,125-150,159-168,177-179,181,186-188
+app/lib/server/launcher.dart
+  s_06973911ad2cd6::t_317700e3095b7b 44-45,75,97-102,113,154-157,220-224,226-230,321-324,328-331,354-355,384-387
+  s_06973911ad2cd6::t_81a148d6e19c6f 24-26,60-70,104,264,296,340,353,356-357
+app/lib/server/options.dart
+  s_06973911ad2cd6::t_81a148d6e19c6f 6-11,16,22-24,29-44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "60fab88bad6ac103e9e58d93bba39cf0e2c1737d",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
