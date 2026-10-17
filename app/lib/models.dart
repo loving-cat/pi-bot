@@ -272,6 +272,7 @@ class Msg {
   String? get approvalId => meta?['approvalId'] as String?;
   String? get approvalTool => meta?['tool'] as String?;
   String? get approvalSummary => meta?['summary'] as String?;
+
   /// 已经决定过了：approved / denied / consumed；空 = 还在等
   String? get approvalDecision => meta?['decision'] as String?;
 
@@ -572,6 +573,56 @@ class BotSkill {
   );
 
   Map<String, dynamic> toJson() => {'id': id, 'title': title, 'howto': howto};
+}
+
+/// 技能库（全局，所有 bot 共享）里的一条。
+///
+/// 与 [BotSkill] 的区别：那是"某个 bot 自己会的事"，全量进它的系统提示；
+/// 这里存在库里，可以有很多条，按任务挑几条注入 —— 所以多了摘要、标签和启停。
+class LibrarySkill {
+  LibrarySkill({
+    required this.id,
+    required this.title,
+    this.summary = '',
+    this.howto = '',
+    List<String>? tags,
+    this.enabled = true,
+    this.createdAt = 0,
+    this.updatedAt = 0,
+  }) : tags = tags ?? [];
+
+  final String id;
+  String title;
+  String summary;
+  String howto;
+  List<String> tags;
+  bool enabled;
+  final int createdAt;
+  final int updatedAt;
+
+  factory LibrarySkill.fromJson(Map<String, dynamic> json) => LibrarySkill(
+    id: json['id'] as String? ?? '',
+    title: json['title'] as String? ?? '',
+    summary: json['summary'] as String? ?? '',
+    howto: json['howto'] as String? ?? '',
+    tags: ((json['tags'] as List?) ?? const [])
+        .map((t) => '$t')
+        .where((t) => t.isNotEmpty)
+        .toList(),
+    enabled: json['enabled'] != false,
+    createdAt: (json['createdAt'] as num?)?.toInt() ?? 0,
+    updatedAt: (json['updatedAt'] as num?)?.toInt() ?? 0,
+  );
+
+  /// 搜索用：标题 + 摘要 + 标签 + 正文
+  bool matches(String query) {
+    final q = query.trim().toLowerCase();
+    if (q.isEmpty) return true;
+    return title.toLowerCase().contains(q) ||
+        summary.toLowerCase().contains(q) ||
+        howto.toLowerCase().contains(q) ||
+        tags.any((t) => t.toLowerCase().contains(q));
+  }
 }
 
 /// 跨会话引用：bot 给别的 bot 发了私信，在**来源房间**留下一个指针。
