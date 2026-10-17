@@ -249,18 +249,11 @@ flutter analyze
 - 所有工具的文件操作都被限制在 `data/workspace` 内
 - 仓库本身**不含任何密钥、本机路径、内网地址**——全部走用户级配置或环境变量
 
-## 灵感与致谢
+## 灵感
 
-这个项目在设计和机制上参考了开源项目，**只学做法，没有抄代码、命名和标志性动效**：
-
-- **[DeepSeek-Bot](https://github.com/Fei2411/DeepSeek-Bot)**（Apache-2.0）
-  学的是：`@名字` 作为调度信号、部门/花名册的组织方式、群里"谁在说话"的轮次与并发模型
-  （它的 `round.slots` 与 *"Work does not hold a round up"* 直接影响了我们的群调度设计：
+- **[DeepSeek-Bot](https://github.com/Fei2411/DeepSeek-Bot)**（Apache-2.0）：`@名字` 作为调度信号、部门/花名册的组织方式、群里"谁在说话"的轮次与并发模型
+  （`round.slots` 与 *"Work does not hold a round up"* 影响了群调度设计：
   顺序由组长定、执行全员并行、忙的人不阻塞这一轮）、以及"投递进对方 inbox"而不是死等。
-
-同时刻意**不抄**：命名体系、头像形体名、特征性动效参数。配色可以对齐，因为那是审美取向，不是实现。
-
-如果你觉得某个机制值得再看，欢迎提 issue。
 
 ## License
 
