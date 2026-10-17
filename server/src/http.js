@@ -14,6 +14,7 @@ import { timingSafeEqual, log } from './util.js';
 import { shells } from './shells.js';
 import { computeNextRun, validateSchedule } from './automations.js';
 import { VERSION } from './version.js';
+import { checkForUpdate, clearUpdateCache } from './update-checker.js';
 import { UploadSessions } from './upload-sessions.js';
 import { loadHooks, saveHooks, validateHook } from './hooks.js';
 
@@ -380,6 +381,14 @@ export function createHttpServer({ runner, pairing }) {
         const all = runner.availableModels;
         const list = keyword ? all.filter((m) => `${m.provider}/${m.id}`.toLowerCase().includes(keyword)) : all;
         return send(res, 200, { total: list.length, models: list.slice(0, 200) });
+      }
+
+      // 检查更新：只查不装。下载与安装由客户端在用户确认后自己做。
+      if (pathname === '/api/update' && req.method === 'GET') {
+        const platform = String(url.searchParams.get('platform') || '').trim() || undefined;
+        const force = url.searchParams.get('force') === '1';
+        const info = await checkForUpdate({ platform, force });
+        return send(res, 200, info);
       }
 
       // ---------- 附件 ----------
