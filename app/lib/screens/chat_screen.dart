@@ -16,6 +16,7 @@ import '../theme.dart';
 import '../widgets/attachment_view.dart';
 import '../widgets/avatar_life.dart';
 import '../widgets/ask_card.dart';
+import '../widgets/approval_card.dart';
 import '../widgets/blob_avatar.dart';
 import '../widgets/context_chip.dart';
 import '../widgets/floating_menu.dart';
@@ -1561,6 +1562,16 @@ class _MessageRow extends StatelessWidget {
     // 「问你」卡片：卡住时让用户点一下/写一句，不用打字回一长串
     if (msg.isAsk) {
       return AskCard(msg: msg, onAnswer: (text) => _answerAsk(context, text));
+    }
+    // 「要动手了，批不批」卡片（部门规矩 = 需要批准时）
+    if (msg.isApproval) {
+      return ApprovalCard(
+        msg: msg,
+        onDecide: (approve) => AppScope.read(context).decideApproval(
+          msg.approvalId ?? '',
+          approve: approve,
+        ),
+      );
     }
 
     final isUser = msg.isUser;

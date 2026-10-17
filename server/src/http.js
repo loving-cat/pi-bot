@@ -14,6 +14,7 @@ import { timingSafeEqual, log } from './util.js';
 import { shells } from './shells.js';
 import { computeNextRun, validateSchedule } from './automations.js';
 import { UploadSessions } from './upload-sessions.js';
+import { loadHooks, saveHooks, validateHook } from './hooks.js';
 
 function send(res, status, body) {
   const payload = JSON.stringify(body ?? {});
@@ -177,6 +178,70 @@ export function createHttpServer({ runner, pairing }) {
           user: store.userSummary(),
           pairing: config.staticToken ? null : pairing.snapshot(),
         });
+      }
+
+      // ---------- 工具钩子（改入参 / 拦下） ----------
+      if (pathname === '/api/hooks' && req.method === 'GET') {
+        return send(res, 200, { hooks: loadHooks() });
+      }
+      if (pathname === '/api/hooks' && req.method === 'PUT') {
+        const body = await readBody(req);
+        const list = Array.isArray(body?.hooks) ? body.hooks : [];
+        const bad = list.map((rule) => validateHook(rule)).filter(Boolean);
+        if (bad.length) return send(res, 400, { error: bad[0] });
+        return send(res, 200, { hooks: saveHooks(list) });
+      }
+
+      // ---------- 审批（危险动作第三档） ----------
+      if (pathname === '/api/approvals' && req.method === 'GET') {
+        const roomId = url.searchParams.get('roomId');
+        const status = url.searchParams.get('status');
+        return send(res, 200, {
+          approvals: store.listApprovals({ roomId, status, limit: 100 }),
+        });
+      }
+
+      const approvalMatch = pathname.match(/^\/api\/approvals\/([^/]+)$/);
+      if (approvalMatch && req.method === 'POST') {
+        const body = await readBody(req);
+        const approval = store.decideApproval(approvalMatch[1], {
+          approved: body?.approve === true,
+        });
+        // scope='task' → 开一个 10 分钟的放行窗口（同一 bot + 同一会话）
+        if (approval?.status === 'approved' && body?.scope === 'task') {
+          store.grantApproval({
+            roomId: approval.roomId,
+            botId: approval.botId,
+            minutes: Number(body?.minutes) || 10,
+          });
+        }
+        if (!approval) return send(res, 400, { error: '没有待批准的这一条' });
+
+        // 卡片状态跟着变（前端据此把按钮置灰）
+        const card = (store.listMessages(approval.roomId, { limit: 200 }) ?? []).find(
+          (m) => m?.meta?.approvalId === approval.id,
+        );
+        if (card) {
+          store.updateMessage(approval.roomId, card.id, {
+            meta: { ...(card.meta ?? {}), decision: approval.status },
+          });
+        }
+
+        if (approval.status === 'approved') {
+          runner.resumeAfterApproval(approval).catch((err) =>
+            log('批准后继续失败：', err?.message || err),
+          );
+        } else {
+          store.appendMessage({
+            roomId: approval.roomId,
+            authorType: 'system',
+            authorName: '审批',
+            text: `已拒绝：${approval.summary}`,
+            status: 'done',
+            meta: { approvalId: approval.id, decision: 'denied' },
+          });
+        }
+        return send(res, 200, { approval });
       }
 
       // ---------- 定时任务 ----------

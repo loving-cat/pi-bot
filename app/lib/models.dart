@@ -267,6 +267,14 @@ class Msg {
     return parsed.total > 0 ? parsed : null;
   }
 
+  /// 审批卡片（危险动作第三档：ask）
+  bool get isApproval => kind == 'approval';
+  String? get approvalId => meta?['approvalId'] as String?;
+  String? get approvalTool => meta?['tool'] as String?;
+  String? get approvalSummary => meta?['summary'] as String?;
+  /// 已经决定过了：approved / denied / consumed；空 = 还在等
+  String? get approvalDecision => meta?['decision'] as String?;
+
   /// 要不要同时给一个"我自己说"的输入框
   bool get askAllowCustom => meta?['allowCustom'] != false;
   bool get wasSteer => meta?['queued'] != null;
