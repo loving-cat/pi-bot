@@ -34,3 +34,12 @@ const shutdown = () => {
 };
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
+
+// 兜底：中转是长跑进程，任何一处未捕获异常都不该让 agent 整个退出
+// （退出 = 手机上所有连接一起断）。记日志，继续服务。
+process.on('uncaughtException', (err) => {
+  log('未捕获异常：', err?.stack || err?.message || err);
+});
+process.on('unhandledRejection', (reason) => {
+  log('未处理的 Promise 拒绝：', reason?.stack || reason?.message || reason);
+});
