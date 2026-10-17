@@ -198,7 +198,7 @@ class _RiseIn extends StatelessWidget {
   }
 }
 
-class _OptionButton extends StatelessWidget {
+class _OptionButton extends StatefulWidget {
   const _OptionButton({
     required this.label,
     required this.detail,
@@ -210,53 +210,72 @@ class _OptionButton extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
+  State<_OptionButton> createState() => _OptionButtonState();
+}
+
+class _OptionButtonState extends State<_OptionButton> {
+  bool _hover = false;
+
+  @override
   Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(PB.rLg),
-      onTap: onTap,
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-        decoration: BoxDecoration(
-          color: PB.bgActive,
-          borderRadius: BorderRadius.circular(PB.rLg),
-          border: Border.all(color: PB.borderSecondary),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    label,
-                    style: const TextStyle(
-                      fontSize: PB.fsSm,
-                      color: PB.textPrimary,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  if (detail.isNotEmpty) ...[
-                    const SizedBox(height: 2),
+    // 悬停反馈自己做：InkWell 的水波纹画在 Material 上，会被这层不透明容器
+    // 盖住（看得见点击、看不见悬停）。这里用 MouseRegion + AnimatedContainer
+    // 直接把底色和描边变亮，鼠标一上去就有反应。
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          curve: Curves.easeOut,
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          decoration: BoxDecoration(
+            color: _hover ? PB.bgHover : PB.bgActive,
+            borderRadius: BorderRadius.circular(PB.rLg),
+            border: Border.all(
+              color: _hover ? PB.accent.withValues(alpha: 0.45) : PB.borderSecondary,
+            ),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                     Text(
-                      detail,
+                      widget.label,
                       style: const TextStyle(
-                        fontSize: PB.fsXxs,
-                        color: PB.textQuaternary,
-                        height: 1.4,
+                        fontSize: PB.fsSm,
+                        color: PB.textPrimary,
+                        fontWeight: FontWeight.w500,
                       ),
                     ),
+                    if (widget.detail.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        widget.detail,
+                        style: const TextStyle(
+                          fontSize: PB.fsXxs,
+                          color: PB.textQuaternary,
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
-            ),
-            const Icon(
-              LucideIcons.chevronRight,
-              size: 15,
-              color: PB.textQuaternary,
-            ),
-          ],
+              Icon(
+                LucideIcons.chevronRight,
+                size: 15,
+                color: _hover ? PB.accent : PB.textQuaternary,
+              ),
+            ],
+          ),
         ),
       ),
     );
