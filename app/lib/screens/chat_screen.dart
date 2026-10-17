@@ -9,6 +9,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../app_state.dart';
+import '../clipboard_image.dart';
 import '../models.dart';
 import '../scope.dart';
 import '../theme.dart';
@@ -59,6 +60,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   String? _shownError;
   final List<Attachment> _pending = [];
   bool _uploading = false;
+
+  /// 正在把文件拖到窗口上（给一个明确的落点提示）
+  bool _draggingOver = false;
 
   /// 防止“粘贴路径 → 转附件”自己重入（清空文本也会触发监听）
   bool _convertingPaste = false;
@@ -331,8 +335,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _convertingPaste = false;
     unawaited(
       _uploadAll([
-        for (final f in files)
-          (f.uri.pathSegments.last, () => f.readAsBytes()),
+        for (final f in files) (f.uri.pathSegments.last, () => f.readAsBytes()),
       ]),
     );
   }
@@ -542,8 +545,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       //   反馈用提示条 —— 不去做布满全屏的高亮层（以前加过，一不小心就把 body
       //   的嵌套改坏、整个文件都不编译了）。
       body: DropTarget(
-        onDragEntered: (_) => _toast('松手就加进来（图片 / PDF / Word 都行）'),
+        onDragEntered: (_) => setState(() => _draggingOver = true),
+        onDragExited: (_) => setState(() => _draggingOver = false),
         onDragDone: (detail) async {
+          setState(() => _draggingOver = false);
           final files = detail.files
               .where((f) => f.path.trim().isNotEmpty)
               .toList();
@@ -552,183 +557,237 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             for (final f in files) (f.name, () => File(f.path).readAsBytes()),
           ]);
         },
-        child: Column(
-        children: [
-          Expanded(
-            child: msgs.isEmpty
-                ? _EmptyHint(room: room, lead: lead)
-                : Stack(
-                    children: [
-                      // ★ 消息列表整块**不许抢焦点**。
-                      //
-                      //   列表里每条消息的 MdText 默认 selectable: true，底层是
-                      //   SelectableText.rich —— 它会自己建 FocusNode。而流式输出时
-                      //   消息每 80ms 重建一次，这些节点就在焦点竞争里把焦点从输入框
-                      //   拽走：用户打字打一半断掉，得重新点一下输入框。
-                      //
-                      //   ExcludeFocus 从根上关掉这条路。代价是消息里不能再用键盘
-                      //   Ctrl+C —— 但每条消息长按有「复制」菜单，功能没丢。
-                      ExcludeFocus(
-                        child: ListView.builder(
-                          controller: _scroll,
-                          // ★ 居中限宽：窗口拉宽时左右留白跟着长（内容列最多 1180），
-                          //   气泡就不会被吸附到窗口两边。
-                          //   左边用 leftPad：群里减掉头像列那 42px，
-                          //   这样气泡的左右边缘在私聊/群聊里落在同一位置。
-                          padding: EdgeInsets.fromLTRB(
-                            leftPad,
-                            20,
-                            sidePad,
-                            20,
-                          ),
-                          itemCount: msgs.length,
-                          itemBuilder: (ctx, i) {
-                            final msg = msgs[i];
-                            final prev = i > 0 ? msgs[i - 1] : null;
-                            final newAuthor =
-                                prev == null ||
-                                prev.authorId != msg.authorId ||
-                                prev.authorType != msg.authorType ||
-                                (msg.createdAt - prev.createdAt) >
-                                    5 * 60 * 1000;
-                            // 同一个人连着发好几条时，头像挂在**最后一条**上 ——
-                            // 这样整串气泡都在头像的右上方，头像在底部托着。
-                            // （挂在第一条的话，头像会卡在整串中间，很怪。）
-                            final next = i + 1 < msgs.length
-                                ? msgs[i + 1]
-                                : null;
-                            final endOfRun =
-                                next == null ||
-                                next.authorId != msg.authorId ||
-                                next.authorType != msg.authorType ||
-                                (next.createdAt - msg.createdAt) >
-                                    5 * 60 * 1000;
-                            // ★ 这条是**外面的人说的**（不在这个会话的名单里）——
-                            //   比如负责人把某个成员的报告转进群里。
-                            //   挂一条「消息来自 X」，点开是**只读**的窥视：
-                            //   看那个 bot 的私聊里到底说了什么（用户要的"链路可见"）。
-                            final relayed = msg.authorType == 'bot' &&
-                                msg.authorId != null &&
-                                !room.botIds.contains(msg.authorId);
-                            final relayedBot = relayed
-                                ? state.botById(msg.authorId)
-                                : null;
-                            final relayedRoom = relayedBot == null
-                                ? null
-                                : state.rooms
-                                      .where(
-                                        (r) =>
-                                            !r.isGroup &&
-                                            r.botIds.contains(relayedBot.id),
-                                      )
-                                      .firstOrNull;
-                            // 不居中：整行铺满，bot 贴左、我贴右
-                            return _Appear(
-                              key: ValueKey(msg.id),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  if (relayedBot != null)
-                                    _RelayedFrom(
-                                      bot: relayedBot,
-                                      // 点开那个 bot 的私聊（只读）——
-                                      // 找不到私聊房间就不给点（只显示是谁说的）
-                                      onTap: relayedRoom == null
-                                          ? null
-                                          : () => showChatPeek(
-                                              context,
-                                              refs: [
-                                                MsgRef(
-                                                  botId: relayedBot.id,
-                                                  roomId: relayedRoom.id,
-                                                ),
-                                              ],
-                                            ),
-                                    ),
-                                  _MessageRow(
-                                msg: msg,
-                                showAuthor: newAuthor,
-                                showAvatar: endOfRun,
-                                bot: state.botById(msg.authorId),
-                                isGroup: room.isGroup,
-                                mentions: room.botNames,
-                                // @ 的名字 → 那个 bot（chip 的颜色、悬停卡的内容都靠它）
-                                mentionOf: (name) {
-                                  final b = state.botByName(name);
-                                  return b == null
+        child: Stack(
+          children: [
+            Column(
+              children: [
+                Expanded(
+                  child: msgs.isEmpty
+                      ? _EmptyHint(room: room, lead: lead)
+                      : Stack(
+                          children: [
+                            // ★ 消息列表整块**不许抢焦点**。
+                            //
+                            //   列表里每条消息的 MdText 默认 selectable: true，底层是
+                            //   SelectableText.rich —— 它会自己建 FocusNode。而流式输出时
+                            //   消息每 80ms 重建一次，这些节点就在焦点竞争里把焦点从输入框
+                            //   拽走：用户打字打一半断掉，得重新点一下输入框。
+                            //
+                            //   ExcludeFocus 从根上关掉这条路。代价是消息里不能再用键盘
+                            //   Ctrl+C —— 但每条消息长按有「复制」菜单，功能没丢。
+                            ExcludeFocus(
+                              child: ListView.builder(
+                                controller: _scroll,
+                                // ★ 居中限宽：窗口拉宽时左右留白跟着长（内容列最多 1180），
+                                //   气泡就不会被吸附到窗口两边。
+                                //   左边用 leftPad：群里减掉头像列那 42px，
+                                //   这样气泡的左右边缘在私聊/群聊里落在同一位置。
+                                padding: EdgeInsets.fromLTRB(
+                                  leftPad,
+                                  20,
+                                  sidePad,
+                                  20,
+                                ),
+                                itemCount: msgs.length,
+                                itemBuilder: (ctx, i) {
+                                  final msg = msgs[i];
+                                  final prev = i > 0 ? msgs[i - 1] : null;
+                                  final newAuthor =
+                                      prev == null ||
+                                      prev.authorId != msg.authorId ||
+                                      prev.authorType != msg.authorType ||
+                                      (msg.createdAt - prev.createdAt) >
+                                          5 * 60 * 1000;
+                                  // 同一个人连着发好几条时，头像挂在**最后一条**上 ——
+                                  // 这样整串气泡都在头像的右上方，头像在底部托着。
+                                  // （挂在第一条的话，头像会卡在整串中间，很怪。）
+                                  final next = i + 1 < msgs.length
+                                      ? msgs[i + 1]
+                                      : null;
+                                  final endOfRun =
+                                      next == null ||
+                                      next.authorId != msg.authorId ||
+                                      next.authorType != msg.authorType ||
+                                      (next.createdAt - msg.createdAt) >
+                                          5 * 60 * 1000;
+                                  // ★ 这条是**外面的人说的**（不在这个会话的名单里）——
+                                  //   比如负责人把某个成员的报告转进群里。
+                                  //   挂一条「消息来自 X」，点开是**只读**的窥视：
+                                  //   看那个 bot 的私聊里到底说了什么（用户要的"链路可见"）。
+                                  final relayed =
+                                      msg.authorType == 'bot' &&
+                                      msg.authorId != null &&
+                                      !room.botIds.contains(msg.authorId);
+                                  final relayedBot = relayed
+                                      ? state.botById(msg.authorId)
+                                      : null;
+                                  final relayedRoom = relayedBot == null
                                       ? null
-                                      : MentionInfo(
-                                          seed: b.id,
-                                          subtitle: b.tagline,
-                                          emoji: b.emoji,
-                                        );
+                                      : state.rooms
+                                            .where(
+                                              (r) =>
+                                                  !r.isGroup &&
+                                                  r.botIds.contains(
+                                                    relayedBot.id,
+                                                  ),
+                                            )
+                                            .firstOrNull;
+                                  // 不居中：整行铺满，bot 贴左、我贴右
+                                  return _Appear(
+                                    key: ValueKey(msg.id),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        if (relayedBot != null)
+                                          _RelayedFrom(
+                                            bot: relayedBot,
+                                            // 点开那个 bot 的私聊（只读）——
+                                            // 找不到私聊房间就不给点（只显示是谁说的）
+                                            onTap: relayedRoom == null
+                                                ? null
+                                                : () => showChatPeek(
+                                                    context,
+                                                    refs: [
+                                                      MsgRef(
+                                                        botId: relayedBot.id,
+                                                        roomId: relayedRoom.id,
+                                                      ),
+                                                    ],
+                                                  ),
+                                          ),
+                                        _MessageRow(
+                                          msg: msg,
+                                          showAuthor: newAuthor,
+                                          showAvatar: endOfRun,
+                                          bot: state.botById(msg.authorId),
+                                          isGroup: room.isGroup,
+                                          mentions: room.botNames,
+                                          // @ 的名字 → 那个 bot（chip 的颜色、悬停卡的内容都靠它）
+                                          mentionOf: (name) {
+                                            final b = state.botByName(name);
+                                            return b == null
+                                                ? null
+                                                : MentionInfo(
+                                                    seed: b.id,
+                                                    subtitle: b.tagline,
+                                                    emoji: b.emoji,
+                                                  );
+                                          },
+                                          isLead:
+                                              room.isGroup &&
+                                              msg.authorId != null &&
+                                              msg.authorId == room.leadBotId,
+                                          onLongPress: () =>
+                                              showMessageActions(context, msg),
+                                        ),
+                                      ],
+                                    ),
+                                  );
                                 },
-                                isLead:
-                                    room.isGroup &&
-                                    msg.authorId != null &&
-                                    msg.authorId == room.leadBotId,
-                                onLongPress: () =>
-                                    showMessageActions(context, msg),
-                                  ),
-                                ],
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                      // 顶部渐变：消息滚上去时柔和淡出，而不是被标题栏硬切
-                      Positioned(
-                        left: 0,
-                        right: 0,
-                        top: 0,
-                        height: 22,
-                        child: IgnorePointer(
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
-                                colors: [
-                                  PB.bgPane,
-                                  PB.bgPane.withValues(alpha: 0),
-                                ],
                               ),
                             ),
-                          ),
+                            // 顶部渐变：消息滚上去时柔和淡出，而不是被标题栏硬切
+                            Positioned(
+                              left: 0,
+                              right: 0,
+                              top: 0,
+                              height: 22,
+                              child: IgnorePointer(
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      begin: Alignment.topCenter,
+                                      end: Alignment.bottomCenter,
+                                      colors: [
+                                        PB.bgPane,
+                                        PB.bgPane.withValues(alpha: 0),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                ),
+                _tapToReattach(
+                  _Composer(
+                    controller: _input,
+                    focus: _focus,
+                    busy: busy,
+                    queuedCount: state.queued[room.id] ?? 0,
+                    pending: _pending,
+                    uploading: _uploading,
+                    onPickImages: _pickImages,
+                    onPickFiles: _pickFiles,
+                    onTeach: () => showTeachDialog(
+                      context,
+                      state.mainBot ?? state.bots.first,
+                    ),
+                    onRemovePending: (att) => setState(
+                      () => _pending.removeWhere((a) => a.id == att.id),
+                    ),
+                    onPasteImage: (name, bytes) =>
+                        _uploadAll([(name, () async => bytes)]),
+                    onSend: _send,
+                    onStop: () => state.abort(room.id),
+                    showJump: !_stick,
+                    unread: _unreadWhileUp,
+                    onJump: () {
+                      setState(() {
+                        _stick = true;
+                        _unreadWhileUp = 0;
+                      });
+                      unawaited(_toBottom(animate: true));
+                    },
+                  ),
+                ),
+              ],
+            ),
+            // 拖拽落点提示：整块遮罩 + 一句话，松手就上传（图片 / PDF / Word / Excel 都收）
+            if (_draggingOver)
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: Container(
+                    color: PB.bgApp.withValues(alpha: 0.75),
+                    alignment: Alignment.center,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 22,
+                        vertical: 16,
+                      ),
+                      decoration: BoxDecoration(
+                        color: PB.bgBubble,
+                        borderRadius: BorderRadius.circular(PB.r2xl),
+                        border: Border.all(
+                          color: PB.accent.withValues(alpha: 0.5),
                         ),
                       ),
-                    ],
+                      child: const Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            LucideIcons.paperclip,
+                            size: 22,
+                            color: PB.accent,
+                          ),
+                          SizedBox(height: 8),
+                          Text(
+                            '松手就加进来（图片 / PDF / Word / Excel）',
+                            style: TextStyle(
+                              fontSize: PB.fsSm,
+                              color: PB.textSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
-          ),
-          _tapToReattach(
-            _Composer(
-              controller: _input,
-              focus: _focus,
-              busy: busy,
-              queuedCount: state.queued[room.id] ?? 0,
-              pending: _pending,
-              uploading: _uploading,
-              onPickImages: _pickImages,
-              onPickFiles: _pickFiles,
-              onTeach: () =>
-                  showTeachDialog(context, state.mainBot ?? state.bots.first),
-              onRemovePending: (att) =>
-                  setState(() => _pending.removeWhere((a) => a.id == att.id)),
-              onSend: _send,
-              onStop: () => state.abort(room.id),
-              showJump: !_stick,
-              unread: _unreadWhileUp,
-              onJump: () {
-                setState(() {
-                  _stick = true;
-                  _unreadWhileUp = 0;
-                });
-                unawaited(_toBottom(animate: true));
-              },
-            ),
-          ),
-        ],
-      ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -849,6 +908,7 @@ class _Composer extends StatefulWidget {
     required this.onPickImages,
     required this.onPickFiles,
     required this.onTeach,
+    this.onPasteImage,
     required this.onRemovePending,
     required this.onSend,
     required this.onStop,
@@ -872,6 +932,9 @@ class _Composer extends StatefulWidget {
 
   /// 「教它做一项任务」——把用户口述的做法存成 bot 的技能
   final VoidCallback onTeach;
+
+  /// Ctrl+V 粘进来一张图（截图）：直接当附件发出去
+  final Future<void> Function(String name, List<int> bytes)? onPasteImage;
   final void Function(Attachment) onRemovePending;
   final VoidCallback onSend;
   final VoidCallback onStop;
@@ -918,6 +981,31 @@ class _ComposerState extends State<_Composer> {
     super.initState();
     widget.controller.addListener(_onTextChanged);
     _hasText = widget.controller.text.trim().isNotEmpty;
+  }
+
+  /// Ctrl+V：剪贴板有图就发图，没有就按文本插进输入框。
+  Future<void> _paste() async {
+    final img = await readClipboardImage();
+    if (img != null) {
+      try {
+        await widget.onPasteImage?.call(img.name, img.bytes);
+      } finally {
+        img.dispose();
+      }
+      return;
+    }
+    // 没图：走默认的文本粘贴
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text;
+    if (text == null || text.isEmpty) return;
+    final value = widget.controller.value;
+    final sel = value.selection;
+    final start = sel.isValid ? sel.start : value.text.length;
+    final end = sel.isValid ? sel.end : value.text.length;
+    widget.controller.value = TextEditingValue(
+      text: value.text.replaceRange(start, end, text),
+      selection: TextSelection.collapsed(offset: start + text.length),
+    );
   }
 
   void _onTextChanged() {
@@ -1124,36 +1212,49 @@ class _ComposerState extends State<_Composer> {
                         onSend();
                         return KeyEventResult.handled;
                       },
-                      child: TextField(
-                        controller: controller,
-                        focusNode: widget.focus,
-                        // ★ 进会话就聚焦输入框 —— 用户不用先点一下才能打字。
-                        //   ChatScreen 按房间 id 加了 key，切到任意 bot 都会重建一次，
-                        //   autofocus 跟着再触发一次，行为一致。
-                        autofocus: true,
-                        minLines: 1,
-                        maxLines: 6,
-                        keyboardType: TextInputType.multiline,
-                        // 手机软键盘上回车键直接变成「发送」
-                        textInputAction: TextInputAction.send,
-                        onSubmitted: (_) => onSend(),
-                        style: const TextStyle(
-                          fontSize: PB.fsBase,
-                          height: 1.4,
-                        ),
-                        decoration: InputDecoration(
-                          hintText: '说点什么',
-                          hintStyle: const TextStyle(
-                            color: PB.textQuaternary,
-                            fontSize: PB.fsBase,
+                      child: Actions(
+                        actions: <Type, Action<Intent>>{
+                          // ★ Ctrl+V：先看剪贴板里有没有**图**（截图），有就当附件；
+                          //   没有就走原来的文本粘贴。Flutter 自带的粘贴只认文本，
+                          //   截图粘进来会静默什么都不发生。
+                          PasteTextIntent: CallbackAction<PasteTextIntent>(
+                            onInvoke: (_) {
+                              unawaited(_paste());
+                              return null;
+                            },
                           ),
-                          border: InputBorder.none,
-                          enabledBorder: InputBorder.none,
-                          focusedBorder: InputBorder.none,
-                          filled: false,
-                          isDense: true,
-                          contentPadding: const EdgeInsets.symmetric(
-                            vertical: 13,
+                        },
+                        child: TextField(
+                          controller: controller,
+                          focusNode: widget.focus,
+                          // ★ 进会话就聚焦输入框 —— 用户不用先点一下才能打字。
+                          //   ChatScreen 按房间 id 加了 key，切到任意 bot 都会重建一次，
+                          //   autofocus 跟着再触发一次，行为一致。
+                          autofocus: true,
+                          minLines: 1,
+                          maxLines: 6,
+                          keyboardType: TextInputType.multiline,
+                          // 手机软键盘上回车键直接变成「发送」
+                          textInputAction: TextInputAction.send,
+                          onSubmitted: (_) => onSend(),
+                          style: const TextStyle(
+                            fontSize: PB.fsBase,
+                            height: 1.4,
+                          ),
+                          decoration: InputDecoration(
+                            hintText: '说点什么',
+                            hintStyle: const TextStyle(
+                              color: PB.textQuaternary,
+                              fontSize: PB.fsBase,
+                            ),
+                            border: InputBorder.none,
+                            enabledBorder: InputBorder.none,
+                            focusedBorder: InputBorder.none,
+                            filled: false,
+                            isDense: true,
+                            contentPadding: const EdgeInsets.symmetric(
+                              vertical: 13,
+                            ),
                           ),
                         ),
                       ),
