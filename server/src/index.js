@@ -48,6 +48,11 @@ async function main() {
   process.on('unhandledRejection', (reason) => {
     log('‼️  未处理的 Promise 拒绝（进程继续跑）：', reason?.stack || reason?.message || reason);
   });
+  // 退出时在日志里留一行 —— 桌面端靠这一行立刻判断"这次启动挂了"，
+  // 而不是干等 30 秒健康检查超时（用户看到的就是"报错循环"）。
+  process.on('exit', (code) => {
+    log(`服务端进程退出 code=${code}`);
+  });
 
   const reaped = store.reapStaleStreaming();
   if (reaped) log(`清理了 ${reaped} 条上次遗留的 streaming 消息`);
