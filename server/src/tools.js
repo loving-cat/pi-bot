@@ -619,6 +619,87 @@ export function buildCommonTools({ runner, roomId, botId }) {
         return ok(keep ? '已结束（记录保留）' : '已结束并移除');
       },
     }),
+
+    // ---------------------------------------------------------------- 外部系统
+    defineTool({
+      name: 'query_site',
+      label: '查外部系统',
+      description:
+        '去已接入的外部 Web 系统查数据（比如投研系统、后台管理系统）。' +
+        '用法：先用 list_sites 看接了哪些系统、每个系统的接口前缀是什么，' +
+        '再用 query_site 带上路径和查询参数去查。返回的是对方接口的原始 JSON。' +
+        '★ 不确定接口路径时，先查一个列表接口看结构，再决定要不要带筛选参数。',
+      parameters: Type.Object({
+        site: Type.String({ description: '系统标识（用 list_sites 查到的 id 或名字）' }),
+        path: Type.String({ description: '接口路径，以 / 开头，如 /api/rankings' }),
+        query: Type.Optional(
+          Type.Record(Type.String(), Type.String(), {
+            description: '查询参数。值都是字符串；数组用逗号连接',
+          }),
+        ),
+      }),
+      execute: async (_toolCallId, { site, path, query }) => {
+        const runtime = runner?.sites;
+        if (!runtime) return fail('这个会话没有接入外部系统的能力');
+
+        // 按 id 或名字找站点（模型不一定记得 id）
+        const all = store.siteList();
+        const found =
+          all.find((s) => s.id === site) ??
+          all.find((s) => s.name === site) ??
+          all.find((s) => s.name.includes(site) || site.includes(s.name));
+        if (!found) {
+          return fail(
+            `没有叫「${site}」的系统。已接入的有：${all.map((s) => `${s.name}(${s.id})`).join('、') || '（空）'}`,
+          );
+        }
+
+        const res = await runtime.request({
+          site: found,
+          path,
+          query: query ?? {},
+        });
+        if (!res.ok) {
+          return fail(`查 ${found.name} 失败：${res.reason}`, { siteId: found.id });
+        }
+
+        // 结果可能很大：截一段给模型，并说清总量，避免把上下文撑爆
+        const text = JSON.stringify(res.data);
+        const limit = 12000;
+        if (text.length > limit) {
+          return ok(
+            `查 ${found.name} 成功，但结果较大（${text.length} 字符），下面是前 ${limit} 字符。` +
+              `需要更精确的结果就加筛选参数或翻页：\n\n${text.slice(0, limit)}`,
+            { siteId: found.id, truncated: true },
+          );
+        }
+        return ok(text, { siteId: found.id });
+      },
+    }),
+
+    defineTool({
+      name: 'list_sites',
+      label: '看接了哪些系统',
+      description: '列出已接入的外部 Web 系统，以及各自对应的部门。派活前先看一眼。',
+      parameters: Type.Object({}),
+      execute: async () => {
+        const all = store.siteList();
+        if (!all.length) {
+          return ok('还没有接入任何外部系统。用户可以在设置的「系统接入」里添加。');
+        }
+        const lines = all.map((s) => {
+          const room = s.teamRoomId ? store.getRoom(s.teamRoomId) : null;
+          return [
+            `- ${s.name}（id=${s.id}）`,
+            `  ${s.baseUrl}`,
+            `  账号：${s.account}`,
+            `  团队：${room ? room.name : '（还没建）'}`,
+          ].join('\n');
+        });
+        return ok(`已接入 ${all.length} 个系统：\n\n${lines.join('\n')}`);
+      },
+    }),
+
   ];
 }
 

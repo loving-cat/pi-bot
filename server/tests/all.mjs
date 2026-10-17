@@ -14,6 +14,7 @@ const TESTS = [
   'closing-turn',
   'transcript-budget',
   'skills',
+  'sites',
   'update-check',
   'update-checker',
   'session-resources',
