@@ -1,0 +1,24 @@
+docs/MACOS.md
+  s_06973911ad2cd6::t_dab64897e5443b 3-43,50-55,59-95
+docs/MODULE-MAP.md
+  s_06973911ad2cd6::t_dab64897e5443b 55,59-65,90-94
+README.md
+  s_06973911ad2cd6::t_dab64897e5443b 108-109,112-113,117,121-132
+  s_06973911ad2cd6::t_885969abde053a 133
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4b70bb610f2a7aefec916d2e741adae87b1d9a72",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
