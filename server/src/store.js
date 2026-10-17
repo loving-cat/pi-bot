@@ -574,6 +574,23 @@ export class Store {
   }
 
   /** 拿到（或新建）与某个 bot 的 DM */
+  /** 已经存在的私聊（不会新建） */
+  findDm(botId) {
+    return (
+      Object.values(this.state.rooms).find(
+        (r) => r.kind === 'dm' && r.botIds.length === 1 && r.botIds[0] === botId,
+      ) ?? null
+    );
+  }
+
+  /** 标记"这个私聊已经开场过了"，避免反复自我介绍 */
+  markRoomGreeted(roomId) {
+    const room = this.state.rooms[roomId];
+    if (!room) return;
+    room.greetedAt = now();
+    this.scheduleSave();
+  }
+
   ensureDm(botId) {
     const bot = this.getBot(botId);
     if (!bot) return null;
