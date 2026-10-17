@@ -14,13 +14,15 @@
 | `http.js` | REST 路由（鉴权、房间/消息/bot/任务/定时任务/分片上传/附件/政策） |
 | `ws.js` | WebSocket：hello 快照、send/abort/ping、事件广播 |
 | `version.js` | 服务端版本唯一来源（读 package.json） |
+| `update-check.js` | 版本比较与更新判定、按平台挑安装包（纯函数） |
+| `update-checker.js` | 查 GitHub Releases（可换镜像）、超时与缓存；只查不装 |
 | `store.js` | 内存态与落盘：bots/rooms/devices/sessions/**tasks**/**automations**/**approvals**/policy；消息游标；拒绝留档 |
 | `pi-runner.js` | 轮次编排：建会话、群轮次、派活、预算、打断、上报、定时任务执行入口 |
 | `session-factory.js` | 造会话：模型/工具/预算/提示词装配；扩展过滤（不加载 context-mode 类） |
 | `session-pool.js` | 会话缓存、pending 去重、LRU 驱逐 |
 | `tools.js` | 工具定义（通用 + 主控）：派活/私信/建部门/后台进程/询问卡片… |
 | `group-prompt.js` | 群聊会话层：谁先开口、每人看到什么、提示词拼装（纯逻辑） |
-| `group-round.js` | 群轮次决策：该跳过/排队/打断/派发（纯函数） |
+| `group-round.js` | 群轮次决策：该跳过/排队/打断/派发、收尾轮判定（纯函数） |
 | `escalation.js` | 出事往上抬：抬给谁、回执写什么 |
 | `watchdog.js` | 心跳与卡死判定、收尾 |
 | `prompt-input.js` | 拼输入：附件正文、图片、自动附图 |
@@ -58,6 +60,8 @@
 | `app_state.dart` | 连接、房间、消息、流式、任务、定时任务、模型组…（**状态与请求**） |
 | `models.dart` | 数据模型：Msg / Room / Bot / TaskItem / Automation / ChangedSummary… |
 | `api.dart` | HTTP 封装（含分片上传 `uploadChunked`） |
+| `update_info.dart` | 更新响应解析 + 要不要提示的规则（纯逻辑，有测试） |
+| `widgets/update_prompt.dart` | 更新提示弹窗、带进度下载、下载完成提示 |
 | `server/` | 启动层：`options` / `locate` / `server_log` / `supervisor` / `launcher` |
 | `screens/` | 页面：home_shell / chat_screen / rooms_screen / bots_screen / settings / pair / scan |
 | `widgets/` | 可复用组件：`tool_steps`、`changed_files`、`task_board`、`automation_sheet`、`ask_card`、**`approval_card`**、`md_text`、`attachment_view`、`avatar*`、`window_title_bar`… |
