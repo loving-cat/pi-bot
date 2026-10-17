@@ -51,8 +51,8 @@
 | 拒绝留档 | `store.addDenial/listDenials`，`/api/state` 带 `denials` | ✅ 已实现 |
 | 拦截点 | pi 内联扩展拦 `tool_call`（`server/src/policy-hook.js`） | ✅ 已实现 |
 | 转写游标 + 代数 | 不采用：会话转写由 pi 维护，服务端只做快照与增量推送 | 跳过 |
-| 后台 shell + 输出模式通知 | — | 待做 |
-| 截断元数据 | — | 待做 |
+| 后台 shell + 输出模式通知 | `server/src/shells.js` + `run_background` / `read_shell` / `write_stdin` / `kill_shell`（pattern + 等待） | ✅ 已实现 |
+| 截断元数据 | 后台进程只保留最近 64KB 并标记 truncated；工具结果暂未带总量 | 部分 |
 | 钩子（改入参 / 追加上下文） | 已有 `tool_call` 拦截，可在此基础上扩展 | 部分 |
 | 任务板 / 自动化 / 附件分片 | — | 待做 |
 

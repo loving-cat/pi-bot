@@ -5,6 +5,7 @@ import { Pairing, lanAddresses } from './pairing.js';
 import { createHttpServer } from './http.js';
 import { attachWs } from './ws.js';
 import { log } from './util.js';
+import { shells } from './shells.js';
 
 async function banner(pairing, runner) {
   const c = describeConfig();
@@ -88,6 +89,7 @@ async function main() {
     log(`${signal} → 收工`);
     pairing.stop();
     runner.health?.stop();
+    shells.stopAll();
     runner.disposeAll();
     store.saveNow();
     server.close(() => process.exit(0));
