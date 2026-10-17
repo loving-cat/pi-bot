@@ -16,6 +16,7 @@ import path from 'node:path';
 import { config } from './config.js';
 import { bus } from './bus.js';
 import { newId, now, readJson, writeJsonAtomic, insertionPoint, log } from './util.js';
+import { normalizeRules } from './shell-policy.js';
 
 const STATE_FILE = path.join(config.dataDir, 'state.json');
 const ROOMS_DIR = path.join(config.dataDir, 'rooms');
@@ -67,6 +68,15 @@ export const POLICY_DEFAULT = {
   dangerous: 'allow',
   /** 交付必须附证据：命令输出 / 文件路径 / 测试结果，而不是一句"改好了" */
   requireProof: false,
+  /**
+   * 命令级规则：禁止执行的命令。
+   *
+   * 两种写法：`rm -rf *`（整条通配）、`aws:*s3 rm*`（可执行体:参数）。
+   * 匹配前先归一化（还原引号/转义/去不可见字符），避免改写绕过。
+   */
+  denyCommands: [],
+  /** 命令级规则：若非空，则只允许匹配的命令 */
+  allowCommands: [],
 };
 
 function normalizePolicy(patch = {}, base = POLICY_DEFAULT) {
@@ -74,6 +84,10 @@ function normalizePolicy(patch = {}, base = POLICY_DEFAULT) {
     dangerous: patch.dangerous === 'deny' ? 'deny' : patch.dangerous === 'allow' ? 'allow' : base.dangerous,
     requireProof:
       patch.requireProof === undefined ? base.requireProof : Boolean(patch.requireProof),
+    denyCommands:
+      patch.denyCommands === undefined ? base.denyCommands : normalizeRules(patch.denyCommands),
+    allowCommands:
+      patch.allowCommands === undefined ? base.allowCommands : normalizeRules(patch.allowCommands),
   };
 }
 
@@ -505,6 +519,37 @@ export class Store {
     this.scheduleSave();
     bus.emit('event', { t: 'policy.updated', policy: next });
     return next;
+  }
+
+  // ---------- 被拦下的命令（审计） ----------
+
+  /** 记录一次被命令策略拒绝的执行；只保留最近 200 条 */
+  addDenial({ roomId = null, botId = null, botName = '', command = '', rule = null, reason = '' } = {}) {
+    if (!Array.isArray(this.state.denials)) this.state.denials = [];
+    const denial = {
+      id: newId('dn_'),
+      at: now(),
+      roomId,
+      botId,
+      botName,
+      command: String(command ?? '').slice(0, 2000),
+      rule: rule ? String(rule).slice(0, 200) : null,
+      reason: String(reason ?? '').slice(0, 300),
+    };
+    this.state.denials.push(denial);
+    if (this.state.denials.length > 200) {
+      this.state.denials.splice(0, this.state.denials.length - 200);
+    }
+    this.scheduleSave();
+    bus.emit('event', { t: 'policy.denied', denial });
+    return denial;
+  }
+
+  /** 最近的拒绝记录（新的在前） */
+  listDenials({ roomId = null, limit = 50 } = {}) {
+    const list = Array.isArray(this.state.denials) ? this.state.denials : [];
+    const picked = roomId ? list.filter((d) => d.roomId === roomId) : list;
+    return picked.slice(-Math.max(1, Math.min(limit, 200))).reverse();
   }
 
   // ---------- 房间 ----------
