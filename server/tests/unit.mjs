@@ -1606,7 +1606,7 @@ await test('回执：谁断的 / 为什么断 / 请对方怎么做', () => {
   const n = buildEscalationNote({ store: noteStore, fromBotId: 'b1', reason: '心跳断了：600 秒没动静' });
   assert.match(n, /优化工程师/, '要写清是谁的活断了');
   assert.match(n, /心跳断了/);
-  assert.match(n, /请你重新安排/, '要告诉对方该干什么');
+  assert.match(n, /请按这个顺序处理/, '要告诉对方该干什么');
 });
 
 await test('回执：重试过就写明试了几次、为什么放弃', () => {
@@ -1634,7 +1634,23 @@ await test('回执：带原任务（方便对方直接照着重派）', () => {
 await test('回执：原任务超长会截断，但绝不截掉"请对方做什么"', () => {
   const n = buildEscalationNote({ store: noteStore, fromBotId: 'b1', reason: '断了', task: 'x'.repeat(5000) });
   assert.ok(n.length < 1200, '不能把一整段任务原样塞进回执');
-  assert.match(n, /请你重新安排/, '结尾的指令必须在');
+  assert.match(n, /请按这个顺序处理/, '结尾的指令必须在');
+});
+
+await test('回执：不能给负责人留下"自己上"的暗示', () => {
+  const n = buildEscalationNote({
+    store: noteStore,
+    fromBotId: 'b1',
+    reason: '试了 3 次都没成',
+    attempts: 3,
+  });
+  // 旧文案是"请你重新安排：换个人，或者再派一次" —— 读起来像允许它自己接手，
+  // 于是负责人遇到成员失败就悄悄把活干了，用户以为全员都交付了。
+  assert.ok(!/请你重新安排/.test(n), '旧文案会诱导负责人自己接手');
+  assert.match(n, /先 @ 优化工程师 再派一次/, '第一步必须是重派，不是自己上');
+  assert.match(n, /另一个同事接手/, '第二步是换人');
+  assert.match(n, /必须在群里说明你接手了/, '真要自己上必须公开说明');
+  assert.match(n, /不要悄悄把活接下/, '明确禁止悄悄兜底');
 });
 
 await test('回执：查不到 bot 就用 id 兜底（别出现 undefined 的残句）', () => {
