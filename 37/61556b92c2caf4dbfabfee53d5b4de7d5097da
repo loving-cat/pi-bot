@@ -1,0 +1,72 @@
+app/macos/Runner/Configs/AppInfo.xcconfig
+  s_06973911ad2cd6::t_2fd3e6181a0190 1-12
+scripts/tests/pack-macos-test.sh
+  s_06973911ad2cd6::t_733565fc6264bb 1-6,8-170,172-185,187-198,200-222,226-230
+  s_06973911ad2cd6::t_3625e25c5347f7 7,171,186,199,223-225
+scripts/pack-macos.sh
+  s_06973911ad2cd6::t_0f9bc8b779c843 2,10,12-64,67-71,74-75,77,80-82,84-86,89-101,104,110-111,117-129,131-136,138-140,143-148,150-159,161-170,174
+  s_06973911ad2cd6::t_afcf94daf42e4e 72-73,102-103,105-109,112-116
+  s_06973911ad2cd6::t_a911eb291814a6 160
+app/macos/Runner/Release.entitlements
+  s_06973911ad2cd6::t_2fd3e6181a0190 1-12
+app/macos/Runner/DebugProfile.entitlements
+  s_06973911ad2cd6::t_2fd3e6181a0190 1-14
+.gitignore
+  s_06973911ad2cd6::t_1a46fed1bd716e 18,42-43
+app/macos/Runner/Info.plist
+  s_06973911ad2cd6::t_2fd3e6181a0190 1-36
+app/.metadata
+  s_06973911ad2cd6::t_68e1d2982540bf 21-23
+app/analysis_options.yaml
+  s_06973911ad2cd6::t_587f17837c8c83 17
+app/macos/.gitignore
+  s_06973911ad2cd6::t_18e79845e405a5 1-7
+app/macos/Flutter/Flutter-Debug.xcconfig
+  s_06973911ad2cd6::t_1e88213c27fcd1 1
+app/macos/Flutter/Flutter-Release.xcconfig
+  s_06973911ad2cd6::t_ab2bec3a55db0a 1
+app/macos/Flutter/GeneratedPluginRegistrant.swift
+  s_06973911ad2cd6::t_1b357653c1452b 1-28
+app/macos/Runner.xcodeproj/project.pbxproj
+  s_06973911ad2cd6::t_c9150345d155f4 1-729
+app/macos/Runner.xcodeproj/project.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
+  s_06973911ad2cd6::t_e25e423aa5f55e 1-8
+app/macos/Runner.xcodeproj/xcshareddata/xcschemes/Runner.xcscheme
+  s_06973911ad2cd6::t_d09bb814b339ce 1-117
+app/macos/Runner.xcworkspace/contents.xcworkspacedata
+  s_06973911ad2cd6::t_9f372e3cefc9b4 1-7
+app/macos/Runner.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
+  s_06973911ad2cd6::t_2254ca2b26e040 1-8
+app/macos/Runner/AppDelegate.swift
+  s_06973911ad2cd6::t_67aa4fb913d66d 1-13
+app/macos/Runner/Assets.xcassets/AppIcon.appiconset/Contents.json
+  s_06973911ad2cd6::t_a74da82f1db859 1-68
+app/macos/Runner/Base.lproj/MainMenu.xib
+  s_06973911ad2cd6::t_63c8f806be84a1 1-343
+app/macos/Runner/Configs/Debug.xcconfig
+  s_06973911ad2cd6::t_db12cc78378ac8 1-2
+app/macos/Runner/Configs/Release.xcconfig
+  s_06973911ad2cd6::t_5297168f88b8e3 1-2
+app/macos/Runner/Configs/Warnings.xcconfig
+  s_06973911ad2cd6::t_ea3eaba7ed2575 1-13
+app/macos/Runner/MainFlutterWindow.swift
+  s_06973911ad2cd6::t_c38ae15edb32e4 1-15
+app/macos/RunnerTests/RunnerTests.swift
+  s_06973911ad2cd6::t_8ec19572ee260d 1-12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3761556b92c2caf4dbfabfee53d5b4de7d5097da",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
