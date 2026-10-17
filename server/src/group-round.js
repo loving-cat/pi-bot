@@ -26,11 +26,14 @@ export function shouldStopRound({
   runs = 0,
   maxRuns = 0,
   aborting = false,
+  closing = false,
 } = {}) {
   // 用户按了终止：立刻收手，不再往下派（正在跑的那些也已经被 abort 了）
   if (aborting) return { stop: true, why: '已终止' };
   // 队列空了但还有人在跑：**不能停** —— 他们的回复里 @ 的人会补进队列
   if (queueLen === 0 && pendingLen === 0) return { stop: true, why: '没有排队的人了' };
+  // 收尾轮不受 maxRuns 约束：它是老大的汇总，抽掉它用户就看不到结论了
+  if (closing) return { stop: false, why: '' };
   if (queueLen > 0 && runs >= maxRuns) {
     return { stop: true, why: `本轮到上限 ${maxRuns} 次` };
   }
@@ -75,4 +78,44 @@ export function planItem({ item, name = '', done = 0, budget = 0, busy = false, 
  */
 export function leftBehind(queue = [], nameOf = (id) => id) {
   return queue.map((q) => nameOf(q.botId));
+}
+
+/**
+ * 这一轮跑完之后要不要叫老大回来做**收尾总结**？
+ *
+ * 为什么需要它：
+ * 老大的总结只是它自己最后一轮的输出，而同一波成员是并发跑完的——
+ * 谁的回复落地得晚，谁就排在总结后面。用户看到的就是“结论夹在中间，
+ * 后面还有人在交作业”。预算（maxRuns / leadTurns）一用完，更没人收口。
+ *
+ * 判定规则（全部基于消息记录，不看时间）：
+ *   · 老大从没在这轮说过话 → 不用收尾（它没有可汇总的内容，交给下一轮）
+ *   · 老大说完之后又有别的成员发言 → 需要收尾
+ *   · 老大最后一句就是全场最后一句 → 它已经是收口，不用再叫
+ *
+ * @param {object} p
+ * @param {Array<{id:string, authorType?:string, authorId?:string}>} p.messages 房间消息（旧→新）
+ * @param {string|null} p.leadId 老大的 bot id
+ * @param {Set<string>|string[]} [p.members] 成员 id（用于排除非成员）
+ * @returns {{needed: boolean, why: string}}
+ */
+export function planClosing({ messages = [], leadId = null, members = [] } = {}) {
+  if (!leadId) return { needed: false, why: '这个部门没有老大' };
+  const set = members instanceof Set ? members : new Set(members ?? []);
+  const bots = messages.filter((m) => m?.authorType === 'bot' && m?.authorId);
+  if (!bots.length) return { needed: false, why: '这一轮还没有人发言' };
+
+  let lastLead = -1;
+  for (let i = 0; i < bots.length; i++) {
+    if (bots[i].authorId === leadId) lastLead = i;
+  }
+  if (lastLead < 0) return { needed: false, why: '老大这一轮还没发过言' };
+
+  // 老大之后还有谁说过话（只算部门成员，别人的消息不算）
+  const after = bots.slice(lastLead + 1).filter((m) => !set.size || set.has(m.authorId));
+  if (!after.length) return { needed: false, why: '老大已经收口了' };
+  return {
+    needed: true,
+    why: `老大说完之后还有 ${after.length} 个人交了作业，需要它汇总收口`,
+  };
 }
