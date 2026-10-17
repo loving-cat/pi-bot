@@ -63,13 +63,27 @@ export function createEscalator({ store, run, onError = () => {} }) {
   };
 }
 
-/** 回执正文（纯函数，好单测：该带的信息一样不能少） */
+/**
+ * 回执正文（纯函数，好单测：该带的信息一样不能少）。
+ *
+ * ★ 文案里不能留"自己上"的口子。
+ *   老版本写的是"请你重新安排：换个人，或者再派一次" ——
+ *   读起来等于允许它自己接手，于是负责人遇到成员失败就悄悄把活干了，
+ *   用户以为全员交付完成，实际有人掉链子被掩盖。
+ */
 export function buildEscalationNote({ store, fromBotId, reason, task = '', attempts = 0, why = '' }) {
   const from = store?.getBot?.(fromBotId);
-  return (
-    `[这单断了] ${from?.name ?? fromBotId}：${reason}` +
-    (attempts ? `（试了 ${attempts} 次，${why}）` : '') +
-    (task ? `\n\n原任务：${task.slice(0, 600)}` : '') +
-    `\n\n请你重新安排：换个人，或者再派一次。`
+  const name = from?.name ?? fromBotId;
+  const lines = [`[这单断了] ${name}：${reason}`];
+  if (attempts) lines.push(`（试了 ${attempts} 次${why ? `，${why}` : ''}）`);
+  if (task) lines.push('', `原任务：${String(task).slice(0, 600)}`);
+  lines.push(
+    '',
+    '请按这个顺序处理：',
+    `1. 先 @ ${name} 再派一次，把要求说得更具体（做什么 / 交什么 / 怎么算完成）。`,
+    '2. 还不行就 @ 另一个同事接手，并说明是谁没完成。',
+    '3. 实在没人能接，你自己上 —— 但**必须在群里说明你接手了、因为谁没完成**。',
+    '★ 不要悄悄把活接下：用户会以为全员都交付了，掉链子的事故就被掩盖了。',
   );
+  return lines.join('\n');
 }
