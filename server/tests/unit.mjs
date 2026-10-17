@@ -20,6 +20,7 @@ async function test(name, fn) {
 // mentions：@提及解析（整个组织架构的调度信号）
 // ---------------------------------------------------------------------------
 const { parseMentions, rosterLine } = await import('../src/mentions.js');
+const { trimTranscript } = await import('../src/transcript-budget.js');
 
 const MEMBERS = [
   { id: '1', name: 'UI设计师', emoji: '🎨' },
@@ -1204,7 +1205,34 @@ await test('会话层：补给的记录带发言人，超长会截断', () => {
     { isLead: false, members: [lead, mate], leadId: lead.id },
   );
   assert.match(prompt, /用户: 干这个/);
-  assert.match(prompt, /同事: x+…/, '超长的记录要截断，别把上下文撑爆');
+  // 超长记录要裁剪：保留头尾（结论常在末尾），中间标出省略了多少字
+  assert.match(prompt, /同事: x+/, '超长的记录要截断，别把上下文撑爆');
+  assert.match(prompt, /省略 \d+ 字/, '要明确告诉模型中间省略了，别让它以为原文就这么短');
+  assert.ok(prompt.length < 4000, `prompt 不该被原始 3000 字撑开（实际 ${prompt.length}）`);
+});
+
+await test('会话层：记录超预算时保留最新的，并说明丢了几条', () => {
+  const lead = { id: 'l3', name: '头儿' };
+  const mate = { id: 'm3', name: '小兵' };
+  // 25 条各 800 字 = 2 万字，超过 transcriptFor 的 12000 字预算
+  const fresh = Array.from({ length: 25 }, (_, i) => ({
+    authorType: 'bot',
+    authorName: `同事${i}`,
+    text: String(i).padEnd(800, 'z'),
+    status: 'done',
+  }));
+  // 走真实裁剪路径（transcriptFor 内部就是 trimTranscript）
+  const trimmed = trimTranscript(fresh, { maxChars: 12000, maxItems: 30 });
+  assert.ok(trimmed.dropped > 0, '这批数据应该确实被裁掉一部分');
+
+  const prompt = composeGroupPrompt({ name: '测试组' }, mate, trimmed.items, {
+    isLead: false,
+    members: [lead, mate],
+    leadId: lead.id,
+    droppedCount: trimmed.dropped,
+  });
+  assert.ok(prompt.length < 16000, `prompt 应被预算收口（实际 ${prompt.length}）`);
+  assert.match(prompt, /更早的 \d+ 条已省略/, '要告诉模型前面还有内容没给它');
 });
 
 

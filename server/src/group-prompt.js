@@ -13,6 +13,7 @@
  */
 import { store } from './store.js';
 import { parseMentions, rosterLine } from './mentions.js';
+import { clipMessage, trimTranscript } from './transcript-budget.js';
 
 /** 部门成员（含老大）+ 老大 id。老大的 id 不在名单里时退回第一个 */
 export function departmentOf(room) {
@@ -48,8 +49,14 @@ export function openingSpeakers(room, { text = '', openerBotId = null, kickoff =
 /**
  * 某个成员"还没看过"的那段记录 —— 用游标（seenCursor）算位置，
  * 已经说过的、自己说的、没写完的都不给它看。
+ *
+ * 两重收口，缺一不可：
+ *   · 条数（默认 200 条）—— 防止把整个房间倒给它；
+ *   · 字数预算（默认 12000 字）—— 真实群聊里单条能有四千多字，
+ *     光按条数截，200 条就是天量 prompt，会频繁触发上下文压缩。
+ * 越新的消息越重要，所以预算从新往旧装。
  */
-export function transcriptFor(roomId, botId, limit = 30) {
+export function transcriptFor(roomId, botId, limit = 30, { maxChars = 12000 } = {}) {
   const list = store.listMessages(roomId, { limit: 200 });
   const cursor = store.seenCursor(roomId, botId);
   let start = 0;
@@ -60,7 +67,12 @@ export function transcriptFor(roomId, botId, limit = 30) {
   const fresh = list
     .slice(start)
     .filter((m) => m.authorId !== botId && m.status === 'done' && (m.text ?? '').trim());
-  return fresh.slice(-limit);
+
+  const { items, dropped } = trimTranscript(fresh, { maxChars, maxItems: limit });
+  // 调用方绝大多数只关心"有哪些消息"，所以返回值仍是数组；
+  // 需要知道"前面还丢了几条"时读 droppedCount（普通属性，传递/拷贝都不会丢）。
+  items.droppedCount = dropped;
+  return items;
 }
 
 /**
@@ -105,7 +117,16 @@ export function composeGroupPrompt(
   room,
   bot,
   fresh,
-  { isLead = false, reason = '', members = [], leadId = null, order = null, closing = false } = {},
+  {
+    isLead = false,
+    reason = '',
+    members = [],
+    leadId = null,
+    order = null,
+    closing = false,
+    // 记录被裁掉了几条：由 transcriptFor 给出；没传就看数组上挂的属性
+    droppedCount = null,
+  } = {},
 ) {
   const lead = members.find((m) => m.id === leadId) ?? null;
   const peers = members.filter((m) => m.id !== bot.id);
@@ -136,10 +157,17 @@ export function composeGroupPrompt(
   if (fresh?.length) {
     const lines = fresh.map((m) => {
       const who = m.authorType === 'user' ? '用户' : m.authorName;
-      const body = (m.text ?? '').trim();
-      return `${who}: ${body.length > 1600 ? `${body.slice(0, 1600)}…` : body}`;
+      // 单条超长的保留头尾：结论和数字常在末尾，只留开头会砍掉最关键的
+      return `${who}: ${clipMessage((m.text ?? '').trim(), 1600)}`;
     });
-    parts.push('', '【群里刚刚发生的事（补给你的记录）】', ...lines);
+    const dropped = Number(droppedCount ?? fresh?.droppedCount ?? 0);
+    parts.push(
+      '',
+      dropped > 0
+        ? `【群里刚刚发生的事（补给你的记录，更早的 ${dropped} 条已省略）】`
+        : '【群里刚刚发生的事（补给你的记录）】',
+      ...lines,
+    );
   }
 
   const rules = isLead
