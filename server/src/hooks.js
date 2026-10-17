@@ -40,6 +40,11 @@ export function validateHook(rule = {}) {
     return 'rewrite 动作要给出 rewrite 字段（替换成什么）';
   }
   const when = rule.when ?? {};
+  // rewrite 的语义是"把命令里的某段换成另一段"：没有 pattern 就无从替换，
+  // 而空正则会匹配在字符串开头，表现为"把替换串插到命令前面"，非常反直觉。
+  if (rule.action === 'rewrite' && typeof when.pattern !== 'string') {
+    return 'rewrite 必须配 when.pattern（指明要替换命令里的哪一段）';
+  }
   if (when.tool !== undefined && typeof when.tool !== 'string') return 'when.tool 要是字符串';
   for (const key of ['pattern', 'pathPattern']) {
     if (when[key] === undefined) continue;

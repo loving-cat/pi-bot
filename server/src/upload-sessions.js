@@ -88,28 +88,35 @@ export class UploadSessions {
     return { received: s.received, size: s.size };
   }
 
-  /** 合并完成；sha256 给了就校验 */
-  complete(id, { sha256 = '' } = {}) {
+  /**
+   * 合并完成；sha256 给了就校验。
+   *
+   * 不把文件读进内存：只做 stat + 流式算 hash，然后把**临时文件路径**交回去，
+   * 由调用方用 saveMovedFile 直接 rename 进附件目录（500MB 也不会顶内存）。
+   */
+  async complete(id, { sha256 = '' } = {}) {
     const s = this.sessions.get(id);
     if (!s) return { error: '上传会话不存在或已过期' };
     if (s.received !== s.size) {
       return { error: `还差 ${s.size - s.received} 字节没传完` };
     }
-    let buffer;
-    try {
-      buffer = fs.readFileSync(s.file);
-    } catch (err) {
-      return { error: `读取失败：${err?.message || err}` };
-    }
     if (sha256) {
-      const actual = crypto.createHash('sha256').update(buffer).digest('hex');
+      const actual = await new Promise((resolve, reject) => {
+        const hash = crypto.createHash('sha256');
+        const stream = fs.createReadStream(s.file);
+        stream.on('data', (chunk) => hash.update(chunk));
+        stream.on('error', reject);
+        stream.on('end', () => resolve(hash.digest('hex')));
+      }).catch((err) => ({ error: `校验失败：${err?.message || err}` }));
+      if (actual && actual.error) return actual;
       if (actual !== String(sha256).toLowerCase()) {
         this.abort(id);
         return { error: '校验失败：内容与 sha256 不一致，已丢弃' };
       }
     }
-    this.abort(id);
-    return { buffer, name: s.name, mime: s.mime };
+    // 会话记录先摘掉（临时文件保留给调用方搬走）
+    this.sessions.delete(id);
+    return { filePath: s.file, name: s.name, mime: s.mime, size: s.size };
   }
 
   abort(id) {
