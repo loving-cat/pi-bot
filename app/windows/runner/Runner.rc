@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.pibot" "\0"
-            VALUE "FileDescription", "pi_bot" "\0"
+            VALUE "CompanyName", "pi-bot" "\0"
+            VALUE "FileDescription", "pi-bot · 你自己的 agent 团队" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "pi_bot" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.pibot. All rights reserved." "\0"
+            VALUE "InternalName", "pi-bot" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 pi-bot contributors (MIT)" "\0"
             VALUE "OriginalFilename", "pi_bot.exe" "\0"
-            VALUE "ProductName", "pi_bot" "\0"
+            VALUE "ProductName", "pi-bot" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END
