@@ -249,7 +249,7 @@ flutter analyze
 - 所有工具的文件操作都被限制在 `data/workspace` 内
 - 仓库本身**不含任何密钥、本机路径、内网地址**——全部走用户级配置或环境变量
 
-## 灵感
+## 参考
 
 - **[DeepSeek-Bot](https://github.com/Fei2411/DeepSeek-Bot)**（Apache-2.0）：`@名字` 作为调度信号、部门/花名册的组织方式、群里"谁在说话"的轮次与并发模型
   （`round.slots` 与 *"Work does not hold a round up"* 影响了群调度设计：
