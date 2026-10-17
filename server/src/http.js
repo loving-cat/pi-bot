@@ -180,14 +180,16 @@ export function createHttpServer({ runner, pairing }) {
 
       if (pathname === '/api/devices' && req.method === 'GET') {
         return send(res, 200, {
-          devices: store.listDevices().map(({ token, ...rest }) => rest),
+          // 不带 token：撤销用 id，客户端拿不到别人的凭证
+          devices: store.listDevicesPublic(),
           localTrusted: true,
         });
       }
 
       const deviceMatch = pathname.match(/^\/api\/devices\/([^/]+)$/);
       if (deviceMatch && req.method === 'DELETE') {
-        return send(res, 200, { revoked: store.revokeDevice(deviceMatch[1]) });
+        const selector = decodeURIComponent(deviceMatch[1]);
+        return send(res, 200, { revoked: store.revokeDevice(selector) });
       }
 
       if (pathname === '/api/state' && req.method === 'GET') {

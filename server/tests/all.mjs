@@ -10,6 +10,8 @@ import path from 'node:path';
 const TESTS = [
   'version',
   'pi-args',
+  'console-inherit',
+  'session-resources',
   'relay-frames',
   'unit',
   'tasks',
@@ -24,6 +26,7 @@ const TESTS = [
   'dm',
   'ask-guard',
   'auth',
+  'device-revoke',
   'disk',
   'room-lock',
   'model-health',

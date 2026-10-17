@@ -332,11 +332,39 @@ export class Store {
       .sort((a, b) => (b.lastSeenAt || 0) - (a.lastSeenAt || 0));
   }
 
-  revokeDevice(token) {
-    if (!this.state.devices[token]) return false;
+  /**
+   * 给客户端的设备列表：**不带 token**。
+   * 撤销走 id，所以客户端不需要拿到 token（token 是那台设备的凭证）。
+   */
+  listDevicesPublic() {
+    return this.listDevices().map(({ token, ...rest }) => rest);
+  }
+
+  /** 按设备 id 找（token 本身不给客户端，撤销只能靠 id） */
+  findDeviceById(id) {
+    if (!id) return null;
+    for (const [token, d] of Object.entries(this.state.devices)) {
+      if (d.id === id) return { token, device: d };
+    }
+    return null;
+  }
+
+  /**
+   * 撤销设备：id 或 token 都能认（token 是历史调用方式）。
+   * 事件里只带 id —— 广播给所有在线设备的消息里不能出现别人的 token。
+   */
+  revokeDevice(selector) {
+    const key = String(selector ?? '');
+    let token = this.state.devices[key] ? key : null;
+    if (!token) {
+      const hit = this.findDeviceById(key);
+      token = hit ? hit.token : null;
+    }
+    if (!token) return false;
+    const device = this.state.devices[token];
     delete this.state.devices[token];
     this.scheduleSave();
-    bus.emit('event', { t: 'device.revoked', token });
+    bus.emit('event', { t: 'device.revoked', id: device?.id ?? null });
     return true;
   }
 

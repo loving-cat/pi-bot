@@ -92,8 +92,6 @@ export const config = {
   /** 每个房间内存里保留的消息条数（落盘也按此裁剪） */
   maxMessagesPerRoom: Number(process.env.PI_BOT_MAX_MESSAGES || 500),
   pairTtlMs: Number(process.env.PI_BOT_PAIR_TTL_MS || 10 * 60 * 1000),
-  /** 不加载 ~/.pi/agent 下的扩展（默认加载：这样 pi-bot 能拿到 team/dispatch_task 等） */
-  noExtensions: process.env.PI_BOT_NO_EXTENSIONS === '1',
   /** bot 跑完一轮后，自动把工作目录里新生成的图片附到消息上 */
   autoAttachImages: process.env.PI_BOT_AUTO_ATTACH !== '0',
   /**
@@ -182,3 +180,29 @@ export function describeConfig() {
     auth: config.staticToken ? 'static-token' : 'pairing-code',
   };
 }
+
+/**
+ * bot 会话要加载哪些 pi 侧资源。
+ *
+ * **默认全关。** 那些资源是给终端里的 pi 用的：
+ *   · 扩展（extensions/）：会起子进程（派子 agent、MCP 客户端、弹窗），
+ *   · MCP 服务（mcp.json）：每个会话拉一堆 python/node 进程，
+ *   · skills / 提示模板：是给终端 agent 的提示词，bot 用不上。
+ * bot 需要的是"模型 + 我们自己给的工具"，多一样都是隐患：占资源、塞满提示词、
+ * 几十个 bot 并存时互相打架。要开就用环境变量单独开。
+ *
+ * @param {Record<string,string|undefined>} env
+ * @returns {{noExtensions:boolean,noMcp:boolean,noSkills:boolean,noPromptTemplates:boolean}}
+ */
+export function resourceSwitches(env = process.env) {
+  const on = (v) => v === '1';
+  return {
+    noExtensions: !on(env.PI_BOT_EXTENSIONS),
+    noMcp: !on(env.PI_BOT_MCP),
+    noSkills: !on(env.PI_BOT_SKILLS),
+    noPromptTemplates: !on(env.PI_BOT_SKILLS),
+  };
+}
+
+/** 本次启动生效的开关 */
+export const resourceOptions = resourceSwitches();
