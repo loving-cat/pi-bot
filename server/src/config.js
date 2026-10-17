@@ -10,9 +10,54 @@ import { fileURLToPath } from 'node:url';
 
 const pkgRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 
+/**
+ * 用户数据目录：与安装位置无关，重装/换目录不影响数据。
+ *
+ * Windows 为 %LOCALAPPDATA%\pi-bot\data，macOS 为
+ * ~/Library/Application Support/pi-bot/data，Linux 为
+ * $XDG_DATA_HOME/pi-bot/data。
+ */
+function userDataDir() {
+  if (process.platform === 'win32' && process.env.LOCALAPPDATA) {
+    return path.join(process.env.LOCALAPPDATA, 'pi-bot', 'data');
+  }
+  if (process.platform === 'darwin') {
+    return path.join(os.homedir(), 'Library', 'Application Support', 'pi-bot', 'data');
+  }
+  const base = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
+  return path.join(base, 'pi-bot', 'data');
+}
+
+/**
+ * 一次性迁移：把 `<repo>/data` 的数据复制到用户数据目录。
+ *
+ * 仅当新目录没有 state.json 且旧目录有时执行；旧目录保持原样。
+ * 以下划线开头的目录（测试产物）不迁移。
+ */
+function migrateLegacyData(legacy, target) {
+  try {
+    if (fs.existsSync(path.join(target, 'state.json'))) return;
+    if (!fs.existsSync(path.join(legacy, 'state.json'))) return;
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.cpSync(legacy, target, {
+      recursive: true,
+      filter: (src) => !path.basename(src).startsWith('_'),
+    });
+    migratedFrom = legacy;
+    console.warn(`[config] 已把旧数据目录搬过来：${legacy} → ${target}（旧的留着当备份）`);
+  } catch (err) {
+    console.warn('[config] 搬旧数据失败（继续用新目录）：', err?.message || err);
+  }
+}
+
+/** 本次启动是否执行了数据迁移（未迁移为 null） */
+let migratedFrom = null;
+
 const home = process.env.PI_BOT_HOME
   ? path.resolve(process.env.PI_BOT_HOME)
-  : path.join(pkgRoot, 'data');
+  : userDataDir();
+
+if (!process.env.PI_BOT_HOME) migrateLegacyData(path.join(pkgRoot, 'data'), home);
 
 const dataDir = home;
 const workspace = process.env.PI_BOT_WORKSPACE
@@ -33,6 +78,8 @@ export const config = {
   home,
   dataDir,
   workspace,
+  /** 本次启动是否从旧目录搬过来的（不是则为 null） */
+  migratedFrom,
   host: process.env.PI_BOT_HOST || '0.0.0.0',
   port: Number(process.env.PI_BOT_PORT || 8787),
   serverName: process.env.PI_BOT_NAME || 'pi-bot',
@@ -128,6 +175,8 @@ export function describeConfig() {
     serverName: config.serverName,
     port: config.port,
     home: config.home,
+    dataDir: config.dataDir,
+    migratedFrom: config.migratedFrom,
     workspace: config.workspace,
     model: config.model ?? '(pi 默认)',
     thinking: config.thinking,

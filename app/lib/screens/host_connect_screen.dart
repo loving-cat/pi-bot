@@ -6,7 +6,6 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../models.dart';
 import '../platform.dart';
 import '../scope.dart';
-import '../server_launcher.dart';
 import '../theme.dart';
 
 /// 桌面端专用：本机服务端连不上时的兜底页。
@@ -28,8 +27,8 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
   @override
   void initState() {
     super.initState();
-    // 服务端起来后自动进主界面。离线就再试一次（会顺带把服务端拉起来）。
-    // 连续失败太多次时 AppState 会自己暂停重试（避免报错无限循环），这里跟着停。
+    // 服务端就绪后自动进入主界面；离线时按间隔重试。
+    // 连续失败时 AppState 会暂停重试，这里同步停止。
     _ticker = Timer.periodic(const Duration(seconds: 3), (_) async {
       final state = AppScope.read(context);
       if (state.link == LinkState.online) return;
@@ -57,9 +56,8 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
     final starting = state.serverStarting;
     final problem = state.serverProblem;
     final attempts = state.serverAttempts;
-    // ★ 提示里要写**这台机器上的真实路径**，不能写“解压目录”或者一句泛泛的 cd server ——
-    //   用户照着敲得对得上它实际解到哪儿。
-    final serverDir = resolvedServerDir;
+    // 手动启动命令使用本机真实路径。
+    final serverDir = state.serverDir;
     final manual = serverDir == null
         ? 'cd <你解压的目录>\nnode src/index.js'
         : 'cd "$serverDir"\nnode src/index.js';
@@ -243,7 +241,7 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
                           serverDir == null
                               ? '自己起也行：起来之后这里会自动连上，不用点任何东西。'
                               : '自己起也行：起来之后这里会自动连上，不用点任何东西。\n'
-                                    '日志：$serverLogPath',
+                                    '日志：${state.serverLogPath}',
                           style: const TextStyle(
                             fontSize: PB.fsXxs,
                             color: PB.textQuaternary,
