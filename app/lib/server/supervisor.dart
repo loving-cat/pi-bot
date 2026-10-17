@@ -38,14 +38,39 @@ class ServerSupervisor {
     required Map<String, String> extraEnv,
   }) async {
     _script.writeAsStringSync(_scriptSource, flush: true);
+    final extraJson = extraEnv.isEmpty ? '{}' : jsonEncode(extraEnv);
+
+    if (Platform.isWindows) {
+      // ★ Dart 的 Process.start 不带 CREATE_NO_WINDOW：GUI 程序拉起控制台子进程时，
+      //   Windows 会给它开一个新控制台窗口（用户看到的就是"一闪的 cmd/node"）。
+      //   用 WScript.Shell.Run(..., 0) 以**隐藏窗口**启动，参数与工作目录照传。
+      final vbs = File(
+        '${stateDir.path}${Platform.pathSeparator}spawn-server.vbs',
+      );
+      String q(String v) => '"${v.replaceAll('"', '""')}"';
+      final cmdline = [
+        q(nodePath),
+        q(_script.path),
+        q(nodePath),
+        q(entryPath),
+        q(serverDir),
+        q(logPath),
+        q(pidFile.path),
+        q(extraJson),
+      ].join(' ');
+      vbs.writeAsStringSync(
+        'Set sh = CreateObject("WScript.Shell")\r\n'
+        'sh.CurrentDirectory = "${serverDir.replaceAll('"', '""')}"\r\n'
+        'sh.Run ${q(cmdline)}, 0, False\r\n',
+        flush: true,
+      );
+      return Process.start('wscript.exe', [vbs.path]);
+    }
+
     return Process.start(
       nodePath,
-      [_script.path, nodePath, entryPath, serverDir, logPath, pidFile.path],
+      [_script.path, nodePath, entryPath, serverDir, logPath, pidFile.path, extraJson],
       workingDirectory: serverDir,
-      // 用户配置的 PI_BOT_HOME / PI_BOT_PORT 由辅助脚本转发给服务端
-      environment: {
-        if (extraEnv.isNotEmpty) 'PI_BOT_SPAWN_ENV': jsonEncode(extraEnv),
-      },
     );
   }
 
@@ -71,8 +96,8 @@ const String _scriptSource = r'''
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 
-const [node, entry, cwd, logPath, pidFile] = process.argv.slice(2);
-const extra = JSON.parse(process.env.PI_BOT_SPAWN_ENV || '{}');
+const [node, entry, cwd, logPath, pidFile, extraJson] = process.argv.slice(2);
+const extra = JSON.parse(extraJson || '{}');
 const fd = fs.openSync(logPath, 'a');
 const header = `\n---- ${new Date().toISOString()} 启动: ${entry} (node ${process.version}) ----\n`;
 fs.writeSync(fd, header);

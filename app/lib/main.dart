@@ -1,8 +1,12 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:screen_retriever/screen_retriever.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'app_log.dart';
 import 'app_state.dart';
 import 'models.dart';
 import 'frame_log.dart';
@@ -16,6 +20,7 @@ import 'widgets/window_title_bar.dart';
 import 'screens/home_shell.dart';
 import 'screens/host_connect_screen.dart';
 import 'theme.dart';
+import 'window_state.dart';
 
 /// 开发用：`--dart-define=PI_BOT_URL=http://127.0.0.1:8787 --dart-define=PI_BOT_TOKEN=test-token`
 /// 再配合 `--dart-define=PI_BOT_OPEN=main` 直接进某个群（截图 / 调 UI 用）。
@@ -25,6 +30,8 @@ const _devOpen = String.fromEnvironment('PI_BOT_OPEN');
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // 界面层的错误也要留档（服务端有 server.log，界面以前什么都没有）
+  installAppErrorLogging();
 
   // 帧耗时采样（只有带了 PI_BOT_FRAME_LOG 环境变量才工作，平时零开销）
   FrameLog.start();
@@ -38,11 +45,30 @@ Future<void> main() async {
   // 桌面端：无边框窗口，控制按钮由 App 自己画在右上角
   if (WindowTitleBar.isSupported) {
     await windowManager.ensureInitialized();
-    const options = WindowOptions(
+
+    // 上次的窗口位置/大小（外接屏拔掉、分辨率变了会自动夹回可见区域）
+    final prefs = await SharedPreferences.getInstance();
+    final saved = decodeWindowBounds(prefs.getString(_kWindowBounds));
+    Rect? target;
+    if (saved != null) {
+      try {
+        final display = await screenRetriever.getPrimaryDisplay();
+        final pos = display.visiblePosition;
+        final size = display.visibleSize ?? display.size;
+        target = clampWindowRect(
+          saved.rect,
+          Rect.fromLTWH(pos?.dx ?? 0, pos?.dy ?? 0, size.width, size.height),
+        );
+      } catch (_) {
+        target = saved.rect;
+      }
+    }
+
+    final options = WindowOptions(
       // 注意：这里的 size 是**逻辑像素**，最终物理尺寸 = size × 系统缩放
-      size: Size(1180, 760),
+      size: target?.size ?? const Size(1180, 760),
       minimumSize: kWindowMinSize,
-      center: true,
+      center: target == null,
       // ★ 不透明。以前是 Colors.transparent —— 无边框 + 每像素 alpha 的窗口，
       //   每次重绘都要走 DWM 的混合路径（每帧整窗重新合成）。界面本来就铺满
       //   bgApp，透明没有任何视觉效果，纯粹白花钱。
@@ -55,12 +81,58 @@ Future<void> main() async {
     await windowManager.waitUntilReadyToShow(options, () async {
       await windowManager.setAsFrameless();
       await windowManager.setHasShadow(true);
+      if (target != null) await windowManager.setBounds(target);
       await windowManager.show();
+      if (saved?.maximized == true) await windowManager.maximize();
       await windowManager.focus();
     });
+
+    // 记住窗口：拖动/缩放结束后（400ms 空闲）写一次，最大化状态单独记
+    final saver = _WindowSaver(prefs);
+    windowManager.addListener(saver);
   }
 
   runApp(const PiBotApp());
+}
+
+const _kWindowBounds = 'window_bounds';
+
+/// 把窗口位置/大小写进 prefs（防抖 400ms，拖动过程中不写盘）
+class _WindowSaver with WindowListener {
+  _WindowSaver(this.prefs);
+
+  final SharedPreferences prefs;
+  Timer? _timer;
+
+  void _schedule() {
+    _timer?.cancel();
+    _timer = Timer(const Duration(milliseconds: 400), _save);
+  }
+
+  Future<void> _save() async {
+    try {
+      final bounds = await windowManager.getBounds();
+      final maxed = await windowManager.isMaximized();
+      await prefs.setString(
+        _kWindowBounds,
+        encodeWindowBounds(WindowBounds(rect: bounds, maximized: maxed)),
+      );
+    } catch (_) {}
+  }
+
+  @override
+  void onWindowResize() => _schedule();
+  @override
+  void onWindowMove() => _schedule();
+  @override
+  void onWindowMaximize() => _schedule();
+  @override
+  void onWindowUnmaximize() => _schedule();
+  @override
+  void onWindowClose() {
+    _timer?.cancel();
+    _save();
+  }
 }
 
 class PiBotApp extends StatefulWidget {
