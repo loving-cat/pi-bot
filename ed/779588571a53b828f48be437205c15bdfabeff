@@ -1,0 +1,36 @@
+app/lib/server/launcher.dart
+  s_06973911ad2cd6::t_718d090ec6e8a0 419-423
+  s_06973911ad2cd6::t_aa7b8e1b045e8c 4,408
+app/test/server_health_test.dart
+  s_06973911ad2cd6::t_718d090ec6e8a0 14-24,49-83,97-108,128-158,160-173,188-191
+  s_06973911ad2cd6::t_aa7b8e1b045e8c 1-13,25-48,84-96,109-127,159,174-187,192-195
+  s_06973911ad2cd6::t_b66a62229510a6 196-208
+app/lib/server/health.dart
+  s_06973911ad2cd6::t_aa7b8e1b045e8c 1,16-32
+  s_06973911ad2cd6::t_718d090ec6e8a0 2-15
+docs/MACOS.md
+  s_06973911ad2cd6::t_53211e53813b30 74-78,82,98
+app/test/server_supervisor_test.dart
+  s_06973911ad2cd6::t_aa7b8e1b045e8c 15-16,116
+  s_06973911ad2cd6::t_880d39db1c29b9 117-118
+docs/MODULE-MAP.md
+  s_06973911ad2cd6::t_7ce6320cd3db7b 57
+server/src/config.js
+  s_06973911ad2cd6::t_7ce6320cd3db7b 4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ed779588571a53b828f48be437205c15bdfabeff",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
