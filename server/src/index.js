@@ -6,6 +6,7 @@ import { createHttpServer } from './http.js';
 import { attachWs } from './ws.js';
 import { log } from './util.js';
 import { shells } from './shells.js';
+import { createAutomationScheduler } from './automations.js';
 
 async function banner(pairing, runner) {
   const c = describeConfig();
@@ -77,6 +78,14 @@ async function main() {
   const server = createHttpServer({ runner, pairing });
   attachWs(server, { runner });
 
+  // 定时任务：每 30s 看一次有没有到点的
+  const scheduler = createAutomationScheduler({
+    store,
+    log,
+    run: (automation) => runner.runAutomation(automation),
+  });
+  scheduler.start();
+
   server.listen(config.port, config.host, async () => {
     await banner(pairing, runner);
     log(`listening on http://${config.host}:${config.port}  (ws://…/ws)`);
@@ -88,6 +97,7 @@ async function main() {
     closing = true;
     log(`${signal} → 收工`);
     pairing.stop();
+    scheduler.stop();
     runner.health?.stop();
     shells.stopAll();
     runner.disposeAll();
