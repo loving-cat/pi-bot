@@ -24,6 +24,23 @@ export const SKILL_LIMITS = {
 };
 
 /**
+ * 文本里有没有"编码损坏"的痕迹。
+ *
+ * `U+FFFD`（替换字符）是解码失败时产生的：一个本来是中文的字节流，
+ * 被当成别的编码解过一遍再编码回来，就会变成一串 `�`。
+ * 这种内容一旦入库，界面上显示的就是乱码，而且**用户自己也没法修**
+ * （他看到的就是问号，不知道该填什么），只能删了重来。
+ *
+ * 所以宁可当场拒收并说清原因，也不要把垃圾存进去。
+ *
+ * @param {string} text
+ * @returns {boolean}
+ */
+export function hasBrokenEncoding(text) {
+  return /�/.test(String(text ?? ''));
+}
+
+/**
  * 规范化单条技能。
  *
  * @param {object} raw
@@ -33,6 +50,10 @@ export const SKILL_LIMITS = {
 export function normalizeSkill(raw = {}, now = Date.now()) {
   const title = String(raw?.title ?? '').trim().slice(0, SKILL_LIMITS.title);
   if (!title) return null;
+  // 编码坏掉的内容不收：存进去只会变成界面上的乱码，用户还改不回来
+  if (hasBrokenEncoding(title) || hasBrokenEncoding(raw?.howto) || hasBrokenEncoding(raw?.summary)) {
+    return null;
+  }
 
   const tags = Array.isArray(raw?.tags)
     ? [...new Set(
@@ -53,6 +74,24 @@ export function normalizeSkill(raw = {}, now = Date.now()) {
     createdAt: Number(raw?.createdAt) || now,
     updatedAt: Number(raw?.updatedAt) || now,
   };
+}
+
+/**
+ * 校验一条技能能否入库，返回**人话原因**（能入库返回 null）。
+ *
+ * 与 normalizeSkill 的分工：那个只负责"整理数据形状"，这个负责"告诉用户为什么不行"。
+ * 界面和工具都需要一句能直接显示的话，不然用户只看到保存失败。
+ *
+ * @param {object} raw
+ * @returns {string|null}
+ */
+export function skillRejectReason(raw = {}) {
+  const title = String(raw?.title ?? '').trim();
+  if (!title) return '技能需要一个标题';
+  if (hasBrokenEncoding(title) || hasBrokenEncoding(raw?.howto) || hasBrokenEncoding(raw?.summary)) {
+    return '内容里有乱码（编码损坏），请重新输入或换个方式导入';
+  }
+  return null;
 }
 
 /**
