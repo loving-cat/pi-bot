@@ -31,6 +31,13 @@ await test('校验：动作、正则、空条件', () => {
   assert.equal(validateHook({ action: 'rewrite', rewrite: 'x', when: { pattern: 'npm' } }), null);
 });
 
+await test('★ rewrite 必须配 when.pattern（否则空正则会插到命令开头）', () => {
+  assert.match(
+    validateHook({ action: 'rewrite', rewrite: 'x', when: { tool: 'bash' } }),
+    /必须配 when\.pattern/,
+  );
+});
+
 await test('★ block：命中就拦下并带说明', () => {
   const rules = [
     { id: 'no-publish', action: 'block', note: '发布要人工', when: { tool: 'bash', pattern: 'npm\\s+publish' } },

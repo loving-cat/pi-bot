@@ -216,6 +216,13 @@ flutter analyze
 
 模块职责见 [`docs/MODULE-MAP.md`](docs/MODULE-MAP.md)（找东西先看那张表）。
 
+**测试**：服务端纯单测 `cd server && npm test`（17 个文件，不需要起服务、不需要网络）；
+端到端冒烟 `npm run test:integration`（需要先起服务端）。
+
+**关于 token 的位置**：手机/桌面端把 token 放在 `Authorization` 头里；附件 URL
+（`/api/files/:id?token=…`）为了给 `<img>` 直接用，token 在 query 里 —— 局域网自用可以接受，
+但如果你把服务端暴露到公网，请换成反向代理注入鉴权，别让 token 进访问日志。
+
 见 `server/.env.example`。常用：
 
 | 变量 | 默认 | 说明 |

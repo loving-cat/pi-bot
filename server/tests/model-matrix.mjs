@@ -5,7 +5,7 @@
  */
 import { ModelRuntime, SessionManager, createAgentSession } from '@earendil-works/pi-coding-agent';
 import { loadExtraProviders } from '../src/providers.js';
-import { MODEL_MENU } from '../src/model-menu.js';
+import { menuEntries } from '../src/model-menu.js';
 
 const rt = await ModelRuntime.create();
 for (const [id, cfg] of Object.entries(loadExtraProviders())) rt.registerProvider(id, cfg);
@@ -23,7 +23,7 @@ function textOf(msg) {
 }
 
 const results = [];
-for (const entry of MODEL_MENU) {
+for (const entry of menuEntries()) {
   for (const slug of entry.slugs) {
     const idx = slug.indexOf('/');
     const model = rt.getModel(slug.slice(0, idx), slug.slice(idx + 1));
