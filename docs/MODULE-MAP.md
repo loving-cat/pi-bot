@@ -11,6 +11,7 @@
 | `config.js` | 全部配置来源；数据目录定位与一次性迁移 |
 | `http.js` | REST 路由（鉴权、房间/消息/bot/任务/定时任务/分片上传/附件/政策） |
 | `ws.js` | WebSocket：hello 快照、send/abort/ping、事件广播 |
+| `version.js` | 服务端版本唯一来源（读 package.json） |
 | `store.js` | 内存态与落盘：bots/rooms/devices/sessions/**tasks**/**automations**/**approvals**/policy；消息游标；拒绝留档 |
 | `pi-runner.js` | 轮次编排：建会话、群轮次、派活、预算、打断、上报、定时任务执行入口 |
 | `session-factory.js` | 造会话：模型/工具/预算/提示词装配；扩展过滤（不加载 context-mode 类） |
@@ -57,6 +58,8 @@
 | `widgets/` | 可复用组件：`tool_steps`、`changed_files`、`task_board`、`automation_sheet`、`ask_card`、**`approval_card`**、`md_text`、`attachment_view`、`avatar*`、`window_title_bar`… |
 | `theme.dart` | 颜色/字号/圆角；**图标约束写在这里**（基础字体仅 68 个字形） |
 | `clipboard_image.dart` | 剪贴板图片读取（Windows PowerShell） |
+| `window_state.dart` | 窗口位置/大小记忆：编码、解析、夹回可见区（纯函数） |
+| `app_log.dart` | 界面层错误落盘（app.log）、打开日志目录 |
 
 界面约定：
 
