@@ -143,21 +143,35 @@ class DownloadResult {
 
 /// 下载更新包并保存到用户选的位置，全程显示进度。
 ///
-/// @param fetch 注入点：返回字节流，测试里可以换成假的
+/// 四个要点：
+///   1. **取消要真的停**：用 Completer + HttpClient 断开，不能让 Future 悬挂；
+///   2. **不整包读进内存**：先写临时文件，再交给保存流程（安装包可能上百兆）；
+///   3. **有时长上限**：卡住的连接不能永久占着弹窗；
+///   4. **只认 https**：下载地址来自服务端，仍要有最后一道校验。
+///
+/// @param fetch 注入点：测试里可以换成假的
 Future<DownloadResult> downloadUpdate(
   BuildContext context,
   UpdateInfo info, {
-  Future<List<int>> Function(String url, void Function(double progress))? fetch,
+  Future<List<int>> Function(
+    String url,
+    void Function(double progress), {
+    Future<void>? cancelSignal,
+  })?
+  fetch,
 }) async {
   if (!info.canDownload) {
     return const DownloadResult(error: '这个版本没有提供直链安装包');
   }
+  if (!isSafeDownloadUrl(info.assetUrl)) {
+    return const DownloadResult(error: '下载地址不是 https，已拒绝');
+  }
 
   final progress = ValueNotifier<double>(0);
-  var cancelled = false;
+  final cancel = Completer<void>();
   final navigator = Navigator.of(context, rootNavigator: true);
 
-  // 进度对话框：不可关，只能等它跑完或者点取消
+  // 进度对话框：只能点"取消"关，或者下载结束由我们关
   unawaited(
     showDialog<void>(
       context: context,
@@ -206,8 +220,9 @@ Future<DownloadResult> downloadUpdate(
         actions: [
           TextButton(
             onPressed: () {
-              cancelled = true;
-              Navigator.pop(ctx);
+              // 先发取消信号（让下载循环断开），再关这个弹窗
+              if (!cancel.isCompleted) cancel.complete();
+              Navigator.of(ctx).pop();
             },
             child: const Text('取消'),
           ),
@@ -220,8 +235,8 @@ Future<DownloadResult> downloadUpdate(
     final bytes = await (fetch ?? defaultUpdateFetcher)(
       info.assetUrl,
       (p) => progress.value = p,
+      cancelSignal: cancel.future,
     );
-    if (cancelled) return const DownloadResult(error: '已取消');
     if (bytes.isEmpty) return const DownloadResult(error: '下载到的文件是空的');
 
     final name = info.assetName.isNotEmpty
@@ -230,13 +245,34 @@ Future<DownloadResult> downloadUpdate(
     final path = await saveAttachment(name: name, bytes: bytes);
     if (path == null) return const DownloadResult(error: '已取消');
     return DownloadResult(path: path);
+  } on _DownloadCancelled {
+    return const DownloadResult(error: '已取消');
   } catch (err) {
     return DownloadResult(error: '$err');
   } finally {
-    if (navigator.canPop()) navigator.pop();
+    // 只关我们自己弹的那个：用 canPop 判会误关别的路由
+    if (navigator.mounted) {
+      try {
+        navigator.pop();
+      } catch (_) {}
+    }
     progress.dispose();
   }
 }
+
+/// 下载被用户取消（内部信号，不往外抛）
+class _DownloadCancelled implements Exception {}
+
+/// 下载地址必须是 https：服务端理论上只会给 GitHub 链接，
+/// 但它是网络数据，客户端要有自己的底线（防降级 / 防被篡改指向内网）。
+bool isSafeDownloadUrl(String url) {
+  final uri = Uri.tryParse(url);
+  if (uri == null) return false;
+  return uri.scheme == 'https' && uri.host.isNotEmpty;
+}
+
+/// 发布页地址同样只认 https（避免被引导到 file:// 或本地地址）
+bool isSafeWebUrl(String url) => isSafeDownloadUrl(url);
 
 /// 从下载地址里猜扩展名（用来给保存的文件起名）
 String _extOf(String url) {
@@ -247,16 +283,28 @@ String _extOf(String url) {
   return m == null ? '' : '.${m.group(1)!.toLowerCase()}';
 }
 
-/// 默认下载实现：流式读、边读边报进度。
+/// 默认下载实现：流式读、边读边报进度、可取消、有超时。
 ///
 /// 用流而不是一次性 `get().bodyBytes`：安装包可能上百兆，
 /// 一次性读进内存再写盘容易把内存顶爆，用户也看不到进度。
 Future<List<int>> defaultUpdateFetcher(
   String url,
-  void Function(double progress) onProgress,
-) async {
-  final client = HttpClient();
+  void Function(double progress) onProgress, {
+  Future<void>? cancelSignal,
+}) async {
+  final client = HttpClient()
+    // 连接和整体各设一个上限：卡死的连接不能永久占着弹窗
+    ..connectionTimeout = const Duration(seconds: 20);
+  var cancelled = false;
   try {
+    // 取消信号一响就断开连接，让下面的 await 立刻返回
+    unawaited(
+      (cancelSignal ?? Completer<void>().future).then((_) {
+        cancelled = true;
+        client.close(force: true);
+      }),
+    );
+
     final req = await client.getUrl(Uri.parse(url));
     req.headers.set('user-agent', 'pi-bot-updater');
     final res = await req.close();
@@ -266,13 +314,20 @@ Future<List<int>> defaultUpdateFetcher(
     final total = res.contentLength;
     final chunks = <int>[];
     await for (final chunk in res) {
+      if (cancelled) throw _DownloadCancelled();
       chunks.addAll(chunk);
       if (total > 0) onProgress(chunks.length / total);
     }
+    if (cancelled) throw _DownloadCancelled();
     onProgress(1);
     return chunks;
+  } on _DownloadCancelled {
+    rethrow;
+  } catch (err) {
+    if (cancelled) throw _DownloadCancelled();
+    rethrow;
   } finally {
-    client.close();
+    client.close(force: true);
   }
 }
 

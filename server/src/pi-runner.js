@@ -49,6 +49,8 @@ import { snapshotWorkspace, diffSnapshots, summarizeChanges } from './change-wat
 import {
   composeGroupPrompt,
   departmentOf,
+  lastDoneIndexAll,
+  lastDoneIndexOf,
   lastMessageId,
   openingSpeakers,
   transcriptFor,
@@ -608,6 +610,10 @@ export class PiRunner {
         .join('、')}`,
     );
 
+    // 本轮开始的房间位置 + 参与者集合：收尾轮判定要拿它们做基准
+    const roundStartIndex = lastDoneIndexAll(roomId);
+    const participants = [leadId, ...members.map((m) => m.id)].filter(Boolean);
+
     let runs = 0;
     // ★ 同一波的人**同时**发出去。
     //
@@ -876,50 +882,57 @@ export class PiRunner {
     //
     // 为什么要有这一轮：同一波成员是并发跑完的，"谁的回复落地得晚"纯看模型速度，
     // 于是老大的结论经常夹在中间，后面还挂着几份作业；预算一用完更是没人收口。
-    // 这里不看预算、不看 maxRuns，只看"老大是不是最后说话的那个人"。
-    if (!this.aborting.has(roomId)) {
-      const closing = planClosing({
-        messages: store.listMessages(roomId, { limit: 50 }),
-        leadId,
-        members: members.map((m) => m.id),
-      });
-      if (closing.needed && leadId) {
-        const lead = store.getBot(leadId);
-        if (lead) {
+    //
+    // 两个要点：
+    //   1. 判定用**位置**而不是"取最近 N 条"：窗口型判定在长回合里会漏判/误判；
+    //   2. 判定之后先**同步占位**再 await：否则在"最后一个成员清 busy"到
+    //      "收尾 run 置 busy"之间的空档里，用户消息会并发起一轮，
+    //      把收尾总结挤到用户回复之后 —— 正是这功能要修的那个毛病。
+    if (!this.aborting.has(roomId) && leadId) {
+      const lead = store.getBot(leadId);
+      const closing = lead
+        ? planClosing({
+            roundStartIndex,
+            lastLeadIndex: lastDoneIndexOf(roomId, [leadId]),
+            lastMemberIndex: lastDoneIndexOf(roomId, participants),
+          })
+        : { needed: false, why: '找不到老大' };
+
+      if (lead && closing.needed) {
+        const leadKey = this.#key(roomId, lead.id);
+        // —— 从这一行到下面的 await 之间不许再插入任何 await ——
+        this.dispatching.add(leadKey);
+        try {
           log(`【${room.name}】🗣 ${closing.why} → 叫 ${lead.name} 收尾`);
-          const prompt = composeGroupPrompt(
-            room,
-            lead,
-            transcriptFor(roomId, leadId),
-            {
-              isLead: true,
-              reason: '大家交完了，给用户一个最终结论',
-              members,
-              leadId,
-              closing: true,
-            },
-          );
-          try {
-            const res = await this.run(roomId, lead.id, prompt, { groupTurn: true });
-            if (res.ok && res.text.trim()) {
-              log(`【${room.name}】✅ 收尾完成（${res.text.trim().length} 字）`);
-              // 收尾轮是最后一条：它要是又 @ 了人，这一轮也不会再派了。
-              // 留痕，避免用户以为"它说了还有活要干，怎么没人动"。
-              const { found } = parseMentions(res.text, members, { selfId: lead.id });
-              if (found.length) {
-                log(
-                  `【${room.name}】⚠️ 收尾轮又 @ 了 ${found
-                    .map((id) => store.getBot(id)?.name ?? id)
-                    .join('、')}，但本轮已收口，这些活留到下次`,
-                );
-              }
-            } else {
-              log(`【${room.name}】收尾没跑成：${res.error ?? '空回复'}`);
+          const prompt = composeGroupPrompt(room, lead, transcriptFor(roomId, leadId), {
+            isLead: true,
+            reason: '大家交完了，给用户一个最终结论',
+            members,
+            leadId,
+            closing: true,
+          });
+          const res = await this.run(roomId, lead.id, prompt, { groupTurn: true });
+          if (res.ok && res.text.trim()) {
+            log(`【${room.name}】✅ 收尾完成（${res.text.trim().length} 字）`);
+            // 收尾轮是最后一条：它要是又 @ 了人，这一轮也不会再派了。
+            // 留痕，避免用户以为"它说了还有活要干，怎么没人动"。
+            const { found } = parseMentions(res.text, members, { selfId: lead.id });
+            if (found.length) {
+              log(
+                `【${room.name}】⚠️ 收尾轮又 @ 了 ${found
+                  .map((id) => store.getBot(id)?.name ?? id)
+                  .join('、')}，但本轮已收口，这些活留到下次`,
+              );
             }
-          } catch (err) {
-            log(`【${room.name}】收尾异常：`, err?.message || err);
+          } else {
+            log(`【${room.name}】收尾没跑成：${res.error ?? '空回复'}`);
           }
           store.setCursor(roomId, lead.id, lastMessageId(roomId));
+        } catch (err) {
+          // 收尾失败不能让 runRound 抛出去（房间锁在 finally 里释放）
+          log(`【${room.name}】收尾异常：`, err?.message || err);
+        } finally {
+          this.dispatching.delete(leadKey);
         }
       }
     }

@@ -63,6 +63,37 @@ export function transcriptFor(roomId, botId, limit = 30) {
   return fresh.slice(-limit);
 }
 
+/**
+ * 房间当前的消息位置（用于标记"本轮从哪里开始"）。
+ * @returns {number} 最后一条消息的序号；空房间返回 -1
+ */
+export function lastDoneIndexAll(roomId) {
+  const list = store.listMessages(roomId, { limit: 1 });
+  return list.length ? store.listMessages(roomId, { limit: 100000 }).length - 1 : -1;
+}
+
+/**
+ * 某个作者集合"最近一条已完成发言"的位置（用消息在房间里的序号表示）。
+ *
+ * 为什么要有这个而不是直接传消息数组：收尾判定只关心"谁什么时候说的"，
+ * 拿数组就得猜要多大的窗口 —— 窗口小会漏（一轮超 50 条就判错），
+ * 窗口大又会把上一轮的消息带进来。这里直接按作者集合查最后位置，O(n) 但无窗口。
+ *
+ * @returns {number} 位置（越大越新）；没有发言过返回 -1
+ */
+export function lastDoneIndexOf(roomId, authorIds = []) {
+  const set = new Set(authorIds);
+  if (!set.size) return -1;
+  const list = store.listMessages(roomId, { limit: 100000 });
+  for (let i = list.length - 1; i >= 0; i--) {
+    const m = list[i];
+    if (m.status !== 'done') continue; // 失败的消息不算"说过话"
+    if (m.authorType !== 'bot') continue;
+    if (set.has(m.authorId)) return i;
+  }
+  return -1;
+}
+
 /** 房间里最后一条消息的 id（推进游标用） */
 export function lastMessageId(roomId) {
   const list = store.listMessages(roomId, { limit: 1 });

@@ -88,34 +88,34 @@ export function leftBehind(queue = [], nameOf = (id) => id) {
  * 谁的回复落地得晚，谁就排在总结后面。用户看到的就是“结论夹在中间，
  * 后面还有人在交作业”。预算（maxRuns / leadTurns）一用完，更没人收口。
  *
- * 判定规则（全部基于消息记录，不看时间）：
- *   · 老大从没在这轮说过话 → 不用收尾（它没有可汇总的内容，交给下一轮）
- *   · 老大说完之后又有别的成员发言 → 需要收尾
- *   · 老大最后一句就是全场最后一句 → 它已经是收口，不用再叫
+ * 为什么用三个位置（序号）而不是消息数组：
+ *   传数组就得选一个"取多少条"的窗口。窗口小了，一轮产出超过窗口就漏判；
+ *   窗口大了，会把上一轮老大的发言带进来造成误判。
+ *   位置是绝对值，不存在窗口问题。
+ *
+ * 判定规则：
+ *   · 老大本轮没说过话 → 不收尾（它没有可汇总的内容）
+ *   · 老大说完之后没人再说话 → 它已经是收口，不用再叫
+ *   · 老大说完之后还有成员说过话 → 需要收尾
  *
  * @param {object} p
- * @param {Array<{id:string, authorType?:string, authorId?:string}>} p.messages 房间消息（旧→新）
- * @param {string|null} p.leadId 老大的 bot id
- * @param {Set<string>|string[]} [p.members] 成员 id（用于排除非成员）
+ * @param {number} p.roundStartIndex 本轮开始时的房间消息位置（-1 表示空房间）
+ * @param {number} p.lastLeadIndex   老大最近一次发言的位置（-1 表示从没说过）
+ * @param {number} p.lastMemberIndex 参与本轮的成员（含老大）最近一次发言的位置
  * @returns {{needed: boolean, why: string}}
  */
-export function planClosing({ messages = [], leadId = null, members = [] } = {}) {
-  if (!leadId) return { needed: false, why: '这个部门没有老大' };
-  const set = members instanceof Set ? members : new Set(members ?? []);
-  const bots = messages.filter((m) => m?.authorType === 'bot' && m?.authorId);
-  if (!bots.length) return { needed: false, why: '这一轮还没有人发言' };
-
-  let lastLead = -1;
-  for (let i = 0; i < bots.length; i++) {
-    if (bots[i].authorId === leadId) lastLead = i;
+export function planClosing({
+  roundStartIndex = -1,
+  lastLeadIndex = -1,
+  lastMemberIndex = -1,
+} = {}) {
+  // 老大这一轮没发言（要么从没说过，要么最后一次在开轮之前）
+  if (lastLeadIndex < 0 || lastLeadIndex <= roundStartIndex) {
+    return { needed: false, why: '老大这一轮还没发过言' };
   }
-  if (lastLead < 0) return { needed: false, why: '老大这一轮还没发过言' };
-
-  // 老大之后还有谁说过话（只算部门成员，别人的消息不算）
-  const after = bots.slice(lastLead + 1).filter((m) => !set.size || set.has(m.authorId));
-  if (!after.length) return { needed: false, why: '老大已经收口了' };
-  return {
-    needed: true,
-    why: `老大说完之后还有 ${after.length} 个人交了作业，需要它汇总收口`,
-  };
+  // 老大说完之后没有人再说话
+  if (lastMemberIndex <= lastLeadIndex) {
+    return { needed: false, why: '老大已经收口了' };
+  }
+  return { needed: true, why: '老大说完之后还有人交作业，需要它汇总收口' };
 }

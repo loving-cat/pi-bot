@@ -59,6 +59,17 @@ test('预发布小于正式版', () => {
   assert.equal(compareVersions('1.0.0-rc.1', '1.0.0-beta.9'), 1);
 });
 
+test('预发布多位数按数值比（beta.10 > beta.9）', () => {
+  assert.equal(
+    compareVersions('1.0.0-beta.10', '1.0.0-beta.9'),
+    1,
+    '字符串比较会判成 -1，更新将永远不提示',
+  );
+  assert.equal(compareVersions('1.0.0-beta.9', '1.0.0-beta.10'), -1);
+  assert.equal(compareVersions('1.0.0-beta.02', '1.0.0-beta.2'), 0, '前导零按数值相等');
+  assert.equal(compareVersions('1.0.0-rc.1', '1.0.0-beta.11'), 1, '字母段仍按字典序');
+});
+
 test('v 前缀与构建号不影响比较', () => {
   assert.equal(compareVersions('v1.1.0', '1.1.0'), 0);
   assert.equal(compareVersions('1.1.0+3', '1.1.0+1'), 0);
@@ -98,17 +109,40 @@ test('更新说明过长会被截断', () => {
 
 test('挑 Windows 安装包', () => {
   const assets = [
-    { name: 'pi-bot-android.apk', url: 'u1' },
-    { name: 'pi-bot-1.2.0-windows-setup.exe', url: 'u2', size: 100 },
-    { name: 'pi-bot-1.2.0.dmg', url: 'u3' },
+    { name: 'pi-bot-android.apk', url: 'https://x/app.apk' },
+    { name: 'pi-bot-1.2.0-windows-setup.exe', url: 'https://x/win.exe', size: 100 },
+    { name: 'pi-bot-1.2.0.dmg', url: 'https://x/mac.dmg' },
   ];
-  assert.equal(pickAssetFor(assets, 'win32').url, 'u2');
-  assert.equal(pickAssetFor(assets, 'darwin').url, 'u3');
-  assert.equal(pickAssetFor(assets, 'android').url, 'u1');
+  assert.equal(pickAssetFor(assets, 'win32').url, 'https://x/win.exe');
+  assert.equal(pickAssetFor(assets, 'darwin').url, 'https://x/mac.dmg');
+  assert.equal(pickAssetFor(assets, 'android').url, 'https://x/app.apk');
+});
+
+test('Windows 不能挑到 darwin 包（无锚点 /win/ 会误命中）', () => {
+  const assets = [{ name: 'pi-bot-1.2.0-darwin-arm64.dmg', url: 'https://x/mac.dmg', size: 1 }];
+  assert.equal(pickAssetFor(assets, 'win32'), null, 'darwin 里含 win 子串，必须带分隔符边界');
+});
+
+test('更新元数据不能被当成安装包', () => {
+  const assets = [
+    { name: 'latest.yml', url: 'https://x/latest.yml' },
+    { name: 'pi-bot-setup.exe.blockmap', url: 'https://x/a.blockmap' },
+    { name: 'pi-bot-win-x64.exe', url: 'https://x/a.exe', size: 9 },
+  ];
+  assert.equal(pickAssetFor(assets, 'win32').name, 'pi-bot-win-x64.exe');
+});
+
+test('只按文件名判平台，URL 里带平台词不干扰', () => {
+  const assets = [{ name: 'pi-bot-win64.exe', url: 'https://x/darwin/pi-bot-win64.exe', size: 5 }];
+  assert.equal(pickAssetFor(assets, 'win32').name, 'pi-bot-win64.exe');
+});
+
+test('非 https 链接不采纳', () => {
+  assert.equal(pickAssetFor([{ name: 'a.exe', url: 'http://x/a.exe' }], 'win32'), null);
 });
 
 test('挑不到对应平台 → 返回 null（不瞎猜）', () => {
-  const assets = [{ name: 'something.zip', url: 'u1' }];
+  const assets = [{ name: 'something.zip', url: 'https://x/s.zip' }];
   assert.equal(pickAssetFor(assets, 'android'), null);
   assert.equal(pickAssetFor([], 'win32'), null);
 });
