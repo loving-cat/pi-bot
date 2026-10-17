@@ -1,0 +1,71 @@
+.gitignore
+  s_06973911ad2cd6::t_b656af6a694cd7 19-20
+README.md
+  s_06973911ad2cd6::t_d122fc8cd5842b 233-243
+app/lib/screens/host_connect_screen.dart
+  s_06973911ad2cd6::t_86a85da0a5a342 10,78,80
+app/lib/screens/pair_screen.dart
+  s_06973911ad2cd6::t_48ddbf63e6f10a 11,121,123
+app/lib/widgets/app_logo.dart
+  s_06973911ad2cd6::t_86e7f18fd76eba 1-52
+app/lib/widgets/window_title_bar.dart
+  s_06973911ad2cd6::t_cc13446c476eec 10,44-49
+app/pubspec.yaml
+  s_06973911ad2cd6::t_4f1b6c2e390ddb 37-38
+app/tool/make_icon.py
+  s_06973911ad2cd6::t_b7cc4510e5f4b8 1-129
+docs/MODULE-MAP.md
+  s_06973911ad2cd6::t_6e73419e5a18b1 39-41
+docs/RELAY.md
+  s_06973911ad2cd6::t_caae27fa194d08 1-100
+server/package.json
+  s_06973911ad2cd6::t_24e1bc30e78667 10-15
+server/src/attachments.js
+  s_06973911ad2cd6::t_e7573d183b6fe0 91-125,131-134
+server/src/hooks.js
+  s_06973911ad2cd6::t_ad8e78fadd55e0 43-47
+server/src/http.js
+  s_06973911ad2cd6::t_1b1560d136858c 11-12,25-28,45,91-109,118-123,165-175,414,416-417,449-450,672-681
+server/src/relay-agent.js
+  s_06973911ad2cd6::t_2056d6ce11e932 1-36
+server/src/relay-server.js
+  s_06973911ad2cd6::t_9cfc1c0787b67c 1-33
+server/src/relay/agent.js
+  s_06973911ad2cd6::t_e11295a26d43b8 1-202
+server/src/relay/frames.js
+  s_06973911ad2cd6::t_221102552bb49f 1-81
+server/src/relay/server.js
+  s_06973911ad2cd6::t_4f64458f6678cb 1-285
+server/src/upload-sessions.js
+  s_06973911ad2cd6::t_903b23283db4ed 91-97,104-111,117-119
+server/tests/all.mjs
+  s_06973911ad2cd6::t_1d599b8c9a4b77 1-46
+server/tests/auth.mjs
+  s_06973911ad2cd6::t_21dbacbf283c61 21,47,58,72,155-184
+server/tests/hooks.mjs
+  s_06973911ad2cd6::t_8ce7f34d6c6416 34-40
+server/tests/model-matrix.mjs
+  s_06973911ad2cd6::t_154f5a7d8371bb 8,26
+server/tests/relay-frames.mjs
+  s_06973911ad2cd6::t_5e668eda26e621 1-77
+server/tests/relay.mjs
+  s_06973911ad2cd6::t_0268d3e1f657c1 1-166
+server/tests/uploads.mjs
+  s_06973911ad2cd6::t_1e57c91024839a 25,36,40-43,60,64,67,72,77,83-85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5a4efc2170a511e910c66c3a02406f664257e2ab",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
