@@ -98,6 +98,17 @@ export function attachWs(server, { runner }) {
   });
 
   const forward = (event) => {
+    // 设备被移除：立刻断开它的在线连接（否则它靠长连接还能继续收消息）
+    if (event.t === 'device.revoked') {
+      for (const client of wss.clients) {
+        if (client.device?.id && client.device.id === event.id) {
+          try {
+            client.close(4401, 'device revoked');
+          } catch {}
+        }
+      }
+      return;
+    }
     const payload = JSON.stringify(event);
     for (const client of wss.clients) {
       if (client.readyState === 1) client.send(payload);

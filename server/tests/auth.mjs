@@ -89,11 +89,31 @@ await test('本机能看设备列表，也能撤销设备', async () => {
   const { token } = store.addDevice('测试手机');
   const list = await call('127.0.0.1', '/api/devices');
   assert.equal(list.status, 200);
-  assert.ok(list.body.devices.some((d) => d.name === '测试手机'));
-  assert.ok(!('token' in list.body.devices[0]), '设备列表不能把 token 原文发出去');
-  const del = await call('127.0.0.1', `/api/devices/${token}`, { method: 'DELETE' });
+  const row = list.body.devices.find((d) => d.name === '测试手机');
+  assert.ok(row, '列表里要有刚加的设备');
+  assert.ok(!('token' in row), '设备列表不能把 token 原文发出去');
+  assert.ok(row.id, '必须给出 id —— 客户端只能靠它撤销');
+
+  // ★ 撤销走 id（App 用的就是这条；以前 App 拿不到 token，删的是 "null"，所以"移除没反应"）
+  const del = await call('127.0.0.1', `/api/devices/${row.id}`, { method: 'DELETE' });
   assert.equal(del.status, 200);
   assert.equal(del.body.revoked, true);
+
+  const after = await call('127.0.0.1', '/api/devices');
+  assert.ok(!after.body.devices.some((d) => d.id === row.id), '撤销后列表里不该再有它');
+  assert.equal(store.findDeviceByToken(token), null, 'token 也要一起失效');
+});
+
+await test('撤销也认 token（历史调用方式）', async () => {
+  const { token } = store.addDevice('老客户端');
+  const del = await call('127.0.0.1', `/api/devices/${token}`, { method: 'DELETE' });
+  assert.equal(del.body.revoked, true);
+});
+
+await test('撤销不存在的设备返回 false', async () => {
+  const del = await call('127.0.0.1', '/api/devices/d_nope', { method: 'DELETE' });
+  assert.equal(del.status, 200);
+  assert.equal(del.body.revoked, false);
 });
 
 await test('回环请求打开的 /pair 页面包含配对码', async () => {
