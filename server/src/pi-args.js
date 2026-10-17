@@ -8,7 +8,7 @@
  *
  * 所以入口先看参数：像 pi CLI 就把参数原样交给 pi CLI，否则才起服务端。
  */
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -67,18 +67,41 @@ export function resolvePiCli() {
 
 /**
  * 把参数交给 pi CLI 执行，返回退出码。
- * stdio 直通（扩展是拿管道读 JSON 事件的）；windowsHide 避免弹控制台窗口。
+ *
+ * stdio 直通：扩展是拿管道读 JSON 事件的。
+ * 信号转发：派活的扩展超时后会先 SIGTERM 我们，得把子进程一起带走，
+ * 否则真正的 pi 会变成孤儿进程继续跑。
  */
-export function delegateToPiCli(argv, { env = process.env } = {}) {
+export function runPiCli(argv, { env = process.env } = {}) {
   const { command, args } = resolvePiCli();
-  const res = spawnSync(command, [...args, ...argv], {
-    stdio: 'inherit',
-    windowsHide: true,
-    env,
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(command, [...args, ...argv], {
+        stdio: 'inherit',
+        windowsHide: true,
+        env,
+      });
+    } catch (err) {
+      console.error(`pi 入口调用失败（${command}）：${err?.message || err}`);
+      return resolve(127);
+    }
+
+    const forward = (signal) => {
+      try {
+        child.kill(signal);
+      } catch {}
+    };
+    process.on('SIGTERM', forward);
+    process.on('SIGINT', forward);
+    process.on('exit', () => forward('SIGTERM'));
+
+    child.on('error', (err) => {
+      console.error(`pi 入口调用失败（${command}）：${err.message}`);
+      resolve(127);
+    });
+    child.on('exit', (code, signal) => {
+      resolve(signal ? 1 : (code ?? 1));
+    });
   });
-  if (res.error) {
-    console.error(`pi 入口调用失败（${command}）：${res.error.message}`);
-    return 127;
-  }
-  return res.status ?? 1;
 }
