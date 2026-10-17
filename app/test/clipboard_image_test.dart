@@ -5,11 +5,11 @@ void main() {
   test('从 PowerShell 输出里取出临时 PNG 路径', () {
     const out = r'''
 Add-Type : something
-C:\Users\XL\AppData\Local\Temp\pi-bot-paste-abc.png
+C:\Users\you\AppData\Local\Temp\pi-bot-paste-abc.png
 ''';
     expect(
       clipboardImagePathFromOutput(out),
-      r'C:\Users\XL\AppData\Local\Temp\pi-bot-paste-abc.png',
+      r'C:\Users\you\AppData\Local\Temp\pi-bot-paste-abc.png',
     );
   });
 
