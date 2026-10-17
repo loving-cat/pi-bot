@@ -20,6 +20,8 @@ import 'widgets/window_title_bar.dart';
 import 'screens/home_shell.dart';
 import 'screens/host_connect_screen.dart';
 import 'theme.dart';
+import 'update_info.dart';
+import 'widgets/update_prompt.dart';
 import 'window_state.dart';
 
 /// 开发用：`--dart-define=PI_BOT_URL=http://127.0.0.1:8787 --dart-define=PI_BOT_TOKEN=test-token`
@@ -166,7 +168,47 @@ class _PiBotAppState extends State<PiBotApp> with WidgetsBindingObserver {
       if (_devUrl.isNotEmpty && _devToken.isNotEmpty && !_state.paired) {
         _state.useToken(_devUrl, _devToken, device: 'dev-shell');
       }
+      // 启动完成后查一次更新并提示。延后几秒：让界面先画出来，
+      // 别让"连服务器 / 拉状态"和检查更新挤在一起。
+      Future<void>.delayed(const Duration(seconds: 4), _maybePromptUpdate);
     });
+  }
+
+  /// 查到新版本就问用户要不要下载。
+  ///
+  /// 静默条件（不打扰）：
+  ///   · 检查本身失败 / 没有新版本；
+  ///   · 用户已经对这个版本点过"以后再说"（出了更新的版本才会再问）。
+  Future<void> _maybePromptUpdate() async {
+    if (!mounted) return;
+    final info = await _state.checkUpdate();
+    if (!mounted || info == null) return;
+    if (!shouldPromptUpdate(info, _state.skippedUpdateVersion)) return;
+
+    final choice = await showUpdateDialog(context, info);
+    if (!mounted) return;
+
+    switch (choice) {
+      case UpdateChoice.later:
+        await _state.skipUpdateVersion(info.latest);
+      case UpdateChoice.openPage:
+        if (info.pageUrl.isNotEmpty) {
+          try {
+            await Process.run(Platform.isWindows ? 'explorer' : 'open', [
+              info.pageUrl,
+            ]);
+          } catch (_) {}
+        }
+      case UpdateChoice.download:
+        final result = await downloadUpdate(context, info);
+        if (!mounted) return;
+        if (result.ok) {
+          await showDownloadDoneDialog(context, path: result.path!, info: info);
+        } else if (result.error != null && result.error != '已取消') {
+          ScaffoldMessenger.maybeOf(context)
+              ?.showSnackBar(SnackBar(content: Text('下载失败：${result.error}')));
+        }
+    }
   }
 
   @override
@@ -248,9 +290,12 @@ class _Root extends StatelessWidget {
     //   永远等不到东西。现在：起服务端期间 / 一个房间都还没拿到时，
     //   先给"正在启动 / 为什么起不来"那一页（它会自己重试，也会把服务端拉起来）。
     if (isHostPlatform) {
-      final stillBooting = state.serverStarting ||
+      final stillBooting =
+          state.serverStarting ||
           !state.paired ||
-          (state.localMode && state.link != LinkState.online && state.rooms.isEmpty);
+          (state.localMode &&
+              state.link != LinkState.online &&
+              state.rooms.isEmpty);
       if (stillBooting) return const HostConnectScreen();
     }
     if (!state.paired) return const PairScreen();
