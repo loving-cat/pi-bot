@@ -34,6 +34,8 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/icon/
   fonts:
     # ★ Inter.ttf 是**可变字体**（有 fvar 表），所以只登记一次就够了 ——
     #   Flutter 会按 TextStyle.fontWeight 去走 wght 轴拿到真正的 400/500/600/700。
