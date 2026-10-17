@@ -16,6 +16,7 @@ const TESTS = [
   'skills',
   'sites',
   'secrets',
+  'retry-policy',
   'update-check',
   'update-checker',
   'session-resources',
