@@ -20,7 +20,16 @@
  */
 import http from 'node:http';
 import { WebSocketServer } from 'ws';
-import { decodeFrame, encodeFrame, packBody, unpackBody, MAX_FRAME_BYTES } from './frames.js';
+import crypto from 'node:crypto';
+import {
+  FrameTooLargeError,
+  MAX_FRAME_BYTES,
+  MAX_FRAME_TEXT_BYTES,
+  decodeFrame,
+  encodeFrame,
+  packBody,
+  unpackBody,
+} from './frames.js';
 import { log } from '../util.js';
 
 const CODE_RE = /^[0-9a-f]{12}$/;
@@ -60,7 +69,9 @@ export function createRelay({ secret = '', port = 8788, host = '0.0.0.0' } = {})
   });
 
   // ---------- WebSocket ----------
-  const wss = new WebSocketServer({ noServer: true });
+  // maxPayload：帧文本上限。超过的直接被 ws 层关掉（1009），
+  // 不会进到 packBody/unpackBody 里 —— 那两处 throw 会带崩整个中转。
+  const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_TEXT_BYTES });
 
   server.on('upgrade', (req, socket, head) => {
     const url = new URL(req.url, 'http://relay.local');
@@ -82,7 +93,7 @@ export function createRelay({ secret = '', port = 8788, host = '0.0.0.0' } = {})
     const code = String(url.searchParams.get('code') ?? '');
     const given = String(url.searchParams.get('secret') ?? '');
     if (!CODE_RE.test(code)) return ws.close(4400, 'bad code');
-    if (secret && given !== secret) return ws.close(4403, 'bad secret');
+    if (secret && !sameSecret(given, secret)) return ws.close(4403, 'bad secret');
 
     const existing = rooms.get(code);
     if (existing) {
@@ -97,6 +108,15 @@ export function createRelay({ secret = '', port = 8788, host = '0.0.0.0' } = {})
     log(`中转：电脑侧已接入 ${code}（当前 ${rooms.size} 个）`);
 
     ws.on('message', (raw) => {
+      try {
+        handleAgentFrame(raw);
+      } catch (err) {
+        // 一条坏帧不能带崩中转（否则所有挂着的电脑一起掉线）
+        log(`中转：agent 帧处理失败 ${code}：${err?.message || err}`);
+      }
+    });
+
+    function handleAgentFrame(raw) {
       const frame = decodeFrame(raw.toString());
       if (!frame) return;
       if (frame.t === 'res') {
@@ -111,7 +131,19 @@ export function createRelay({ secret = '', port = 8788, host = '0.0.0.0' } = {})
         const stream = room.streams.get(frame.id);
         if (!stream) return;
         if (frame.t === 'ws-msg') {
-          const data = unpackBody(frame);
+          let data;
+          try {
+            data = unpackBody(frame);
+          } catch (err) {
+            log(`中转：ws 消息解包失败 ${code}：${err?.message || err}`);
+            if (err instanceof FrameTooLargeError) {
+              room.streams.delete(frame.id);
+              try {
+                stream.close(1013, 'frame too large');
+              } catch {}
+            }
+            return;
+          }
           if (stream.readyState === 1) stream.send(data);
         } else {
           room.streams.delete(frame.id);
@@ -120,7 +152,7 @@ export function createRelay({ secret = '', port = 8788, host = '0.0.0.0' } = {})
           } catch {}
         }
       }
-    });
+    }
 
     const cleanup = () => {
       if (rooms.get(code) !== room) return;
@@ -142,22 +174,44 @@ export function createRelay({ secret = '', port = 8788, host = '0.0.0.0' } = {})
     ws.on('error', cleanup);
 
     // 让 agent 知道配对码（它自己也会打印）
-    ws.send(encodeFrame({ t: 'hello', code }));
+    try {
+      ws.send(encodeFrame({ t: 'hello', code }));
+    } catch (err) {
+      log(`中转：握手帧发送失败：${err?.message || err}`);
+    }
   }
 
   function onClientWs(client, room, url, code) {
     const id = `ws_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     const path = `${url.pathname}${url.search}`.replace(`/${code}`, '');
     room.streams.set(id, client);
-    room.socket.send(
-      encodeFrame({ t: 'ws-open', id, path, headers: pickHeaders(url) }),
-    );
+    try {
+      room.socket.send(encodeFrame({ t: 'ws-open', id, path, headers: pickHeaders(url) }));
+    } catch (err) {
+      log(`中转：ws-open 发送失败：${err?.message || err}`);
+      room.streams.delete(id);
+      try {
+        client.close(1011, 'relay error');
+      } catch {}
+      return;
+    }
 
     client.on('message', (raw) => {
       const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(String(raw));
-      room.socket.send(
-        encodeFrame({ t: 'ws-msg', id, dir: 'c2s', ...packBody(buf) }),
-      );
+      try {
+        room.socket.send(encodeFrame({ t: 'ws-msg', id, dir: 'c2s', ...packBody(buf) }));
+      } catch (err) {
+        log(`中转：客户端消息装不进帧（${buf.length} 字节）：${err?.message || err}`);
+        room.streams.delete(id);
+        try {
+          client.close(1013, 'frame too large');
+        } catch {}
+        try {
+          room.socket.send(
+            encodeFrame({ t: 'ws-close', id, code: 1013, reason: 'frame too large' }),
+          );
+        } catch {}
+      }
     });
     const close = (code2, reason) => {
       room.streams.delete(id);
@@ -177,7 +231,12 @@ export function createRelay({ secret = '', port = 8788, host = '0.0.0.0' } = {})
       size += chunk.length;
       if (size > MAX_FRAME_BYTES) {
         res.writeHead(413, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ error: '请求体太大（中转上限 16MB）' }));
+        res.end(
+          JSON.stringify({
+            error: `请求体太大：中转单帧上限 ${Math.round(MAX_FRAME_BYTES / 1024 / 1024)}MB，大文件请用分片上传（/api/uploads）`,
+            code: 'frame_too_large',
+          }),
+        );
         req.destroy();
         return;
       }
@@ -194,7 +253,13 @@ export function createRelay({ secret = '', port = 8788, host = '0.0.0.0' } = {})
 
       room.pending.set(id, {
         resolve: (frame) => {
-          const payload = unpackBody(frame);
+          let payload;
+          try {
+            payload = unpackBody(frame);
+          } catch (err) {
+            log(`中转：响应解包失败：${err?.message || err}`);
+            return json(res, 502, { error: '中转：电脑侧回包过大或损坏' });
+          }
           const headers = { ...(frame.headers ?? {}) };
           // 中转自己决定长度与缓存头，避免与帧里的旧值冲突
           delete headers['content-length'];
@@ -260,6 +325,14 @@ export function createRelay({ secret = '', port = 8788, host = '0.0.0.0' } = {})
       });
     },
   };
+}
+
+/** 定长比较，避免按前缀长度泄露信息 */
+function sameSecret(given, expected) {
+  const a = Buffer.from(String(given ?? ''), 'utf8');
+  const b = Buffer.from(String(expected ?? ''), 'utf8');
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
 }
 
 function json(res, status, body) {

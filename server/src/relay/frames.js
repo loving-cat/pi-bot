@@ -18,15 +18,29 @@ import zlib from 'node:zlib';
 
 /** 单帧上限（压缩前的原始字节） */
 export const MAX_FRAME_BYTES = 16 * 1024 * 1024;
+/**
+ * 帧文本（JSON + base64）的上限。
+ * body 走 base64 会膨胀 4/3，再加 JSON 字段，留一倍余量刚好够。
+ * WebSocket 的 maxPayload 用这个值：超限由 ws 层关闭（1009），不会进业务代码。
+ */
+export const MAX_FRAME_TEXT_BYTES = MAX_FRAME_BYTES * 2;
 /** 小于这个就不折腾压缩了 */
 const COMPRESS_MIN = 512;
+
+/** 帧超限。单独的类型，调用方可以据此回 413 而不是当成普通故障 */
+export class FrameTooLargeError extends Error {
+  constructor(bytes, limit = MAX_FRAME_BYTES) {
+    super(`帧太大：${bytes} 字节（上限 ${limit}）`);
+    this.name = 'FrameTooLargeError';
+    this.bytes = bytes;
+    this.limit = limit;
+  }
+}
 
 /** 把一段二进制装进帧字段：base64；够大且压得动就顺带压缩 */
 export function packBody(buffer) {
   if (!buffer || !buffer.length) return { body: '', z: 0 };
-  if (buffer.length > MAX_FRAME_BYTES) {
-    throw new Error(`帧太大：${buffer.length} 字节（上限 ${MAX_FRAME_BYTES}）`);
-  }
+  if (buffer.length > MAX_FRAME_BYTES) throw new FrameTooLargeError(buffer.length);
   const compressed = buffer.length >= COMPRESS_MIN
     ? safeDeflate(buffer)
     : null;
@@ -42,7 +56,7 @@ export function unpackBody(frame = {}) {
   const raw = frame.body ?? frame.data ?? '';
   if (!raw) return Buffer.alloc(0);
   const buf = Buffer.from(String(raw), 'base64');
-  if (buf.length > MAX_FRAME_BYTES) throw new Error('帧太大');
+  if (buf.length > MAX_FRAME_BYTES) throw new FrameTooLargeError(buf.length);
   if (frame.z) {
     const out = zlib.inflateRawSync(buf, { maxOutputLength: MAX_FRAME_BYTES });
     return out;
@@ -61,9 +75,8 @@ function safeDeflate(buffer) {
 /** 组装一个帧字符串（顺便挡住超大帧） */
 export function encodeFrame(frame) {
   const text = JSON.stringify(frame);
-  if (Buffer.byteLength(text) > MAX_FRAME_BYTES * 2) {
-    throw new Error('帧太大，拒绝发送');
-  }
+  const bytes = Buffer.byteLength(text);
+  if (bytes > MAX_FRAME_TEXT_BYTES) throw new FrameTooLargeError(bytes, MAX_FRAME_TEXT_BYTES);
   return text;
 }
 
@@ -71,7 +84,7 @@ export function encodeFrame(frame) {
 export function decodeFrame(raw) {
   try {
     const text = typeof raw === 'string' ? raw : String(raw);
-    if (text.length > MAX_FRAME_BYTES * 2) return null;
+    if (text.length > MAX_FRAME_TEXT_BYTES) return null;
     const frame = JSON.parse(text);
     if (!frame || typeof frame !== 'object' || typeof frame.t !== 'string') return null;
     return frame;

@@ -82,7 +82,7 @@ npm run relay-agent -- \
 
 代码：
 `server/src/relay/frames.js`（帧编解码，纯函数）、`server/src/relay/server.js`（中转）、
-`server/src/relay/agent.js`（电脑侧）。测试：`npm test`（帧）+ `npm run test:relay`（端到端）。
+`server/src/relay/agent.js`（电脑侧）。测试：`npm test`（帧纯单测）+ `npm run test:relay`（端到端 + 边界/故障）。
 
 ## 四、安全与限制
 
@@ -90,7 +90,15 @@ npm run relay-agent -- \
 - **配对码是 12 位十六进制（48 bit）**，由电脑侧生成；换一次就断掉所有已连的手机。
 - **中转不存内容、不做鉴权**：真正的鉴权还是电脑侧那台服务端的 token/pairing。
 - **必须用 TLS**（https/wss）：不然 token 会在公网明文传输。
-- **单帧上限 16MB**：大附件（几十上百 MB）建议还是回局域网直连，或直接用隧道方案。
+- **单帧上限 16MB**（`MAX_FRAME_BYTES`）：超限不截断，一律回明确错误。
+  - 电脑侧响应太大 → HTTP 413，body `{"code":"frame_too_large"}`；
+  - 手机 ws 消息太大 → 那条桥接以 1013 关闭（超过 ws `maxPayload` 的由 ws 层 1009 关闭）；
+  - 手机 POST 太大 → 中转直接 413，提示改用分片上传。
+  - 大文件走分片（App 对 >8MB 的文件自动分片，4MB/片），别用单发 `/api/uploads`。
+- 中转侧 `maxPayload = MAX_FRAME_BYTES * 2`（base64 膨胀 4/3，留一倍余量），
+  超限在 ws 层就被挡掉，进不到业务代码里。
+- 两个入口都有 `uncaughtException` / `unhandledRejection` 兜底：记日志、继续服务，
+  不会因为一条坏帧把全部连接带走。
 - 中转只搬字节，`mcp` 工具、后台进程、审批这些都在电脑上跑，行为与局域网一致。
 
 ## 五、不做的事（留给用户）
