@@ -51,6 +51,10 @@ class AppState extends ChangeNotifier {
   /// 最近一次检查更新的结果（null = 还没查过）
   UpdateInfo? updateInfo;
 
+  /// 全局技能库（所有 bot 共享）
+  List<LibrarySkill> skills = const [];
+  bool skillsLoaded = false;
+
   ServerInfo? serverInfo;
   List<Room> rooms = const [];
   List<Bot> bots = const [];
@@ -541,6 +545,107 @@ class AppState extends ChangeNotifier {
   }
 
   // ---------------------------------------------------------------- HTTP
+
+  // ---------------------------------------------------------------- 技能库
+
+  /// 拉技能库（设置页打开时调）
+  Future<void> loadSkills() async {
+    if (api == null) return;
+    try {
+      final json = await api!.get('/api/skills');
+      skills = ((json['skills'] as List?) ?? const [])
+          .map((e) => LibrarySkill.fromJson(e as Map<String, dynamic>))
+          .toList();
+      skillsLoaded = true;
+      _notify();
+    } catch (err) {
+      lastError = '技能库加载失败：$err';
+      _notify();
+    }
+  }
+
+  /// 加一条技能。返回错误文案（成功时返回 null）。
+  Future<String?> addSkill({
+    required String title,
+    String summary = '',
+    String howto = '',
+    List<String> tags = const [],
+  }) async {
+    if (api == null) return '未连接服务端';
+    try {
+      await api!.post('/api/skills', {
+        'title': title,
+        'summary': summary,
+        'howto': howto,
+        'tags': tags,
+      });
+      await loadSkills();
+      return null;
+    } catch (err) {
+      return '$err';
+    }
+  }
+
+  /// 改一条技能。返回错误文案（成功时返回 null）。
+  Future<String?> updateSkill(
+    String id, {
+    String? title,
+    String? summary,
+    String? howto,
+    List<String>? tags,
+    bool? enabled,
+  }) async {
+    if (api == null) return '未连接服务端';
+    try {
+      await api!.patch('/api/skills/${Uri.encodeComponent(id)}', {
+        if (title != null) 'title': title,
+        if (summary != null) 'summary': summary,
+        if (howto != null) 'howto': howto,
+        if (tags != null) 'tags': tags,
+        if (enabled != null) 'enabled': enabled,
+      });
+      await loadSkills();
+      return null;
+    } catch (err) {
+      return '$err';
+    }
+  }
+
+  /// 删一条技能
+  Future<String?> removeSkill(String id) async {
+    if (api == null) return '未连接服务端';
+    try {
+      await api!.delete('/api/skills/${Uri.encodeComponent(id)}');
+      await loadSkills();
+      return null;
+    } catch (err) {
+      return '$err';
+    }
+  }
+
+  /// 导入若干 SKILL.md（内容由调用方读出来）
+  /// @returns (成功数, 跳过明细)
+  Future<({int imported, List<String> skipped})> importSkillFiles(
+    List<({String name, String text})> files,
+  ) async {
+    if (api == null) return (imported: 0, skipped: ['未连接服务端']);
+    try {
+      final json = await api!.post('/api/skills/import', {
+        'files': files.map((f) => {'name': f.name, 'text': f.text}).toList(),
+      });
+      final imported = (json['imported'] as List?)?.length ?? 0;
+      final skipped = ((json['skipped'] as List?) ?? const [])
+          .map(
+            (s) =>
+                '${(s as Map)['title'] ?? s['name'] ?? ''}：${s['reason'] ?? '跳过'}',
+          )
+          .toList();
+      await loadSkills();
+      return (imported: imported, skipped: skipped);
+    } catch (err) {
+      return (imported: 0, skipped: ['$err']);
+    }
+  }
 
   /// 查一次有没有新版本。
   ///
