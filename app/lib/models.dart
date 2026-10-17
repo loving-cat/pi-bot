@@ -451,6 +451,7 @@ class ServerInfo {
     this.version = '',
     this.hostname = '',
     this.workspace = '',
+    this.dataDir = '',
     this.model,
     this.note,
     this.tools = const [],
@@ -459,6 +460,11 @@ class ServerInfo {
   final String version;
   final String hostname;
   final String workspace;
+
+  /// 服务端把数据存在哪儿（房间/会话/上传/工作目录都在它下面）。
+  /// 这是用户最该知道的东西 —— 不能让它“神秘换掉”。
+  final String dataDir;
+
   final String? model;
   final String? note;
   final List<String> tools;
@@ -467,6 +473,7 @@ class ServerInfo {
     version: json['version'] as String? ?? '',
     hostname: json['hostname'] as String? ?? '',
     workspace: json['workspace'] as String? ?? '',
+    dataDir: json['dataDir'] as String? ?? '',
     model: json['model'] as String?,
     note: json['note'] as String?,
     tools: ((json['tools'] as List?) ?? const []).whereType<String>().toList(),

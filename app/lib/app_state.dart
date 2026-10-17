@@ -10,7 +10,8 @@ import 'models.dart';
 import 'native.dart';
 import 'notify.dart';
 import 'platform.dart';
-import 'server_launcher.dart';
+import 'server/launcher.dart';
+import 'server/options.dart';
 import 'text_utils.dart';
 
 /// 全局状态：连接、房间、消息、流式输出。
@@ -29,6 +30,11 @@ List<String> mergeMemberIds(List<String> current, List<String> added) {
 class AppState extends ChangeNotifier {
   static const _kUrl = 'server_url';
   static const _kToken = 'server_token';
+  // 本机服务端的启动配置（开源里每个人环境不同，得能自己指）
+  static const _kDataDir = 'server_data_dir';
+  static const _kPort = 'server_port';
+  static const _kEntry = 'server_entry';
+  static const _kNode = 'server_node';
   static const _kDevice = 'device_name';
 
   String? serverUrl;
@@ -110,21 +116,35 @@ class AppState extends ChangeNotifier {
   String? serverProblem;
 
   /// 服务端进程的日志尾部（诊断用，失败时贴在界面上）
-  List<String> serverLog = const [];
+  List<String> get serverLog => serverLauncher.logLines;
+
+  /// 服务端目录 / 日志位置（界面上的手动命令和排查要用真实路径）
+  String? get serverDir => serverLauncher.serverDir;
+  String get serverLogPath => serverLauncher.logPath;
+
+  /// 启动编排（找 node / 装依赖 / 拉起 / 等健康）都在这一个对象里
+  final LocalServerLauncher serverLauncher = LocalServerLauncher();
   int _lastServerNotify = 0;
 
-  /// 本机服务端的巡检：因为任何原因挂了（被系统杀掉、端口被抢、异常退出）
-  /// 都自动拉回来 —— 用户不该为了这个重启 App。
+  /// 本机服务端巡检：离线时按退避间隔尝试重新启动。
   Timer? _serverWatch;
   DateTime _lastSpawnAt = DateTime.fromMillisecondsSinceEpoch(0);
   int _spawnFails = 0;
 
-  /// 连续失败太多次就停下来，等人点按钮 —— 否则"启动→失败→再启动"
-  /// 会无休止地循环（用户看到的就是报错一直在跳）。
+  /// 连续失败达到上限后暂停自动重试，等待手动触发。
   bool serverRetryPaused = false;
 
-  /// 启动尝试次数（界面上显示"第 N 次"，免得看起来像卡住了）
+  /// 已发起的启动尝试次数（界面展示用）
   int serverAttempts = 0;
+
+  /// 用户配置的启动参数。空 = 自动探测。
+  String serverDataDir = '';
+  int serverPort = 8787;
+  String serverEntryPath = '';
+  String serverNodePath = '';
+
+  /// 本机服务端地址（端口可在设置里改）
+  String get localUrl => 'http://127.0.0.1:$serverPort';
 
   bool get paired =>
       serverUrl != null && (localMode || (token ?? '').isNotEmpty);
@@ -151,25 +171,26 @@ class AppState extends ChangeNotifier {
     serverUrl = prefs.getString(_kUrl);
     token = prefs.getString(_kToken);
     deviceName = prefs.getString(_kDevice) ?? '我的手机';
+    serverDataDir = prefs.getString(_kDataDir) ?? '';
+    serverPort = prefs.getInt(_kPort) ?? 8787;
+    serverEntryPath = prefs.getString(_kEntry) ?? '';
+    serverNodePath = prefs.getString(_kNode) ?? '';
     if (paired) {
       api = Api(serverUrl!, token ?? '');
       unawaited(refresh());
       connect();
     } else if (isHostPlatform) {
-      // 桌面端就是宿主：**先把服务端拉起来**，再直连本机（不走配对）。
-      //
-      //   以前这里只做了一半 —— 直接连 127.0.0.1:8787 当作"服务端就在那儿"，
-      //   但没人去起它。双击 exe 后看到的是"离线 · 自动重连中"，永远连不上。
-      resetServerLogForNewRun();
+      // 桌面端即宿主：先确保本机服务端就绪，再直连（不走配对）。
+      serverLauncher.resetLogForNewRun();
       await bootLocalServer();
       _startServerWatchdog();
     }
     _notify();
   }
 
-  /// 桌面端启动：确保本机服务端在跑（没有就拉起来），然后连它。
+  /// 桌面端启动：确保本机服务端就绪后连接。
   ///
-  /// 幂等：端口上已经有人在听就只是连上去（第二次打开 App 不会再拉一个进程）。
+  /// 幂等：端口上已有服务端时只建立连接，不重复启动进程。
   Future<void> bootLocalServer({bool manual = false}) async {
     if (!isHostPlatform) return;
     if (serverStarting) return;
@@ -185,14 +206,18 @@ class AppState extends ChangeNotifier {
     _notify();
     var ok = false;
     try {
-      final result = await ensureLocalServer(
-        baseUrl: localServerUrl,
+      serverLauncher.options = ServerLaunchOptions(
+        entryPath: serverEntryPath.isEmpty ? null : serverEntryPath,
+        nodePath: serverNodePath.isEmpty ? null : serverNodePath,
+        dataDir: serverDataDir.isEmpty ? null : serverDataDir,
+      );
+      final result = await serverLauncher.ensureRunning(
+        baseUrl: localUrl,
         onProgress: () {
           // 探活是 300ms 一轮，别把整棵树按这个频率重建
           final t = DateTime.now().millisecondsSinceEpoch;
           if (t - _lastServerNotify < 700) return;
           _lastServerNotify = t;
-          serverLog = serverLogTail;
           _notify();
         },
       );
@@ -200,13 +225,10 @@ class AppState extends ChangeNotifier {
       serverProblem = result.ok ? null : result.error;
     } finally {
       serverStarting = false;
-      serverLog = serverLogTail;
       _notify();
     }
 
-    // ★ 失败计数就在这里算 —— 不管是谁发起的重试（界面定时器 / 后台巡检 / 手动点），
-    //   都会经过这一个入口。以前计数只写在后台上，界面定时器不断发起新尝试，
-    //   计数永远追不上，于是"同一屏错误反复跳"。
+    // 失败计数统一在此处累加：所有重试来源（界面定时器 / 后台巡检 / 手动）都经过这里。
     if (ok) {
       _spawnFails = 0;
       serverRetryPaused = false;
@@ -244,14 +266,45 @@ class AppState extends ChangeNotifier {
     });
   }
 
-  /// 桌面端：直连本机服务端
-  Future<void> connectLocal({String url = localServerUrl}) async {
-    localMode = true;
-    serverUrl = url;
-    token = '';
-    api = Api(url, '');
+  /// 保存「本机服务端」配置并重启。换端口/换数据目录必须重启才生效 ——
+  /// 所以这里直接把服务端停掉重拉，用户不需要自己去任务管理器。
+  Future<void> applyServerSettings({
+    required String dataDir,
+    required int port,
+    required String entryPath,
+    required String nodePath,
+  }) async {
+    serverDataDir = dataDir.trim();
+    serverPort = port;
+    serverEntryPath = entryPath.trim();
+    serverNodePath = nodePath.trim();
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_kUrl, url);
+    await prefs.setString(_kDataDir, serverDataDir);
+    await prefs.setInt(_kPort, serverPort);
+    await prefs.setString(_kEntry, serverEntryPath);
+    await prefs.setString(_kNode, serverNodePath);
+    await restartLocalServer();
+  }
+
+  /// 重启本机服务端（改完配置用它）
+  Future<void> restartLocalServer() async {
+    if (!isHostPlatform) return;
+    disconnect();
+    await serverLauncher.stop();
+    _spawnFails = 0;
+    serverRetryPaused = false;
+    serverProblem = null;
+    await bootLocalServer(manual: true);
+  }
+
+  /// 桌面端：直连本机服务端
+  Future<void> connectLocal({String? url}) async {
+    localMode = true;
+    serverUrl = url ?? localUrl;
+    token = '';
+    api = Api(serverUrl!, '');
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kUrl, serverUrl!);
     await prefs.setString(_kToken, '');
     await refresh();
     connect();
