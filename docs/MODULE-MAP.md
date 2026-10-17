@@ -24,6 +24,7 @@
 | `group-prompt.js` | 群聊会话层：谁先开口、每人看到什么、提示词拼装（纯逻辑） |
 | `group-round.js` | 群轮次决策：该跳过/排队/打断/派发、收尾轮判定（纯函数） |
 | `transcript-budget.js` | 群聊记录按字数预算裁剪、单条超长保留头尾（纯函数） |
+| `skills.js` | 技能库：规范化、SKILL.md 解析、按任务挑选（纯函数） |
 | `escalation.js` | 出事往上抬：抬给谁、回执写什么 |
 | `watchdog.js` | 心跳与卡死判定、收尾 |
 | `prompt-input.js` | 拼输入：附件正文、图片、自动附图 |
@@ -63,6 +64,7 @@
 | `api.dart` | HTTP 封装（含分片上传 `uploadChunked`） |
 | `update_info.dart` | 更新响应解析 + 要不要提示的规则（纯逻辑，有测试） |
 | `widgets/update_prompt.dart` | 更新提示弹窗、带进度下载、下载完成提示 |
+| `widgets/skills_library.dart` | 技能库面板：搜索/增删改/启停/导入 SKILL.md |
 | `server/` | 启动层：`options` / `locate` / `server_log` / `supervisor` / `launcher` |
 | `screens/` | 页面：home_shell / chat_screen / rooms_screen / bots_screen / settings / pair / scan |
 | `widgets/` | 可复用组件：`tool_steps`、`changed_files`、`task_board`、`automation_sheet`、`ask_card`、**`approval_card`**、`md_text`、`attachment_view`、`avatar*`、`window_title_bar`… |
