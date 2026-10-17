@@ -589,6 +589,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 /// 以前设置页是一条 760 行的长列表（七块内容），找东西全靠滚。
 /// 拆成标签页后每页只放同一类东西；切换用带方向感的推入动画，
 /// 而不是原地淡入淡出 —— 让"翻页"这件事有空间感。
+///
+/// 标签数量会随功能增长（连接 / 服务端 / 技能 / 系统 / 高级），
+/// 所以整条做成可横向滚动，窄窗口下不会溢出。
 class _SettingsTabs extends StatelessWidget {
   const _SettingsTabs({required this.index, required this.onChanged});
 
@@ -607,18 +610,22 @@ class _SettingsTabs extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 4, 14, 10),
-      child: Row(
-        children: [
-          for (var i = 0; i < _items.length; i++) ...[
-            if (i > 0) const SizedBox(width: 6),
-            _TabPill(
-              icon: _items[i].icon,
-              label: _items[i].label,
-              selected: i == index,
-              onTap: () => onChanged(i),
-            ),
+      // 可横向滚动：手机或窄窗口下五个标签排不下时不会溢出（Row 会报 RenderFlex overflow）
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            for (var i = 0; i < _items.length; i++) ...[
+              if (i > 0) const SizedBox(width: 6),
+              _TabPill(
+                icon: _items[i].icon,
+                label: _items[i].label,
+                selected: i == index,
+                onTap: () => onChanged(i),
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }

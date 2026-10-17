@@ -15,6 +15,7 @@ const TESTS = [
   'transcript-budget',
   'skills',
   'sites',
+  'secrets',
   'update-check',
   'update-checker',
   'session-resources',
