@@ -198,17 +198,25 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
                   SegmentedButton<String>(
                     segments: const [
                       ButtonSegment(value: 'allow', label: Text('允许')),
+                      ButtonSegment(value: 'ask', label: Text('需批准')),
                       ButtonSegment(value: 'deny', label: Text('只读')),
                     ],
-                    selected: {policy['dangerous'] == 'deny' ? 'deny' : 'allow'},
+                    selected: {
+                      policy['dangerous'] == 'deny'
+                          ? 'deny'
+                          : policy['dangerous'] == 'ask'
+                          ? 'ask'
+                          : 'allow',
+                    },
                     onSelectionChanged: (v) => _savePolicy({'dangerous': v.first}),
                   ),
                 ],
               ),
               const SizedBox(height: 6),
               const Text(
-                '只读 = 直接不给 bot 改文件和跑命令的工具（看还是能看的）。'
-                '这是唯一真正拦得住的约束 —— 靠提示词里写"请先问"是拦不住的。',
+                '需批准 = 工具照给，但每一次改文件/跑命令都先弹一张卡片让你点。'
+                '只读 = 直接不给这些工具（看还是能看的）。'
+                '两种都是真拦得住 —— 靠提示词里写"请先问"是拦不住的。',
                 style: TextStyle(
                   fontSize: PB.fsXxs,
                   color: PB.textQuaternary,

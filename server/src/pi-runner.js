@@ -1421,6 +1421,33 @@ export class PiRunner {
   }
 
   /**
+   * 用户批准之后，让那个 bot 继续。
+   *
+   * 不做"恢复上一次的调用栈"（SDK 没这能力）；而是把批准的事实告诉它，
+   * 让它把同一件事再做一次 —— 同一次调用的指纹已经放行，这次能过去。
+   */
+  async resumeAfterApproval(approval) {
+    const bot = store.getBot(approval.botId);
+    if (!bot) return { ok: false, error: 'bot 不存在' };
+    const prompt =
+      `用户已经批准了这次操作：${approval.tool} ${approval.summary}
+` +
+      '请继续把刚才没做完的事做完（同样的事情直接执行，不用再问）。';
+    store.appendMessage({
+      roomId: approval.roomId,
+      authorType: 'system',
+      authorName: '审批',
+      text: `已批准：${approval.summary}`,
+      status: 'done',
+      meta: { approvalId: approval.id, decision: 'approved' },
+    });
+    return this.run(approval.roomId, approval.botId, prompt, {
+      skipUserMessage: true,
+      meta: { approvalResume: approval.id },
+    });
+  }
+
+  /**
    * 跑一条定时任务：在它的会话里像"到点了"那样触发一轮。
    * 群里交给组长接（和用户发消息同一条路径），私聊直接跑那个 bot。
    */
