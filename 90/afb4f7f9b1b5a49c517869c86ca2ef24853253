@@ -1,0 +1,25 @@
+app/test/clipboard_image_test.dart
+  s_06973911ad2cd6::t_2932085bd08a1f 1-4,7,26-194
+  s_06973911ad2cd6::t_09299ab798a75e 195-197
+app/lib/clipboard_image.dart
+  s_06973911ad2cd6::t_2932085bd08a1f 5-7,9,53-60
+app/lib/clipboard_image_macos.dart
+  s_06973911ad2cd6::t_2932085bd08a1f 1-90
+  s_06973911ad2cd6::t_3bb995efa5857f 91
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "90afb4f7f9b1b5a49c517869c86ca2ef24853253",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
