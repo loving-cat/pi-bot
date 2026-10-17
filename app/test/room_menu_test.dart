@@ -1081,7 +1081,7 @@ void main() {
   });
 
   testWidgets('★ 「消息来自 X」：转进来的消息才挂，自己人说的不挂', (tester) async {
-    // 用户（截图 同类客户端 那种）：转进来的消息要有一行"消息来自 X"，点开是只读窥视。
+    // 转进来的消息要有一行"消息来自 X"，点开是只读窥视。
     tester.view.physicalSize = const Size(900, 800);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
