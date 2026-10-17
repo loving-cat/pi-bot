@@ -83,5 +83,18 @@ check('注释写明两个选项为什么不能加', () => {
   );
 });
 
+check('辅助脚本不提前关掉日志 fd（关掉会害死服务端）', () => {
+  // 服务端继承这份日志句柄；helper 先退出并 closeSync(fd)，服务端后续写日志
+  // 就会失败并静默退出（实测表现：日志只有一行 header，随后进程消失）。
+  assert.ok(
+    !/fs\.closeSync\(fd\)/.test(spawnScript),
+    '辅助脚本不能 closeSync 日志 fd，句柄要交给子进程继续持有',
+  );
+});
+
+check('辅助脚本不 unref 子进程', () => {
+  assert.ok(!/\.unref\(\)/.test(spawnScript), 'unref 会让辅助脚本退出时带走子进程的句柄');
+});
+
 console.log(`\n控制台继承测试：${pass}/${pass + fail} 通过`);
 if (fail > 0) process.exit(1);
