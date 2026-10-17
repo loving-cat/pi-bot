@@ -27,14 +27,14 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
   @override
   void initState() {
     super.initState();
-    // 服务端起来后自动进主界面
+    // 服务端起来后自动进主界面。离线就再试一次（会顺带把服务端拉起来）。
     _ticker = Timer.periodic(const Duration(seconds: 3), (_) async {
       final state = AppScope.read(context);
       if (state.link == LinkState.online) return;
-      if (_retrying) return;
+      if (_retrying || state.serverStarting) return;
       _retrying = true;
       try {
-        await state.connectLocal();
+        await state.bootLocalServer();
       } finally {
         _retrying = false;
       }
@@ -52,6 +52,8 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
     final state = AppScope.of(context);
     final url = state.serverUrl ?? localServerUrl;
     final online = state.link == LinkState.online;
+    final starting = state.serverStarting;
+    final problem = state.serverProblem;
 
     return Scaffold(
       backgroundColor: PB.bgApp,
@@ -91,7 +93,13 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
                 ),
                 const SizedBox(height: 22),
                 Text(
-                  online ? '连上了' : '正在连接本机服务端…',
+                  online
+                      ? '连上了'
+                      : starting
+                          ? '正在启动本机服务端…'
+                          : problem != null
+                              ? '服务端没起来'
+                              : '正在连接本机服务端…',
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                     fontSize: PB.fsXl,
@@ -121,7 +129,50 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
                     color: PB.textTertiary,
                   ),
                 ),
-                const SizedBox(height: 26),
+                const SizedBox(height: 22),
+                if (problem != null) ...[
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: PB.danger.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(PB.rLg),
+                      border: Border.all(color: PB.danger.withValues(alpha: 0.25)),
+                    ),
+                    child: SelectableText(
+                      problem,
+                      style: const TextStyle(
+                        fontSize: PB.fsXs,
+                        color: PB.textSecondary,
+                        height: 1.6,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                if (state.serverLog.isNotEmpty) ...[
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: PB.bgApp,
+                      borderRadius: BorderRadius.circular(PB.rLg),
+                      border: Border.all(color: PB.borderTertiary),
+                    ),
+                    child: SelectableText(
+                      state.serverLog.take(10).join('\n'),
+                      maxLines: 10,
+                      style: const TextStyle(
+                        fontFamily: PB.monoFamily,
+                        fontFamilyFallback: PB.monoFallback,
+                        fontSize: PB.fsXxs,
+                        color: PB.textQuaternary,
+                        height: 1.6,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
@@ -141,7 +192,7 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
                           ),
                           const SizedBox(width: 8),
                           const Text(
-                            '服务端没起？在终端跑：',
+                            '正常情况不用管这里 —— 双击打开就会自己起。',
                             style: TextStyle(
                               fontSize: PB.fsXs,
                               color: PB.textTertiary,
@@ -174,7 +225,7 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
                       ),
                       const SizedBox(height: 10),
                       const Text(
-                        '起来之后这里会自动连上，不用点任何东西。',
+                        '自己起也行：起来之后这里会自动连上，不用点任何东西。',
                         style: TextStyle(
                           fontSize: PB.fsXxs,
                           color: PB.textQuaternary,
@@ -186,9 +237,9 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
                 ),
                 const SizedBox(height: 20),
                 FilledButton.icon(
-                  onPressed: () => state.connectLocal(),
+                  onPressed: state.serverStarting ? null : () => state.bootLocalServer(),
                   icon: const Icon(LucideIcons.refreshCw, size: 17),
-                  label: const Text('立即重试'),
+                  label: Text(state.serverStarting ? '正在启动…' : '重新启动服务端'),
                 ),
                 const SizedBox(height: 10),
                 // ★ PC 端**不给**去手机配对表单的入口。
