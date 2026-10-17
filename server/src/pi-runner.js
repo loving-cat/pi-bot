@@ -800,10 +800,22 @@ export class PiRunner {
                 text: item.fromText || item.reason,
               });
             }
+            // 部门里"别人派给它"的活 → 任务板上登记一条（跑完再收尾）
+            const taskId = item.fromId
+              ? store.upsertDispatchTask({
+                  roomId,
+                  ownerBotId: bot.id,
+                  title: item.fromText || item.reason,
+                  sourceMessageId: lastMessageId(roomId),
+                })
+              : null;
             const res = await this.run(roomId, bot.id, prompt, {
               groupTurn: true,
               attachments,
             });
+            if (taskId) {
+              store.finishTask(taskId, { ok: res.ok, text: res.text });
+            }
             if (mirror) {
               this.#mirrorProgress({
                 room,
