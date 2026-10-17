@@ -575,6 +575,46 @@ class BotSkill {
   Map<String, dynamic> toJson() => {'id': id, 'title': title, 'howto': howto};
 }
 
+/// 已接入的外部 Web 系统。
+///
+/// 一个系统对应一个部门（"把一个系统简化为一个团队"）。
+/// 口令不下发到客户端 —— 只回 hasPassword，改口令时重新提交。
+class SiteSystem {
+  SiteSystem({
+    required this.id,
+    required this.name,
+    required this.baseUrl,
+    this.account = '',
+    this.hasPassword = false,
+    this.loginPath = '',
+    this.teamRoomId = '',
+    this.connected = false,
+    this.lastError = '',
+  });
+
+  final String id;
+  String name;
+  String baseUrl;
+  String account;
+  bool hasPassword;
+  String loginPath;
+  String teamRoomId;
+  bool connected;
+  String lastError;
+
+  factory SiteSystem.fromJson(Map<String, dynamic> json) => SiteSystem(
+    id: json['id'] as String? ?? '',
+    name: json['name'] as String? ?? '',
+    baseUrl: json['baseUrl'] as String? ?? '',
+    account: json['account'] as String? ?? '',
+    hasPassword: json['hasPassword'] == true,
+    loginPath: json['loginPath'] as String? ?? '',
+    teamRoomId: json['teamRoomId'] as String? ?? '',
+    connected: json['connected'] == true,
+    lastError: json['lastError'] as String? ?? '',
+  );
+}
+
 /// 技能库（全局，所有 bot 共享）里的一条。
 ///
 /// 与 [BotSkill] 的区别：那是"某个 bot 自己会的事"，全量进它的系统提示；

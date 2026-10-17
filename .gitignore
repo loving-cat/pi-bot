@@ -13,6 +13,9 @@ app/android/app/.cxx/
 app/android/local.properties
 app/.idea/
 app/*.iml
+# 本地 JDK（打 APK 用，不随仓库走）
+.jdk/
+
 # 工具产物
 *.png
 !app/assets/**/*.png

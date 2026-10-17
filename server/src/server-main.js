@@ -3,6 +3,7 @@ import { store } from './store.js';
 import { PiRunner } from './pi-runner.js';
 import { Pairing, lanAddresses } from './pairing.js';
 import { createHttpServer } from './http.js';
+import { createSiteRuntime } from './site-runtime.js';
 import { attachWs } from './ws.js';
 import { log } from './util.js';
 import { shells } from './shells.js';
@@ -75,7 +76,11 @@ async function main() {
     }
   };
 
-  const server = createHttpServer({ runner, pairing });
+  // 外部 Web 系统的传输层：管 token、转发查询。给工具和 HTTP 接口共用一份。
+  const sites = createSiteRuntime({ log });
+  runner.sites = sites;
+
+  const server = createHttpServer({ runner, pairing, sites });
   attachWs(server, { runner });
 
   // 定时任务：每 30s 看一次有没有到点的
