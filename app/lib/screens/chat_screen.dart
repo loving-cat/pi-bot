@@ -21,6 +21,7 @@ import '../widgets/context_chip.dart';
 import '../widgets/floating_menu.dart';
 import '../widgets/md_text.dart';
 import '../widgets/msg_ref_chip.dart';
+import '../widgets/changed_files.dart';
 import '../widgets/tool_steps.dart';
 import '../widgets/room_panel.dart';
 import '../widgets/message_actions.dart';
@@ -1714,6 +1715,8 @@ class _MessageRow extends StatelessWidget {
                       ),
                     ),
                   if (msg.steps.isNotEmpty) ToolSteps(steps: msg.steps),
+                  if (msg.changes != null)
+                    ChangedFilesView(summary: msg.changes!),
                   GestureDetector(
                     onLongPress: onLongPress,
                     child: Container(

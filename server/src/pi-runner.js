@@ -45,6 +45,7 @@ import { buildAppendSystemPrompt } from './system-prompt.js';
 import { createSessionBuilder } from './session-factory.js';
 import { createBuildInput } from './prompt-input.js';
 import { collectNewImages, snapshotImages } from './image-watch.js';
+import { snapshotWorkspace, diffSnapshots, summarizeChanges } from './change-watch.js';
 import {
   composeGroupPrompt,
   departmentOf,
@@ -1191,6 +1192,18 @@ export class PiRunner {
     }
     // bot 自己画图：记下开跑前的快照，跑完把新出现的图自动带上
     const beforeImages = config.autoAttachImages ? snapshotImages(config.workspace) : null;
+    // 这一轮改了哪些文件：跑之前拍一张，跑完比一次
+    const watchChanges = process.env.PI_BOT_WATCH_CHANGES !== '0';
+    const beforeFiles = watchChanges ? snapshotWorkspace(config.workspace) : null;
+    const changes = () => {
+      if (!beforeFiles) return null;
+      try {
+        const diff = diffSnapshots(beforeFiles, snapshotWorkspace(config.workspace));
+        return diff.total ? summarizeChanges(diff) : null;
+      } catch {
+        return null;
+      }
+    };
 
     let timeoutHandle = null;
     try {
@@ -1320,6 +1333,7 @@ export class PiRunner {
       if (!finalText) finalText = '（在群里动手步数到上限，先收住）';
       if (emptyRecovered) finalText = `${finalText}\n\n_（原模型首次没出内容，已自动重试）_`;
 
+      const changed = changes();
       const msg = store.updateMessage(
         roomId,
         botMsg.id,
@@ -1331,6 +1345,7 @@ export class PiRunner {
           steps,
           usage,
           attachments: produced,
+          meta: { ...(botMsg.meta ?? {}), ...(changed ? { changed } : {}) },
         },
         { silent: true },
       );
@@ -1354,10 +1369,18 @@ export class PiRunner {
         bus.emit('event', { t: 'msg.done', msg });
         return { ok: true, text: partial, ms: Date.now() - started, messageId: botMsg.id };
       }
+      const changedOnce = changes();
       const msg = store.updateMessage(
         roomId,
         botMsg.id,
-        { text: partial, status: 'error', error: message, steps, usage },
+        {
+          text: partial,
+          status: 'error',
+          error: message,
+          steps,
+          usage,
+          meta: { ...(botMsg.meta ?? {}), ...(changedOnce ? { changed: changedOnce } : {}) },
+        },
         { silent: true },
       );
       bus.emit('event', { t: 'msg.error', roomId, msgId: botMsg.id, error: message, msg });
