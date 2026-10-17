@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'app_state.dart';
+import 'models.dart';
 import 'frame_log.dart';
 import 'resizing.dart';
 import 'widgets/avatar_life.dart';
@@ -167,9 +168,20 @@ class _Root extends StatelessWidget {
     if (!state.ready) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
-    // 桌面端是宿主：永远不显示手机那套配对界面，连不上就显示「怎么起服务端」
-    if (!state.paired)
-      return isHostPlatform ? const HostConnectScreen() : const PairScreen();
+    // 桌面端是宿主：永远不显示手机那套配对界面。
+    //
+    // ★ "本机服务端" 这条路要有三个状态，以前只有两个：
+    //   以前只要 localMode 就当已连上（paired 为 true）→ 直接进主界面 →
+    //   服务端根本没起时用户看到的是骨架屏 + "离线 · 自动重连中"，
+    //   永远等不到东西。现在：起服务端期间 / 一个房间都还没拿到时，
+    //   先给"正在启动 / 为什么起不来"那一页（它会自己重试，也会把服务端拉起来）。
+    if (isHostPlatform) {
+      final stillBooting = state.serverStarting ||
+          !state.paired ||
+          (state.localMode && state.link != LinkState.online && state.rooms.isEmpty);
+      if (stillBooting) return const HostConnectScreen();
+    }
+    if (!state.paired) return const PairScreen();
 
     if (_devOpen.isNotEmpty) {
       final match = state.rooms.where(
