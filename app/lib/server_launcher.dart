@@ -50,13 +50,29 @@ List<String> get serverLogTail => List<String>.unmodifiable(_logLines);
 String? _entryPath;
 String? _nodePath;
 String? _nodeVersion;
-final Map<String, Object> _checked = <String, Object>{};
+
+/// 这台机器上的**真实位置**（界面上的提示要用它们）。
+/// 以前界面上写的是 `cd server` —— 用户把包解到哪个目录都可能，照着敲对不上。
+String? get resolvedServerDir {
+  final entry = _entryPath;
+  if (entry == null) return null;
+  return File(entry).parent.parent.path;
+}
+
+String? get resolvedNodePath => _nodePath;
+
+String get serverLogPath => _logFile().path;
 
 /// 真起来了吗（GET /health）
-Future<bool> serverAlive(String baseUrl, {Duration timeout = const Duration(seconds: 2)}) async {
+Future<bool> serverAlive(
+  String baseUrl, {
+  Duration timeout = const Duration(seconds: 2),
+}) async {
   final client = HttpClient()..connectionTimeout = timeout;
   try {
-    final req = await client.getUrl(Uri.parse('$baseUrl/health')).timeout(timeout);
+    final req = await client
+        .getUrl(Uri.parse('$baseUrl/health'))
+        .timeout(timeout);
     final res = await req.close().timeout(timeout);
     await res.drain<void>();
     return res.statusCode == 200;
@@ -68,7 +84,11 @@ Future<bool> serverAlive(String baseUrl, {Duration timeout = const Duration(seco
 }
 
 /// 端口上有没有人在听（用来区分"服务端没起来"和"端口被别的程序占着"）
-Future<bool> portOpen(String host, int port, {Duration timeout = const Duration(milliseconds: 600)}) async {
+Future<bool> portOpen(
+  String host,
+  int port, {
+  Duration timeout = const Duration(milliseconds: 600),
+}) async {
   try {
     final socket = await Socket.connect(host, port, timeout: timeout);
     socket.destroy();
@@ -117,7 +137,8 @@ String? _findEntry(String exeDir) {
 Future<String?> _findNode(String exeDir) async {
   final sep = Platform.pathSeparator;
   final explicit = Platform.environment['PI_BOT_NODE']?.trim();
-  if (explicit != null && explicit.isNotEmpty && File(explicit).existsSync()) return explicit;
+  if (explicit != null && explicit.isNotEmpty && File(explicit).existsSync())
+    return explicit;
 
   for (final name in ['node.exe', 'node']) {
     final beside = File('$exeDir$sep$name');
@@ -127,7 +148,8 @@ Future<String?> _findNode(String exeDir) async {
   }
 
   if (Platform.isWindows) {
-    final programFiles = Platform.environment['ProgramFiles'] ?? r'C:\Program Files';
+    final programFiles =
+        Platform.environment['ProgramFiles'] ?? r'C:\Program Files';
     final guess = '$programFiles\\nodejs\\node.exe';
     if (File(guess).existsSync()) return guess;
   }
@@ -165,23 +187,50 @@ bool _versionAtLeast(String version, int major) {
   return first >= major;
 }
 
-String? _findNpm(String nodePath) {
+/// 找 npm。
+///
+/// 三种情况都要兼容：
+///   · 普通安装：`<node>\npm.cmd`；
+///   · 发行包里只带了 node.exe（没有 npm.cmd）—— 但 npm 本体在
+///     `node_modules/npm/bin/npm-cli.js`，用 `node npm-cli.js` 一样能跑；
+///   · 都不在旁边的，去 PATH 上找。
+///
+/// 以前只查了第一种，于是打包后（只带 node.exe）永远"找不到 npm"，
+/// 界面就一直在"正在启动"和错误之间循环。
+List<String> _npmCommand(String nodePath) {
   final sep = Platform.pathSeparator;
   final dir = File(nodePath).parent.path;
+
   for (final name in ['npm.cmd', 'npm']) {
     final p = '$dir$sep$name';
-    if (File(p).existsSync()) return p;
+    if (File(p).existsSync()) return [p];
   }
-  return null;
+
+  // 只带了 node.exe 的包：用 node 跑 npm-cli.js
+  final cli = [
+    [dir, 'node_modules', 'npm', 'bin', 'npm-cli.js'].join(sep),
+    [dir, '..', 'node_modules', 'npm', 'bin', 'npm-cli.js'].join(sep),
+  ].firstWhere((p) => File(p).existsSync(), orElse: () => '');
+  if (cli.isNotEmpty) return [nodePath, File(cli).absolute.path];
+
+  return const [];
 }
 
+/// 依赖只装一次：并发/重试的多次调用都等同一个 Future，
+/// 否则启动失败重试时会同时跑好几个 npm install（把机器拖死）。
+Future<String?>? _depsFuture;
+
 // ---------------------------------------------------------------- 日志
+
+/// 本次尝试中服务端进程是不是启动后自己退出了（用来把错误说清楚）
+bool _diedDuringStart = false;
 
 File _logFile() {
   return File('${_stateDir().path}${Platform.pathSeparator}server.log');
 }
 
 /// 日志太大就滚一份（不然跑几个月能到几百兆）
+int _logFrom = 0;
 void _rotateIfHuge(File file) {
   try {
     if (!file.existsSync()) return;
@@ -192,13 +241,33 @@ void _rotateIfHuge(File file) {
   } catch (_) {}
 }
 
-/// 读日志尾部（我们不再从管道拿输出，改成轮询这个文件）
+/// 每次 App 启动先清空日志（上一轮留到 `server.log.prev`）。
+///
+/// 为什么：日志是共用的一个文件，如果不清，界面会拿上一次运行的输出当成
+/// 这一次的“启动日志”贴出来（用户看到的是完全无关的旧内容）。
+void resetServerLogForNewRun() {
+  final file = _logFile();
+  try {
+    if (file.existsSync() && file.lengthSync() > 0) {
+      final prev = File('${file.path}.prev');
+      if (prev.existsSync()) prev.deleteSync();
+      file.renameSync(prev.path);
+    }
+  } catch (_) {}
+  _logLines.clear();
+}
+
+/// 读日志尾部（我们不再从管道拿输出，改成轮询这个文件）。
+///
+/// 只看**本次尝试**写入的部分（`_logFrom` 是拉起前记下的偏移）：
+/// 不然上一次启动留下的"进程退出"会被当成这一次的，白白报错。
 void _syncLogFromFile(File file) {
   try {
     if (!file.existsSync()) return;
     final length = file.lengthSync();
-    if (length == 0) return;
-    final start = length > 8192 ? length - 8192 : 0;
+    if (length <= _logFrom) return;
+    final windowStart = length > 8192 ? length - 8192 : 0;
+    final start = _logFrom > windowStart ? _logFrom : windowStart;
     final raf = file.openSync();
     try {
       raf.setPositionSync(start);
@@ -228,35 +297,49 @@ void _note(String line) {
 // ---------------------------------------------------------------- 启动
 
 /// 确保 `server/node_modules` 在。第一次启动会慢一次（npm install），之后秒过。
-Future<String?> _ensureDependencies(String nodePath, String serverDir, void Function()? onProgress) async {
+Future<String?> _ensureDependencies(
+  String nodePath,
+  String serverDir,
+  void Function()? onProgress,
+) {
+  return _depsFuture ??= _installDependencies(nodePath, serverDir, onProgress);
+}
+
+Future<String?> _installDependencies(
+  String nodePath,
+  String serverDir,
+  void Function()? onProgress,
+) async {
   final sep = Platform.pathSeparator;
   if (Directory('$serverDir${sep}node_modules').existsSync()) return null;
-  if (_checked['deps'] == true) return null;
 
-  final npm = _findNpm(nodePath);
-  if (npm == null) {
-    return '服务端缺依赖（node_modules 不存在），也没找到 npm。'
-        '把 node 重装一遍（要带 npm），或者在 $serverDir 里手动跑 npm install。';
+  final npm = _npmCommand(nodePath);
+  if (npm.isEmpty) {
+    return '服务端缺依赖（$serverDir${sep}node_modules 不存在），也没找到 npm。\n'
+        '· 装上带 npm 的 Node 22+（npm.cmd 就会自己出现）；\n'
+        '· 或者在下面这个目录里手动跑一次 npm install：\n  $serverDir';
   }
 
   _note('第一次启动：正在安装服务端依赖（npm install，可能要一两分钟）…');
+  _note('  ${npm.join(' ')}');
   onProgress?.call();
   try {
     final r = await Process.run(
-      npm,
-      ['install', '--omit=dev', '--no-audit', '--no-fund'],
+      npm.first,
+      [...npm.skip(1), 'install', '--omit=dev', '--no-audit', '--no-fund'],
       workingDirectory: serverDir,
-      runInShell: Platform.isWindows,
+      runInShell: Platform.isWindows && npm.length == 1,
     );
     if (r.exitCode != 0) {
+      _depsFuture = null; // 失败允许下次重试
       final out = '${r.stderr}${r.stdout}'.trim();
       return '安装服务端依赖失败（npm install 退出码 ${r.exitCode}）。\n'
           '${out.length > 600 ? out.substring(out.length - 600) : out}';
     }
     _note('依赖装好了。');
-    _checked['deps'] = true;
     return null;
   } catch (err) {
+    _depsFuture = null;
     return '安装服务端依赖失败：$err';
   }
 }
@@ -278,13 +361,17 @@ Future<Process> _spawnRedirected(
   String serverDir,
   File logFile,
 ) async {
-  final supervisor = File('${_stateDir().path}${Platform.pathSeparator}spawn-server.mjs');
-  supervisor.writeAsStringSync(_supervisorSource, flush: true);
-  return Process.start(
-    nodePath,
-    [supervisor.path, nodePath, entryPath, serverDir, logFile.path],
-    workingDirectory: serverDir,
+  final supervisor = File(
+    '${_stateDir().path}${Platform.pathSeparator}spawn-server.mjs',
   );
+  supervisor.writeAsStringSync(_supervisorSource, flush: true);
+  return Process.start(nodePath, [
+    supervisor.path,
+    nodePath,
+    entryPath,
+    serverDir,
+    logFile.path,
+  ], workingDirectory: serverDir);
 }
 
 /// 只活几十毫秒的启动器：spawn 真服务端（stdio 接到日志文件）后立刻退出
@@ -311,7 +398,9 @@ Directory _stateDir() {
   final base = Platform.environment['LOCALAPPDATA'];
   final dir = (base != null && base.isNotEmpty)
       ? Directory('$base${Platform.pathSeparator}pi-bot')
-      : Directory('${Directory.systemTemp.path}${Platform.pathSeparator}pi-bot');
+      : Directory(
+          '${Directory.systemTemp.path}${Platform.pathSeparator}pi-bot',
+        );
   try {
     dir.createSync(recursive: true);
   } catch (_) {}
@@ -338,14 +427,22 @@ Future<ServerLaunchResult> ensureLocalServer({
       }
       if (!_spawning) break;
     }
-    return const ServerLaunchResult(ok: false, alreadyRunning: false, error: '上一次启动还在进行中');
+    return const ServerLaunchResult(
+      ok: false,
+      alreadyRunning: false,
+      error: '上一次启动还在进行中',
+    );
   }
 
   _spawning = true;
   try {
     // 进程还在跑但端口还没通（正在初始化 / 装依赖）→ 别重复拉
     if (_serverProcess != null) {
-      if (await _waitHealthy(baseUrl, waitFor: waitFor, onProgress: onProgress)) {
+      if (await _waitHealthy(
+        baseUrl,
+        waitFor: waitFor,
+        onProgress: onProgress,
+      )) {
         return const ServerLaunchResult(ok: true, alreadyRunning: false);
       }
       _serverProcess = null;
@@ -358,7 +455,8 @@ Future<ServerLaunchResult> ensureLocalServer({
       return ServerLaunchResult(
         ok: false,
         alreadyRunning: false,
-        error: '找不到服务端程序（server/src/index.js）。找过这些位置：\n  $tried\n'
+        error:
+            '找不到服务端程序（server/src/index.js）。找过这些位置：\n  $tried\n'
             '发行包应该把 server 目录放在 pi_bot.exe 旁边；也可以用环境变量 PI_BOT_SERVER 指过去。',
       );
     }
@@ -368,7 +466,8 @@ Future<ServerLaunchResult> ensureLocalServer({
       return const ServerLaunchResult(
         ok: false,
         alreadyRunning: false,
-        error: '找不到 node —— 服务端要用它跑。\n'
+        error:
+            '找不到 node —— 服务端要用它跑。\n'
             '· 装一个 Node 22 或更新：https://nodejs.org\n'
             '· 或者把 node.exe 放到 pi_bot.exe 旁边\n'
             '· 或者用环境变量 PI_BOT_NODE 指定 node.exe 的路径',
@@ -392,27 +491,55 @@ Future<ServerLaunchResult> ensureLocalServer({
     }
 
     final serverDir = File(_entryPath!).parent.parent.path;
-    final depsProblem = await _ensureDependencies(_nodePath!, serverDir, onProgress);
+    final depsProblem = await _ensureDependencies(
+      _nodePath!,
+      serverDir,
+      onProgress,
+    );
     if (depsProblem != null) {
-      return ServerLaunchResult(ok: false, alreadyRunning: false, error: depsProblem);
+      return ServerLaunchResult(
+        ok: false,
+        alreadyRunning: false,
+        error: depsProblem,
+      );
     }
 
     final logFile = _logFile();
     _rotateIfHuge(logFile);
+    _diedDuringStart = false;
+    _logFrom = logFile.existsSync() ? logFile.lengthSync() : 0;
+    _logLines.clear();
     _note('启动服务端：$_nodePath $_entryPath（node v$_nodeVersion）');
+    _note('日志文件：${logFile.path}（上一轮的留在 ${logFile.path}.prev）');
 
-    final proc = await _spawnRedirected(_nodePath!, _entryPath!, serverDir, logFile);
+    final proc = await _spawnRedirected(
+      _nodePath!,
+      _entryPath!,
+      serverDir,
+      logFile,
+    );
     _serverProcess = proc;
     // 启动器自己的输出很短（就一行 pid），读干净就好
-    const Utf8Decoder().bind(proc.stdout).listen((s) => _note(s.trim()), onError: (_) {});
-    const Utf8Decoder().bind(proc.stderr).listen((s) => _note(s.trim()), onError: (_) {});
-    unawaited(proc.exitCode.then((code) {
-      if (code != 0) _note('启动器退出，code=$code（日志：${logFile.path}）');
-      if (identical(_serverProcess, proc)) _serverProcess = null;
-    }));
+    const Utf8Decoder()
+        .bind(proc.stdout)
+        .listen((s) => _note(s.trim()), onError: (_) {});
+    const Utf8Decoder()
+        .bind(proc.stderr)
+        .listen((s) => _note(s.trim()), onError: (_) {});
+    unawaited(
+      proc.exitCode.then((code) {
+        if (code != 0) _note('启动器退出，code=$code（日志：${logFile.path}）');
+        if (identical(_serverProcess, proc)) _serverProcess = null;
+      }),
+    );
     onProgress?.call();
 
-    if (await _waitHealthy(baseUrl, waitFor: waitFor, onProgress: onProgress, logFile: logFile)) {
+    if (await _waitHealthy(
+      baseUrl,
+      waitFor: waitFor,
+      onProgress: onProgress,
+      logFile: logFile,
+    )) {
       return const ServerLaunchResult(ok: true, alreadyRunning: false);
     }
 
@@ -422,19 +549,29 @@ Future<ServerLaunchResult> ensureLocalServer({
       return ServerLaunchResult(
         ok: false,
         alreadyRunning: false,
-        error: '端口 ${uri.port} 被别的程序占着（连得上，但它不是 pi-bot）。'
+        error:
+            '端口 ${uri.port} 被别的程序占着（连得上，但它不是 pi-bot）。'
             '关掉那个程序，或者用 PI_BOT_PORT 换个端口。',
       );
     }
 
-    final tail = _logLines.isEmpty ? '' : '\n日志尾部：\n${_logLines.take(12).join('\n')}';
+    final tail = _logLines.isEmpty
+        ? ''
+        : '\n日志尾部：\n${_logLines.take(12).join('\n')}';
+    final why = _diedDuringStart
+        ? '服务端启动后马上退出了（原因见下面的日志尾部）。'
+        : '服务端没能在 ${waitFor.inSeconds}s 内应答。';
     return ServerLaunchResult(
       ok: false,
       alreadyRunning: false,
-      error: '服务端没能在 ${waitFor.inSeconds}s 内应答。$tail',
+      error: '$why$tail',
     );
   } catch (err) {
-    return ServerLaunchResult(ok: false, alreadyRunning: false, error: '启动服务端失败：$err');
+    return ServerLaunchResult(
+      ok: false,
+      alreadyRunning: false,
+      error: '启动服务端失败：$err',
+    );
   } finally {
     _spawning = false;
   }
@@ -449,8 +586,17 @@ Future<bool> _waitHealthy(
   final deadline = DateTime.now().add(waitFor);
   var ticks = 0;
   while (DateTime.now().isBefore(deadline)) {
-    if (await serverAlive(baseUrl, timeout: const Duration(milliseconds: 800))) return true;
-    if (logFile != null) _syncLogFromFile(logFile);
+    if (await serverAlive(baseUrl, timeout: const Duration(milliseconds: 800)))
+      return true;
+    if (logFile != null) {
+      _syncLogFromFile(logFile);
+      // ★ 进程已经退出（日志里有退出行 / 未捕获异常）→ 立刻把原因报上去，
+      //   不要干等到超时。这是把"报错反复跳 30 秒"压成"1 秒内报一次"的关键。
+      if (_logLines.any((l) => l.contains('服务端进程退出') || l.contains('未捕获异常'))) {
+        _diedDuringStart = true;
+        return false;
+      }
+    }
     if (ticks % 2 == 0) onProgress?.call();
     ticks++;
     await Future<void>.delayed(const Duration(milliseconds: 300));

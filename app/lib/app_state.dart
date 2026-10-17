@@ -56,7 +56,10 @@ class AppState extends ChangeNotifier {
 
   /// 部门规矩（危险动作 / 交付要附证据）。
   /// 服务端一直在收，界面以前没有入口 —— 用户只能看着 bot 随便跑命令。
-  Map<String, dynamic> policy = const {'dangerous': 'allow', 'requireProof': false};
+  Map<String, dynamic> policy = const {
+    'dangerous': 'allow',
+    'requireProof': false,
+  };
 
   /// 用户自己叫什么。
   /// bot 的系统提示里会用这个名字称呼你（服务端拼进去的），
@@ -116,6 +119,13 @@ class AppState extends ChangeNotifier {
   DateTime _lastSpawnAt = DateTime.fromMillisecondsSinceEpoch(0);
   int _spawnFails = 0;
 
+  /// 连续失败太多次就停下来，等人点按钮 —— 否则"启动→失败→再启动"
+  /// 会无休止地循环（用户看到的就是报错一直在跳）。
+  bool serverRetryPaused = false;
+
+  /// 启动尝试次数（界面上显示"第 N 次"，免得看起来像卡住了）
+  int serverAttempts = 0;
+
   bool get paired =>
       serverUrl != null && (localMode || (token ?? '').isNotEmpty);
 
@@ -150,6 +160,7 @@ class AppState extends ChangeNotifier {
       //
       //   以前这里只做了一半 —— 直接连 127.0.0.1:8787 当作"服务端就在那儿"，
       //   但没人去起它。双击 exe 后看到的是"离线 · 自动重连中"，永远连不上。
+      resetServerLogForNewRun();
       await bootLocalServer();
       _startServerWatchdog();
     }
@@ -159,13 +170,20 @@ class AppState extends ChangeNotifier {
   /// 桌面端启动：确保本机服务端在跑（没有就拉起来），然后连它。
   ///
   /// 幂等：端口上已经有人在听就只是连上去（第二次打开 App 不会再拉一个进程）。
-  Future<void> bootLocalServer() async {
+  Future<void> bootLocalServer({bool manual = false}) async {
     if (!isHostPlatform) return;
     if (serverStarting) return;
+    if (manual) {
+      // 手动点"重新启动"：重置失败计数，再给一轮机会
+      _spawnFails = 0;
+      serverRetryPaused = false;
+    }
+    serverAttempts++;
     _lastSpawnAt = DateTime.now();
     serverStarting = true;
     serverProblem = null;
     _notify();
+    var ok = false;
     try {
       final result = await ensureLocalServer(
         baseUrl: localServerUrl,
@@ -178,30 +196,51 @@ class AppState extends ChangeNotifier {
           _notify();
         },
       );
+      ok = result.ok;
       serverProblem = result.ok ? null : result.error;
     } finally {
       serverStarting = false;
       serverLog = serverLogTail;
       _notify();
     }
+
+    // ★ 失败计数就在这里算 —— 不管是谁发起的重试（界面定时器 / 后台巡检 / 手动点），
+    //   都会经过这一个入口。以前计数只写在后台上，界面定时器不断发起新尝试，
+    //   计数永远追不上，于是"同一屏错误反复跳"。
+    if (ok) {
+      _spawnFails = 0;
+      serverRetryPaused = false;
+    } else {
+      _spawnFails++;
+      if (_spawnFails >= 4 && !serverRetryPaused) {
+        serverRetryPaused = true;
+        _notify();
+      }
+    }
+
     await connectLocal();
   }
 
-  /// 每 4s 看一次：本机服务端不在就拉回来（带退避，别把机器拖死）。
+  /// 每 4s 看一次：本机服务端不在就拉回来（带退避，连续失败 4 次就停手）。
   void _startServerWatchdog() {
     _serverWatch?.cancel();
     _lastSpawnAt = DateTime.now();
     _serverWatch = Timer.periodic(const Duration(seconds: 4), (_) async {
       if (_disposed || !isHostPlatform || !localMode) return;
       if (link == LinkState.online || serverStarting) {
-        if (link == LinkState.online) _spawnFails = 0;
+        if (link == LinkState.online) {
+          _spawnFails = 0;
+          serverRetryPaused = false;
+        }
         return;
       }
+      if (serverRetryPaused) return;
       // _lastSpawnAt 已经在 bootLocalServer 里刷新过，这里只判断退避
-      final backoff = Duration(seconds: const [0, 4, 8, 15, 30][_spawnFails.clamp(0, 4)]);
+      final backoff = Duration(
+        seconds: const [0, 4, 8, 15, 30][_spawnFails.clamp(0, 4)],
+      );
       if (DateTime.now().difference(_lastSpawnAt) < backoff) return;
       await bootLocalServer();
-      if (link != LinkState.online) _spawnFails++;
     });
   }
 
@@ -292,7 +331,8 @@ class AppState extends ChangeNotifier {
       // 用户自己叫什么（bot 用它称呼你）。漏了这句左上角就会退回显示服务端地址。
       userName = ((res['user'] as Map?)?['name'] as String?)?.trim() ?? '';
       policy =
-          ((res['policy'] as Map?) ?? const {'dangerous': 'allow', 'requireProof': false})
+          ((res['policy'] as Map?) ??
+                  const {'dangerous': 'allow', 'requireProof': false})
               .cast<String, dynamic>();
       groupLimits = ((res['groupLimits'] as Map?) ?? const {}).map(
         (k, v) => MapEntry('$k', (v as num?)?.toInt() ?? 0),
@@ -885,8 +925,7 @@ class AppState extends ChangeNotifier {
         userName = ((ev['user'] as Map?)?['name'] as String?)?.trim() ?? '';
         break;
       case 'policy.updated':
-        policy =
-            ((ev['policy'] as Map?) ?? policy).cast<String, dynamic>();
+        policy = ((ev['policy'] as Map?) ?? policy).cast<String, dynamic>();
         _notify();
         break;
 
