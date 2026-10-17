@@ -130,6 +130,44 @@ class Api {
     return (decoded['attachment'] as Map).cast<String, dynamic>();
   }
 
+  /// 分片上传：大文件走这条（单片 4MB，整体上限由服务端定）
+  Future<Map<String, dynamic>> uploadChunked(
+    List<int> bytes,
+    String name, {
+    void Function(int sent, int total)? onProgress,
+  }) async {
+    final init = await post('/api/uploads/init', {
+      'name': name,
+      'size': bytes.length,
+    });
+    final id = init['uploadId'] as String?;
+    if (id == null) throw StateError('服务端没有返回 uploadId');
+    final chunk = (init['chunkSize'] as num?)?.toInt() ?? 4 * 1024 * 1024;
+
+    for (var offset = 0; offset < bytes.length; offset += chunk) {
+      final end = offset + chunk > bytes.length ? bytes.length : offset + chunk;
+      final res = await http
+          .post(
+            _uri('/api/uploads/$id/chunk', {'offset': '$offset'}),
+            headers: {
+              if (token != null && token!.isNotEmpty)
+                'authorization': 'Bearer $token',
+              'content-type': 'application/octet-stream',
+            },
+            body: bytes.sublist(offset, end),
+          )
+          .timeout(const Duration(seconds: 120));
+      final decoded = await _decode(res);
+      if (decoded['error'] != null) {
+        throw StateError('${decoded['error']}');
+      }
+      onProgress?.call(end, bytes.length);
+    }
+
+    final done = await post('/api/uploads/$id/complete', const {});
+    return (done['attachment'] as Map).cast<String, dynamic>();
+  }
+
   /// 附件的可访问 URL（token 放 query，方便 <img> 直接用）
   String fileUrl(String id) =>
       '$baseUrl/api/files/$id?token=${Uri.encodeQueryComponent(token ?? '')}';

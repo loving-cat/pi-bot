@@ -214,6 +214,8 @@ flutter analyze
 
 ## 环境变量
 
+模块职责见 [`docs/MODULE-MAP.md`](docs/MODULE-MAP.md)（找东西先看那张表）。
+
 见 `server/.env.example`。常用：
 
 | 变量 | 默认 | 说明 |
