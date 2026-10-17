@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
 import '../resizing.dart';
+import 'app_logo.dart';
 
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:screen_retriever/screen_retriever.dart';
@@ -40,7 +41,12 @@ class _WindowTitleBarState extends State<WindowTitleBar> {
       height: widget.height,
       child: Row(
         children: [
-          // 左边整块是拖拽区（双击 = 最大化 / 还原），和 Windows 原生一样
+          // 左边先放一枚小图标 —— 窗口没有系统标题栏，这是唯一的"品牌位置"
+          const Padding(
+            padding: EdgeInsets.only(left: 10, right: 2),
+            child: AppLogo(size: 18, radius: 5, glow: false),
+          ),
+          // 剩下的整块是拖拽区（双击 = 最大化 / 还原），和 Windows 原生一样
           Expanded(
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
