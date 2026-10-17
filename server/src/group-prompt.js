@@ -74,7 +74,7 @@ export function composeGroupPrompt(
   room,
   bot,
   fresh,
-  { isLead = false, reason = '', members = [], leadId = null, order = null } = {},
+  { isLead = false, reason = '', members = [], leadId = null, order = null, closing = false } = {},
 ) {
   const lead = members.find((m) => m.id === leadId) ?? null;
   const peers = members.filter((m) => m.id !== bot.id);
@@ -112,7 +112,17 @@ export function composeGroupPrompt(
   }
 
   const rules = isLead
-    ? [
+    ? closing
+      ? [
+          `你是「${room.name}」的**部门老大**，现在做**收尾**。`,
+          '',
+          '所有人都交完活了，你只需要给用户一个**能直接读的结论**：',
+          '1. 先一句总结论（干成了什么 / 还剩什么没成）。',
+          '2. 再列「下一步建议」，按优先级，每条一行。',
+          '3. 不要复述成员原文，不要客套，不要再派活，不要再 @ 任何人。',
+          '4. 现在就是最后一条消息了，用户看完这条就该知道结果。',
+        ]
+      : [
         `你是「${room.name}」的**部门老大**。这个部门收到的活，由你先接。`,
         '',
         '你的做法：',
@@ -139,7 +149,9 @@ export function composeGroupPrompt(
 
   parts.push(
     '',
-    `【现在轮到你：${bot.emoji ?? ''}${bot.name}】${reason ? `（${reason}）` : ''}`,
+    closing
+      ? `【现在轮到你收尾：${bot.emoji ?? ''}${bot.name}】${reason ? `（${reason}）` : ''}`
+      : `【现在轮到你：${bot.emoji ?? ''}${bot.name}】${reason ? `（${reason}）` : ''}`,
     ...rules,
   );
   return parts.join('\n');

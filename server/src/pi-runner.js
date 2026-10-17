@@ -31,7 +31,7 @@ import { attachmentBlock } from './extract.js';
 import { inboxPath, metaFor, readForModel, saveFromPath } from './attachments.js';
 import { parseMentions } from './mentions.js';
 import { log, pickEscalationHost, isSuperiorCall } from './util.js';
-import { planItem, shouldStopRound, leftBehind } from './group-round.js';
+import { planItem, shouldStopRound, leftBehind, planClosing } from './group-round.js';
 import {
   applyCompactionBudget,
   readContext,
@@ -871,6 +871,58 @@ export class PiRunner {
     }
     // 收尾：还在跑的人别被丢下（它们的 @ 已经在上面补进队列了）
     await Promise.allSettled(pending);
+
+    // 收尾轮：老大说完之后还有人交作业 → 把老大叫回来统一收口。
+    //
+    // 为什么要有这一轮：同一波成员是并发跑完的，"谁的回复落地得晚"纯看模型速度，
+    // 于是老大的结论经常夹在中间，后面还挂着几份作业；预算一用完更是没人收口。
+    // 这里不看预算、不看 maxRuns，只看"老大是不是最后说话的那个人"。
+    if (!this.aborting.has(roomId)) {
+      const closing = planClosing({
+        messages: store.listMessages(roomId, { limit: 50 }),
+        leadId,
+        members: members.map((m) => m.id),
+      });
+      if (closing.needed && leadId) {
+        const lead = store.getBot(leadId);
+        if (lead) {
+          log(`【${room.name}】🗣 ${closing.why} → 叫 ${lead.name} 收尾`);
+          const prompt = composeGroupPrompt(
+            room,
+            lead,
+            transcriptFor(roomId, leadId),
+            {
+              isLead: true,
+              reason: '大家交完了，给用户一个最终结论',
+              members,
+              leadId,
+              closing: true,
+            },
+          );
+          try {
+            const res = await this.run(roomId, lead.id, prompt, { groupTurn: true });
+            if (res.ok && res.text.trim()) {
+              log(`【${room.name}】✅ 收尾完成（${res.text.trim().length} 字）`);
+              // 收尾轮是最后一条：它要是又 @ 了人，这一轮也不会再派了。
+              // 留痕，避免用户以为"它说了还有活要干，怎么没人动"。
+              const { found } = parseMentions(res.text, members, { selfId: lead.id });
+              if (found.length) {
+                log(
+                  `【${room.name}】⚠️ 收尾轮又 @ 了 ${found
+                    .map((id) => store.getBot(id)?.name ?? id)
+                    .join('、')}，但本轮已收口，这些活留到下次`,
+                );
+              }
+            } else {
+              log(`【${room.name}】收尾没跑成：${res.error ?? '空回复'}`);
+            }
+          } catch (err) {
+            log(`【${room.name}】收尾异常：`, err?.message || err);
+          }
+          store.setCursor(roomId, lead.id, lastMessageId(roomId));
+        }
+      }
+    }
 
     // 没被叫到的成员也算「看过这条了」，避免下次一次性倒一堆旧账
     const lastId = lastMessageId(roomId);

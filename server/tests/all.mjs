@@ -11,6 +11,7 @@ const TESTS = [
   'version',
   'pi-args',
   'console-inherit',
+  'closing-turn',
   'session-resources',
   'relay-frames',
   'unit',
