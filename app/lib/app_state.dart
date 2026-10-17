@@ -149,6 +149,9 @@ class AppState extends ChangeNotifier {
   bool get paired =>
       serverUrl != null && (localMode || (token ?? '').isNotEmpty);
 
+  /// 任务板（每条任务带状态/负责人/未读/置顶）
+  List<TaskItem> tasks = const [];
+
   /// 已配对的远程设备（设置页用）
   List<Map<String, dynamic>> devices = const [];
   Map<String, dynamic>? pairing;
@@ -340,6 +343,79 @@ class AppState extends ChangeNotifier {
     connect();
   }
 
+  /// 某个房间的任务（未完成在前、置顶优先）
+  List<TaskItem> tasksFor(String roomId) {
+    final list = tasks.where((t) => t.roomId == roomId).toList()
+      ..sort((a, b) {
+        if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;
+        if (a.isDone != b.isDone) return a.isDone ? 1 : -1;
+        return b.updatedAt.compareTo(a.updatedAt);
+      });
+    return list;
+  }
+
+  /// 未完成 + 未读的任务数（侧边栏小红点用）
+  int get openTaskCount =>
+      tasks.where((t) => !t.isDone || t.isUnread).length;
+
+  Future<void> refreshTasks() async {
+    final client = api;
+    if (client == null) return;
+    try {
+      final res = await client.get('/api/tasks');
+      tasks = ((res['tasks'] as List?) ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(TaskItem.fromJson)
+          .toList();
+      _notify();
+    } catch (err) {
+      lastError = '$err';
+      _notify();
+    }
+  }
+
+  Future<void> updateTask(String id, Map<String, dynamic> patch) async {
+    try {
+      final res = await api?.patch('/api/tasks/$id', patch);
+      final task = res?['task'];
+      if (task is Map) {
+        final parsed = TaskItem.fromJson(task.cast<String, dynamic>());
+        final idx = tasks.indexWhere((t) => t.id == parsed.id);
+        tasks = [...tasks];
+        if (idx >= 0) {
+          tasks[idx] = parsed;
+        } else {
+          tasks.add(parsed);
+        }
+        _notify();
+      }
+    } catch (err) {
+      lastError = '$err';
+      _notify();
+    }
+  }
+
+  Future<void> createTask({required String roomId, required String title}) async {
+    try {
+      await api?.post('/api/tasks', {'roomId': roomId, 'title': title});
+      await refreshTasks();
+    } catch (err) {
+      lastError = '$err';
+      _notify();
+    }
+  }
+
+  Future<void> deleteTask(String id) async {
+    try {
+      await api?.delete('/api/tasks/$id');
+      tasks = tasks.where((t) => t.id != id).toList();
+      _notify();
+    } catch (err) {
+      lastError = '$err';
+      _notify();
+    }
+  }
+
   Future<void> signOut() async {
     disconnect();
     await Native.stopService();
@@ -390,6 +466,10 @@ class AppState extends ChangeNotifier {
       groupLimits = ((res['groupLimits'] as Map?) ?? const {}).map(
         (k, v) => MapEntry('$k', (v as num?)?.toInt() ?? 0),
       );
+      tasks = ((res['tasks'] as List?) ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(TaskItem.fromJson)
+          .toList();
       final ctx = (res['context'] as Map?)?.cast<String, dynamic>() ?? const {};
       contexts
         ..clear()

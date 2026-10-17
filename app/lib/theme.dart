@@ -82,6 +82,10 @@ class PB {
   /// 这里把用到中文的小字抬到 12（= 15 个物理像素，整像素）——
   /// 只改"中英混排的那几行"，不动标签类的小字。
   static const fsTinyCjk = 12.0;
+
+  /// 图标包默认字体只有 **68 个字形**；不在这个集合里的图标会画成空白，
+  /// 而组件测试只看 IconData、发现不了。加新图标前先确认它在基础字体里
+  /// （可用图标：list / checkCircle2 / fileText / target / boxes / pin …）。
   /// 优先用装了的现代等宽，退回系统自带 —— 常见等宽字体的度量差异在噪声范围内，
   /// 挑顺眼的就行，不值得为它打包字体。
   static const monoFamily = 'JetBrains Mono';
