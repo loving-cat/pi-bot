@@ -4,7 +4,7 @@
  * 纯函数，不碰进程与网络。分三步：
  *   1. 归一化：去掉不可见字符，还原 shell 的引号与转义，得到命令真正会执行的形态；
  *   2. 解析：按 `&& || ; | &` 切段，每段取可执行体、参数与子命令；
- *   3. 判定：deny 规则优先 → 无法静态判定则拒绝（fail-closed）→ allow 清单。
+ *   3. 判定：deny 规则优先 → 无法静态判定则拒绝（判不了就拒绝）→ allow 清单。
  *
  * 归一化是必要的一步：`r''m -rf /`、`\rm -rf /`、`"rm" -rf /`、`$'\x72m' -rf /`
  * 在 shell 里都是同一个命令，只按原始字符串比较会被绕过。
@@ -297,7 +297,7 @@ export function normalizeRules(rules) {
 /**
  * 判定一条命令。
  *
- * 顺序：deny 命中 → 拒绝；命令无法静态判定且配置了 deny → 拒绝（fail-closed）；
+ * 顺序：deny 命中 → 拒绝；命令无法静态判定且配置了 deny → 拒绝（判不了就拒绝）；
  * 配置了 allow → 每一段都必须在 allow 里。
  *
  * @returns {{allowed:boolean, deniedBy:string|null, rule:string|null, reason:string|null, message:string|null}}

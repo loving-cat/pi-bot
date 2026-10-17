@@ -2,7 +2,7 @@
  * 命令级策略测试。
  *   node tests/shell-policy.mjs
  *
- * 覆盖归一化（引号/转义/不可见字符）、分段、规则校验、deny/allow 判定与 fail-closed。
+ * 覆盖归一化（引号/转义/不可见字符）、分段、规则校验、deny/allow 判定与"判不了就拒绝"。
  */
 import assert from 'node:assert/strict';
 
@@ -108,7 +108,7 @@ await test('deny：不相关的命令放行', () => {
   assert.equal(decideCommand('git status', { denyCommands: ['rm -rf *'] }).allowed, true);
 });
 
-await test('★ fail-closed：命令无法静态判定且配了 deny → 拒绝', () => {
+await test('★ 判不了就拒绝：命令无法静态判定且配了 deny → 拒绝', () => {
   const v = decideCommand('echo $(cat secret)', { denyCommands: ['rm -rf *'] });
   assert.equal(v.allowed, false);
   assert.equal(v.deniedBy, 'unparseable');
