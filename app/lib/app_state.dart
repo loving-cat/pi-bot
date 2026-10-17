@@ -13,6 +13,7 @@ import 'platform.dart';
 import 'server/launcher.dart';
 import 'server/options.dart';
 import 'text_utils.dart';
+import 'update_info.dart';
 
 /// 全局状态：连接、房间、消息、流式输出。
 /// 把新成员接到名单后面：去重、保持原有顺序。
@@ -36,11 +37,19 @@ class AppState extends ChangeNotifier {
   static const _kEntry = 'server_entry';
   static const _kNode = 'server_node';
   static const _kDevice = 'device_name';
+  // 用户点了"以后再说"的那个版本：同一个版本不再反复弹，出了更新的版本才再问
+  static const _kSkippedUpdate = 'skipped_update_version';
 
   String? serverUrl;
   String? token;
   String deviceName = '我的手机';
   Api? api;
+
+  /// 用户点过"以后再说"的版本号
+  String skippedUpdateVersion = '';
+
+  /// 最近一次检查更新的结果（null = 还没查过）
+  UpdateInfo? updateInfo;
 
   ServerInfo? serverInfo;
   List<Room> rooms = const [];
@@ -181,6 +190,7 @@ class AppState extends ChangeNotifier {
     serverPort = prefs.getInt(_kPort) ?? 8787;
     serverEntryPath = prefs.getString(_kEntry) ?? '';
     serverNodePath = prefs.getString(_kNode) ?? '';
+    skippedUpdateVersion = prefs.getString(_kSkippedUpdate) ?? '';
     if (paired) {
       api = Api(serverUrl!, token ?? '');
       unawaited(refresh());
@@ -192,6 +202,8 @@ class AppState extends ChangeNotifier {
       _startServerWatchdog();
     }
     _notify();
+    // 启动后顺手查一次更新：不 await、失败静默 —— 检查更新绝不该拖慢启动
+    if (paired) unawaited(checkUpdate());
   }
 
   /// 桌面端启动：确保本机服务端就绪后连接。
@@ -358,8 +370,7 @@ class AppState extends ChangeNotifier {
   }
 
   /// 未完成 + 未读的任务数（侧边栏小红点用）
-  int get openTaskCount =>
-      tasks.where((t) => !t.isDone || t.isUnread).length;
+  int get openTaskCount => tasks.where((t) => !t.isDone || t.isUnread).length;
 
   Future<void> refreshTasks() async {
     final client = api;
@@ -402,7 +413,10 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<void> createTask({required String roomId, required String title}) async {
+  Future<void> createTask({
+    required String roomId,
+    required String title,
+  }) async {
     try {
       await api?.post('/api/tasks', {'roomId': roomId, 'title': title});
       await refreshTasks();
@@ -424,7 +438,10 @@ class AppState extends ChangeNotifier {
   }
 
   /// 批准 / 拒绝一次危险动作（服务端会顺手让那个 bot 继续或记一条拒绝）
-  Future<void> decideApproval(String approvalId, {required bool approve}) async {
+  Future<void> decideApproval(
+    String approvalId, {
+    required bool approve,
+  }) async {
     try {
       await api?.post('/api/approvals/$approvalId', {'approve': approve});
     } catch (err) {
@@ -524,6 +541,37 @@ class AppState extends ChangeNotifier {
   }
 
   // ---------------------------------------------------------------- HTTP
+
+  /// 查一次有没有新版本。
+  ///
+  /// 失败不抛错也不打扰用户：检查更新是锦上添花，断网/服务端旧了都不该显示红字。
+  /// @param force 跳过服务端缓存（用户点"重新检查"时用）
+  Future<UpdateInfo?> checkUpdate({bool force = false}) async {
+    if (!paired || api == null) return null;
+    try {
+      final json = await api!.get(
+        '/api/update',
+        query: {'platform': UpdateInfo.platformParam, if (force) 'force': '1'},
+      );
+      final info = UpdateInfo.fromJson(json);
+      updateInfo = info;
+      _notify();
+      return info;
+    } catch (_) {
+      // 静默：检查更新失败不是错误
+      return null;
+    }
+  }
+
+  /// 记下"这个版本先不更新"，之后同一个版本不再弹（新版本出来还会问）
+  Future<void> skipUpdateVersion(String version) async {
+    skippedUpdateVersion = version;
+    _notify();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_kSkippedUpdate, version);
+    } catch (_) {}
+  }
 
   Future<void> refresh() async {
     final client = api;
