@@ -12,6 +12,8 @@ const TESTS = [
   'pi-args',
   'console-inherit',
   'closing-turn',
+  'update-check',
+  'update-checker',
   'session-resources',
   'relay-frames',
   'unit',

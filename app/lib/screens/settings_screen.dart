@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -15,6 +16,9 @@ import '../widgets/server_config_section.dart';
 import '../widgets/log_section.dart';
 
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+
+import '../app_state.dart';
+import '../widgets/update_prompt.dart';
 
 /// 设置页。
 ///
@@ -184,80 +188,80 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ),
                       ),
                       // 手机端（远程客户端）：说清楚"我连的是哪台"，再给一个重新扫码
-              if (!isHostPlatform) ...[
-                _Card(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        '已连接的服务端',
-                        style: TextStyle(
-                          fontSize: PB.fsXs,
-                          color: PB.textTertiary,
+                      if (!isHostPlatform) ...[
+                        _Card(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                '已连接的服务端',
+                                style: TextStyle(
+                                  fontSize: PB.fsXs,
+                                  color: PB.textTertiary,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      state.serverUrl ?? '（未知）',
+                                      style: const TextStyle(
+                                        fontFamily: PB.monoFamily,
+                                        fontFamilyFallback: PB.monoFallback,
+                                        fontSize: PB.fsSm,
+                                        color: PB.textPrimary,
+                                      ),
+                                    ),
+                                  ),
+                                  const Icon(
+                                    LucideIcons.smartphone,
+                                    size: 16,
+                                    color: PB.textQuaternary,
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              const Text(
+                                '这台手机上还是这台电脑的码 —— 换一台电脑就连它的二维码、'
+                                '或者手填它的地址。',
+                                style: TextStyle(
+                                  fontSize: PB.fsXxs,
+                                  color: PB.textQuaternary,
+                                  height: 1.6,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 6),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              state.serverUrl ?? '（未知）',
-                              style: const TextStyle(
-                                fontFamily: PB.monoFamily,
-                                fontFamilyFallback: PB.monoFallback,
-                                fontSize: PB.fsSm,
-                                color: PB.textPrimary,
+                        const SizedBox(height: 10),
+                        _Card(
+                          child: ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: const Icon(
+                              LucideIcons.qrCode,
+                              size: 20,
+                              color: PB.accent,
+                            ),
+                            title: const Text(
+                              '重新扫码配对',
+                              style: TextStyle(fontSize: PB.fsSm),
+                            ),
+                            subtitle: const Text(
+                              '换电脑、或者配对码失效了就点这里',
+                              style: TextStyle(
+                                fontSize: PB.fsXxs,
+                                color: PB.textQuaternary,
                               ),
                             ),
+                            onTap: () async {
+                              await state.signOut();
+                              if (context.mounted) Navigator.pop(context);
+                            },
                           ),
-                          const Icon(
-                            LucideIcons.smartphone,
-                            size: 16,
-                            color: PB.textQuaternary,
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      const Text(
-                        '这台手机上还是这台电脑的码 —— 换一台电脑就连它的二维码、'
-                        '或者手填它的地址。',
-                        style: TextStyle(
-                          fontSize: PB.fsXxs,
-                          color: PB.textQuaternary,
-                          height: 1.6,
                         ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 10),
-                _Card(
-                  child: ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(
-                      LucideIcons.qrCode,
-                      size: 20,
-                      color: PB.accent,
-                    ),
-                    title: const Text(
-                      '重新扫码配对',
-                      style: TextStyle(fontSize: PB.fsSm),
-                    ),
-                    subtitle: const Text(
-                      '换电脑、或者配对码失效了就点这里',
-                      style: TextStyle(
-                        fontSize: PB.fsXxs,
-                        color: PB.textQuaternary,
-                      ),
-                    ),
-                    onTap: () async {
-                      await state.signOut();
-                      if (context.mounted) Navigator.pop(context);
-                    },
-                  ),
-                ),
-              ],
-              const SizedBox(height: 14),
+                      ],
+                      const SizedBox(height: 14),
                       const _Hint(
                         '手机和电脑要在同一个 WiFi 下。\n'
                         '手机装 pi-bot App → 点「扫码配对」→ 扫上面这个码。',
@@ -420,6 +424,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     _InfoRow('数据目录', info?.dataDir ?? '-'),
                     _InfoRow('版本', info?.version ?? '-'),
                     _InfoRow('设备名', state.deviceName),
+                    const SizedBox(height: 6),
+                    _UpdateRow(state: state),
                   ],
                 ),
               ),
@@ -617,6 +623,99 @@ class _Hint extends StatelessWidget {
         color: PB.textQuaternary,
         height: 1.7,
       ),
+    );
+  }
+}
+
+/// 设置页里的"检查更新"一行。
+///
+/// 为什么手动入口有必要：启动时那次检查是静默的（失败不报错、点了"以后再说"就不再问），
+/// 用户想主动确认一下有没有新版本时，得有个地方点。
+class _UpdateRow extends StatefulWidget {
+  const _UpdateRow({required this.state});
+
+  final AppState state;
+
+  @override
+  State<_UpdateRow> createState() => _UpdateRowState();
+}
+
+class _UpdateRowState extends State<_UpdateRow> {
+  bool _checking = false;
+
+  Future<void> _check() async {
+    if (_checking) return;
+    setState(() => _checking = true);
+    final info = await widget.state.checkUpdate(force: true);
+    if (!mounted) return;
+    setState(() => _checking = false);
+
+    if (info == null) {
+      ScaffoldMessenger.maybeOf(context)
+          ?.showSnackBar(const SnackBar(content: Text('检查更新失败（服务端没连上或网络不通）')));
+      return;
+    }
+    if (!info.ok) {
+      ScaffoldMessenger.maybeOf(context)
+          ?.showSnackBar(SnackBar(content: Text(info.reason)));
+      return;
+    }
+    if (!info.update) {
+      ScaffoldMessenger.maybeOf(context)
+          ?.showSnackBar(SnackBar(content: Text('已经是最新版本（${info.current}）')));
+      return;
+    }
+    // 有新版本：走同一个提示流程，用户确认后下载
+    if (!mounted) return;
+    final choice = await showUpdateDialog(context, info);
+    if (!mounted) return;
+    if (choice == UpdateChoice.later) {
+      await widget.state.skipUpdateVersion(info.latest);
+      return;
+    }
+    if (choice == UpdateChoice.openPage && info.pageUrl.isNotEmpty) {
+      try {
+        await Process.run(Platform.isWindows ? 'explorer' : 'open', [
+          info.pageUrl,
+        ]);
+      } catch (_) {}
+      return;
+    }
+    if (choice == UpdateChoice.download) {
+      final result = await downloadUpdate(context, info);
+      if (!mounted) return;
+      if (result.ok) {
+        await showDownloadDoneDialog(context, path: result.path!, info: info);
+      } else if (result.error != null && result.error != '已取消') {
+        ScaffoldMessenger.maybeOf(context)
+            ?.showSnackBar(SnackBar(content: Text('下载失败：${result.error}')));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        TextButton.icon(
+          onPressed: _checking ? null : _check,
+          icon: _checking
+              ? const SizedBox(
+                  width: 12,
+                  height: 12,
+                  child: CircularProgressIndicator(strokeWidth: 1.6),
+                )
+              : const Icon(Icons.refresh, size: 15),
+          label: Text(_checking ? '检查中…' : '检查更新'),
+          style: TextButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+            minimumSize: Size.zero,
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            foregroundColor: PB.accent,
+            textStyle: const TextStyle(fontSize: PB.fsXs),
+          ),
+        ),
+      ],
     );
   }
 }
