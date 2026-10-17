@@ -1285,7 +1285,7 @@ class _AppearState extends State<_Appear> with SingleTickerProviderStateMixin {
 
 /// 「消息来自 X」—— 这条不是这个会话的人说的，是从别处转过来的。
 ///
-/// 用户要的（截图里 同类客户端 那种）：一行居中的小字 + 头像，**可点** ——
+/// 形态：一行居中的小字 + 头像，**可点** ——
 /// 点开是**只读**的窥视，看那个 bot 的私聊里到底说了什么，整条链路就看清了。
 /// 以前只有"已发送给 X"那种（bot 主动私信时才有），转发进来的没有标记。
 class _RelayedFrom extends StatefulWidget {
