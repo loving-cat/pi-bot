@@ -62,13 +62,9 @@ export class ModelHealth {
   }
 
   /**
-   * 缓存里新鲜的结果。
+   * 读取缓存结果；过期返回 null，并在后台排队重探。
    *
-   * ★ 过期不等于「挂了」。
-   *   以前这里过期就直接 return null，而菜单把「没有任何新鲜结论」当「全员不可用」——
-   *   服务连续跑过一天之后，模型菜单全变 ✗、招人/建部门被全部拒掉，
-   *   用户以为是模型坏了跑去改配置，其实只是缓存过期了。
-   *   现在：过期就排队后台重探（不阻塞调用方），并且不再拿它当死亡结论。
+   * 过期表示"暂无结论"，不等同于模型不可用。
    */
   get(slug) {
     const r = this.results[slug];
@@ -84,7 +80,7 @@ export class ModelHealth {
     return Object.values(this.results).some((r) => r && at - r.at <= this.ttlMs);
   }
 
-  /** 有过结论（可能是过期的）：以前能跑，先当能用看待，别把人拦在门外 */
+  /** 存在历史结论且结果为可用（可能已过期） */
   wasGood(slug) {
     return Boolean(this.results[slug]?.ok);
   }
@@ -104,10 +100,8 @@ export class ModelHealth {
   }
 
   /**
-   * 攒一批过期条目再重探。
-   *
-   * 菜单一渲染就会 get() 几十次，一人发一个探活请求会把上游打爆，
-   * 所以攒 800ms 合并成一次 runAll（它自己只跑「没有新鲜结果」的那些）。
+   * 合并批量重探：800ms 内收集的过期条目合并为一次 runAll，
+   * 避免一次界面渲染触发大量并发探活。
    */
   #queueRefresh(slug) {
     if (!slug || slug.includes('@')) return; // 档位组合由 runLevelMatrix 单独跑
@@ -125,11 +119,7 @@ export class ModelHealth {
   }
 
   /**
-   * 定时看一眼有没有过期的，有就补探。
-   *
-   * 为什么要定时而不能只靠「用到时才发现」：跑一天之后**第一个**问菜单的人
-   * 拿到的还是过期数据（虽然现在会当乐观处理，但结论还是不真）。
-   * 主动补探之后，用户看到的永远是新鲜结论。
+   * 定期检查并补探过期结果，保证查询前已有新鲜结论。
    */
   startAutoRefresh(intervalMs = 60 * 60 * 1000) {
     if (this.autoTimer) return;

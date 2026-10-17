@@ -107,20 +107,17 @@ export function createHttpServer({ runner, pairing }) {
           return send(res, 401, { error: '配对码不对或已过期，看服务端控制台最新那 6 位数字' });
         }
         const { token, device } = store.addDevice(body.deviceName);
-        // ★ 一个码只换一次 token。
-        //   以前换完不 rotate：同一个 6 位码在 10 分钟有效期内可以无限次换 token，
-        //   拿到一次码就等于永久接管（配合下面那条「码对谁可见」，这两处是同一个洞）。
+        // 配对码一次性：换到 token 后立即作废，避免同一码重复换发。
         pairing.rotate({ force: true });
         return send(res, 200, { token, device, serverName: config.serverName, workspace: config.workspace });
       }
 
       // ---------- 身份 ----------
-      // 只有两种人是主人：本机（回环，PC 端 App 就跑在这台机器上）、带合法 token 的已配对设备。
+      // 主人 = 本机回环请求（桌面端）或携带合法 token 的已配对设备。
       const device = authenticate(req, url);
 
-      // ---------- 网页版配对页（手机上打不开相机 App 时用）----------
-      // 页面本身公开（地址不是秘密），但**配对码只给主人看**：
-      // 码是「只能从服务端控制台看到」的凭证，挂到局域网上人人可取就等于没有配对。
+      // ---------- 网页版配对页 ----------
+      // 页面公开（地址不是秘密），配对码只返回给已鉴权的请求。
       if (pathname === '/pair' && req.method === 'GET') {
         const snap = config.staticToken ? null : pairing.snapshot({ withCode: Boolean(device) });
         const html = pairPage(snap);
@@ -440,10 +437,7 @@ export function serverInfo(runner) {
 }
 
 /**
- * 网页版配对页：给手机看地址（码只给主人看）。
- *
- * 以前这里把码直接印在页面上 —— 而页面是局域网公开的，于是「谁都能拿到码」；
- * 现在分成两种：本机/已登录 → 照旧显示码；别人打开 → 只显示地址 + 一句提示。
+ * 网页版配对页：展示地址；配对码仅对已鉴权的请求渲染。
  */
 function pairPage(snap) {
   const addresses = lanAddresses()
