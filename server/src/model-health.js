@@ -29,12 +29,18 @@ function textOf(message) {
 }
 
 export class ModelHealth {
-  constructor(runner) {
+  constructor(runner, { ttlMs = TTL_MS } = {}) {
     this.runner = runner;
+    /** 探活结果多久算过期（提出来是为了能测：不然要等 24 小时） */
+    this.ttlMs = ttlMs;
     /** @type {Record<string, {ok:boolean, ms:number, error:string|null, at:number}>} */
     this.results = {};
     this.running = false;
     this.progress = { done: 0, total: 0 };
+    /** 后台重探的防抖定时器 + 待探队列 */
+    this.refreshTimer = null;
+    this.refreshQueue = new Set();
+    this.autoTimer = null;
     this.load();
   }
 
@@ -55,12 +61,91 @@ export class ModelHealth {
     }
   }
 
-  /** 缓存里新鲜的结果 */
+  /**
+   * 缓存里新鲜的结果。
+   *
+   * ★ 过期不等于「挂了」。
+   *   以前这里过期就直接 return null，而菜单把「没有任何新鲜结论」当「全员不可用」——
+   *   服务连续跑过一天之后，模型菜单全变 ✗、招人/建部门被全部拒掉，
+   *   用户以为是模型坏了跑去改配置，其实只是缓存过期了。
+   *   现在：过期就排队后台重探（不阻塞调用方），并且不再拿它当死亡结论。
+   */
   get(slug) {
     const r = this.results[slug];
     if (!r) return null;
-    if (Date.now() - r.at > TTL_MS) return null;
-    return r;
+    if (Date.now() - r.at <= this.ttlMs) return r;
+    if (!this.running) this.#queueRefresh(slug);
+    return null;
+  }
+
+  /** 全库有没有**任何**新鲜结论（用来区分「真全挂了」和「全都过期了」） */
+  hasFresh() {
+    const at = Date.now();
+    return Object.values(this.results).some((r) => r && at - r.at <= this.ttlMs);
+  }
+
+  /** 有过结论（可能是过期的）：以前能跑，先当能用看待，别把人拦在门外 */
+  wasGood(slug) {
+    return Boolean(this.results[slug]?.ok);
+  }
+
+  /** 这几个 slug 里有没有**新鲜**结论（不管好坏） */
+  hasFreshFor(slugs) {
+    const at = Date.now();
+    return slugs.some((s) => {
+      const r = this.results[s];
+      return Boolean(r) && at - r.at <= this.ttlMs;
+    });
+  }
+
+  anyExpired() {
+    const at = Date.now();
+    return Object.values(this.results).some((r) => r && at - r.at > this.ttlMs);
+  }
+
+  /**
+   * 攒一批过期条目再重探。
+   *
+   * 菜单一渲染就会 get() 几十次，一人发一个探活请求会把上游打爆，
+   * 所以攒 800ms 合并成一次 runAll（它自己只跑「没有新鲜结果」的那些）。
+   */
+  #queueRefresh(slug) {
+    if (!slug || slug.includes('@')) return; // 档位组合由 runLevelMatrix 单独跑
+    this.refreshQueue.add(slug);
+    if (this.refreshTimer) return;
+    this.refreshTimer = setTimeout(() => {
+      this.refreshTimer = null;
+      const count = this.refreshQueue.size;
+      this.refreshQueue.clear();
+      if (!count || this.running) return;
+      log(`模型探活：${count} 个结果过期，后台重探`);
+      this.runAll().catch((err) => log('⚠️  后台重探失败：', err?.message || err));
+    }, 800);
+    this.refreshTimer.unref?.();
+  }
+
+  /**
+   * 定时看一眼有没有过期的，有就补探。
+   *
+   * 为什么要定时而不能只靠「用到时才发现」：跑一天之后**第一个**问菜单的人
+   * 拿到的还是过期数据（虽然现在会当乐观处理，但结论还是不真）。
+   * 主动补探之后，用户看到的永远是新鲜结论。
+   */
+  startAutoRefresh(intervalMs = 60 * 60 * 1000) {
+    if (this.autoTimer) return;
+    this.autoTimer = setInterval(() => {
+      if (this.running || !this.anyExpired()) return;
+      log('模型探活：有结果过期了，自动补探');
+      this.runAll().catch((err) => log('⚠️  自动补探失败：', err?.message || err));
+    }, intervalMs);
+    this.autoTimer.unref?.();
+  }
+
+  stop() {
+    if (this.autoTimer) clearInterval(this.autoTimer);
+    if (this.refreshTimer) clearTimeout(this.refreshTimer);
+    this.autoTimer = null;
+    this.refreshTimer = null;
   }
 
   // ---------- 「模型 × 思考等级」组合探活 ----------
