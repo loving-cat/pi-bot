@@ -152,6 +152,9 @@ class AppState extends ChangeNotifier {
   /// 任务板（每条任务带状态/负责人/未读/置顶）
   List<TaskItem> tasks = const [];
 
+  /// 定时任务
+  List<Automation> automations = const [];
+
   /// 已配对的远程设备（设置页用）
   List<Map<String, dynamic>> devices = const [];
   Map<String, dynamic>? pairing;
@@ -367,6 +370,10 @@ class AppState extends ChangeNotifier {
           .whereType<Map<String, dynamic>>()
           .map(TaskItem.fromJson)
           .toList();
+      automations = ((res['automations'] as List?) ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(Automation.fromJson)
+          .toList();
       _notify();
     } catch (err) {
       lastError = '$err';
@@ -410,6 +417,77 @@ class AppState extends ChangeNotifier {
       await api?.delete('/api/tasks/$id');
       tasks = tasks.where((t) => t.id != id).toList();
       _notify();
+    } catch (err) {
+      lastError = '$err';
+      _notify();
+    }
+  }
+
+  // ---------------------------------------------------------------- 定时任务
+
+  List<Automation> automationsFor(String roomId) =>
+      automations.where((a) => a.roomId == roomId).toList();
+
+  Future<void> refreshAutomations() async {
+    try {
+      final res = await api?.get('/api/automations');
+      automations = ((res?['automations'] as List?) ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(Automation.fromJson)
+          .toList();
+      _notify();
+    } catch (err) {
+      lastError = '$err';
+      _notify();
+    }
+  }
+
+  Future<void> createAutomation({
+    required String roomId,
+    required String title,
+    required String prompt,
+    int? everyMinutes,
+    String? dailyAt,
+  }) async {
+    try {
+      await api?.post('/api/automations', {
+        'roomId': roomId,
+        'title': title,
+        'prompt': prompt,
+        if (everyMinutes != null) 'everyMinutes': everyMinutes,
+        if (dailyAt != null) 'dailyAt': dailyAt,
+      });
+      await refreshAutomations();
+    } catch (err) {
+      lastError = '$err';
+      _notify();
+    }
+  }
+
+  Future<void> updateAutomation(String id, Map<String, dynamic> patch) async {
+    try {
+      await api?.patch('/api/automations/$id', patch);
+      await refreshAutomations();
+    } catch (err) {
+      lastError = '$err';
+      _notify();
+    }
+  }
+
+  Future<void> deleteAutomation(String id) async {
+    try {
+      await api?.delete('/api/automations/$id');
+      automations = automations.where((a) => a.id != id).toList();
+      _notify();
+    } catch (err) {
+      lastError = '$err';
+      _notify();
+    }
+  }
+
+  Future<void> runAutomationNow(String id) async {
+    try {
+      await api?.post('/api/automations/$id/run', const {});
     } catch (err) {
       lastError = '$err';
       _notify();
@@ -575,7 +653,10 @@ class AppState extends ChangeNotifier {
     final client = api;
     if (client == null) return null;
     try {
-      final json = await client.upload(bytes, name);
+      // 超过 8MB 走分片：普通接口是整包读进内存的，大文件会被拒或把服务端拖慢
+      final json = bytes.length > 8 * 1024 * 1024
+          ? await client.uploadChunked(bytes, name)
+          : await client.upload(bytes, name);
       return Attachment.fromJson(json);
     } catch (err) {
       lastError = '上传失败：$err';

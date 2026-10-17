@@ -74,6 +74,50 @@ class ChangedFile {
   );
 }
 
+/// 一条定时任务
+class Automation {
+  const Automation({
+    required this.id,
+    required this.title,
+    this.roomId,
+    this.prompt = '',
+    this.enabled = true,
+    this.everyMinutes,
+    this.dailyAt,
+    this.nextRunAt = 0,
+    this.lastRunAt = 0,
+  });
+
+  final String id;
+  final String title;
+  final String? roomId;
+  final String prompt;
+  final bool enabled;
+  final int? everyMinutes;
+  final String? dailyAt;
+  final int nextRunAt;
+  final int lastRunAt;
+
+  /// "每 30 分钟" / "每天 09:30"
+  String get scheduleLabel {
+    if (everyMinutes != null) return '每 $everyMinutes 分钟';
+    if (dailyAt != null) return '每天 $dailyAt';
+    return '未排期';
+  }
+
+  factory Automation.fromJson(Map<String, dynamic> json) => Automation(
+    id: json['id'] as String? ?? '',
+    title: json['title'] as String? ?? '',
+    roomId: json['roomId'] as String?,
+    prompt: json['prompt'] as String? ?? '',
+    enabled: json['enabled'] != false,
+    everyMinutes: (json['everyMinutes'] as num?)?.toInt(),
+    dailyAt: json['dailyAt'] as String?,
+    nextRunAt: (json['nextRunAt'] as num?)?.toInt() ?? 0,
+    lastRunAt: (json['lastRunAt'] as num?)?.toInt() ?? 0,
+  );
+}
+
 /// 任务板上的一条任务
 class TaskItem {
   const TaskItem({
