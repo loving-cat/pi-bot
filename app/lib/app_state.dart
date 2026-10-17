@@ -10,6 +10,7 @@ import 'models.dart';
 import 'native.dart';
 import 'notify.dart';
 import 'platform.dart';
+import 'server_launcher.dart';
 import 'text_utils.dart';
 
 /// 全局状态：连接、房间、消息、流式输出。
@@ -99,6 +100,22 @@ class AppState extends ChangeNotifier {
   /// 本机模式：桌面端直连 127.0.0.1，服务端信任 loopback，不需要 token
   bool localMode = false;
 
+  /// 本机服务端是不是正在拉起（界面据此显示"正在启动"而不是"连不上"）
+  bool serverStarting = false;
+
+  /// 拉不起来时给人看的原因（找不到 node / 端口没应答 / 试过哪些路径）
+  String? serverProblem;
+
+  /// 服务端进程的日志尾部（诊断用，失败时贴在界面上）
+  List<String> serverLog = const [];
+  int _lastServerNotify = 0;
+
+  /// 本机服务端的巡检：因为任何原因挂了（被系统杀掉、端口被抢、异常退出）
+  /// 都自动拉回来 —— 用户不该为了这个重启 App。
+  Timer? _serverWatch;
+  DateTime _lastSpawnAt = DateTime.fromMillisecondsSinceEpoch(0);
+  int _spawnFails = 0;
+
   bool get paired =>
       serverUrl != null && (localMode || (token ?? '').isNotEmpty);
 
@@ -129,10 +146,63 @@ class AppState extends ChangeNotifier {
       unawaited(refresh());
       connect();
     } else if (isHostPlatform) {
-      // 桌面端就是宿主：直连本机，不走配对
-      await connectLocal();
+      // 桌面端就是宿主：**先把服务端拉起来**，再直连本机（不走配对）。
+      //
+      //   以前这里只做了一半 —— 直接连 127.0.0.1:8787 当作"服务端就在那儿"，
+      //   但没人去起它。双击 exe 后看到的是"离线 · 自动重连中"，永远连不上。
+      await bootLocalServer();
+      _startServerWatchdog();
     }
     _notify();
+  }
+
+  /// 桌面端启动：确保本机服务端在跑（没有就拉起来），然后连它。
+  ///
+  /// 幂等：端口上已经有人在听就只是连上去（第二次打开 App 不会再拉一个进程）。
+  Future<void> bootLocalServer() async {
+    if (!isHostPlatform) return;
+    if (serverStarting) return;
+    _lastSpawnAt = DateTime.now();
+    serverStarting = true;
+    serverProblem = null;
+    _notify();
+    try {
+      final result = await ensureLocalServer(
+        baseUrl: localServerUrl,
+        onProgress: () {
+          // 探活是 300ms 一轮，别把整棵树按这个频率重建
+          final t = DateTime.now().millisecondsSinceEpoch;
+          if (t - _lastServerNotify < 700) return;
+          _lastServerNotify = t;
+          serverLog = serverLogTail;
+          _notify();
+        },
+      );
+      serverProblem = result.ok ? null : result.error;
+    } finally {
+      serverStarting = false;
+      serverLog = serverLogTail;
+      _notify();
+    }
+    await connectLocal();
+  }
+
+  /// 每 4s 看一次：本机服务端不在就拉回来（带退避，别把机器拖死）。
+  void _startServerWatchdog() {
+    _serverWatch?.cancel();
+    _lastSpawnAt = DateTime.now();
+    _serverWatch = Timer.periodic(const Duration(seconds: 4), (_) async {
+      if (_disposed || !isHostPlatform || !localMode) return;
+      if (link == LinkState.online || serverStarting) {
+        if (link == LinkState.online) _spawnFails = 0;
+        return;
+      }
+      // _lastSpawnAt 已经在 bootLocalServer 里刷新过，这里只判断退避
+      final backoff = Duration(seconds: const [0, 4, 8, 15, 30][_spawnFails.clamp(0, 4)]);
+      if (DateTime.now().difference(_lastSpawnAt) < backoff) return;
+      await bootLocalServer();
+      if (link != LinkState.online) _spawnFails++;
+    });
   }
 
   /// 桌面端：直连本机服务端
@@ -1075,6 +1145,8 @@ class AppState extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _serverWatch?.cancel();
+    _serverWatch = null;
     disconnect();
     streamTick.dispose();
     super.dispose();
