@@ -159,6 +159,8 @@ export function createHttpServer({ runner, pairing }) {
           // 群聊轮次预算（防止 bot 解不了就互相聊个没完）
           groupLimits: store.groupLimits(),
           policy: store.policy(),
+          // 最近被命令策略拦下的执行（新的在前），界面用来做审计提示
+          denials: store.listDenials({ limit: 20 }),
           templates: store.templates(),
           // 用户自己是谁（bot 要知道在跟谁说话）
           user: store.userSummary(),

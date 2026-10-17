@@ -23,6 +23,7 @@ import { store, toolsForPolicy } from './store.js';
 import { applyCompactionBudget, withCapacity } from './context-budget.js';
 import { buildAppendSystemPrompt } from './system-prompt.js';
 import { buildChiefTools, buildCommonTools } from './tools.js';
+import { createPolicyExtension } from './policy-hook.js';
 import { log } from './util.js';
 
 /**
@@ -78,6 +79,8 @@ export function createSessionBuilder({ runner, health, resolveModel, modelLabel 
     const resourceLoader = new DefaultResourceLoader({
       cwd: config.workspace,
       agentDir: getAgentDir(),
+      // 命令级规矩的拦截点：bash/powershell 调用前按部门规则判定
+      extensionFactories: [createPolicyExtension({ roomId, bot })],
       appendSystemPrompt: buildAppendSystemPrompt(bot, {
         userName: store.userName(),
         // 部门规矩跟着会话走：工具集和提示都是建会话时定的，规矩变了会作废重建
