@@ -92,7 +92,9 @@ class ServerSupervisor {
     if (pid == null) return;
     try {
       if (Platform.isWindows) {
-        await Process.run('taskkill', ['/PID', '$pid', '/F']);
+        // /T 连子进程一起杀：服务端会派生 rg/fd/git 等工具进程，
+        // 不带上它们就会变成孤儿，继续占着文件和端口。
+        await Process.run('taskkill', ['/PID', '$pid', '/T', '/F']);
       } else {
         Process.killPid(pid, ProcessSignal.sigterm);
       }
