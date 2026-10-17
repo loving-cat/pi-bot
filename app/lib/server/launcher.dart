@@ -27,14 +27,23 @@ class LocalServerLauncher {
         File('${stateDir.path}${Platform.pathSeparator}server.log'),
       );
 
-  /// `%LOCALAPPDATA%\pi-bot`（Windows）或系统临时目录下的同名目录
+  /// 每个平台放"我们自己的小文件"（日志 / pid / 启动脚本）的位置。
+  ///
+  /// Windows 是 `%LOCALAPPDATA%\pi-bot`，macOS 是
+  /// `~/Library/Application Support/pi-bot` —— 不能用临时目录（重启就没了）。
   static Directory defaultStateDir() {
-    final base = Platform.environment['LOCALAPPDATA'];
-    final dir = (base != null && base.isNotEmpty)
-        ? Directory('$base${Platform.pathSeparator}pi-bot')
-        : Directory(
-            '${Directory.systemTemp.path}${Platform.pathSeparator}pi-bot',
-          );
+    final sep = Platform.pathSeparator;
+    String base;
+    if (Platform.isWindows) {
+      base = Platform.environment['LOCALAPPDATA'] ?? Directory.systemTemp.path;
+    } else if (Platform.isMacOS) {
+      final home = Platform.environment['HOME'] ?? '~';
+      base = '$home/Library/Application Support';
+    } else {
+      base = Platform.environment['XDG_STATE_HOME'] ??
+          '${Platform.environment['HOME'] ?? '~'}/.local/state';
+    }
+    final dir = Directory('$base${sep}pi-bot');
     try {
       dir.createSync(recursive: true);
     } catch (_) {}

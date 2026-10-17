@@ -11,7 +11,7 @@
 | `config.js` | 全部配置来源；数据目录定位与一次性迁移 |
 | `http.js` | REST 路由（鉴权、房间/消息/bot/任务/定时任务/分片上传/附件/政策） |
 | `ws.js` | WebSocket：hello 快照、send/abort/ping、事件广播 |
-| `store.js` | 内存态与落盘：bots/rooms/devices/sessions/**tasks**/**automations**/policy；消息游标；拒绝留档 |
+| `store.js` | 内存态与落盘：bots/rooms/devices/sessions/**tasks**/**automations**/**approvals**/policy；消息游标；拒绝留档 |
 | `pi-runner.js` | 轮次编排：建会话、群轮次、派活、预算、打断、上报、定时任务执行入口 |
 | `session-factory.js` | 造会话：模型/工具/预算/提示词装配；扩展过滤（不加载 context-mode 类） |
 | `session-pool.js` | 会话缓存、pending 去重、LRU 驱逐 |
@@ -31,6 +31,7 @@
 | `shell-policy.js` | 命令级规则：归一化、解析、通配匹配、判不了就拒绝（纯函数） |
 | `policy-hook.js` | 命令规则的执行点（pi 内联扩展，拦 `tool_call`） |
 | `dm.js` | 私聊行为：开场文案、进度回执、是否该回执（纯函数） |
+| `hooks.js` | 工具钩子：改写入参 / 拦下（规则存 `data/hooks.json`，判定纯函数） |
 | `change-watch.js` | 工作目录快照与改动对比（本轮改了哪些文件） |
 | `automations.js` | 定时任务：排期计算、校验、调度器（时间逻辑纯函数） |
 | `coding-baseline.js` | 开发类 bot 的工程基线提示 |
@@ -53,7 +54,7 @@
 | `api.dart` | HTTP 封装（含分片上传 `uploadChunked`） |
 | `server/` | 启动层：`options` / `locate` / `server_log` / `supervisor` / `launcher` |
 | `screens/` | 页面：home_shell / chat_screen / rooms_screen / bots_screen / settings / pair / scan |
-| `widgets/` | 可复用组件：`tool_steps`（工具调用收起）、`changed_files`（改了哪些文件）、`task_board`、`automation_sheet`、`ask_card`、`md_text`、`attachment_view`、`avatar*`、`window_title_bar`… |
+| `widgets/` | 可复用组件：`tool_steps`、`changed_files`、`task_board`、`automation_sheet`、`ask_card`、**`approval_card`**、`md_text`、`attachment_view`、`avatar*`、`window_title_bar`… |
 | `theme.dart` | 颜色/字号/圆角；**图标约束写在这里**（基础字体仅 68 个字形） |
 | `clipboard_image.dart` | 剪贴板图片读取（Windows PowerShell） |
 
@@ -77,6 +78,6 @@
 
 | 层 | 命令 |
 |---|---|
-| 服务端全量 | `cd server && node tests/<name>.mjs`（unit / auth / disk / tasks / automations / uploads / shells / shell-policy / policy-hook / dm / ask-guard / room-lock / model-health） |
+| 服务端全量 | `cd server && node tests/<name>.mjs`（unit / auth / disk / tasks / automations / uploads / **approvals** / **hooks** / shells / shell-policy / policy-hook / dm / ask-guard / room-lock / model-health） |
 | 客户端全量 | `cd app && flutter test` |
 | 静态检查 | `cd app && flutter analyze` |
