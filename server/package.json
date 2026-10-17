@@ -7,7 +7,9 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "dev": "node --watch src/index.js",
+    "test": "node tests/all.mjs",
+    "test:integration": "node tests/smoke.mjs"
   },
   "engines": {
     "node": ">=22"

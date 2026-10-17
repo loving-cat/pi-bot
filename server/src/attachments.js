@@ -88,12 +88,50 @@ export function saveBuffer(buffer, { name = 'file', mime = null } = {}) {
   return meta;
 }
 
+/**
+ * 把一个**已经在磁盘上**的文件收进来（分片上传合并后走这条）。
+ *
+ * 与 saveBuffer 的区别：不把内容读进内存 —— 500MB 的文件用 readFileSync 会直接
+ * 顶到峰值内存。这里先算 id/扩展名，再 rename（跨盘则 copy+unlink）。
+ */
+export function saveMovedFile(sourcePath, { name = 'file', mime = null } = {}) {
+  if (!fs.existsSync(sourcePath)) throw new Error(`文件不存在：${sourcePath}`);
+  const type = normalizeMime(name, mime);
+  const id = crypto.randomBytes(9).toString('hex');
+  const ext = EXT_BY_MIME[type] ?? path.extname(name || '') ?? '';
+  const file = path.join(DIR, id + ext);
+  try {
+    fs.renameSync(sourcePath, file);
+  } catch {
+    fs.copyFileSync(sourcePath, file);
+    try {
+      fs.unlinkSync(sourcePath);
+    } catch {}
+  }
+  const stat = fs.statSync(file);
+  const meta = {
+    id,
+    name: String(name || 'file').slice(0, 200),
+    mime: type,
+    kind: kindFor(type),
+    size: stat.size,
+    ext,
+    createdAt: Date.now(),
+  };
+  index[id] = meta;
+  persist();
+  return meta;
+}
+
 /** 把工作目录里的文件收进来（bot 发图用） */
 export function saveFromPath(filePath, { name = null, mime = null } = {}) {
   if (!fs.existsSync(filePath)) throw new Error(`文件不存在：${filePath}`);
   const buffer = fs.readFileSync(filePath);
   const base = name ?? path.basename(filePath);
-  return saveBuffer(buffer, { name: base, mime: mime ?? MIME_BY_EXT[path.extname(filePath).toLowerCase()] });
+  return saveBuffer(buffer, {
+    name: base,
+    mime: mime ?? MIME_BY_EXT[path.extname(filePath).toLowerCase()] ?? null,
+  });
 }
 
 export function metaFor(id) {
