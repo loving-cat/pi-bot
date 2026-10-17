@@ -10,6 +10,7 @@ import { modelGroups, testModelGroup } from './model-groups.js';
 import { store } from './store.js';
 import { metaFor, pathFor, saveBuffer } from './attachments.js';
 import { timingSafeEqual, log } from './util.js';
+import { shells } from './shells.js';
 
 function send(res, status, body) {
   const payload = JSON.stringify(body ?? {});
@@ -379,6 +380,7 @@ export function createHttpServer({ runner, pairing }) {
         return send(res, 200, { room: store.roomSummary(room) });
       }
       if (roomMatch && req.method === 'DELETE') {
+        shells.killRoom(roomMatch[1]);
         const r = store.deleteRoom(roomMatch[1]);
         if (!r) return send(res, 400, { error: '删不了（不存在或是 DM）' });
         return send(res, 200, r);
