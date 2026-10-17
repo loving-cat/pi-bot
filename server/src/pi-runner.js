@@ -1420,6 +1420,35 @@ export class PiRunner {
     return this.run(roomId, botId, prompt, { timeoutMs, meta });
   }
 
+  /**
+   * 跑一条定时任务：在它的会话里像"到点了"那样触发一轮。
+   * 群里交给组长接（和用户发消息同一条路径），私聊直接跑那个 bot。
+   */
+  async runAutomation(automation) {
+    const room = store.getRoom(automation?.roomId);
+    if (!room) return { ok: false, error: '会话不存在' };
+    const botId = automation.botId ?? this.targetBotFor(room);
+    if (!botId) return { ok: false, error: '这个会话里没有 bot' };
+
+    store.appendMessage({
+      roomId: room.id,
+      authorType: 'system',
+      authorName: '定时任务',
+      text: `⏰ ${automation.title}`,
+      status: 'done',
+      meta: { automation: automation.id },
+    });
+    log(`⏰ 定时任务「${automation.title}」→ ${room.name}`);
+
+    if (room.kind === 'group') {
+      return this.send(room.id, automation.prompt, {});
+    }
+    return this.run(room.id, botId, automation.prompt, {
+      skipUserMessage: true,
+      meta: { automation: automation.id },
+    });
+  }
+
   /** 总经理（主控）往部门下达任务：以主控身份发帖，然后触发一轮部门响应 */
   async dispatchToGroup({ roomId, text, fromBotId = null }) {
     const room = store.getRoom(roomId);

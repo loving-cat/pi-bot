@@ -4,6 +4,7 @@
  */
 import http from 'node:http';
 import fs from 'node:fs';
+import path from 'node:path';
 import { config } from './config.js';
 import { lanAddresses } from './pairing.js';
 import { modelGroups, testModelGroup } from './model-groups.js';
@@ -11,6 +12,8 @@ import { store } from './store.js';
 import { metaFor, pathFor, saveBuffer } from './attachments.js';
 import { timingSafeEqual, log } from './util.js';
 import { shells } from './shells.js';
+import { computeNextRun, validateSchedule } from './automations.js';
+import { UploadSessions } from './upload-sessions.js';
 
 function send(res, status, body) {
   const payload = JSON.stringify(body ?? {});
@@ -83,6 +86,9 @@ function authenticate(req, url) {
 }
 
 export function createHttpServer({ runner, pairing }) {
+  const uploads = new UploadSessions({
+    dir: path.join(config.dataDir, 'uploads', '_partial'),
+  });
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     const pathname = url.pathname.replace(/\/+$/, '') || '/';
@@ -171,6 +177,65 @@ export function createHttpServer({ runner, pairing }) {
         });
       }
 
+      // ---------- 定时任务 ----------
+      if (pathname === '/api/automations' && req.method === 'GET') {
+        const roomId = url.searchParams.get('roomId');
+        return send(res, 200, { automations: store.listAutomations({ roomId }) });
+      }
+
+      if (pathname === '/api/automations' && req.method === 'POST') {
+        const body = await readBody(req);
+        const problem = validateSchedule(body);
+        if (problem) return send(res, 400, { error: problem });
+        if (!store.getRoom(body.roomId)) return send(res, 400, { error: '会话不存在' });
+        const automation = store.createAutomation({
+          roomId: body.roomId,
+          title: body.title,
+          prompt: body.prompt,
+          botId: body.botId ?? null,
+          everyMinutes: body.everyMinutes ?? null,
+          dailyAt: body.dailyAt ?? null,
+          enabled: body.enabled !== false,
+          createdBy: device.id,
+          nextRunAt: computeNextRun(body) ?? 0,
+        });
+        if (!automation) return send(res, 400, { error: '任务要有标题和内容' });
+        return send(res, 200, { automation });
+      }
+
+      const autoMatch = pathname.match(/^\/api\/automations\/([^/]+)$/);
+      if (autoMatch && req.method === 'PATCH') {
+        const body = await readBody(req);
+        const patch = { ...body };
+        // 改了排期就重算下一次
+        if (body.everyMinutes !== undefined || body.dailyAt !== undefined) {
+          const current = store.getAutomation(autoMatch[1]);
+          const merged = {
+            everyMinutes: body.everyMinutes ?? current?.everyMinutes,
+            dailyAt: body.dailyAt ?? current?.dailyAt,
+          };
+          const problem = validateSchedule(merged);
+          if (problem) return send(res, 400, { error: problem });
+          patch.nextRunAt = computeNextRun(merged) ?? 0;
+        }
+        const automation = store.updateAutomation(autoMatch[1], patch);
+        if (!automation) return send(res, 404, { error: '定时任务不存在' });
+        return send(res, 200, { automation });
+      }
+      if (autoMatch && req.method === 'DELETE') {
+        return send(res, 200, { deleted: store.deleteAutomation(autoMatch[1]) });
+      }
+
+      const autoRunMatch = pathname.match(/^\/api\/automations\/([^/]+)\/run$/);
+      if (autoRunMatch && req.method === 'POST') {
+        const automation = store.getAutomation(autoRunMatch[1]);
+        if (!automation) return send(res, 404, { error: '定时任务不存在' });
+        runner.runAutomation(automation).catch((err) =>
+          log('手动触发定时任务失败：', err?.message || err),
+        );
+        return send(res, 200, { ok: true, started: true });
+      }
+
       // ---------- 任务板 ----------
       if (pathname === '/api/tasks' && req.method === 'GET') {
         const roomId = url.searchParams.get('roomId');
@@ -211,6 +276,47 @@ export function createHttpServer({ runner, pairing }) {
       }
 
       // ---------- 附件 ----------
+      // ---------- 分片上传（大文件走这里） ----------
+      if (pathname === '/api/uploads/init' && req.method === 'POST') {
+        const body = await readBody(req);
+        const started = uploads.init(body);
+        if (started.error) return send(res, 400, { error: started.error });
+        return send(res, 200, started);
+      }
+
+      const chunkMatch = pathname.match(/^\/api\/uploads\/([^/]+)\/chunk$/);
+      if (chunkMatch && req.method === 'POST') {
+        const limit = 4 * 1024 * 1024;
+        const chunks = [];
+        let size = 0;
+        for await (const chunk of req) {
+          size += chunk.length;
+          if (size > limit) return send(res, 413, { error: '单个分片不能超过 4MB' });
+          chunks.push(chunk);
+        }
+        const result = uploads.writeChunk(
+          chunkMatch[1],
+          url.searchParams.get('offset'),
+          Buffer.concat(chunks),
+        );
+        if (result.error) return send(res, 400, { error: result.error });
+        return send(res, 200, result);
+      }
+
+      const completeMatch = pathname.match(/^\/api\/uploads\/([^/]+)\/complete$/);
+      if (completeMatch && req.method === 'POST') {
+        const body = await readBody(req).catch(() => ({}));
+        const done = uploads.complete(completeMatch[1], { sha256: body?.sha256 });
+        if (done.error) return send(res, 400, { error: done.error });
+        const meta = saveBuffer(done.buffer, { name: done.name, mime: done.mime });
+        return send(res, 200, { attachment: { ...meta, url: `/api/files/${meta.id}` } });
+      }
+
+      const abortUploadMatch = pathname.match(/^\/api\/uploads\/([^/]+)$/);
+      if (abortUploadMatch && req.method === 'DELETE') {
+        return send(res, 200, { aborted: uploads.abort(abortUploadMatch[1]) });
+      }
+
       if (pathname === '/api/uploads' && req.method === 'POST') {
         const chunks = [];
         let size = 0;

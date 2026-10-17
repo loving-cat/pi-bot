@@ -204,6 +204,7 @@ export class Store {
     this.state = saved?.version === STATE_VERSION ? saved : this.#seed();
     if (!this.state.sessions) this.state.sessions = {};
     if (!Array.isArray(this.state.tasks)) this.state.tasks = [];
+    if (!Array.isArray(this.state.automations)) this.state.automations = [];
     /** @type {Map<string, any[]>} roomId -> messages */
     this.messages = new Map();
     for (const room of Object.values(this.state.rooms)) {
@@ -731,6 +732,100 @@ export class Store {
       createdBy,
     });
     return { room, bots: created };
+  }
+
+  // ---------- 定时任务 ----------
+
+  listAutomations({ roomId = null } = {}) {
+    const all = Array.isArray(this.state.automations) ? this.state.automations : [];
+    return roomId ? all.filter((a) => a.roomId === roomId) : all.slice();
+  }
+
+  getAutomation(id) {
+    return (this.state.automations ?? []).find((a) => a.id === id) ?? null;
+  }
+
+  createAutomation({
+    roomId = null,
+    title = '',
+    prompt = '',
+    botId = null,
+    everyMinutes = null,
+    dailyAt = null,
+    enabled = true,
+    createdBy = null,
+    nextRunAt = null,
+  } = {}) {
+    const clean = String(title ?? '').trim().slice(0, 120);
+    const body = String(prompt ?? '').trim();
+    if (!clean || !body) return null;
+    if (!Array.isArray(this.state.automations)) this.state.automations = [];
+    const automation = {
+      id: newId('au_'),
+      roomId,
+      title: clean,
+      prompt: body.slice(0, 4000),
+      botId,
+      everyMinutes: everyMinutes ? Math.max(5, Math.round(Number(everyMinutes))) : null,
+      dailyAt: dailyAt ? String(dailyAt).slice(0, 5) : null,
+      enabled: enabled !== false,
+      createdBy,
+      createdAt: now(),
+      lastRunAt: 0,
+      nextRunAt: nextRunAt ?? 0,
+    };
+    this.state.automations.push(automation);
+    this.scheduleSave();
+    bus.emit('event', { t: 'automation.updated', automation });
+    return automation;
+  }
+
+  updateAutomation(id, patch = {}) {
+    const a = this.getAutomation(id);
+    if (!a) return null;
+    if (patch.title !== undefined) {
+      const clean = String(patch.title ?? '').trim().slice(0, 120);
+      if (clean) a.title = clean;
+    }
+    if (patch.prompt !== undefined) {
+      const body = String(patch.prompt ?? '').trim();
+      if (body) a.prompt = body.slice(0, 4000);
+    }
+    if (patch.botId !== undefined) a.botId = patch.botId || null;
+    if (patch.everyMinutes !== undefined) {
+      a.everyMinutes = patch.everyMinutes
+        ? Math.max(5, Math.round(Number(patch.everyMinutes)))
+        : null;
+      if (a.everyMinutes) a.dailyAt = null;
+    }
+    if (patch.dailyAt !== undefined) {
+      a.dailyAt = patch.dailyAt ? String(patch.dailyAt).slice(0, 5) : null;
+      if (a.dailyAt) a.everyMinutes = null;
+    }
+    if (patch.enabled !== undefined) a.enabled = Boolean(patch.enabled);
+    if (patch.nextRunAt !== undefined) a.nextRunAt = Number(patch.nextRunAt) || 0;
+    this.scheduleSave();
+    bus.emit('event', { t: 'automation.updated', automation: a });
+    return a;
+  }
+
+  markAutomationRan(id, nextRunAt) {
+    const a = this.getAutomation(id);
+    if (!a) return null;
+    a.lastRunAt = now();
+    a.nextRunAt = Number(nextRunAt) || 0;
+    this.scheduleSave();
+    return a;
+  }
+
+  deleteAutomation(id) {
+    const list = this.state.automations ?? [];
+    const idx = list.findIndex((a) => a.id === id);
+    if (idx < 0) return false;
+    list.splice(idx, 1);
+    this.scheduleSave();
+    bus.emit('event', { t: 'automation.deleted', id });
+    return true;
   }
 
   // ---------- 任务板 ----------
