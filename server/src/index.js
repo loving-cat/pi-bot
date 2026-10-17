@@ -14,10 +14,18 @@ async function banner(pairing, runner) {
     '  │               pi-bot   server                 │',
     '  └───────────────────────────────────────────────┘',
     `  工作目录   ${c.workspace}`,
+    `  数据目录   ${c.dataDir}`,
     `  模型       ${runner.modelLabel() ?? '(无)'}    思考 ${c.thinking}`,
     `  工具       ${c.tools}`,
     '',
   ];
+  if (c.migratedFrom) {
+    lines.push(
+      `  ★ 数据已从旧位置搬过来：${c.migratedFrom}`,
+      '    旧目录原样保留当备份，确认没问题后可以自己删。',
+      '',
+    );
+  }
   console.log(lines.join('\n'));
 
   if (config.staticToken) {
@@ -39,17 +47,14 @@ async function banner(pairing, runner) {
 }
 
 async function main() {
-  // ★ 进程级兜底：宁可带病跑，也别整个服务静默消失。
-  //   典型场景：Windows 上落盘撞杀软/备份抛 EPERM —— 以前没人接，
-  //   Node 直接 exit，手机端就永远"离线 · 自动重连中"（而用户根本不知道发生过什么）。
+  // 进程级异常兜底：记录日志并保持服务运行。
   process.on('uncaughtException', (err) => {
     log('‼️  未捕获异常（进程继续跑）：', err?.stack || err?.message || err);
   });
   process.on('unhandledRejection', (reason) => {
     log('‼️  未处理的 Promise 拒绝（进程继续跑）：', reason?.stack || reason?.message || reason);
   });
-  // 退出时在日志里留一行 —— 桌面端靠这一行立刻判断"这次启动挂了"，
-  // 而不是干等 30 秒健康检查超时（用户看到的就是"报错循环"）。
+  // 退出时写入一行日志，桌面端据此快速判定启动失败。
   process.on('exit', (code) => {
     log(`服务端进程退出 code=${code}`);
   });

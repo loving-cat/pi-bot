@@ -430,6 +430,8 @@ export function serverInfo(runner) {
     version: '0.2.0',
     hostname: config.hostname,
     workspace: config.workspace,
+    // 数据目录也回给 App：这是用户最该知道、也最不该被“神秘换掉”的东西
+    dataDir: config.dataDir,
     model: runner.modelLabel(),
     note: runner.initNote,
     tools: config.tools,

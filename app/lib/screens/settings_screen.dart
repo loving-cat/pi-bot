@@ -11,6 +11,7 @@ import '../theme.dart';
 import '../widgets/group_limits_section.dart';
 import '../widgets/user_name_section.dart';
 import '../widgets/model_group_editor.dart';
+import '../widgets/server_config_section.dart';
 
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
@@ -321,6 +322,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
 
               const SizedBox(height: 22),
+              // 本机服务端：默认全自动，环境不同的人可以自己指路径/数据目录
+              const ServerConfigSection(),
+
+              const SizedBox(height: 22),
               // 我是谁（bot 会用它称呼你）
               const UserNameSection(),
 
@@ -405,6 +410,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     _InfoRow('模型', info?.model ?? '-'),
                     _InfoRow('工具', info?.tools.join(', ') ?? '-'),
                     _InfoRow('工作目录', info?.workspace ?? '-'),
+                    // ★ 数据目录要显式给用户看：房间/会话/上传/附件都在这儿。
+                    //   以前它跟着安装目录跑，换个安装位置就变成“数据没了”。
+                    _InfoRow('数据目录', info?.dataDir ?? '-'),
                     _InfoRow('版本', info?.version ?? '-'),
                     _InfoRow('设备名', state.deviceName),
                   ],
