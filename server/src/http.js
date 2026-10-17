@@ -13,6 +13,7 @@ import { metaFor, pathFor, saveBuffer } from './attachments.js';
 import { timingSafeEqual, log } from './util.js';
 import { shells } from './shells.js';
 import { computeNextRun, validateSchedule } from './automations.js';
+import { VERSION } from './version.js';
 import { UploadSessions } from './upload-sessions.js';
 import { loadHooks, saveHooks, validateHook } from './hooks.js';
 
@@ -102,7 +103,7 @@ export function createHttpServer({ runner, pairing }) {
         return send(res, 200, {
           ok: true,
           serverName: config.serverName,
-          version: '0.2.0',
+          version: VERSION,
           stats: store.stats(),
           model: runner.modelLabel(),
           note: runner.initNote,
@@ -639,7 +640,7 @@ export function createHttpServer({ runner, pairing }) {
 
 export function serverInfo(runner) {
   return {
-    version: '0.2.0',
+    version: VERSION,
     hostname: config.hostname,
     workspace: config.workspace,
     // 数据目录也回给 App：这是用户最该知道、也最不该被“神秘换掉”的东西
