@@ -55,6 +55,10 @@ class AppState extends ChangeNotifier {
   List<LibrarySkill> skills = const [];
   bool skillsLoaded = false;
 
+  /// 已接入的外部 Web 系统
+  List<SiteSystem> sites = const [];
+  bool sitesLoaded = false;
+
   ServerInfo? serverInfo;
   List<Room> rooms = const [];
   List<Bot> bots = const [];
@@ -644,6 +648,101 @@ class AppState extends ChangeNotifier {
       return (imported: imported, skipped: skipped);
     } catch (err) {
       return (imported: 0, skipped: ['$err']);
+    }
+  }
+
+  // ---------------------------------------------------------------- 外部系统
+
+  Future<void> loadSites() async {
+    if (api == null) return;
+    try {
+      final json = await api!.get('/api/sites');
+      sites = ((json['sites'] as List?) ?? const [])
+          .map((e) => SiteSystem.fromJson(e as Map<String, dynamic>))
+          .toList();
+      sitesLoaded = true;
+      _notify();
+    } catch (err) {
+      lastError = '系统列表加载失败：$err';
+      _notify();
+    }
+  }
+
+  /// 添加前探测：这个站能不能连、登录字段叫什么
+  Future<Map<String, dynamic>> probeSite({
+    required String baseUrl,
+    required String account,
+    required String password,
+    String accountField = '',
+    String passwordField = '',
+  }) async {
+    if (api == null) return {'ok': false, 'reason': '未连接服务端'};
+    try {
+      return await api!.post('/api/sites/probe', {
+        'baseUrl': baseUrl,
+        'account': account,
+        'password': password,
+        if (accountField.isNotEmpty) 'accountField': accountField,
+        if (passwordField.isNotEmpty) 'passwordField': passwordField,
+      });
+    } catch (err) {
+      return {'ok': false, 'reason': '$err'};
+    }
+  }
+
+  Future<String?> addSite({
+    required String baseUrl,
+    required String account,
+    required String password,
+    String name = '',
+    Map<String, dynamic>? auth,
+  }) async {
+    if (api == null) return '未连接服务端';
+    try {
+      await api!.post('/api/sites', {
+        'name': name,
+        'baseUrl': baseUrl,
+        'account': account,
+        'password': password,
+        if (auth != null) 'auth': auth,
+      });
+      await loadSites();
+      return null;
+    } catch (err) {
+      return '$err';
+    }
+  }
+
+  Future<String?> removeSite(String id) async {
+    if (api == null) return '未连接服务端';
+    try {
+      await api!.delete('/api/sites/${Uri.encodeComponent(id)}');
+      await loadSites();
+      return null;
+    } catch (err) {
+      return '$err';
+    }
+  }
+
+  /// 给系统绑定/创建团队（交给主控去做）
+  Future<String?> bindSiteTeam(String id, String siteName) async {
+    if (api == null) return '未连接服务端';
+    try {
+      await api!.post('/api/sites/${Uri.encodeComponent(id)}/team', {'name': '$siteName 团队'});
+      await loadSites();
+      return null;
+    } catch (err) {
+      return '$err';
+    }
+  }
+
+  /// 测一下某个系统现在通不通
+  Future<Map<String, dynamic>> testSite(String id) async {
+    if (api == null) return {'ok': false, 'reason': '未连接服务端'};
+    try {
+      return await api!.post('/api/sites/${Uri.encodeComponent(id)}/test');
+    } catch (err) {
+      return {'ok': false, 'reason': '$err'};
     }
   }
 

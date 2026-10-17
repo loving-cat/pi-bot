@@ -33,6 +33,7 @@ const STATE_VERSION = 2;
  * 目的很实际：**防止 bot 解不了就互相聊个没完**。
  */
 import { normalizeSkillList, normalizeSkill, skillRejectReason } from './skills.js';
+import { normalizeSite } from './sites.js';
 
 export const GROUP_LIMITS_DEFAULT = {
   /** 部门老大每次发言最多跑几轮 */
@@ -549,6 +550,64 @@ export class Store {
     this.scheduleSave();
     bus.emit('event', { t: 'groupLimits.updated', limits: next });
     return next;
+  }
+
+  // ---------------------------------------------------------------- 外部系统（站点）
+
+  /** 已接入的外部 Web 系统 */
+  siteList() {
+    const list = Array.isArray(this.state.sites) ? this.state.sites : [];
+    return list.map((s) => normalizeSite(s)).filter(Boolean);
+  }
+
+  getSite(id) {
+    return this.siteList().find((s) => s.id === id) ?? null;
+  }
+
+  /** 添加一个站点（重复的 baseUrl 会被拒，避免同一系统接两次） */
+  addSite(raw = {}) {
+    const site = normalizeSite({ ...raw, updatedAt: Date.now() });
+    if (!site) return { error: '网址和账号是必填的' };
+    const list = this.siteList();
+    const dup = list.find(
+      (s) => s.baseUrl.toLowerCase() === site.baseUrl.toLowerCase() && s.account === site.account,
+    );
+    if (dup) return { error: `这个系统已经接过了（${dup.name}）` };
+    list.push(site);
+    this.state.sites = list;
+    this.scheduleSave();
+    bus.emit('event', { t: 'sites.updated' });
+    return { site };
+  }
+
+  /** 改站点（口令、登录路径、字段名都可能要改） */
+  updateSite(id, patch = {}) {
+    const list = this.siteList();
+    const idx = list.findIndex((s) => s.id === id);
+    if (idx < 0) return { error: '系统不存在' };
+    const merged = normalizeSite({ ...list[idx], ...patch, id, updatedAt: Date.now() });
+    if (!merged) return { error: '网址和账号是必填的' };
+    list[idx] = merged;
+    this.state.sites = list;
+    this.scheduleSave();
+    bus.emit('event', { t: 'sites.updated' });
+    return { site: merged };
+  }
+
+  /** 删站点。关联的部门不自动删（那里面有聊天记录，删了收不回来） */
+  removeSite(id) {
+    const list = this.siteList();
+    const next = list.filter((s) => s.id !== id);
+    if (next.length === list.length) return { error: '系统不存在' };
+    this.state.sites = next;
+    this.scheduleSave();
+    bus.emit('event', { t: 'sites.updated' });
+    return { ok: true };
+  }
+
+  /** 记下这个系统对应的部门（"一个系统一个团队"） */
+  bindSiteTeam(id, roomId) {
+    return this.updateSite(id, { teamRoomId: roomId ?? '' });
   }
 
   // ---------------------------------------------------------------- 技能库
