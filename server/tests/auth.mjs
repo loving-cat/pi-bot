@@ -1,15 +1,14 @@
 /**
- * 鉴权回归测试：配对码 / 设备列表不能落到局域网上。
+ * 鉴权测试：配对接口与设备接口的可见范围。
  *   node tests/auth.mjs
  *
- * 验的是（2026-10-17 体检里第 1 条的那个洞）：
- *   ① 远程（非回环）拿不到配对码 —— /api/pairing 401，/pair 页面里也不许出现码；
- *   ② 远程读不到也删不掉设备列表；
- *   ③ 本机（回环）照旧能看能管 —— PC 端 App 就是本机，不能把它关在门外；
- *   ④ 一个码只能换一次 token（换完立刻作废）。
+ * 覆盖：
+ *   ① 非回环请求无法获取配对码（/api/pairing 返回 401，/pair 页面不含码）；
+ *   ② 非回环请求无法读取或撤销设备；
+ *   ③ 回环请求（桌面端）保持可读可管；
+ *   ④ 配对码一次性，换发 token 后立即失效。
  *
- * 为什么要真的从局域网地址打进来：回环请求本来就是"主人"，
- * 洞只在**非回环**时才存在 —— 光用 127.0.0.1 测是测不出这个 bug 的。
+ * 非回环用例通过本机局域网地址发起，回环地址无法覆盖该路径。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -79,7 +78,7 @@ function call(host, pathname, { method = 'GET', body = null, token = '' } = {}) 
   });
 }
 
-await test('本机（回环）能拿到配对码 —— PC 端 App 要用', async () => {
+await test('回环请求可获取配对码', async () => {
   const r = await call('127.0.0.1', '/api/pairing');
   assert.equal(r.status, 200);
   assert.equal(r.body.code, pairing.code, '本机要看到真码');
@@ -96,7 +95,7 @@ await test('本机能看设备列表，也能撤销设备', async () => {
   assert.equal(del.body.revoked, true);
 });
 
-await test('本机打开 /pair 页面能看到码', async () => {
+await test('回环请求打开的 /pair 页面包含配对码', async () => {
   const r = await call('127.0.0.1', '/pair');
   assert.equal(r.status, 200);
   assert.ok(r.text.includes(pairing.code), '本机页面应该印出码');
