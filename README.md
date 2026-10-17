@@ -105,8 +105,28 @@ node src/index.js
 
 ### 2. 电脑端（宿主）
 
-解压 Windows 包，双击 `pi_bot.exe`。桌面端就是宿主：直接连本机 `127.0.0.1:8787`，不用配对。
-需要连别的服务端时：设置 → 远程连接。
+解压 Windows 包，双击 `pi_bot.exe`。桌面端就是宿主，启动时会自动把服务端跑起来：
+
+1. 先探本机 `127.0.0.1:8787`，已有服务端就直接连（不会重复启动）；
+2. 没有就定位 `server/src/index.js`（exe 同级 → 上层目录 → `PI_BOT_SERVER`）；
+3. 定位 node（exe 同级 → Program Files → PATH → `PI_BOT_NODE`），要求 22+；
+4. 首次缺少 `node_modules` 时自动执行 `npm install`；
+5. 启动后轮询 `/health`，就绪即进主界面。
+
+服务端与界面解耦：关掉界面服务端仍在，再次打开直接连上；服务端异常退出会按退避间隔自动重启。
+
+需要改端口 / 数据目录 / node 路径：设置 →「本机服务端」（留空即自动探测，保存后自动重启）。
+
+数据存放在**用户目录**，与安装位置无关：
+
+| 平台 | 数据目录 |
+|---|---|
+| Windows | `%LOCALAPPDATA%\pi-bot\data` |
+| macOS | `~/Library/Application Support/pi-bot/data` |
+| Linux | `$XDG_DATA_HOME/pi-bot/data`（默认 `~/.local/share/pi-bot/data`） |
+
+里面有 `rooms/`（会话消息）、`sessions/`（agent 会话）、`uploads/`（附件）、
+`workspace/`（bot 的工作目录）、`state.json`。备份就备份这一个目录。
 
 ### 3. 手机端
 
@@ -185,9 +205,12 @@ node tests/room-lock.mjs     # 群调度回归（并发 / 终止 / 打断 / 竞�
 node tests/bench.mjs         # 性能基准（1 万条消息）
 
 cd ../app
-flutter test                 # 106 项组件测试
+flutter test                 # 124 项测试（含启动层：入口定位 / node·npm 定位 / 探活）
 flutter analyze
 ```
+
+`scripts/pack-windows.ps1` 生成可分发目录（exe + server + 依赖）：
+`-WithNode` 附带 `node.exe`（目标机器无需安装 Node），`-Zip` 同时打包压缩文件。
 
 ## 环境变量
 
@@ -198,7 +221,7 @@ flutter analyze
 | `PI_BOT_PORT` | 8787 | 端口 |
 | `PI_BOT_MODEL` | 自动 | 默认模型（来自你的模型组） |
 | `PI_BOT_TOKEN` | — | 固定 token（设了就跳过配对码） |
-| `PI_BOT_HOME` / `PI_BOT_WORKSPACE` | `<repo>/data` | 数据目录 / agent 的工作目录 |
+| `PI_BOT_HOME` / `PI_BOT_WORKSPACE` | 用户数据目录（见上表） | 数据目录 / agent 的工作目录 |
 | `PI_BOT_GROUP_MAX_STEPS` | 30 | 部门里单轮最多几个来回（**对话轮次**，不是工具调用次数） |
 | `PI_BOT_GROUP_TURN_MAX_MS` | 600000 | 部门里单轮最长跑多久 |
 | `PI_BOT_GROUP_BUSY_WAIT_MS` | 120000 | 要派的活碰上成员正忙，最多等它多久 |
