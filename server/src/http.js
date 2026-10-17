@@ -15,6 +15,7 @@ import { shells } from './shells.js';
 import { computeNextRun, validateSchedule } from './automations.js';
 import { VERSION } from './version.js';
 import { checkForUpdate, clearUpdateCache } from './update-checker.js';
+import { parseSkillMarkdown } from './skills.js';
 import { UploadSessions } from './upload-sessions.js';
 import { loadHooks, saveHooks, validateHook } from './hooks.js';
 
@@ -381,6 +382,55 @@ export function createHttpServer({ runner, pairing }) {
         const all = runner.availableModels;
         const list = keyword ? all.filter((m) => `${m.provider}/${m.id}`.toLowerCase().includes(keyword)) : all;
         return send(res, 200, { total: list.length, models: list.slice(0, 200) });
+      }
+
+      // ---------- 技能库（全局，所有 bot 共享） ----------
+      if (pathname === '/api/skills' && req.method === 'GET') {
+        return send(res, 200, { skills: store.skillLibrary() });
+      }
+
+      if (pathname === '/api/skills' && req.method === 'POST') {
+        const body = await readBody(req);
+        const r = store.addSkill({
+          title: body.title,
+          summary: body.summary,
+          howto: body.howto,
+          tags: body.tags,
+        });
+        if (r.error) return send(res, 400, { error: r.error });
+        return send(res, 200, { skill: r.skill });
+      }
+
+      const skillMatch = pathname.match(/^\/api\/skills\/([^/]+)$/);
+      if (skillMatch && req.method === 'PATCH') {
+        const body = await readBody(req);
+        const r = store.updateSkill(decodeURIComponent(skillMatch[1]), body);
+        if (r.error) return send(res, 404, { error: r.error });
+        return send(res, 200, { skill: r.skill });
+      }
+      if (skillMatch && req.method === 'DELETE') {
+        const r = store.removeSkill(decodeURIComponent(skillMatch[1]));
+        if (r.error) return send(res, 404, { error: r.error });
+        return send(res, 200, { ok: true });
+      }
+
+      // 导入：客户端把 SKILL.md 的正文读出来发给这里，服务端负责解析
+      // （放在服务端解析是为了让导入规则只有一份，和手动添加走同一套规范化）
+      if (pathname === '/api/skills/import' && req.method === 'POST') {
+        const body = await readBody(req);
+        const files = Array.isArray(body.files) ? body.files : [];
+        const parsed = [];
+        const unparsed = [];
+        for (const f of files.slice(0, 100)) {
+          const skill = parseSkillMarkdown(f?.text, f?.name);
+          if (skill) parsed.push(skill);
+          else unparsed.push({ name: String(f?.name ?? ''), reason: '解析不出内容' });
+        }
+        const r = store.importSkills(parsed);
+        return send(res, 200, {
+          imported: r.imported,
+          skipped: [...r.skipped, ...unparsed],
+        });
       }
 
       // 检查更新：只查不装。下载与安装由客户端在用户确认后自己做。
