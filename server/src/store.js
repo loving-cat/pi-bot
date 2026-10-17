@@ -60,7 +60,10 @@ export const GROUP_LIMITS_DEFAULT = {
  */
 export const POLICY_DEFAULT = {
   /**
-   * 危险动作：allow = 照常；deny = 不给改文件/跑命令的工具（只读部门）。
+   * 危险动作：
+   *   allow = 照常；
+   *   ask   = 工具照给，但每一次"会动手"的调用都要用户点批准（见 policy-hook）；
+   *   deny  = 不给改文件/跑命令的工具（只读部门）。
    *
    * 这是**能真拦住的**那一种约束：不给工具，它就干不了。
    * （"需要批准"那一档要接审批闸门，等有真实需求再做。）
@@ -81,7 +84,14 @@ export const POLICY_DEFAULT = {
 
 function normalizePolicy(patch = {}, base = POLICY_DEFAULT) {
   return {
-    dangerous: patch.dangerous === 'deny' ? 'deny' : patch.dangerous === 'allow' ? 'allow' : base.dangerous,
+    dangerous:
+      patch.dangerous === 'deny'
+        ? 'deny'
+        : patch.dangerous === 'ask'
+          ? 'ask'
+          : patch.dangerous === 'allow'
+            ? 'allow'
+            : base.dangerous,
     requireProof:
       patch.requireProof === undefined ? base.requireProof : Boolean(patch.requireProof),
     denyCommands:
@@ -205,6 +215,8 @@ export class Store {
     if (!this.state.sessions) this.state.sessions = {};
     if (!Array.isArray(this.state.tasks)) this.state.tasks = [];
     if (!Array.isArray(this.state.automations)) this.state.automations = [];
+    if (!Array.isArray(this.state.approvals)) this.state.approvals = [];
+    if (!Array.isArray(this.state.approvalGrants)) this.state.approvalGrants = [];
     /** @type {Map<string, any[]>} roomId -> messages */
     this.messages = new Map();
     for (const room of Object.values(this.state.rooms)) {
@@ -732,6 +744,125 @@ export class Store {
       createdBy,
     });
     return { room, bots: created };
+  }
+
+  // ---------- 审批（危险动作第三档） ----------
+
+  listApprovals({ roomId = null, status = null, limit = 50 } = {}) {
+    const all = Array.isArray(this.state.approvals) ? this.state.approvals : [];
+    return all
+      .filter((a) => (!roomId || a.roomId === roomId) && (!status || a.status === status))
+      .slice()
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, Math.max(1, Math.min(limit, 200)));
+  }
+
+  getApproval(id) {
+    return (this.state.approvals ?? []).find((a) => a.id === id) ?? null;
+  }
+
+  /** 同一个 hash 已经有"已批准但还没用掉"的，就放行一次 */
+  takeApproved(hash) {
+    const hit = (this.state.approvals ?? []).find(
+      (a) => a.hash === hash && a.status === 'approved',
+    );
+    if (!hit) return null;
+    hit.status = 'consumed';
+    hit.updatedAt = now();
+    this.scheduleSave();
+    return hit;
+  }
+
+  findPendingApproval({ roomId, botId, hash }) {
+    return (
+      (this.state.approvals ?? []).find(
+        (a) =>
+          a.roomId === roomId &&
+          a.botId === botId &&
+          a.hash === hash &&
+          a.status === 'pending',
+      ) ?? null
+    );
+  }
+
+  createApproval({
+    roomId,
+    botId,
+    botName = '',
+    tool,
+    summary = '',
+    input = null,
+    hash,
+  } = {}) {
+    const dup = this.findPendingApproval({ roomId, botId, hash });
+    if (dup) return dup;
+    if (!Array.isArray(this.state.approvals)) this.state.approvals = [];
+    const approval = {
+      id: newId('ap_'),
+      roomId,
+      botId,
+      botName,
+      tool: String(tool ?? ''),
+      summary: String(summary ?? '').slice(0, 500),
+      input: input ?? null,
+      hash,
+      status: 'pending',
+      createdAt: now(),
+      updatedAt: now(),
+    };
+    this.state.approvals.push(approval);
+    if (this.state.approvals.length > 200) {
+      this.state.approvals.splice(0, this.state.approvals.length - 200);
+    }
+    this.scheduleSave();
+    bus.emit('event', { t: 'approval.created', approval });
+    return approval;
+  }
+
+  decideApproval(id, { approved = false } = {}) {
+    const a = this.getApproval(id);
+    if (!a || a.status !== 'pending') return null;
+    a.status = approved ? 'approved' : 'denied';
+    a.updatedAt = now();
+    this.scheduleSave();
+    bus.emit('event', { t: 'approval.decided', approval: a });
+    return a;
+  }
+
+  /**
+   * 开一个"临时放行窗口"：用户批准后，这个 bot 在这个会话里接下来的操作
+   * 不再逐条弹卡片（默认 10 分钟）。避免它连着跑三条命令就要点三次。
+   */
+  grantApproval({ roomId, botId, minutes = 10 } = {}) {
+    if (!roomId || !botId) return null;
+    const until = now() + Math.max(1, Math.min(120, Number(minutes) || 10)) * 60_000;
+    const list = this.state.approvalGrants ?? [];
+    const existing = list.find((g) => g.roomId === roomId && g.botId === botId);
+    if (existing) {
+      existing.until = Math.max(existing.until, until);
+    } else {
+      list.push({ roomId, botId, until });
+    }
+    this.state.approvalGrants = list;
+    this.scheduleSave();
+    return { roomId, botId, until };
+  }
+
+  hasApprovalGrant({ roomId, botId } = {}) {
+    const at = now();
+    const list = (this.state.approvalGrants ?? []).filter((g) => g.until > at);
+    this.state.approvalGrants = list;
+    return list.some((g) => g.roomId === roomId && g.botId === botId);
+  }
+
+  /** 清掉放行窗口：给了谁就只清谁，都不给就全清 */
+  clearApprovalGrants({ roomId = null, botId = null } = {}) {
+    this.state.approvalGrants = (this.state.approvalGrants ?? []).filter((g) => {
+      const roomMatch = roomId ? g.roomId === roomId : true;
+      const botMatch = botId ? g.botId === botId : true;
+      return !(roomMatch && botMatch);
+    });
+    this.scheduleSave();
   }
 
   // ---------- 定时任务 ----------

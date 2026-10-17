@@ -423,6 +423,16 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// 批准 / 拒绝一次危险动作（服务端会顺手让那个 bot 继续或记一条拒绝）
+  Future<void> decideApproval(String approvalId, {required bool approve}) async {
+    try {
+      await api?.post('/api/approvals/$approvalId', {'approve': approve});
+    } catch (err) {
+      lastError = '$err';
+      _notify();
+    }
+  }
+
   // ---------------------------------------------------------------- 定时任务
 
   List<Automation> automationsFor(String roomId) =>

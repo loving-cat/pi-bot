@@ -6,12 +6,51 @@
  *   · 规则从 store 实时读取 —— 改规矩后新建的会话立即生效；
  *   · 拒绝时写一条审计记录，并把原因回给模型（模型据此换做法，不会卡死）。
  */
+import crypto from 'node:crypto';
 import { store } from './store.js';
 import { decideCommand } from './shell-policy.js';
 import { log } from './util.js';
+import { bus } from './bus.js';
+import { loadHooks, applyHooks } from './hooks.js';
 
 /** 执行命令的工具名 */
 const SHELL_TOOLS = new Set(['bash', 'powershell']);
+
+/** "会动手"的工具：第三档审批只拦这些（读、搜、发消息不拦） */
+const MUTATING_TOOLS = new Set([
+  'bash',
+  'powershell',
+  'write',
+  'edit',
+  'run_background',
+  'write_stdin',
+  'kill_shell',
+]);
+
+/** 把一次调用压成一句人话，给审批卡片看 */
+export function summarizeToolCall(tool, input = {}) {
+  const pick = (k) => (typeof input?.[k] === 'string' ? input[k] : '');
+  if (SHELL_TOOLS.has(tool) || tool === 'run_background') {
+    return pick('command') || pick('cmd') || '(命令)';
+  }
+  if (tool === 'write') {
+    const body = pick('content');
+    return `${pick('path') || '(文件)'}${body ? `（写 ${body.length} 字）` : ''}`;
+  }
+  if (tool === 'edit') return pick('path') || '(文件)';
+  if (tool === 'write_stdin') return `${pick('shell_id')} ← ${pick('chars')}`;
+  if (tool === 'kill_shell') return pick('shell_id') || '(进程)';
+  return JSON.stringify(input ?? {}).slice(0, 200);
+}
+
+/** 同一次调用（工具 + 入参）的指纹：批准一次只放行同一个动作 */
+export function approvalHash(tool, input) {
+  return crypto
+    .createHash('sha1')
+    .update(`${tool}
+${JSON.stringify(input ?? {})}`)
+    .digest('hex');
+}
 
 /**
  * @param {{roomId:string, bot:object}} ctx
@@ -23,9 +62,76 @@ export function createPolicyExtension({ roomId, bot }) {
     hidden: true,
     factory: (pi) => {
       pi.on('tool_call', (event) => {
-        if (!SHELL_TOOLS.has(event?.toolName)) return undefined;
-
+        const tool = event?.toolName;
         const policy = store.policy();
+
+        // ---- 钩子：可以先改入参（重写命令），也可以直接拦下 ----
+        const hooked = applyHooks(loadHooks(), { tool, input: event?.input ?? {} });
+        if (hooked.blocked) return { block: true, reason: hooked.reason };
+        if (hooked.applied.length) {
+          // 就地改写入参（SDK 约定：mutate event.input 即可生效）
+          if (event?.input && typeof event.input === 'object') {
+            Object.assign(event.input, hooked.input);
+          }
+        }
+
+        // ---- 第三档：每一次"会动手"的调用都要用户点批准 ----
+        if (policy.dangerous === 'ask' && MUTATING_TOOLS.has(tool)) {
+          // 用户批准过"本次任务" → 这个 bot 在这个会话里有一段时间不用逐条点
+          if (store.hasApprovalGrant({ roomId, botId: bot?.id ?? null })) return undefined;
+          const hash = approvalHash(tool, event?.input);
+          // 批准过的那一次直接放行（而且只用一次）
+          if (store.takeApproved(hash)) return undefined;
+
+          const existing = store.findPendingApproval({
+            roomId,
+            botId: bot?.id ?? null,
+            hash,
+          });
+          if (existing) {
+            return {
+              block: true,
+              reason: '这一次操作还在等用户批准（卡片已经发在会话里了），先别重复调用。',
+            };
+          }
+
+          const summary = summarizeToolCall(tool, event?.input);
+          const approval = store.createApproval({
+            roomId,
+            botId: bot?.id ?? null,
+            botName: bot?.name ?? '',
+            tool,
+            summary,
+            input: event?.input ?? null,
+            hash,
+          });
+          const msg = store.appendMessage({
+            roomId,
+            authorType: 'bot',
+            authorId: bot?.id ?? null,
+            authorName: bot?.name ?? '',
+            authorEmoji: bot?.emoji ?? null,
+            kind: 'approval',
+            text: `${bot?.name ?? '它'} 想执行：${summary}`,
+            status: 'done',
+            meta: {
+              approvalId: approval.id,
+              tool,
+              summary,
+            },
+          });
+          bus.emit('event', { t: 'msg.new', msg });
+          log(`🛡 ${bot?.name ?? 'bot'} 的操作等待批准：${String(summary).slice(0, 80)}`);
+          return {
+            block: true,
+            reason:
+              '这一次操作需要用户批准，批准卡片已经发在会话里。' +
+              '先不要重复调用；等用户点了批准会再来找你继续。',
+          };
+        }
+
+        if (!SHELL_TOOLS.has(tool)) return undefined;
+
         const denyCommands = policy.denyCommands ?? [];
         const allowCommands = policy.allowCommands ?? [];
         if (!denyCommands.length && !allowCommands.length) return undefined;
