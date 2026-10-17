@@ -9,7 +9,10 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "test": "node tests/all.mjs",
-    "test:integration": "node tests/smoke.mjs"
+    "test:integration": "node tests/smoke.mjs",
+    "relay": "node src/relay-server.js",
+    "relay-agent": "node src/relay-agent.js",
+    "test:relay": "node tests/relay.mjs"
   },
   "engines": {
     "node": ">=22"
