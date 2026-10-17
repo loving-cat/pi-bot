@@ -450,6 +450,13 @@ class AppState extends ChangeNotifier {
           .toList();
       messages[roomId] = list;
       _notify();
+      // 空私聊：让 bot 自己开口（自我介绍 + 询问卡片）。
+      // 服务端按房间标记只做一次，重复调用无副作用。
+      final room = rooms.where((r) => r.id == roomId).firstOrNull;
+      final botId = (room?.kind == 'dm') ? room?.botIds.firstOrNull : null;
+      if (list.isEmpty && botId != null) {
+        unawaited(ensureDm(botId));
+      }
     } catch (err) {
       lastError = '$err';
       _notify();
