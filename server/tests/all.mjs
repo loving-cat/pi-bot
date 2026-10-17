@@ -9,6 +9,7 @@ import path from 'node:path';
 
 const TESTS = [
   'version',
+  'pi-args',
   'relay-frames',
   'unit',
   'tasks',
