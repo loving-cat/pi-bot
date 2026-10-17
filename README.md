@@ -219,6 +219,10 @@ flutter analyze
 **测试**：服务端纯单测 `cd server && npm test`（17 个文件，不需要起服务、不需要网络）；
 端到端冒烟 `npm run test:integration`（需要先起服务端）。
 
+**跨网访问**：默认就是局域网直连（手机连电脑的 IP）。想在外网用，可以套现成隧道
+（frp / Cloudflare Tunnel / Tailscale），或使用我们附带的参考中转 —— 接口与用法见
+[`docs/RELAY.md`](docs/RELAY.md)。中转是可选的，默认不启动。
+
 **关于 token 的位置**：手机/桌面端把 token 放在 `Authorization` 头里；附件 URL
 （`/api/files/:id?token=…`）为了给 `<img>` 直接用，token 在 query 里 —— 局域网自用可以接受，
 但如果你把服务端暴露到公网，请换成反向代理注入鉴权，别让 token 进访问日志。
