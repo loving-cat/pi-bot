@@ -11,10 +11,11 @@
  *   state.json        设备 / bot / 房间 / 每个会话的 sessionFile
  *   rooms/<id>.json   房间消息
  */
+import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config.js';
 import { bus } from './bus.js';
-import { newId, now, readJson, writeJsonAtomic, insertionPoint } from './util.js';
+import { newId, now, readJson, writeJsonAtomic, insertionPoint, log } from './util.js';
 
 const STATE_FILE = path.join(config.dataDir, 'state.json');
 const ROOMS_DIR = path.join(config.dataDir, 'rooms');
@@ -248,13 +249,34 @@ export class Store {
   }
 
   saveNow() {
-    writeJsonAtomic(STATE_FILE, this.state);
+    try {
+      writeJsonAtomic(STATE_FILE, this.state);
+    } catch (err) {
+      log('⚠️  写 state.json 失败（进程继续跑）：', err?.message || err);
+    }
     // 只写有变更的房间：之前是每次变更都把全部房间重写一遍，
     // 房间一多（每个群 500 条消息）就是纯浪费。
-    for (const roomId of this.dirtyRooms) {
-      writeJsonAtomic(path.join(ROOMS_DIR, `${roomId}.json`), this.messages.get(roomId) ?? []);
+    //
+    // 每个房间单独兜底：一个房间写失败（Windows 上 rename 撞杀软/备份抛 EPERM）
+    // 不应该让剩下所有房间都丢掉这次的改动 —— 失败的留在 dirty 里下次再试。
+    for (const roomId of [...this.dirtyRooms]) {
+      try {
+        writeJsonAtomic(path.join(ROOMS_DIR, `${roomId}.json`), this.messages.get(roomId) ?? []);
+        this.dirtyRooms.delete(roomId);
+      } catch (err) {
+        log(`⚠️  写房间 ${roomId} 失败（下次重试）：`, err?.message || err);
+      }
     }
-    this.dirtyRooms.clear();
+  }
+
+  /** 删文件（房间/会话）：失败不算错，最多是磁盘上多留一份 */
+  #removeFile(file) {
+    if (!file) return;
+    try {
+      fs.unlinkSync(file);
+    } catch (err) {
+      if (err?.code !== 'ENOENT') log(`⚠️  删文件失败 ${file}：`, err?.message || err);
+    }
   }
 
   // ---------- 设备 ----------
@@ -403,6 +425,8 @@ export class Store {
       if (room.kind === 'dm' && room.botIds[0] === id) {
         delete this.state.rooms[room.id];
         this.messages.delete(room.id);
+        this.dirtyRooms.delete(room.id);
+        this.#removeFile(path.join(ROOMS_DIR, `${room.id}.json`));
         bus.emit('event', { t: 'room.deleted', roomId: room.id });
       } else if (room.botIds.includes(id)) {
         room.botIds = room.botIds.filter((b) => b !== id);
@@ -411,7 +435,10 @@ export class Store {
       }
     }
     for (const key of Object.keys(this.state.sessions)) {
-      if (key.endsWith(`:${id}`)) delete this.state.sessions[key];
+      if (key.endsWith(`:${id}`)) {
+        this.#removeFile(this.state.sessions[key]);
+        delete this.state.sessions[key];
+      }
     }
     this.scheduleSave();
     bus.emit('event', { t: 'bot.deleted', botId: id });
@@ -588,8 +615,17 @@ export class Store {
     //   注意删的是**这个会话**，不是那个 bot：下次点它 / @它，ensureDm 会重新开一个空的。
     delete this.state.rooms[id];
     this.messages.delete(id);
+    // ★ 磁盘上也要真删。
+    //   以前只删内存和 state 条目，`rooms/<id>.json` 永远留在盘上 ——
+    //   现场跑成 49 个文件 vs 10 个房间（280KB 孤儿，31 个是 2 字节的 `[]`）。
+    //   而且删掉的房间还挂在 dirty 里，下一次落盘会把空数组再写回去。
+    this.dirtyRooms.delete(id);
+    this.#removeFile(path.join(ROOMS_DIR, `${id}.json`));
     for (const key of Object.keys(this.state.sessions)) {
-      if (key.startsWith(`${id}:`)) delete this.state.sessions[key];
+      if (key.startsWith(`${id}:`)) {
+        this.#removeFile(this.state.sessions[key]);
+        delete this.state.sessions[key];
+      }
     }
     this.scheduleSave();
     bus.emit('event', { t: 'room.deleted', roomId: id });
