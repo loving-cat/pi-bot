@@ -4,12 +4,12 @@
  * 服务端真正的启动逻辑在 server-main.js；这里保持入口很小，
  * 免得以后又有人在入口里堆业务。
  */
-import { delegateToPiCli, isPiInvocation } from './pi-args.js';
+import { isPiInvocation, runPiCli } from './pi-args.js';
 
 const argv = process.argv.slice(2);
 
 if (isPiInvocation(argv)) {
-  process.exit(delegateToPiCli(argv));
+  process.exit(await runPiCli(argv));
 } else {
   await import('./server-main.js');
 }
