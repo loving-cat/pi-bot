@@ -59,7 +59,7 @@ class _ChangedFilesViewState extends State<ChangedFilesView> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     const Icon(
-                      LucideIcons.fileDiff,
+                      LucideIcons.fileText,
                       size: 11,
                       color: PB.textQuaternary,
                     ),

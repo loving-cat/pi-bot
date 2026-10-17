@@ -74,6 +74,50 @@ class ChangedFile {
   );
 }
 
+/// 任务板上的一条任务
+class TaskItem {
+  const TaskItem({
+    required this.id,
+    required this.title,
+    this.status = 'open',
+    this.ownerName,
+    this.roomId,
+    this.detail = '',
+    this.unreadAt = 0,
+    this.pinnedAt = 0,
+    this.updatedAt = 0,
+  });
+
+  final String id;
+  final String title;
+
+  /// open | doing | done
+  final String status;
+  final String? ownerName;
+  final String? roomId;
+  final String detail;
+  final int unreadAt;
+  final int pinnedAt;
+  final int updatedAt;
+
+  bool get isDone => status == 'done';
+  bool get isDoing => status == 'doing';
+  bool get isPinned => pinnedAt > 0;
+  bool get isUnread => unreadAt > 0;
+
+  factory TaskItem.fromJson(Map<String, dynamic> json) => TaskItem(
+    id: json['id'] as String? ?? '',
+    title: json['title'] as String? ?? '',
+    status: json['status'] as String? ?? 'open',
+    ownerName: json['ownerName'] as String?,
+    roomId: json['roomId'] as String?,
+    detail: json['detail'] as String? ?? '',
+    unreadAt: (json['unreadAt'] as num?)?.toInt() ?? 0,
+    pinnedAt: (json['pinnedAt'] as num?)?.toInt() ?? 0,
+    updatedAt: (json['updatedAt'] as num?)?.toInt() ?? 0,
+  );
+}
+
 /// 一轮里工作目录的改动摘要（新增 / 修改 / 删除）
 class ChangedSummary {
   const ChangedSummary({
