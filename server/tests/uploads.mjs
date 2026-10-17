@@ -22,7 +22,7 @@ async function test(name, fn) {
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-bot-uploads-'));
 
-await test('顺序分片 + 合并，内容一致', () => {
+await test('顺序分片 + 合并，内容一致', async () => {
   const up = new UploadSessions({ dir });
   const body = Buffer.from('hello world，分片上传测试');
   const { uploadId } = up.init({ name: 'a.txt', size: body.length, mime: 'text/plain' });
@@ -33,11 +33,14 @@ await test('顺序分片 + 合并，内容一致', () => {
   const second = up.writeChunk(uploadId, mid, body.subarray(mid));
   assert.equal(second.received, body.length);
 
-  const done = up.complete(uploadId);
+  const done = await up.complete(uploadId);
   assert.equal(done.error, undefined);
   assert.equal(done.name, 'a.txt');
   assert.equal(done.mime, 'text/plain');
-  assert.ok(done.buffer.equals(body));
+  // 新实现不整读进内存：返回临时文件路径，由调用方搬走
+  assert.ok(done.filePath);
+  assert.ok(fs.readFileSync(done.filePath).equals(body));
+  fs.rmSync(done.filePath, { force: true });
 });
 
 await test('★ 乱序分片被拒绝（避免拼错文件）', () => {
@@ -54,30 +57,32 @@ await test('★ 超过声明大小被拒绝', () => {
   assert.match(r.error, /超过声明大小/);
 });
 
-await test('没传完不能合并', () => {
+await test('没传完不能合并', async () => {
   const up = new UploadSessions({ dir });
   const { uploadId } = up.init({ name: 'd.bin', size: 10 });
   up.writeChunk(uploadId, 0, Buffer.alloc(4));
-  assert.match(up.complete(uploadId).error, /还差 6 字节/);
+  assert.match((await up.complete(uploadId)).error, /还差 6 字节/);
 });
 
-await test('★ sha256 不一致时丢弃', () => {
+await test('★ sha256 不一致时丢弃', async () => {
   const up = new UploadSessions({ dir });
   const body = Buffer.from('tamper');
   const { uploadId } = up.init({ name: 'e.txt', size: body.length });
   up.writeChunk(uploadId, 0, body);
-  const r = up.complete(uploadId, { sha256: 'deadbeef' });
+  const r = await up.complete(uploadId, { sha256: 'deadbeef' });
   assert.match(r.error, /校验失败/);
   assert.equal(up.sessions.has(uploadId), false, '失败后会话要一起清掉');
 });
 
-await test('sha256 正确时通过', () => {
+await test('sha256 正确时通过', async () => {
   const up = new UploadSessions({ dir });
   const body = Buffer.from('ok');
   const { uploadId } = up.init({ name: 'f.txt', size: body.length });
   up.writeChunk(uploadId, 0, body);
   const sha = crypto.createHash('sha256').update(body).digest('hex');
-  assert.ok(up.complete(uploadId, { sha256: sha }).buffer.equals(body));
+  const done = await up.complete(uploadId, { sha256: sha });
+  assert.ok(fs.readFileSync(done.filePath).equals(body));
+  fs.rmSync(done.filePath, { force: true });
 });
 
 await test('超大文件在 init 就被拒', () => {

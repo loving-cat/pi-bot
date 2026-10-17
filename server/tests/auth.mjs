@@ -18,7 +18,7 @@ import http from 'node:http';
 process.env.PI_BOT_HOME = path.join(process.cwd(), 'data', '_unit_test_auth');
 fs.rmSync(process.env.PI_BOT_HOME, { recursive: true, force: true });
 
-const { createHttpServer } = await import('../src/http.js');
+const { createHttpServer, hostAllowed } = await import('../src/http.js');
 const { Pairing, lanAddresses } = await import('../src/pairing.js');
 const { store } = await import('../src/store.js');
 
@@ -44,7 +44,7 @@ await new Promise((r) => server.listen(0, '0.0.0.0', r));
 const port = server.address().port;
 
 /** @returns {Promise<{status:number, body:any, text:string}>} */
-function call(host, pathname, { method = 'GET', body = null, token = '' } = {}) {
+function call(host, pathname, { method = 'GET', body = null, token = '', headers = {} } = {}) {
   return new Promise((resolve, reject) => {
     const req = http.request(
       {
@@ -55,6 +55,7 @@ function call(host, pathname, { method = 'GET', body = null, token = '' } = {}) 
         headers: {
           ...(token ? { authorization: `Bearer ${token}` } : {}),
           ...(body ? { 'content-type': 'application/json' } : {}),
+          ...headers,
         },
       },
       (res) => {
@@ -68,7 +69,7 @@ function call(host, pathname, { method = 'GET', body = null, token = '' } = {}) 
           } catch {
             parsed = null;
           }
-          resolve({ status: res.statusCode, body: parsed, text });
+          resolve({ status: res.statusCode, body: parsed, text, headers: res.headers });
         });
       },
     );
@@ -149,6 +150,36 @@ if (lan) {
 await test('错码不放行', async () => {
   const r = await call('127.0.0.1', '/api/pair', { method: 'POST', body: { code: '000000' } });
   assert.equal(r.status, 401);
+});
+
+await test('hostAllowed：本机名/局域网 IP 放行，外部域名拒绝', () => {
+  assert.equal(hostAllowed('127.0.0.1:8787'), true);
+  assert.equal(hostAllowed('localhost:8787'), true);
+  assert.equal(hostAllowed('[::1]:8787'), true);
+  assert.equal(hostAllowed('evil.example.com:8787'), false);
+  assert.equal(hostAllowed(''), false);
+});
+
+await test('★ 伪造 Host 的请求一律 403（防 DNS rebinding）', async () => {
+  const r = await call('127.0.0.1', '/api/state', {
+    headers: { host: 'evil.example.com' },
+  });
+  assert.equal(r.status, 403);
+});
+
+await test('★ 响应不再带 ACAO *（浏览器读不到）', async () => {
+  const r = await call('127.0.0.1', '/health');
+  assert.equal(r.status, 200);
+  assert.equal(r.headers['access-control-allow-origin'], undefined);
+});
+
+await test('★ 状态变更请求必须 application/json（跨域 text/plain 打不进来）', async () => {
+  const r = await call('127.0.0.1', '/api/tasks', {
+    method: 'POST',
+    body: { title: 'x' },
+    headers: { 'content-type': 'text/plain' },
+  });
+  assert.equal(r.status, 415);
 });
 
 server.close();

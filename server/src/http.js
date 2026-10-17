@@ -6,10 +6,10 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config.js';
-import { lanAddresses } from './pairing.js';
 import { modelGroups, testModelGroup } from './model-groups.js';
 import { store } from './store.js';
-import { metaFor, pathFor, saveBuffer } from './attachments.js';
+import { metaFor, pathFor, saveBuffer, saveMovedFile } from './attachments.js';
+import { lanAddresses } from './pairing.js';
 import { timingSafeEqual, log } from './util.js';
 import { shells } from './shells.js';
 import { computeNextRun, validateSchedule } from './automations.js';
@@ -22,9 +22,10 @@ function send(res, status, body) {
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'content-length': Buffer.byteLength(payload),
-    'access-control-allow-origin': '*',
-    'access-control-allow-headers': 'authorization, content-type',
-    'access-control-allow-methods': 'GET, POST, PATCH, DELETE, OPTIONS',
+    // ★ 不再给 `access-control-allow-origin: *`。
+    //   桌面端是同机直连（没有 Origin）；网页配对页是同源。给 * 只会让
+    //   任意网页都能读到 127.0.0.1 的响应。
+    'x-content-type-options': 'nosniff',
   });
   res.end(payload);
 }
@@ -41,7 +42,7 @@ async function readBody(req, limit = 1024 * 1024) {
   try {
     return JSON.parse(Buffer.concat(chunks).toString('utf8'));
   } catch {
-    throw new Error('invalid json');
+    throw Object.assign(new Error('invalid json'), { code: 'INVALID_JSON' });
   }
 }
 
@@ -87,6 +88,25 @@ function authenticate(req, url) {
   return null;
 }
 
+/**
+ * Host 头是否指向本机。
+ *
+ * 桌面端连 127.0.0.1；手机连局域网 IP。除此之外（尤其是外部域名）一律拒绝 ——
+ * 否则恶意网页把自己的域名解析到 127.0.0.1，浏览器就会以"同源"身份打进来
+ * （DNS rebinding），连 CORS 都挡不住。
+ */
+export function hostAllowed(hostHeader) {
+  const host = String(hostHeader ?? '').trim();
+  if (!host) return false;
+  const name = host.startsWith('[')
+    ? host.slice(1, host.indexOf(']'))
+    : host.split(':')[0];
+  const lower = name.toLowerCase();
+  if (lower === '127.0.0.1' || lower === 'localhost' || lower === '::1') return true;
+  if (config.hostname && lower === String(config.hostname).toLowerCase()) return true;
+  return lanAddresses().some((a) => String(a.address).toLowerCase() === lower);
+}
+
 export function createHttpServer({ runner, pairing }) {
   const uploads = new UploadSessions({
     dir: path.join(config.dataDir, 'uploads', '_partial'),
@@ -94,6 +114,12 @@ export function createHttpServer({ runner, pairing }) {
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     const pathname = url.pathname.replace(/\/+$/, '') || '/';
+
+    // ★ Host 必须是本机名/本机 IP：防 DNS rebinding ——
+    //   恶意域名解析到 127.0.0.1 时，Host 会是那个域名，这里直接拒。
+    if (!hostAllowed(req.headers.host)) {
+      return send(res, 403, { error: 'bad host' });
+    }
 
     if (req.method === 'OPTIONS') return send(res, 204, {});
 
@@ -135,6 +161,17 @@ export function createHttpServer({ runner, pairing }) {
       }
 
       if (!device) return send(res, 401, { error: 'unauthorized' });
+
+      // ★ 状态变更请求必须声明 JSON：浏览器跨域发 text/plain 不会触发预检，
+      //   光靠 CORS 挡不住"只求副作用不求回显"的攻击。上传接口例外。
+      const isUploadRoute =
+        pathname === '/api/uploads' || pathname.startsWith('/api/uploads/');
+      if (!isUploadRoute && ['POST', 'PATCH', 'PUT'].includes(req.method)) {
+        const ct = String(req.headers['content-type'] ?? '').toLowerCase();
+        if (!ct.includes('application/json')) {
+          return send(res, 415, { error: 'content-type 必须是 application/json' });
+        }
+      }
 
       // 配对码 / 已配对设备：都是主人才能看的东西，所以放在鉴权之后
       if (pathname === '/api/pairing' && req.method === 'GET') {
@@ -374,9 +411,10 @@ export function createHttpServer({ runner, pairing }) {
       const completeMatch = pathname.match(/^\/api\/uploads\/([^/]+)\/complete$/);
       if (completeMatch && req.method === 'POST') {
         const body = await readBody(req).catch(() => ({}));
-        const done = uploads.complete(completeMatch[1], { sha256: body?.sha256 });
+        const done = await uploads.complete(completeMatch[1], { sha256: body?.sha256 });
         if (done.error) return send(res, 400, { error: done.error });
-        const meta = saveBuffer(done.buffer, { name: done.name, mime: done.mime });
+        // 不整读：临时文件直接搬进附件目录（rename，跨盘才退化成 copy）
+        const meta = saveMovedFile(done.filePath, { name: done.name, mime: done.mime });
         return send(res, 200, { attachment: { ...meta, url: `/api/files/${meta.id}` } });
       }
 
@@ -408,7 +446,8 @@ export function createHttpServer({ runner, pairing }) {
           'content-type': meta.mime,
           'content-length': meta.size,
           'cache-control': 'private, max-age=86400',
-          'access-control-allow-origin': '*',
+          // 附件同样是本机内容，不对外开放跨域读取
+          'x-content-type-options': 'nosniff',
         });
         fs.createReadStream(file).pipe(res);
         return undefined;
@@ -630,7 +669,16 @@ export function createHttpServer({ runner, pairing }) {
       return send(res, 404, { error: 'not found', path: pathname });
     } catch (err) {
       const code = err?.code;
-      const status = code === 'BUSY' ? 409 : code ? 400 : 500;
+      const status =
+        code === 'BUSY'
+          ? 409
+          : code === 'BODY_TOO_LARGE'
+            ? 413
+            : code === 'INVALID_JSON'
+              ? 400
+              : code
+                ? 400
+                : 500;
       return send(res, status, { error: String(err?.message || err), code });
     }
   });
