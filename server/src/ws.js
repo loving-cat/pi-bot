@@ -7,6 +7,7 @@
 import { WebSocketServer } from 'ws';
 import { config } from './config.js';
 import { store } from './store.js';
+import { VERSION } from './version.js';
 import { bus } from './bus.js';
 import { serverInfo, isLoopback, LOCAL_DEVICE } from './http.js';
 import { log, timingSafeEqual } from './util.js';
@@ -47,7 +48,7 @@ export function attachWs(server, { runner }) {
       JSON.stringify({
         t: 'hello',
         serverName: config.serverName,
-        version: '0.2.0',
+        version: VERSION,
         server: serverInfo(runner),
         device,
         rooms: store.listRooms().map((r) => store.roomSummary(r)),
