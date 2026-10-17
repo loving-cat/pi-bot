@@ -28,9 +28,8 @@ export const REF_MERGE_MS = 180_000;
 /**
  * 一次派活的任务描述上限（字符）。
  *
- * 派活描述超长时的处理原则：
- *   超长直接拒绝，不截断。
- * 截断会静默地削掉约束和禁止项 —— 对方拿着不完整的活去干，比不收更危险。
+ * 超长一律退回，不做截断：截断会静默削掉约束与禁止项，
+ * 对方拿着一份不完整的活去干，比直接退回更危险。
  */
 export const MAX_TASK_CHARS = 4000;
 
@@ -349,9 +348,8 @@ export function buildCommonTools({ runner, roomId, botId }) {
         const target = store.getBot(params.botId);
         if (!target) return fail(`找不到 bot ${params.botId}`);
         if (target.id === botId) return fail('不能给自己发私信');
-        // ★ 超长直接退，**不截断**。
-        //   截断会把「约束 / 禁止项 / 要报批」这类东西悄悄切掉 ——
-        //   对方拿着一份缺约束的活去干，比不收更危险。宁可让它分两次派。
+        // 超长直接退回，不截断：截断会把「约束 / 禁止项 / 要报批」悄悄切掉，
+        // 对方拿着缺约束的活去干比不收更危险；宁可让它分两次派。
         if (params.task.length > MAX_TASK_CHARS) {
           return fail(
             `任务描述太长（${params.task.length} 字，上限 ${MAX_TASK_CHARS} 字）。` +
