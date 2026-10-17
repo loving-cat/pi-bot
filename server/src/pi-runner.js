@@ -21,6 +21,7 @@ import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { config } from './config.js';
 import { bus } from './bus.js';
 import { store, toolsForPolicy } from './store.js';
+import { dmOpeningPrompt, shouldMirrorProgress, mirrorProgress } from './dm.js';
 import { loadExtraProviders, settingsDefaultModel } from './providers.js';
 import { modelGroups } from './model-groups.js';
 import { ModelHealth } from './model-health.js';
@@ -533,6 +534,41 @@ export class PiRunner {
    * 流程：定首发人 → 依次跑 → 每个 bot 的输出里 @了谁，谁就排到队尾接着跑。
    * 每人有轮次预算（老大多一些），自己来回的轮数也有上限，防止部门内部无限互吹。
    */
+  /**
+   * 私聊开场：空会话时自我介绍 + 用询问卡片问用户要做什么。
+   *
+   * 触发点在"打开私聊"的接口里；这里再做一遍检查（幂等），
+   * 因为用户可能连着点两下，或者上次开场跑到一半被中断。
+   */
+  async greetDm(roomId, botId) {
+    const room = store.getRoom(roomId);
+    if (!room || room.kind !== 'dm') return { ok: false, skipped: 'not-dm' };
+    if (room.greetedAt) return { ok: false, skipped: 'already-greeted' };
+    if (store.listMessages(roomId, { limit: 1 }).length) {
+      return { ok: false, skipped: 'not-empty' };
+    }
+    const bot = store.getBot(botId);
+    if (!bot) return { ok: false, skipped: 'no-bot' };
+    if (this.isBusy(roomId, botId)) return { ok: false, skipped: 'busy' };
+
+    store.markRoomGreeted(roomId);
+    return this.run(roomId, botId, dmOpeningPrompt(bot), {
+      skipUserMessage: true,
+      meta: { opening: true },
+    });
+  }
+
+  /**
+   * 往 bot 与用户的私聊里回一条进度（写库的实现在 dm.js，便于单测）。
+   */
+  #mirrorProgress({ room, bot, phase, text, ok = true }) {
+    try {
+      mirrorProgress({ store, room, bot, phase, text, ok });
+    } catch (err) {
+      log('私聊进度回执失败：', err?.message || err);
+    }
+  }
+
   async runRound(
     roomId,
     {
@@ -750,10 +786,32 @@ export class PiRunner {
       pending.push(
         (async () => {
           try {
+            const mirror = shouldMirrorProgress({
+              roomKind: room.kind,
+              fromId: item.fromId,
+              botId: bot.id,
+            });
+            if (mirror) {
+              this.#mirrorProgress({
+                room,
+                bot,
+                phase: 'start',
+                text: item.fromText || item.reason,
+              });
+            }
             const res = await this.run(roomId, bot.id, prompt, {
               groupTurn: true,
               attachments,
             });
+            if (mirror) {
+              this.#mirrorProgress({
+                room,
+                bot,
+                phase: 'done',
+                text: res.text,
+                ok: res.ok,
+              });
+            }
           store.setCursor(roomId, bot.id, lastMessageId(roomId));
 
           // 没成也得说一声 —— 不然"叫了它但没动静"没人知道
