@@ -71,7 +71,7 @@ function normalizeMime(name, mime) {
 export function saveBuffer(buffer, { name = 'file', mime = null } = {}) {
   const type = normalizeMime(name, mime);
   const id = crypto.randomBytes(9).toString('hex');
-  const ext = EXT_BY_MIME[type] ?? path.extname(name || '') ?? '';
+  const ext = EXT_BY_MIME[type] ?? path.extname(String(name || ''));
   const file = path.join(DIR, id + ext);
   fs.writeFileSync(file, buffer);
   const meta = {
