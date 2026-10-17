@@ -1,0 +1,51 @@
+docs/MACOS.md
+  s_06973911ad2cd6::t_72e13c2d4fca3e 51
+app/lib/server/supervisor.dart
+  s_06973911ad2cd6::t_28202a6aab0d72 43-78,81-89,91,95,99-104,133-134
+app/lib/app_log.dart
+  s_06973911ad2cd6::t_3438580f701726 1-104
+app/lib/main.dart
+  s_06973911ad2cd6::t_46b549a57011eb 1,5-6,9,23,33-34,48-67,69,71,84,86,89-92,98-137
+app/lib/screens/settings_screen.dart
+  s_06973911ad2cd6::t_26f82d34205315 15,329-331
+app/lib/widgets/log_section.dart
+  s_06973911ad2cd6::t_377bf28f2d477e 1-76
+app/lib/window_state.dart
+  s_06973911ad2cd6::t_0403da06cefa38 1-92
+app/pubspec.yaml
+  s_06973911ad2cd6::t_3707d712c48386 4
+app/test/window_state_test.dart
+  s_06973911ad2cd6::t_9b7e3c11dd4080 1-56
+app/windows/runner/Runner.rc
+  s_06973911ad2cd6::t_9aa68019d3314e 92-93,95-96,98
+docs/MODULE-MAP.md
+  s_06973911ad2cd6::t_11eb888e6a5cd6 14,63-64
+server/package-lock.json
+  s_06973911ad2cd6::t_ea8ccc32940306 3,9
+server/package.json
+  s_06973911ad2cd6::t_0b11bd7ce0cc68 3
+server/src/http.js
+  s_06973911ad2cd6::t_d7ec07c88d2ade 16,106,643
+server/src/version.js
+  s_06973911ad2cd6::t_d7b0d2d900e3f7 1-11
+server/src/ws.js
+  s_06973911ad2cd6::t_d827d19aec2ec2 10,51
+server/tests/version.mjs
+  s_06973911ad2cd6::t_ccae0a559d65b0 1-43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "376c392ebe0268195f6856a0f7eb858c1152d843",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
