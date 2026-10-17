@@ -10,14 +10,22 @@ import 'dart:io';
 /// 子进程再写日志会收到 EPIPE 而退出。
 /// `ProcessStartMode.detached` 在 Windows 上没有 stdio 句柄，node 无法启动；
 /// 通过 `cmd /c` 重定向则会与 Dart 的引号转义规则冲突。
+///
+/// 启动链上**必须保住那个隐藏控制台**：服务端派生的每个子进程（rg / fd / git /
+/// node）默认继承父进程的控制台；父进程没有控制台时，Windows 会给每个子进程
+/// 新建一个控制台窗口，于是工具一跑屏幕上就闪黑框。
+/// 实测：给服务端加 `windowsHide` 或 `detached` 都会把控制台剥掉（
+/// `GetConsoleWindow() == 0`），随后每次派生都会新建窗口。
 class ServerSupervisor {
   ServerSupervisor(this.stateDir);
 
   /// 放 pid / 日志 / 辅助脚本的目录（`%LOCALAPPDATA%\pi-bot`）
   final Directory stateDir;
 
-  File get _script => File('${stateDir.path}${Platform.pathSeparator}spawn-server.mjs');
-  File get pidFile => File('${stateDir.path}${Platform.pathSeparator}server.pid');
+  File get _script =>
+      File('${stateDir.path}${Platform.pathSeparator}spawn-server.mjs');
+  File get pidFile =>
+      File('${stateDir.path}${Platform.pathSeparator}server.pid');
 
   /// 服务端进程的 pid（不是辅助脚本的 pid，后者会立即退出）
   int? readPid() {
@@ -41,9 +49,9 @@ class ServerSupervisor {
     final extraJson = extraEnv.isEmpty ? '{}' : jsonEncode(extraEnv);
 
     if (Platform.isWindows) {
-      // ★ Dart 的 Process.start 不带 CREATE_NO_WINDOW：GUI 程序拉起控制台子进程时，
-      //   Windows 会给它开一个新控制台窗口（用户看到的就是"一闪的 cmd/node"）。
-      //   用 WScript.Shell.Run(..., 0) 以**隐藏窗口**启动，参数与工作目录照传。
+      // Dart 的 Process.start 不带 CREATE_NO_WINDOW：GUI 程序拉起控制台子进程时，
+      // Windows 会给它开一个新控制台窗口。用 WScript.Shell.Run(..., 0) 以**隐藏窗口**启动，
+      // 参数与工作目录照传。
       final vbs = File(
         '${stateDir.path}${Platform.pathSeparator}spawn-server.vbs',
       );
@@ -67,11 +75,15 @@ class ServerSupervisor {
       return Process.start('wscript.exe', [vbs.path]);
     }
 
-    return Process.start(
+    return Process.start(nodePath, [
+      _script.path,
       nodePath,
-      [_script.path, nodePath, entryPath, serverDir, logPath, pidFile.path, extraJson],
-      workingDirectory: serverDir,
-    );
+      entryPath,
+      serverDir,
+      logPath,
+      pidFile.path,
+      extraJson,
+    ], workingDirectory: serverDir);
   }
 
   /// 停止服务端（修改配置或重启时使用）
@@ -101,11 +113,16 @@ const extra = JSON.parse(extraJson || '{}');
 const fd = fs.openSync(logPath, 'a');
 const header = `\n---- ${new Date().toISOString()} 启动: ${entry} (node ${process.version}) ----\n`;
 fs.writeSync(fd, header);
+// 这里两个选项都不能加，否则工具一跑就闪黑框：
+// - 本脚本由 WScript.Shell.Run(...,0) 以隐藏窗口启动，自带一个**隐藏控制台**；
+//   服务端继承它，之后每个工具子进程（rg / fd / git / node）也继承它，
+//   系统就不会再为它们新建控制台窗口。
+// - windowsHide 会把子进程的控制台剥掉（GetConsoleWindow()==0）；
+// - detached 会给子进程 DETACHED_PROCESS，同样没有控制台。
+// 两者都会让服务端的派生链从"共享隐藏控制台"变成"每个子进程新建窗口"。
 const child = spawn(node, [entry], {
   cwd,
   stdio: ['ignore', fd, fd],
-  detached: true,
-  windowsHide: true,
   env: { ...process.env, ...extra },
 });
 if (pidFile) {
