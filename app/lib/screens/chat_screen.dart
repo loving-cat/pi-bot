@@ -22,6 +22,7 @@ import '../widgets/floating_menu.dart';
 import '../widgets/md_text.dart';
 import '../widgets/msg_ref_chip.dart';
 import '../widgets/changed_files.dart';
+import '../widgets/task_board.dart';
 import '../widgets/tool_steps.dart';
 import '../widgets/room_panel.dart';
 import '../widgets/message_actions.dart';
@@ -495,6 +496,51 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           ),
         ),
         actions: [
+          // 任务板：显示这个房间未完成的数量，点开是清单
+          Builder(
+            builder: (ctx) {
+              final list = state.tasksFor(room.id);
+              final pending = list.where((t) => !t.isDone).length;
+              return IconButton(
+                padding: EdgeInsets.zero,
+                alignment: Alignment.center,
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                tooltip: pending > 0 ? '任务（$pending 个未完成）' : '任务',
+                onPressed: () async {
+                  await state.refreshTasks();
+                  if (!ctx.mounted) return;
+                  showModalBottomSheet<void>(
+                    context: ctx,
+                    backgroundColor: PB.bgPane,
+                    isScrollControlled: true,
+                    constraints: const BoxConstraints(maxWidth: 560),
+                    builder: (_) => TaskBoardSheet(
+                      roomName: room.name,
+                      tasks: state.tasksFor(room.id),
+                      onToggleDone: (t) => state.updateTask(
+                        t.id,
+                        {'status': t.isDone ? 'open' : 'done', 'read': true},
+                      ),
+                      onTogglePin: (t) => state.updateTask(t.id, {'pinned': !t.isPinned}),
+                      onDelete: (t) => state.deleteTask(t.id),
+                      onCreate: (title) => state.createTask(roomId: room.id, title: title),
+                    ),
+                  );
+                },
+                icon: Badge(
+                  isLabelVisible: pending > 0,
+                  label: Text('$pending'),
+                  backgroundColor: PB.accent,
+                  child: Icon(
+                    LucideIcons.checkCircle2,
+                    size: 18,
+                    color: pending > 0 ? PB.accent : PB.textTertiary,
+                  ),
+                ),
+              );
+            },
+          ),
           PopupMenuButton<String>(
             icon: const Icon(LucideIcons.ellipsis, size: 18),
             padding: EdgeInsets.zero,
