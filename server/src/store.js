@@ -203,6 +203,7 @@ export class Store {
     const saved = readJson(STATE_FILE, null);
     this.state = saved?.version === STATE_VERSION ? saved : this.#seed();
     if (!this.state.sessions) this.state.sessions = {};
+    if (!Array.isArray(this.state.tasks)) this.state.tasks = [];
     /** @type {Map<string, any[]>} roomId -> messages */
     this.messages = new Map();
     for (const room of Object.values(this.state.rooms)) {
@@ -730,6 +731,142 @@ export class Store {
       createdBy,
     });
     return { room, bots: created };
+  }
+
+  // ---------- 任务板 ----------
+
+  /** 全部任务（新在前） */
+  listTasks({ roomId = null, status = null, limit = 200 } = {}) {
+    const all = Array.isArray(this.state.tasks) ? this.state.tasks : [];
+    return all
+      .filter((t) => (!roomId || t.roomId === roomId) && (!status || t.status === status))
+      .slice()
+      .sort((a, b) => (b.pinnedAt ?? 0) - (a.pinnedAt ?? 0) || b.updatedAt - a.updatedAt)
+      .slice(0, Math.max(1, Math.min(limit, 500)));
+  }
+
+  getTask(id) {
+    return (this.state.tasks ?? []).find((t) => t.id === id) ?? null;
+  }
+
+  createTask({
+    roomId = null,
+    title = '',
+    detail = '',
+    ownerBotId = null,
+    createdBy = null,
+    sourceMessageId = null,
+    status = 'open',
+  } = {}) {
+    const clean = String(title ?? '').trim().slice(0, 200);
+    if (!clean) return null;
+    if (!Array.isArray(this.state.tasks)) this.state.tasks = [];
+    const task = {
+      id: newId('tk_'),
+      roomId,
+      title: clean,
+      detail: String(detail ?? '').slice(0, 2000),
+      status: ['open', 'doing', 'done'].includes(status) ? status : 'open',
+      ownerBotId,
+      ownerName: ownerBotId ? (this.getBot(ownerBotId)?.name ?? null) : null,
+      createdBy,
+      sourceMessageId,
+      createdAt: now(),
+      updatedAt: now(),
+      unreadAt: 0,
+      pinnedAt: 0,
+    };
+    this.state.tasks.push(task);
+    // 任务板只留最近 500 条（旧的自动淘汰，别让它无限长）
+    if (this.state.tasks.length > 500) {
+      const done = this.state.tasks.filter((t) => t.status === 'done');
+      const keep = this.state.tasks.slice(-500);
+      this.state.tasks = keep;
+      if (done.length > 0) log(`任务板已到 500 条上限，淘汰了较早的 ${done.length} 条已完成任务`);
+    }
+    this.scheduleSave();
+    bus.emit('event', { t: 'task.updated', task });
+    return task;
+  }
+
+  updateTask(id, patch = {}) {
+    const task = this.getTask(id);
+    if (!task) return null;
+    if (patch.title !== undefined) {
+      const clean = String(patch.title ?? '').trim().slice(0, 200);
+      if (clean) task.title = clean;
+    }
+    if (patch.detail !== undefined) task.detail = String(patch.detail ?? '').slice(0, 2000);
+    if (patch.ownerBotId !== undefined) {
+      task.ownerBotId = patch.ownerBotId || null;
+      task.ownerName = task.ownerBotId ? (this.getBot(task.ownerBotId)?.name ?? null) : null;
+    }
+    if (patch.status !== undefined && ['open', 'doing', 'done'].includes(patch.status)) {
+      task.status = patch.status;
+      // 变成"完成"时记一条未读，等用户看过再清掉
+      task.unreadAt = patch.status === 'done' ? now() : 0;
+    }
+    if (patch.pinned !== undefined) task.pinnedAt = patch.pinned ? now() : 0;
+    if (patch.read) task.unreadAt = 0;
+    task.updatedAt = now();
+    this.scheduleSave();
+    bus.emit('event', { t: 'task.updated', task });
+    return task;
+  }
+
+  deleteTask(id) {
+    const list = this.state.tasks ?? [];
+    const idx = list.findIndex((t) => t.id === id);
+    if (idx < 0) return false;
+    list.splice(idx, 1);
+    this.scheduleSave();
+    bus.emit('event', { t: 'task.deleted', taskId: id });
+    return true;
+  }
+
+  /**
+   * 部门里派活时登记一个任务（同一个执行者 + 同一句话，10 分钟内复用同一条）。
+   * 返回任务 id，跑完用它收尾。
+   */
+  upsertDispatchTask({ roomId, ownerBotId, title, sourceMessageId = null }) {
+    const clean = String(title ?? '').trim().slice(0, 200);
+    if (!clean || !ownerBotId) return null;
+    const at = now();
+    const existing = (this.state.tasks ?? []).find(
+      (t) =>
+        t.roomId === roomId &&
+        t.ownerBotId === ownerBotId &&
+        t.status !== 'done' &&
+        t.title === clean &&
+        at - t.updatedAt < 10 * 60 * 1000,
+    );
+    if (existing) {
+      existing.updatedAt = at;
+      this.scheduleSave();
+      return existing.id;
+    }
+    const task = this.createTask({
+      roomId,
+      title: clean,
+      ownerBotId,
+      createdBy: 'dispatch',
+      sourceMessageId,
+      status: 'doing',
+    });
+    return task?.id ?? null;
+  }
+
+  /** 一轮跑完后收尾：成功/失败都记下来，完成的置为 done 并标记未读 */
+  finishTask(id, { ok = true, text = '' } = {}) {
+    const task = this.getTask(id);
+    if (!task) return null;
+    task.detail = String(text ?? '').slice(0, 2000);
+    task.status = ok ? 'done' : 'open';
+    task.unreadAt = ok ? now() : 0;
+    task.updatedAt = now();
+    this.scheduleSave();
+    bus.emit('event', { t: 'task.updated', task });
+    return task;
   }
 
   // ---------- 部门模板 ----------
