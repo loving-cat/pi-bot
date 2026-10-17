@@ -189,6 +189,16 @@ export function buildCommonTools({ runner, roomId, botId }) {
         ),
       }),
       execute: async (_toolCallId, { question, options, allowCustom }) => {
+        // 群聊里不弹卡片：任务要往下走，不能停在这里等用户点。
+        // 要确认的事写进正文；用户想回会直接在群里说。
+        const room = store.getRoom(roomId);
+        if (room?.kind === 'group') {
+          return fail(
+            '群聊里不要用询问卡片（会让整件事停下来等）。' +
+              '把需要确认的点写进你这条回复的正文里，然后**继续把能做的部分做完**；' +
+              '用户有意见会直接在群里说。',
+          );
+        }
         const opts = (Array.isArray(options) ? options : [])
           .map((o) => ({
             label: String(o?.label ?? '').trim().slice(0, 40),
