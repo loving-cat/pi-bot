@@ -61,6 +61,54 @@ class Attachment {
   );
 }
 
+/// 一个被改动过的文件
+class ChangedFile {
+  const ChangedFile({required this.path, this.size = 0});
+
+  final String path;
+  final int size;
+
+  factory ChangedFile.fromJson(Map<String, dynamic> json) => ChangedFile(
+    path: json['path'] as String? ?? '',
+    size: (json['size'] as num?)?.toInt() ?? 0,
+  );
+}
+
+/// 一轮里工作目录的改动摘要（新增 / 修改 / 删除）
+class ChangedSummary {
+  const ChangedSummary({
+    this.added = const [],
+    this.modified = const [],
+    this.removed = const [],
+    this.total = 0,
+    this.truncated = false,
+  });
+
+  final List<ChangedFile> added;
+  final List<ChangedFile> modified;
+  final List<ChangedFile> removed;
+  final int total;
+  final bool truncated;
+
+  bool get isEmpty => total == 0;
+
+  factory ChangedSummary.fromJson(Map<String, dynamic> json) {
+    List<ChangedFile> parse(Object? raw) => raw is List
+        ? raw
+              .whereType<Map>()
+              .map((e) => ChangedFile.fromJson(e.cast<String, dynamic>()))
+              .toList()
+        : const [];
+    return ChangedSummary(
+      added: parse(json['added']),
+      modified: parse(json['modified']),
+      removed: parse(json['removed']),
+      total: (json['total'] as num?)?.toInt() ?? 0,
+      truncated: json['truncated'] == true,
+    );
+  }
+}
+
 class Msg {
   Msg({
     required this.id,
@@ -121,6 +169,14 @@ class Msg {
         .whereType<Map>()
         .map((e) => AskOption.fromJson(e.cast<String, dynamic>()))
         .toList();
+  }
+
+  /// 本轮改了哪些文件（服务端跑完对比工作目录写进 meta.changed）
+  ChangedSummary? get changes {
+    final raw = meta?['changed'];
+    if (raw is! Map) return null;
+    final parsed = ChangedSummary.fromJson(raw.cast<String, dynamic>());
+    return parsed.total > 0 ? parsed : null;
   }
 
   /// 要不要同时给一个"我自己说"的输入框
