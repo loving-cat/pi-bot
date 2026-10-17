@@ -20,6 +20,7 @@ import '../widgets/context_chip.dart';
 import '../widgets/floating_menu.dart';
 import '../widgets/md_text.dart';
 import '../widgets/msg_ref_chip.dart';
+import '../widgets/tool_steps.dart';
 import '../widgets/room_panel.dart';
 import '../widgets/message_actions.dart';
 import '../widgets/teach_dialog.dart';
@@ -1611,7 +1612,7 @@ class _MessageRow extends StatelessWidget {
                         ],
                       ),
                     ),
-                  if (msg.steps.isNotEmpty) _Steps(steps: msg.steps),
+                  if (msg.steps.isNotEmpty) ToolSteps(steps: msg.steps),
                   GestureDetector(
                     onLongPress: onLongPress,
                     child: Container(
@@ -1674,125 +1675,6 @@ class _MessageRow extends StatelessWidget {
                 ],
               ),
             ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _Steps extends StatelessWidget {
-  const _Steps({required this.steps});
-
-  final List<ToolStep> steps;
-
-  @override
-  Widget build(BuildContext context) {
-    final running = steps.any((s) => s.status == 'running');
-    final shown = steps.length > 5 ? steps.sublist(steps.length - 5) : steps;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 7),
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(10, 8, 11, 8),
-        decoration: BoxDecoration(
-          color: PB.bgBubble.withValues(alpha: 0.55),
-          borderRadius: BorderRadius.circular(PB.rXl),
-          border: Border.all(color: PB.borderTertiary),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.only(bottom: 5),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    running ? LucideIcons.loader : LucideIcons.circleCheck,
-                    size: 11,
-                    color: running ? PB.accent : PB.textQuaternary,
-                  ),
-                  const SizedBox(width: 5),
-                  Text(
-                    running ? '正在调用工具…' : '工具调用 · ${steps.length} 步',
-                    style: TextStyle(
-                      fontSize: PB.fsXxs,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0.3,
-                      color: running ? PB.accent : PB.textTertiary,
-                    ),
-                  ),
-                  if (steps.length > shown.length) ...[
-                    const SizedBox(width: 6),
-                    // 同上：窄屏上这句也会撑出去
-                    const Flexible(
-                      child: Text(
-                        '（只显示最近 5 步）',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: PB.fsXxs,
-                          color: PB.textQuaternary,
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            for (final step in shown)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 3),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    SizedBox(
-                      width: 12,
-                      height: 12,
-                      child: step.status == 'running'
-                          ? const CircularProgressIndicator(
-                              strokeWidth: 1.6,
-                              color: PB.accent,
-                            )
-                          : Icon(
-                              step.status == 'error'
-                                  ? LucideIcons.x
-                                  : LucideIcons.check,
-                              size: 12,
-                              color: step.status == 'error'
-                                  ? PB.danger
-                                  : PB.textQuaternary,
-                            ),
-                    ),
-                    const SizedBox(width: 7),
-                    // ★ Flexible + 上限 280：桌面端封顶 280 不拉太长，
-                    //   手机端能被压缩到卡片的可用宽度里 ——
-                    //   以前只有 ConstrainedBox(maxWidth: 280)，在窄屏上是个死值，
-                    //   固定 280 比卡片还宽 → 直接撑出框体（用户报的）。
-                    Flexible(
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 280),
-                        child: Text(
-                          '${step.tool}${step.detail.isNotEmpty ? '  ${shortText(step.detail, 62)}' : ''}'
-                          '${step.durationMs != null ? '  ${step.durationMs}ms' : ''}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontFamily: PB.monoFamily,
-                            fontFamilyFallback: PB.monoFallback,
-                            // 这行是**中英混排**（create_bot  name: 平台开发工程师），
-                            // 10 号在 125% 缩放下是 12.5 个物理像素，中文必糊
-                            fontSize: PB.fsTinyCjk,
-                            color: step.status == 'running'
-                                ? PB.accent
-                                : PB.textQuaternary,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
           ],
         ),
       ),
