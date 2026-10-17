@@ -62,8 +62,14 @@ export class Pairing {
     this.timer.unref?.();
   }
 
-  rotate() {
-    if (Date.now() < this.expiresAt) return;
+  /**
+   * 换一个新码。
+   *
+   * force：配对成功时要立刻作废当前码（一个码只能用一次）。
+   * 定时器调的时候不传 force —— 只在已过期时才真换。
+   */
+  rotate({ force = false } = {}) {
+    if (!force && Date.now() < this.expiresAt) return;
     this.code = pairingCode();
     this.rotatedAt = Date.now();
     this.expiresAt = this.rotatedAt + config.pairTtlMs;
@@ -78,14 +84,22 @@ export class Pairing {
     return String(input ?? '').trim() === this.code;
   }
 
-  snapshot() {
-    return {
+  /**
+   * 配对页要的数据。
+   *
+   * withCode=false 时**不带码**：码是「只在服务端控制台可见」的凭证，
+   * 发给任何未鉴权的请求就等于配对机制白设。
+   */
+  snapshot({ withCode = true } = {}) {
+    const snap = {
       code: this.code,
       expiresAt: this.expiresAt,
       ttlMs: this.expiresAt - Date.now(),
       url: preferredUrl(),
       addresses: lanAddresses().map(({ name, address }) => ({ name, url: `http://${address}:${config.port}` })),
     };
+    if (!withCode) delete snap.code;
+    return snap;
   }
 
   /** 二维码内容 */
