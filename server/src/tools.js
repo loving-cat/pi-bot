@@ -19,6 +19,8 @@ import { store } from './store.js';
 import { menuText, resolveMenu, menuEntries } from './model-menu.js';
 import { extractText } from './extract.js';
 import { webSearch, webFetch } from './web.js';
+import { shells } from './shells.js';
+import { decideCommand } from './shell-policy.js';
 import { log, now, isBusyError, planDispatchRetry } from './util.js';
 import { CODING_BASELINE_TITLE, CODING_BASELINE_HOWTO, isCodingRole } from './coding-baseline.js';
 
@@ -489,6 +491,122 @@ export function buildCommonTools({ runner, roomId, botId }) {
         } catch (err) {
           return fail(`发送失败：${err?.message || err}`);
         }
+      },
+    }),
+
+    // ---------------- 长任务：后台进程 ----------------
+
+    defineTool({
+      name: 'run_background',
+      label: '后台跑命令',
+      description:
+        '在后台跑一条命令并立刻返回（拿到 id 与 pid），适合要一直开着的东西：' +
+        'dev server、watch、长脚本、需要交互输入的程序。\n' +
+        '普通一次性的命令请用 bash（它是阻塞的，能直接拿到结果）。\n' +
+        '跑起来之后用 read_shell 看输出、write_stdin 送输入、kill_shell 结束。\n' +
+        '命令同样受部门规矩约束（被禁的会直接拒绝）。',
+      parameters: Type.Object({
+        command: Type.String({ description: '要执行的命令（一整行）' }),
+        cwd: Type.Optional(Type.String({ description: '工作目录，相对工作区；不填就是工作区根' })),
+      }),
+      execute: async (_toolCallId, { command, cwd }) => {
+        const policy = store.policy();
+        const verdict = decideCommand(command, {
+          denyCommands: policy.denyCommands ?? [],
+          allowCommands: policy.allowCommands ?? [],
+        });
+        if (!verdict.allowed) {
+          const bot = store.getBot(botId);
+          store.addDenial({
+            roomId,
+            botId,
+            botName: bot?.name ?? '',
+            command,
+            rule: verdict.rule ?? verdict.deniedBy,
+            reason: verdict.reason,
+          });
+          return fail(verdict.message);
+        }
+
+        const dir = cwd ? insideWorkspace(cwd) : config.workspace;
+        if (!dir) return fail('工作目录必须在工作区里');
+
+        const started = shells.start({ roomId, botId, command, cwd: dir });
+        if (started.error) return fail(started.error);
+
+        const first = await shells.read(started.id, { waitMs: 1200 });
+        const head = first?.output?.trim()
+          ? `首屏输出：\n${first.output.trim().slice(0, 1500)}`
+          : '（还没有输出）';
+        return ok(
+          `已在后台运行：id=${started.id}${started.pid ? ` pid=${started.pid}` : ''}\n` +
+            `${head}\n\n` +
+            'read_shell 看后续输出（可传 pattern 匹配到就返回）、write_stdin 送输入、kill_shell 结束。',
+          { shellId: started.id },
+        );
+      },
+    }),
+
+    defineTool({
+      name: 'read_shell',
+      label: '看后台输出',
+      description:
+        '读后台进程的输出。传 since（上次返回的 offset）就只看新增部分；' +
+        '传 pattern 时，等待期间命中就提前返回（适合等"启动完成 / 出现错误"）。\n' +
+        '返回里 running 表示还在跑，exitCode 是退出码。',
+      parameters: Type.Object({
+        shell_id: Type.String({ description: 'run_background 返回的 id' }),
+        since: Type.Optional(Type.Number({ description: '只看这个字符位置之后的输出（用上次返回的 offset）' })),
+        pattern: Type.Optional(Type.String({ description: '输出里出现这个正则就返回（最多等 wait_ms）' })),
+        wait_ms: Type.Optional(Type.Number({ description: '等新输出最多多少毫秒，默认 0（立即返回），上限 10000' })),
+      }),
+      execute: async (_toolCallId, { shell_id, since, pattern, wait_ms }) => {
+        const result = await shells.read(shell_id, {
+          since: Number(since) || 0,
+          pattern: pattern || '',
+          waitMs: Number(wait_ms) || 0,
+        });
+        if (!result) return fail(`没有这个后台进程：${shell_id}`);
+        const state = result.running
+          ? '运行中'
+          : `已结束${result.exitCode === null ? '' : `（退出码 ${result.exitCode}）`}`;
+        const body = result.output.trim() || '（没有新输出）';
+        return ok(`${state}${result.truncated ? ' · 早期输出已截断' : ''}\n${body}`, {
+          shellId: shell_id,
+          running: result.running,
+          exitCode: result.exitCode,
+          offset: result.offset,
+          matched: result.matched,
+        });
+      },
+    }),
+
+    defineTool({
+      name: 'write_stdin',
+      label: '给后台进程送输入',
+      description: '往后台进程的 stdin 写内容（交互式命令、确认提示都能用）。需要换行就自己带上 \n。',
+      parameters: Type.Object({
+        shell_id: Type.String({ description: 'run_background 返回的 id' }),
+        chars: Type.String({ description: '要写入的内容' }),
+      }),
+      execute: async (_toolCallId, { shell_id, chars }) => {
+        const r = shells.write(shell_id, chars);
+        return r.ok ? ok(`已写入 ${String(chars).length} 个字符`) : fail(r.error);
+      },
+    }),
+
+    defineTool({
+      name: 'kill_shell',
+      label: '结束后台进程',
+      description: '结束后台进程（默认同时移除记录）。',
+      parameters: Type.Object({
+        shell_id: Type.String({ description: 'run_background 返回的 id' }),
+        keep: Type.Optional(Type.Boolean({ description: '只结束、保留记录以便回看输出' })),
+      }),
+      execute: async (_toolCallId, { shell_id, keep }) => {
+        const r = keep ? shells.kill(shell_id) : shells.remove(shell_id);
+        if (!r.ok) return fail(r.error);
+        return ok(keep ? '已结束（记录保留）' : '已结束并移除');
       },
     }),
   ];
