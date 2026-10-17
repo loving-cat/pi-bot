@@ -162,11 +162,45 @@ export function createHttpServer({ runner, pairing }) {
           policy: store.policy(),
           // 最近被命令策略拦下的执行（新的在前），界面用来做审计提示
           denials: store.listDenials({ limit: 20 }),
+          // 任务板（房间页会按 roomId 过滤）
+          tasks: store.listTasks({ limit: 200 }),
           templates: store.templates(),
           // 用户自己是谁（bot 要知道在跟谁说话）
           user: store.userSummary(),
           pairing: config.staticToken ? null : pairing.snapshot(),
         });
+      }
+
+      // ---------- 任务板 ----------
+      if (pathname === '/api/tasks' && req.method === 'GET') {
+        const roomId = url.searchParams.get('roomId');
+        const status = url.searchParams.get('status');
+        return send(res, 200, { tasks: store.listTasks({ roomId, status, limit: 300 }) });
+      }
+
+      if (pathname === '/api/tasks' && req.method === 'POST') {
+        const body = await readBody(req);
+        const task = store.createTask({
+          roomId: body.roomId ?? null,
+          title: body.title,
+          detail: body.detail,
+          ownerBotId: body.ownerBotId ?? null,
+          createdBy: device.id,
+        });
+        if (!task) return send(res, 400, { error: '任务需要一个标题' });
+        return send(res, 200, { task });
+      }
+
+      const taskMatch = pathname.match(/^\/api\/tasks\/([^/]+)$/);
+      if (taskMatch && req.method === 'PATCH') {
+        const body = await readBody(req);
+        const task = store.updateTask(taskMatch[1], body);
+        if (!task) return send(res, 404, { error: '任务不存在' });
+        return send(res, 200, { task });
+      }
+      if (taskMatch && req.method === 'DELETE') {
+        const okDeleted = store.deleteTask(taskMatch[1]);
+        return send(res, okDeleted ? 200 : 404, { deleted: okDeleted });
       }
 
       if (pathname === '/api/models' && req.method === 'GET') {
