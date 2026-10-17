@@ -43,6 +43,7 @@ import { createEscalator } from './escalation.js';
 import { modelLabel, resolveModel, syncModelGroups } from './model-registry.js';
 import { buildAppendSystemPrompt } from './system-prompt.js';
 import { selectSkillsFor, skillsPromptLines } from './skills.js';
+import { decideRetry, retryHint, failureNote } from './retry-policy.js';
 import { createSessionBuilder } from './session-factory.js';
 import { createBuildInput } from './prompt-input.js';
 import { collectNewImages, snapshotImages } from './image-watch.js';
@@ -58,6 +59,9 @@ import {
 } from './group-prompt.js';
 
 const MAX_STEP_TEXT = 200;
+
+/** 重试前等多久（毫秒）：立刻重发大概率撞上同样的偶发问题 */
+const RETRY_DELAY_MS = 3000;
 
 function textOf(message) {
   const content = message?.content;
@@ -816,12 +820,69 @@ export class PiRunner {
                   sourceMessageId: lastMessageId(roomId),
                 })
               : null;
-            const res = await this.run(roomId, bot.id, prompt, {
+            // ★ 失败要重试，而不是只打一行日志就消失。
+            //
+            //   用户观察到的问题：负责人发现成员卡住/失败时，不让人重干，
+            //   而是自己上手 —— 因为**它根本不知道谁失败了**（原来只 log）。
+            //   结果用户以为全员交付完成，实际有人掉链子被悄悄兜底。
+            //
+            //   这里改成：失败 → 群里留痕 → 有限次重试 → 用完上报给负责人。
+            let res = await this.run(roomId, bot.id, prompt, {
               groupTurn: true,
               attachments,
             });
+            let attempt = 1;
+            let lastError = res.ok ? '' : String(res.error ?? '未知原因');
+            const retries = [];
+
+            while (!res.ok) {
+              const decision = decideRetry({
+                error: lastError,
+                attempt,
+                aborting: this.aborting.has(roomId),
+              });
+              if (!decision.retry) {
+                log(`【${room.name}】${bot.name} 不再重试：${decision.why}`);
+                break;
+              }
+              attempt++;
+              retries.push(`${attempt}. ${decision.why}`);
+              // 群里留痕：用户和负责人都能看到"它这次没成，正在重试"
+              store.appendMessage(
+                {
+                  roomId,
+                  authorType: 'system',
+                  authorId: bot.id,
+                  authorName: '重试回执',
+                  text: failureNote({
+                    botName: bot.name,
+                    reason: lastError,
+                    attempt: attempt - 1,
+                    willRetry: true,
+                  }),
+                  status: 'done',
+                  meta: { via: 'retry', attempt: attempt - 1 },
+                },
+                { beforeStreaming: true },
+              );
+              log(`【${room.name}】${bot.name} 第 ${attempt} 次尝试（${decision.kind}）`);
+              // 隔一会儿再试：立刻重发大概率撞上同样的偶发问题
+              await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+              if (this.aborting.has(roomId)) break;
+              // 换个说法再发，而不是原样重发（原样输入很可能得到同样结果）
+              const hinted = retryHint({ attempt: attempt - 1, error: lastError, kind: decision.kind });
+              res = await this.run(roomId, bot.id, hinted + prompt, {
+                groupTurn: true,
+                attachments,
+              });
+              if (!res.ok) lastError = String(res.error ?? '未知原因');
+            }
+
             if (taskId) {
-              store.finishTask(taskId, { ok: res.ok, text: res.text });
+              store.finishTask(taskId, {
+                ok: res.ok,
+                text: res.ok ? res.text : `失败 ${attempt} 次：${lastError}`,
+              });
             }
             if (mirror) {
               this.#mirrorProgress({
@@ -834,11 +895,38 @@ export class PiRunner {
             }
           store.setCursor(roomId, bot.id, lastMessageId(roomId));
 
-          // 没成也得说一声 —— 不然"叫了它但没动静"没人知道
+          // 重试用完还是没成 → 群里留痕 + 上报负责人（让它按顺序处理，别自己悄悄接手）
           if (!res.ok) {
             log(
-              `【${room.name}】${bot.name} 这轮没跑成：${res.error ?? '未知原因'}（${item.reason}）`,
+              `【${room.name}】${bot.name} 最终没跑成（试了 ${attempt} 次）：${lastError}`,
             );
+            store.appendMessage({
+              roomId,
+              authorType: 'system',
+              authorId: bot.id,
+              authorName: '失败回执',
+              text: failureNote({
+                botName: bot.name,
+                reason: lastError,
+                attempt,
+                willRetry: false,
+              }),
+              status: 'done',
+              meta: { via: 'failed', attempts: attempt },
+            });
+
+            // 有负责人就抬给它；它会被明确告知"先重派 → 换人 → 自己上也要说明"
+            if (leadId && bot.id !== leadId && !this.aborting.has(roomId)) {
+              this.escalate({
+                roomId,
+                fromBotId: bot.id,
+                reason: `试了 ${attempt} 次都没成：${lastError}`,
+                task: item.fromText || item.reason,
+                attempts: attempt,
+                why: retries[retries.length - 1] ?? '',
+                prefer: 'lead',
+              }).catch((err) => log('上报失败：', err?.message || err));
+            }
             return;
           }
           const text = res.text.trim();
