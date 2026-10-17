@@ -7,7 +7,9 @@
 
 | 文件 | 职责 |
 |---|---|
-| `index.js` | 启动：reap 遗留流式消息 → 建 runner/pairing → HTTP/WS → 定时任务调度器 → 信号收工 |
+| `index.js` | 入口分流：pi CLI 参数交给 pi CLI，否则加载 `server-main.js` |
+| `pi-args.js` | 判断「这次是 pi CLI 调用还是服务端」并委派；扩展派子 agent 会拿 `argv[1]` 当 pi 入口 |
+| `server-main.js` | 服务端装配：reap 一次性消息 → runner/pairing → HTTP/WS → 定时任务调度器 → 信号收工 |
 | `config.js` | 全部配置来源；数据目录定位与一次性迁移 |
 | `http.js` | REST 路由（鉴权、房间/消息/bot/任务/定时任务/分片上传/附件/政策） |
 | `ws.js` | WebSocket：hello 快照、send/abort/ping、事件广播 |
