@@ -34,6 +34,7 @@ const STATE_VERSION = 2;
  */
 import { normalizeSkillList, normalizeSkill, skillRejectReason } from './skills.js';
 import { normalizeSite } from './sites.js';
+import { encrypt, decrypt, isEncrypted } from './secrets.js';
 
 export const GROUP_LIMITS_DEFAULT = {
   /** 部门老大每次发言最多跑几轮 */
@@ -212,6 +213,43 @@ function normalizeSkills(list) {
 }
 
 export class Store {
+  /**
+   * 站点口令的加密密钥。由 server-main 在启动时注入（loadOrCreateKey）。
+   * 没注入时退化为"不加密"——单测里不需要真密钥，但生产必须注入。
+   */
+  secretsKey = null;
+
+  /** 注入加密密钥（启动时调一次） */
+  useSecretsKey(key) {
+    this.secretsKey = key ?? null;
+    // 借这次机会把历史明文口令迁成密文（只做一次，幂等）
+    this.#migrateSitePasswords();
+    return this;
+  }
+
+  /**
+   * 把 state.sites 里还以明文存的 password 迁成密文。
+   *
+   * 老版本把口令直接写在 state.json 里，升级后要在启动时迁一遍，
+   * 否则用户以为加密了、其实还是明文。
+   */
+  #migrateSitePasswords() {
+    if (!this.secretsKey) return;
+    const list = Array.isArray(this.state.sites) ? this.state.sites : [];
+    let changed = 0;
+    for (const site of list) {
+      const pw = String(site?.password ?? '');
+      if (!pw || isEncrypted(pw)) continue;
+      site.password = encrypt(pw, this.secretsKey);
+      changed++;
+    }
+    if (changed) {
+      this.scheduleSave();
+      // 迁移是要让用户知道的事 —— 但它不该出现在聊天里，只写日志
+      console.log(`🔐 已把 ${changed} 个站点的口令从明文迁移为密文`);
+    }
+  }
+
   constructor() {
     const saved = readJson(STATE_FILE, null);
     this.state = saved?.version === STATE_VERSION ? saved : this.#seed();
@@ -555,9 +593,36 @@ export class Store {
   // ---------------------------------------------------------------- 外部系统（站点）
 
   /** 已接入的外部 Web 系统 */
+  /**
+   * 站点列表。**返回的口令是明文**（runtime 要用它去登录），
+   * 但 state 里存的是密文 —— 这个转换只在这里做，别的地方不许碰。
+   */
+  /**
+   * 把（明文口令的）站点列表加密后写进 state。
+   *
+   * ★ 所有写 state.sites 的地方都必须走这里。
+   *   直接 `this.state.sites = list` 会把明文重新落盘 ——
+   *   siteList() 返回的是明文，很容易踩这个坑。
+   */
+  #persistSites(plainList) {
+    this.state.sites = plainList.map((s) => ({
+      ...s,
+      password: this.secretsKey && s.password ? encrypt(s.password, this.secretsKey) : s.password,
+    }));
+    this.scheduleSave();
+    bus.emit('event', { t: 'sites.updated' });
+  }
+
   siteList() {
     const list = Array.isArray(this.state.sites) ? this.state.sites : [];
-    return list.map((s) => normalizeSite(s)).filter(Boolean);
+    return list
+      .map((s) => {
+        const plain = this.secretsKey
+          ? { ...s, password: decrypt(s?.password, this.secretsKey) }
+          : s;
+        return normalizeSite(plain);
+      })
+      .filter(Boolean);
   }
 
   getSite(id) {
@@ -574,9 +639,7 @@ export class Store {
     );
     if (dup) return { error: `这个系统已经接过了（${dup.name}）` };
     list.push(site);
-    this.state.sites = list;
-    this.scheduleSave();
-    bus.emit('event', { t: 'sites.updated' });
+    this.#persistSites(list);
     return { site };
   }
 
@@ -588,9 +651,7 @@ export class Store {
     const merged = normalizeSite({ ...list[idx], ...patch, id, updatedAt: Date.now() });
     if (!merged) return { error: '网址和账号是必填的' };
     list[idx] = merged;
-    this.state.sites = list;
-    this.scheduleSave();
-    bus.emit('event', { t: 'sites.updated' });
+    this.#persistSites(list);
     return { site: merged };
   }
 
@@ -599,9 +660,7 @@ export class Store {
     const list = this.siteList();
     const next = list.filter((s) => s.id !== id);
     if (next.length === list.length) return { error: '系统不存在' };
-    this.state.sites = next;
-    this.scheduleSave();
-    bus.emit('event', { t: 'sites.updated' });
+    this.#persistSites(next);
     return { ok: true };
   }
 

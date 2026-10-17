@@ -4,6 +4,7 @@ import { PiRunner } from './pi-runner.js';
 import { Pairing, lanAddresses } from './pairing.js';
 import { createHttpServer } from './http.js';
 import { createSiteRuntime } from './site-runtime.js';
+import { loadOrCreateKey } from './secrets.js';
 import { attachWs } from './ws.js';
 import { log } from './util.js';
 import { shells } from './shells.js';
@@ -75,6 +76,14 @@ async function main() {
       console.log(`  配对码 ${code}   网页版 ${pairing.snapshot().url}/pair`);
     }
   };
+
+  // 站点口令的加密密钥：只在本机数据目录，权限 0600，不进仓库。
+  // 没有它就只能存明文 —— 所以这一步失败要显式告警，不能静默降级。
+  try {
+    store.useSecretsKey(loadOrCreateKey(config.dataDir));
+  } catch (err) {
+    log(`⚠️ 无法初始化口令加密（${err?.message ?? err}）—— 站点口令将无法安全保存`);
+  }
 
   // 外部 Web 系统的传输层：管 token、转发查询。给工具和 HTTP 接口共用一份。
   const sites = createSiteRuntime({ log });
