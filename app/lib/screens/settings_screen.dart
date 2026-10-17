@@ -385,8 +385,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                     ),
                                   ),
                                   TextButton(
+                                    // 撤销走设备 id：接口不下发 token（那是设备的凭证）
                                     onPressed: () =>
-                                        state.revokeDevice('${d['token']}'),
+                                        state.revokeDevice('${d['id']}'),
                                     child: const Text(
                                       '移除',
                                       style: TextStyle(

@@ -18,7 +18,7 @@ import {
   getAgentDir,
 } from '@earendil-works/pi-coding-agent';
 
-import { config } from './config.js';
+import { config, resourceOptions } from './config.js';
 import { store, toolsForPolicy } from './store.js';
 import { applyCompactionBudget, withCapacity } from './context-budget.js';
 import { buildAppendSystemPrompt } from './system-prompt.js';
@@ -81,11 +81,13 @@ export function createSessionBuilder({ runner, health, resolveModel, modelLabel 
       agentDir: getAgentDir(),
       // 命令级规矩的拦截点：bash/powershell 调用前按部门规则判定
       extensionFactories: [createPolicyExtension({ roomId, bot })],
-      // ★ 会话里不加载"给终端 agent 省上下文"的那类扩展。
+      // ★ bot 会话不加载 pi 侧的任何"外挂"：扩展、MCP、skills、提示模板。
       //
-      //   context-mode 每建一个会话就会拉起一个 bun 子进程（Windows 上表现为
-      //   控制台窗口一闪一闪）。bot 会话是长驻的、几十个并存，既没必要也吵。
-      //   需要时可以用 PI_BOT_DISABLED_EXTENSIONS 覆盖（逗号分隔，按路径匹配，空=全加载）。
+      //   它们会起子进程（派子 agent / MCP 客户端 / 控制台窗口）、把工具塞进提示词，
+      //   而 bot 是长驻的、几十个并存 —— 全挂上会互相打架、把机器拖死。
+      //   开关见 config.js 的 resourceSwitches()（PI_BOT_EXTENSIONS / PI_BOT_MCP /
+      //   PI_BOT_SKILLS）。这里再按名字挡一遍 context-mode：万一有人手动开了扩展，
+      //   这个每会话拉 bun 子进程的家伙也不该进来。
       extensionsOverride: (base) => {
         const needles = (process.env.PI_BOT_DISABLED_EXTENSIONS ?? 'context-mode')
           .split(',')
@@ -105,7 +107,7 @@ export function createSessionBuilder({ runner, health, resolveModel, modelLabel 
         // 部门规矩跟着会话走：工具集和提示都是建会话时定的，规矩变了会作废重建
         policy: store.policy(),
       }),
-      noExtensions: config.noExtensions || undefined,
+      ...resourceOptions,
     });
     await resourceLoader.reload();
 
