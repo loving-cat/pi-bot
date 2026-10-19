@@ -66,3 +66,6 @@ probe.txt
 # macOS 本机打包产物
 *.dmg
 *.app/
+
+# Android/Gradle 构建产物（曾误提交过一份 130KB 的报告）
+app/android/build/

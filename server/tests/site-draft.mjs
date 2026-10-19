@@ -51,7 +51,7 @@ await test('stage_site 记下草稿，但不入库', async () => {
     name: '投研系统',
     baseUrl: 'https://demo.example.com',
     account: 'alice',
-    password: 'pw123456',
+    password: 'fixture-password',
     modules: [
       { path: '/api/assets', name: '资产' },
       { path: '/api/trades', name: '交易' },
@@ -132,7 +132,7 @@ await test('地址不合法时拒绝', async () => {
 await test('describeDraftForConfirm 不回显口令', () => {
   const draft = siteDrafts.get(ROOM, BOT);
   const text = describeDraftForConfirm(draft);
-  assert.ok(!text.includes('pw123456'), '口令绝不能出现在给用户看的文本里');
+  assert.ok(!text.includes('fixture-password'), '口令绝不能出现在给用户看的文本里');
   assert.match(text, /口令已收到/);
   assert.match(text, /投研系统/);
   assert.match(text, /\/api\/assets/);
