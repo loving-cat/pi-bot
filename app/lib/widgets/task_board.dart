@@ -63,7 +63,11 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
           children: [
             Row(
               children: [
-                const Icon(LucideIcons.listChecks, size: 16, color: PB.textSecondary),
+                const Icon(
+                  LucideIcons.listChecks,
+                  size: 16,
+                  color: PB.textSecondary,
+                ),
                 const SizedBox(width: 8),
                 Text(
                   '任务 · ${widget.roomName}',
@@ -76,7 +80,10 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
                 const Spacer(),
                 Text(
                   '${doing.length + open.length} 个未完成',
-                  style: const TextStyle(fontSize: PB.fsXs, color: PB.textQuaternary),
+                  style: const TextStyle(
+                    fontSize: PB.fsXs,
+                    color: PB.textQuaternary,
+                  ),
                 ),
               ],
             ),
@@ -128,7 +135,10 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
                         padding: EdgeInsets.symmetric(vertical: 18),
                         child: Text(
                           '还没有任务。部门里派的活会自动出现在这里。',
-                          style: TextStyle(fontSize: PB.fsXs, color: PB.textQuaternary),
+                          style: TextStyle(
+                            fontSize: PB.fsXs,
+                            color: PB.textQuaternary,
+                          ),
                         ),
                       ),
                     if (doing.isNotEmpty) ...[
@@ -168,7 +178,8 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
                           ),
                         ),
                       ),
-                      if (_showDone) for (final t in done) _row(t),
+                      if (_showDone)
+                        for (final t in done) _row(t),
                     ],
                   ],
                 ),
@@ -297,14 +308,19 @@ Future<void> showTaskBoard(
     backgroundColor: PB.bgPane,
     isScrollControlled: true,
     constraints: const BoxConstraints(maxWidth: 560),
-    builder: (_) => TaskBoardSheet(
-      roomName: room.name,
-      tasks: state.tasksFor(room.id),
-      onToggleDone: (t) =>
-          state.updateTask(t.id, {'status': t.isDone ? 'open' : 'done', 'read': true}),
-      onTogglePin: (t) => state.updateTask(t.id, {'pinned': !t.isPinned}),
-      onDelete: (t) => state.deleteTask(t.id),
-      onCreate: (title) => state.createTask(roomId: room.id, title: title),
+    builder: (_) => ListenableBuilder(
+      listenable: state,
+      builder: (context, child) => TaskBoardSheet(
+        roomName: room.name,
+        tasks: state.tasksFor(room.id),
+        onToggleDone: (t) => state.updateTask(t.id, {
+          'status': t.isDone ? 'open' : 'done',
+          'read': true,
+        }),
+        onTogglePin: (t) => state.updateTask(t.id, {'pinned': !t.isPinned}),
+        onDelete: (t) => state.deleteTask(t.id),
+        onCreate: (title) => state.createTask(roomId: room.id, title: title),
+      ),
     ),
   );
 }
