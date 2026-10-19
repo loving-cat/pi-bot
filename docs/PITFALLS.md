@@ -544,3 +544,35 @@ Volta 在 `%LOCALAPPDATA%\Volta\bin`、Scoop 在 `scoop\apps\nodejs\current`。
 **修法**：先在 `dist/.pack-windows-<rand>/` 里把包铺完、依赖装完、布局校验完，
 最后才"旧包改名备份 → 新包换进去 → 删备份"。任何一步抛错都把旧包搬回原处。
 `pack-macos.sh` 用的是同一套"暂存 + 回滚"结构，改一边别忘了另一边。
+
+---
+
+## 37. `$list.length` 不是长度 —— 整个列表被插进了界面
+
+**症状**：设置 → 技能 →「本机已装」那一行变成
+
+```
+本机已装 20 个 · [chinese-lit-persona, code-quality, executing-plans, …].length 个可导入
+```
+
+一行扫出一万多像素宽，右边的「全部导入」被挤出屏幕（用户看到的就是按钮消失了）。
+
+**根因**：Dart 的 `$name` 会**吞掉整个标识符**，后面的 `.length` 只是普通字符：
+
+| 写的 | 实际含义 |
+|---|---|
+| `'$pending.length'` | `${pending}` + 字面量 `.length` → `[a, b, …].length` |
+| `'${pending.length}'` | 数字 |
+
+这种错**不会报编译错误**，`unnecessary_brace_in_string_interps` 这类 lint 也抓不到
+（它管的是相反方向：多余的括号）。只有在名字列表足够长、或者真的把属性名读到界面上时
+才会露出来 —— 短列表时看起来只是“文案有点怪”。
+
+**修法**：
+
+1. 取属性/方法一律写 `${list.length}`、`${obj.title}`，别省括号；
+2. 头部这类可能变长的文本，一律 `Expanded`/`Flexible` + `maxLines: 1` + `ellipsis`，
+   保证右边的按钮**永远有位置**（按钮先占位，文本再缩）；
+3. 回归用例：`app/test/local_capabilities_test.dart` 用 20 个长名字跑，
+   断言无 `RenderFlex overflow`、按钮落在可视宽度内，并且界面里不能出现 `[`
+   （出现就说明又把 List.toString() 打进界面了）。
