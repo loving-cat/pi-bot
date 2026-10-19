@@ -16,6 +16,8 @@
  *   3. 正文要截断。一个网页塞进上下文，几千 token 就没了。
  */
 import * as cheerio from 'cheerio';
+
+import { proxyFetch, proxyStatus } from './http-client.js';
 import { config } from './config.js';
 
 const UA =
@@ -33,7 +35,12 @@ async function fetchWithTimeout(url, options = {}) {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(new Error('超时')), options.timeoutMs ?? FETCH_TIMEOUT_MS);
   try {
-    return await fetch(url, {
+    // ★ 用 proxyFetch 而不是原生 fetch：
+    //   用户开了 clash/surge 这类代理（尤其 TUN 模式）时，域名会被解析成
+    //   假地址（198.18.x.x），而 Node 的 fetch **不读系统代理**，直连假 IP 必挂。
+    //   表现就是“一开代理 agent 就搜不了网了”。proxyFetch 会自动探测
+    //   系统/环境变量里的代理并转过去，没代理时行为跟原生 fetch 一致。
+    return await proxyFetch(url, {
       ...options,
       signal: ac.signal,
       redirect: 'follow',
@@ -42,6 +49,54 @@ async function fetchWithTimeout(url, options = {}) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * 把 fetch 的底层异常翻译成**能指导下一步**的话。
+ *
+ * 为什么必须翻译：原来失败就抛一句 "fetch failed"，模型只能看到个光秃秃的
+ * 错误，于是自己去 curl 一遍遍试 —— 十几步才摸出来"这台机器上那个域名
+ * 走了假 IP"。把原因直接说出来，它第一步就知道该换路。
+ *
+ * 常见成因（按实际遇到过的排序）：
+ *   · ENOTFOUND       域名根本没解析
+ *   · 198.18.0.0/15   TUN 代理的假 IP 段 —— Node 的 fetch 不走系统代理，直连假 IP 必挂
+ *   · ECONNREFUSED    端口没人听
+ *   · 证书错误        中间人 / 代理没装根证书
+ *
+ * @param {Error} err
+ * @param {string} url
+ * @returns {string} 一句人话
+ */
+function explainFetchError(err, url) {
+  const msg = String(err?.message ?? err);
+  const cause = err?.cause;
+  const code = String(cause?.code ?? err?.code ?? '');
+  const host = (() => {
+    try { return new URL(url).hostname; } catch { return url; }
+  })();
+
+  if (/超时|timeout/i.test(msg) || code === 'UND_ERR_CONNECT_TIMEOUT') {
+    return `${host} 连接超时（${Math.round(FETCH_TIMEOUT_MS / 1000)} 秒没响应）—— 站点慢、或网络不通、或需要代理`;
+  }
+  if (code === 'ENOTFOUND' || /getaddrinfo/i.test(msg)) {
+    return `${host} 域名解析不出来 —— 域名写错了，或者这台机器的 DNS 有问题`;
+  }
+  if (code === 'ECONNREFUSED') {
+    return `${host} 拒绝连接 —— 端口没开，或者服务没起`;
+  }
+  if (/CERT|SSL|TLS|self.signed/i.test(code) || /certificate/i.test(msg)) {
+    return `${host} 证书验证失败 —— 可能有中间人代理，或站点证书过期`;
+  }
+  // TUN 假 IP：Node 的 fetch 不走系统代理，直连 198.18.x.x 必然失败。
+  // 这是本机装了 clash/surge 这类 TUN 模式代理时的典型现象。
+  if (/198\.18\./.test(msg) || /EHOSTUNREACH/.test(code)) {
+    return (
+      `${host} 连不上。注意：这台机器上它可能被代理解析成了假地址（198.18.x.x），` +
+      `而服务端进程不走系统代理 —— 要么换一个能直连的地址，要么在系统层把域名映射到真实 IP`
+    );
+  }
+  return `${host} 抓取失败：${msg.slice(0, 160)}`;
 }
 
 /** 读响应体，但设上限 */
@@ -224,7 +279,13 @@ export async function webFetch(url, { maxChars = MAX_TEXT_CHARS } = {}) {
     throw new Error(`只支持 http/https，收到的是 ${target.protocol}`);
   }
 
-  const res = await fetchWithTimeout(target.toString(), { accept: 'text/html,*/*' });
+  let res;
+  try {
+    res = await fetchWithTimeout(target.toString(), { accept: 'text/html,*/*' });
+  } catch (err) {
+    // 把底层异常翻成人话 —— 模型据此换路，而不是自己去 curl 十几遍
+    throw new Error(explainFetchError(err, target.toString()));
+  }
   if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`.trim());
 
   const type = (res.headers.get('content-type') || '').toLowerCase();
@@ -240,7 +301,32 @@ export async function webFetch(url, { maxChars = MAX_TEXT_CHARS } = {}) {
   }
 
   const { text, truncated } = readable(raw, { maxChars });
-  return { url: target.toString(), title: titleOf(raw), text, truncated, contentType: type };
+  const title = titleOf(raw);
+
+  // ★ 正文为空不是错误，但要**说清楚原因**。
+  //
+  //   现代 SPA（React/Vue）的 HTML 骨架里几乎没有文字，内容全靠 JS 渲染。
+  //   直接回一个空 text，模型会以为"这个页面是空的"或者"抓取坏了"，
+  //   然后跑去用 curl 反复试 —— 试多少次都一样，因为 curl 也不执行 JS。
+  //   所以这里明确告诉它：拿到了页面、但没有正文，要么换接口，要么别在这上面耗。
+  if (!text.trim()) {
+    return {
+      url: target.toString(),
+      title,
+      text:
+        `（这个页面没有可读正文：HTML 只有骨架，内容由 JavaScript 在浏览器里渲染。\n` +
+        `标题：${title || '(无)'}\n` +
+        `如果它是 SPA 系统，找它的 JSON 接口（通常以 /api/ 开头）直接抓，` +
+        `不要用 curl 反复试首页 —— 不执行 JS 的话试多少次都是这个结果。）`,
+      truncated: false,
+      contentType: type,
+      empty: true,
+    };
+  }
+  return { url: target.toString(), title, text, truncated, contentType: type };
 }
 
 export const webLimits = { MAX_TEXT_CHARS, FETCH_TIMEOUT_MS };
+
+/** 给界面/日志看的代理状态 */
+export { proxyStatus };

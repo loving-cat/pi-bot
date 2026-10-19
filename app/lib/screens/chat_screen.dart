@@ -12,7 +12,9 @@ import '../app_state.dart';
 import '../clipboard_image.dart';
 import '../models.dart';
 import '../scope.dart';
+import '../desktop_shortcuts.dart';
 import '../theme.dart';
+import '../widgets/toast.dart';
 import '../widgets/attachment_view.dart';
 import '../widgets/avatar_life.dart';
 import '../widgets/ask_card.dart';
@@ -253,7 +255,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _focus.requestFocus();
   }
 
-  Future<void> _send() async {
+  Future<void> _send({bool flushMerge = true}) async {
     final text = _input.text;
     final files = List<Attachment>.from(_pending);
     if (text.trim().isEmpty && files.isEmpty) return;
@@ -262,11 +264,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _stick = true;
     final state = AppScope.read(context);
     try {
-      await state.sendMessage(widget.room.id, text, attachments: files);
+      await state.sendMessage(
+        widget.room.id,
+        text,
+        attachments: files,
+        // ★ 用户还在连续输入（打完一句立刻接着下一句）→ 让服务端攒一下，
+        //   把这几条合成一段给模型，它才能看懂完整意图。
+        //   明确按发送/回车 → 立刻投递，一秒都不多等。
+        flushMerge: flushMerge,
+      );
     } catch (err) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('$err')));
+        toast(context, '$err');
         _input.text = text;
         setState(() => _pending.addAll(files));
       }
@@ -362,8 +371,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   void _toast(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    toast(context, message);
   }
 
   @override
@@ -384,8 +392,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       final message = _shownError!;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(message)));
+        toast(context, message);
         AppScope.read(context).clearError();
       });
     }
@@ -1045,6 +1052,19 @@ class _ComposerState extends State<_Composer> {
     if (hasText != _hasText) setState(() => _hasText = hasText);
   }
 
+  /// 输入法是不是**正在组词**（候选框还挂着没确认）。
+  ///
+  /// 为什么必须看这个：中文用户打英文单词时，候选框里的字母还没落进输入框，
+  /// 这时候按回车是「选这个候选词」而不是「发送」。若把回车当成发送，
+  /// 消息会带着半截内容飞出去，输入框还会被清空 —— 用户看起来就是
+  /// “输入法吃字了”。日文/韩文的候选框同理。
+  ///
+  /// `composing` 为空（`TextRange.empty`）才说明没在组词。
+  bool _isComposing() {
+    final composing = widget.controller.value.composing;
+    return composing.isValid && !composing.isCollapsed;
+  }
+
   @override
   void dispose() {
     widget.controller.removeListener(_onTextChanged);
@@ -1241,12 +1261,29 @@ class _ComposerState extends State<_Composer> {
                         if (HardwareKeyboard.instance.isShiftPressed) {
                           return KeyEventResult.ignored;
                         }
+                        // ★ IME 正在组词 → 这个回车属于输入法，不是发送。
+                        //
+                        //   中文用户输入英文时，候选框还没确认，按回车是「选这个候选」；
+                        //   若在这里当成发送，就变成「消息发出去 + 输入框被清空」，
+                        //   用户以为输入法吃字了。日文/韩文同理。
+                        //
+                        //   composing 非空就说明还在组词；交给 TextField 处理后，
+                        //   它会自己把候选词提交进输入框。
+                        if (_isComposing()) return KeyEventResult.ignored;
                         onSend();
                         return KeyEventResult.handled;
                       },
-                      child: Actions(
+                      // ★ 桌面快捷键：按系统习惯绑定（Mac ⌘ / Windows Ctrl）。
+                      //   显式声明而不是全靠 Flutter 默认，是因为我们在
+                      //   PasteTextIntent 上加了"剪贴板有图就发图"的逻辑 ——
+                      //   接管了默认行为，就得把配套的编辑快捷键补全，
+                      //   否则那些键在某一端会变成死的。
+                      child: Shortcuts(
+                        shortcuts: desktopEditingShortcuts(),
+                        child: Actions(
                         actions: <Type, Action<Intent>>{
-                          // ★ Ctrl+V：先看剪贴板里有没有**图**（截图），有就当附件；
+                          ...desktopEditingActions(controller),
+                          // ★ ⌘V / Ctrl+V：先看剪贴板里有没有**图**（截图），有就当附件；
                           //   没有就走原来的文本粘贴。Flutter 自带的粘贴只认文本，
                           //   截图粘进来会静默什么都不发生。
                           PasteTextIntent: CallbackAction<PasteTextIntent>(
@@ -1268,7 +1305,13 @@ class _ComposerState extends State<_Composer> {
                           keyboardType: TextInputType.multiline,
                           // 手机软键盘上回车键直接变成「发送」
                           textInputAction: TextInputAction.send,
-                          onSubmitted: (_) => onSend(),
+                          // ★ onSubmitted 也必须挡同一件事。
+                          //   桌面端 Enter 走的是上面的 onKeyEvent，但手机/某些 IME
+                          //   会直接触发 onSubmitted —— 两条路都要看组词状态。
+                          onSubmitted: (_) {
+                            if (_isComposing()) return;
+                            onSend();
+                          },
                           style: const TextStyle(
                             fontSize: PB.fsBase,
                             height: 1.4,
@@ -1289,6 +1332,7 @@ class _ComposerState extends State<_Composer> {
                             ),
                           ),
                         ),
+                      ),
                       ),
                     ),
                   ),
@@ -1574,6 +1618,13 @@ class _MessageRow extends StatelessWidget {
       );
     }
 
+    // ★ 用户按 Esc 终止的那一条：整条不渲染。
+    //
+    //   跟 pi agent 里的体验对齐：终止就是终止，聊天记录里不留痕。
+    //   以前这里会把消息画成"已按你的要求终止"的灰气泡，
+    //   看起来像程序出错了 —— 而那是用户自己的操作，不需要被告知。
+    if (msg.isAborted) return const SizedBox.shrink();
+
     final isUser = msg.isUser;
     final streaming = msg.isStreaming;
 
@@ -1757,7 +1808,22 @@ class _MessageRow extends StatelessWidget {
                         ],
                       ),
                     ),
-                  if (msg.steps.isNotEmpty) ToolSteps(steps: msg.steps),
+                  // ★ 工具调用卡片：**平时根本不显示**。
+                  //
+                  //   用户看的是结论，不是“它跑了什么命令”—— 截屏里一长串
+                  //   `read_shell / run_background / kill_shell` 对用户既没用也看不懂，
+                  //   还把真正的回答顶到屏幕外面去了。
+                  //
+                  //   只保留两个必要的瞬间：
+                  //     · 正在跑：一行“正在干活…”给人一个反馈（不然以为什么都没发生）
+                  //     · 出错了：把失败露出来（失败不能藏）
+                  //   跑完且没出错 → 整块消失。
+                  if (msg.steps.isNotEmpty)
+                    ToolSteps(
+                      steps: msg.steps,
+                      // 消息跑完且无错时不渲染（组件自己返回 SizedBox.shrink）
+                      quietWhenDone: true,
+                    ),
                   if (msg.changes != null)
                     ChangedFilesView(summary: msg.changes!),
                   GestureDetector(

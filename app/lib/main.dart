@@ -20,6 +20,7 @@ import 'widgets/window_title_bar.dart';
 import 'screens/home_shell.dart';
 import 'screens/host_connect_screen.dart';
 import 'theme.dart';
+import 'widgets/toast.dart';
 import 'update_info.dart';
 import 'widgets/update_prompt.dart';
 import 'window_state.dart';
@@ -205,8 +206,7 @@ class _PiBotAppState extends State<PiBotApp> with WidgetsBindingObserver {
         if (result.ok) {
           await showDownloadDoneDialog(context, path: result.path!, info: info);
         } else if (result.error != null && result.error != '已取消') {
-          ScaffoldMessenger.maybeOf(context)
-              ?.showSnackBar(SnackBar(content: Text('下载失败：${result.error}')));
+          toast(context, '下载失败：${result.error}');
         }
     }
   }

@@ -6,6 +6,7 @@ import '../models.dart';
 import '../scope.dart';
 import '../text_utils.dart';
 import '../theme.dart';
+import '../widgets/toast.dart';
 import '../widgets/blob_avatar.dart';
 import '../widgets/floating_menu.dart';
 import '../widgets/skeleton.dart';
@@ -950,12 +951,7 @@ class _RoomRowState extends State<_RoomRow> {
     final state = AppScope.read(context);
     final err = await state.saveTemplateFromRoom(room.id, name);
     if (!context.mounted) return;
-    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-      SnackBar(
-        duration: const Duration(seconds: 2),
-        content: Text(err ?? '已存成模板「$name」—— 以后可以让主控照它开新部门'),
-      ),
-    );
+    toast(context, err ?? '已存成模板「$name」—— 以后可以让主控照它开新部门');
   }
 
   Future<void> _roomMenu(BuildContext context, Room room, Offset at) async {    final state = widget.state;
@@ -988,12 +984,7 @@ class _RoomRowState extends State<_RoomRow> {
           onTap: () async {
             await Clipboard.setData(ClipboardData(text: room.id));
             if (!context.mounted) return;
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('对话 ID 已复制'),
-                duration: Duration(seconds: 1),
-              ),
-            );
+            toast(context, '对话 ID 已复制');
           },
         ),
         FloatingMenuEntry(
@@ -1090,8 +1081,7 @@ class _RoomRowState extends State<_RoomRow> {
     if (ok != true || !context.mounted) return;
     await state.deleteBot(bot.id);
     if (!context.mounted) return;
-    ScaffoldMessenger.maybeOf(context)
-        ?.showSnackBar(SnackBar(content: Text('已删除 ${bot.name}')));
+    toast(context, '已删除 ${bot.name}');
   }
 
   Future<bool> _confirmDelete(BuildContext context, Room room) async {
