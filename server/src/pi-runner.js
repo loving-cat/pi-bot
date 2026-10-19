@@ -56,6 +56,7 @@ import { modelLabel, resolveModel, syncModelGroups } from './model-registry.js';
 import { buildAppendSystemPrompt } from './system-prompt.js';
 import { selectSkillsFor, skillsPromptLines } from './skills.js';
 import { selectLessonsFor, lessonsPromptLines } from './lessons.js';
+import { availableThinkingLevels } from './model-thinking.js';
 import { createLessonReflector } from './lesson-reflect.js';
 import { decideRetry, retryHint, failureNote } from './retry-policy.js';
 import { createSessionBuilder } from './session-factory.js';
@@ -491,6 +492,13 @@ export class PiRunner {
         contextWindow: m.contextWindow,
         cost: m.cost ? { input: m.cost.input, output: m.cost.output } : null,
         reasoning: Boolean(m.reasoning),
+        // ★ pi 级模型（models.json 里配的）也要带上真实档位：
+        //   pi 的 max/xhigh 只有在 thinkingLevelMap 里显式出现才算支持，
+        //   不告诉前台的话，用户选 max 会被静默 clamp 成 high。
+        thinkingLevels: availableThinkingLevels({
+          reasoning: Boolean(m.reasoning),
+          thinkingLevelMap: m.thinkingLevelMap,
+        }),
       }));
     } catch (err) {
       log('取可用模型列表失败：', modelFailure(err).error);

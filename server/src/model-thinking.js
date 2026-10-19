@@ -193,7 +193,19 @@ export function availableThinkingLevels(thinking = {}) {
   const map = thinking.thinkingLevelMap;
   // 没给映射 = 七个档位都原样透传
   if (!map || typeof map !== 'object') return [...THINKING_LEVELS];
-  return THINKING_LEVELS.filter((level) => own(map, level));
+  // 和 pi 的 getSupportedThinkingLevels 保持同一套判断，只有一处不同：
+  //   · pi 把 `off: null` 当成"不支持 off"，选 off 会被 clamp 到 minimal；
+  //   · 这里把 off **永远算可选**（它就是"不思考"，没有理由关掉），
+  //     至于下发时传不传参数由 pi 按 map 决定。
+  // xhigh / max 是 pi 的扩展档：**必须显式映射**才认为支持，
+  // 否则会静默 clamp 到 high（用户会以为选了 max，其实没生效）。
+  return THINKING_LEVELS.filter((level) => {
+    // off 永远可选（"不思考"没有理由被映射表关掉）。
+    // 其余档位仍按映射表来：没写 = 这个模型不支持，别让用户选了一个
+    // 后台根本不传参的档位（尤其是 xhigh / max，pi 会静默 clamp 到 high）。
+    if (level === 'off') return true;
+    return own(map, level) && map[level] !== null;
+  });
 }
 
 /**

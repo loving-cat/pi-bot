@@ -653,3 +653,57 @@ Volta 在 `%LOCALAPPDATA%\Volta\bin`、Scoop 在 `scoop\apps\nodejs\current`。
 - **产物没有回传**：以前只自动带图片。现在 `artifact-watch.js` 把这一轮新增/改过的
   交付物（pdf/docx/xlsx/csv/md/zip…，源码不算）也挂到消息上，单文件 ≤10MB、
   最多 5 个、合计 ≤25MB。只认快照差异，不把整个工作目录端进群。
+
+---
+
+## 41. `max` / `xhigh` 不是"有就传"——pi 要看到显式映射才认
+
+**症状**：给模型选了「max」，跑出来和 high 没区别；问"为什么开不到 max"。
+看起来是界面没生效，实际上是 pi 在创建会话时把它**静默 clamp** 成了 high。
+
+**根因**（`@earendil-works/pi-ai` 的 `getSupportedThinkingLevels`）：
+
+```js
+if (level === "xhigh" || level === "max") return mapped !== undefined;
+```
+
+七个档位里，**只有 `xhigh` 和 `max` 要求 `thinkingLevelMap` 里显式写出映射**，
+其余五档默认都支持。没有 map（或 map 里没这两档）时：
+
+- 可选档位里根本不会出现 max；
+- 就算选了 max，`clampThinkingLevel` 也会往下找到 high。
+
+所以"模型支持推理（`reasoning: true`）"**不等于**"支持 max"。
+
+**修法**（以 ctyun 为例，写在 `~/.pi/agent/models.json` 的模型上）：
+
+```json
+"thinkingLevelMap": {
+  "minimal": "minimal", "low": "low", "medium": "medium",
+  "high": "high", "xhigh": "max", "max": "max"
+}
+```
+
+两个坑：
+
+1. **不要写 `off: null`**。pi 把 `null` 当成"不支持这一档"，off 会从可选档位里消失，
+   用户选 off 时会被 clamp 成 minimal。想表达"不传参"就别写 off（不在 map 里 = 不下发）。
+2. **上游不一定吃 `max`**。ctyun 的 qwen 系列对 `reasoning_effort: "max"` 直接 500，
+   但接受 `xhigh` —— 这种模型要把 max 映射成 `xhigh`，别照抄别的模型。
+
+**验证**（不要只看界面）：
+
+```bash
+# 1) 这个模型现在支持哪些档位、max 会被 clamp 成什么
+node -e "import('@earendil-works/pi-ai').then(async m=>{...})"
+
+# 2) 建一个会话，看 effective thinkingLevel
+#    以前 requested=max -> effective=high；加了映射后 requested=max -> effective=max
+```
+
+**pi-bot 这一侧也补了两处**：
+
+- `availableThinkingLevels()` 现在把 off 永远算可选，并且只有 map 里显式写了
+  `max` / `xhigh` 才把它们给前台（避免让用户选一个后台根本不会传的档位）；
+- `/api/models` 对 **pi 级模型**（models.json 里的，不在模型组里）也返回真实的
+  `thinkingLevels`，以前只有模型组里的模型才带这个字段，前台只能瞎猜。
