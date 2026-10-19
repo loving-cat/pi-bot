@@ -1,0 +1,44 @@
+app/lib/model_group_capacity.dart
+  h_53f14b6641484b 44-53,56,61-62,80-81,83-89,91-93,144-149,230-231,264-271,286
+app/lib/models.dart
+  h_53f14b6641484b 281-289,558,575-585,597-599
+app/lib/screens/bots_screen.dart
+  h_53f14b6641484b 14-57,351-353,355-373,376-419
+app/lib/widgets/ask_card.dart
+  h_53f14b6641484b 28-35,105-133,185,193,204-251
+app/lib/widgets/model_capacity_fields.dart
+  h_53f14b6641484b 19,37-39,173-177,181-185,190-192,199-236,238-259,261,263,265-267,274,326-334,336-350,356-364
+app/lib/widgets/model_group_editor.dart
+  h_53f14b6641484b 236,266-268,394
+app/lib/widgets/model_picker_field.dart
+  h_53f14b6641484b 17,23-25,39,121-122
+app/test/ask_card_test.dart
+  h_53f14b6641484b 59-114
+app/test/model_group_capacity_test.dart
+  h_53f14b6641484b 236-269
+server/src/http.js
+  h_53f14b6641484b 14-15,395-414,745
+server/src/model-thinking.js
+  h_53f14b6641484b 182-214
+server/src/pi-runner.js
+  h_53f14b6641484b 1126-1131
+server/src/store.js
+  h_53f14b6641484b 1513-1543
+server/tests/all.mjs
+  h_53f14b6641484b 38
+server/tests/ask-card.mjs
+  h_53f14b6641484b 1-125
+server/tests/model-thinking.mjs
+  h_53f14b6641484b 18,198-227
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0e74e8be43b86746f204e43cf38388a7235cb1fc",
+  "prompts": {},
+  "humans": {
+    "h_53f14b6641484b": {
+      "author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
