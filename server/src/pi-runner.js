@@ -24,6 +24,9 @@ import { store, toolsForPolicy } from './store.js';
 import { dmOpeningPrompt, shouldMirrorProgress, mirrorProgress } from './dm.js';
 import { loadExtraProviders, settingsDefaultModel } from './providers.js';
 import { modelGroups } from './model-groups.js';
+import { assistantFailure, fallbackModels, modelFailure, recoverModelReply } from './model-reply.js';
+import { invalidateSessions, retireStaleSession, reserveSession } from './session-refresh.js';
+import { deliverDirectInput } from './direct-message-delivery.js';
 import { ModelHealth } from './model-health.js';
 import { buildChiefTools, buildCommonTools } from './tools.js';
 import { defaultMenuSlug, logMenu, menuSlugs, resolveMenu } from './model-menu.js';
@@ -163,6 +166,7 @@ export class PiRunner {
     this.dispatching = new Set();
     /** roomId -> { text, files }：锁被占时进来的消息，合并到这里等下一轮 */
     this.roundQueue = new Map();
+    this.directDeliveryEpochs = new Map();
   }
 
   /**
@@ -262,6 +266,7 @@ export class PiRunner {
 
   /** 收尾：捣掉这一轮 + 把它正在写的消息结掉（不收的话客户端永远转圈） */
   #stallCleanup(info) {
+    info.entry?.turnController?.abort();
     return stallCleanup({ store })(info);
   }
 
@@ -384,7 +389,7 @@ export class PiRunner {
         reasoning: Boolean(m.reasoning),
       }));
     } catch (err) {
-      log('⚠️  取可用模型列表失败：', err?.message || err);
+      log('取可用模型列表失败：', modelFailure(err).error);
     }
   }
 
@@ -404,15 +409,21 @@ export class PiRunner {
       modelGroups.toProviderConfigs(),
       {
         onLog: log,
-        onError: (id, err) => log(`⚠️  模型组 ${id} 同步失败：`, err?.message || err),
+        onError: (_id, err) => log('模型组同步失败：', modelFailure(err).error),
       },
     );
   }
 
   /** 改完模型组：重新注册 + 刷新列表，然后广播一声让 App 更新 */
-  async applyModelGroupChange() {
+  async applyModelGroupChange(groupId = null) {
     this.syncModelGroups();
     await this.refreshAvailableModels();
+    this.model = this.resolveModel(this.modelLabel()) ?? this.resolveModel(config.model)
+      ?? this.resolveModel(defaultMenuSlug(this.health)) ?? null;
+    this.routerModel = this.model;
+    this.initNote = this.model ? null : '没有可用模型，请先配置模型组';
+    invalidateSessions(this.sessions, (_key, entry) => !groupId || !entry.bot?.model
+      || entry.session?.model?.provider === groupId || entry.bot.model.startsWith(`${groupId}/`));
     bus.emit('event', { t: 'models.changed' });
     return this.availableModels?.length ?? 0;
   }
@@ -431,9 +442,13 @@ export class PiRunner {
    */
   async #ensureSession(roomId, botId) {
     const key = this.#key(roomId, botId);
+    retireStaleSession(this.sessions, key);
     const existing = this.sessions.get(key);
-    if (existing?.session) return existing;
-    if (existing?.pending) return existing.pending;
+    if (existing?.session) return reserveSession(existing);
+    if (existing?.pending) {
+      await existing.pending;
+      return this.#ensureSession(roomId, botId);
+    }
 
     this.__buildSession ??= createSessionBuilder({
       runner: this,
@@ -451,8 +466,11 @@ export class PiRunner {
     this.sessions.set(key, { session: null, busy: false, pending: promise, unsubscribe: null });
     try {
       const entry = await promise;
+      entry.reloadPending = this.sessions.get(key)?.reloadPending ?? false;
       entry.lastUsed = Date.now();
       this.sessions.set(key, entry);
+      if (retireStaleSession(this.sessions, key)) return this.#ensureSession(roomId, botId);
+      reserveSession(entry);
       this.#evictSessions();
       return entry;
     } catch (err) {
@@ -1061,10 +1079,11 @@ export class PiRunner {
       const effective = mode === 'followUp' ? 'followUp' : 'steer';
       let queued;
       try {
-        queued =
-          effective === 'followUp' ? await entry.session.followUp(clean) : await entry.session.steer(clean);
+        const { promptText } = await this.#buildInput(clean, files);
+        if (this.aborting.has(roomId)) throw Object.assign(new Error('已终止'), { name: 'AbortError' });
+        queued = await entry.session[effective](promptText, files.map(readForModel).filter(Boolean));
       } catch (err) {
-        throw Object.assign(new Error(`插话失败：${err?.message || err}`), { code: 'STEER_FAILED' });
+        throw Object.assign(new Error(`插话失败：${modelFailure(err).error}`), { code: 'STEER_FAILED' });
       }
       const userMessage = store.appendMessage(
         {
@@ -1128,11 +1147,25 @@ export class PiRunner {
         );
       }
     } else {
-      this.#buildInput(clean, files)
-        .then(({ promptText }) =>
-          this.run(roomId, botId, promptText, { skipUserMessage: true, attachments: files }),
-        )
-        .catch((err) => log('run 异常：', err?.stack || err));
+      const effective = mode === 'followUp' ? 'followUp' : 'steer';
+      const deliveryEpoch = this.directDeliveryEpochs.get(roomId) ?? 0;
+      deliverDirectInput({
+        prepare: () => this.#buildInput(clean, files),
+        run: ({ promptText }) => this.run(roomId, botId, promptText, { skipUserMessage: true, attachments: files }),
+        getEntry: () => this.sessions.get(this.#key(roomId, botId)),
+        isCancelled: () => this.aborting.has(roomId)
+          || (this.directDeliveryEpochs.get(roomId) ?? 0) !== deliveryEpoch,
+        queue: (session, { promptText }) => session[effective](promptText, files.map(readForModel).filter(Boolean)),
+        accepted: (queued) => {
+          store.updateMessage(roomId, userMessage.id,
+            { meta: { ...(userMessage.meta ?? {}), queued: effective, queuedState: queued ?? 'queued' } });
+          bus.emit('event', { t: 'steer.accepted', roomId, mode: effective, text: clean, messageId: userMessage.id });
+        },
+      }).catch((err) => {
+        const error = modelFailure(err).error;
+        const msg = store.updateMessage(roomId, userMessage.id, { status: 'error', error });
+        bus.emit('event', { t: 'msg.error', roomId, msgId: userMessage.id, error, msg });
+      });
     }
     return { userMessage, bot, group: room.kind === 'group' };
   }
@@ -1157,12 +1190,16 @@ export class PiRunner {
     const started = Date.now();
     const room = store.getRoom(roomId);
     if (!room) return { ok: false, text: '', ms: 0, error: '会话不存在', messageId: '' };
+    if (this.aborting.has(roomId)) return { ok: false, text: '', ms: 0, error: '已终止', messageId: '' };
 
     let entry;
     try {
       entry = await this.#ensureSession(roomId, botId);
     } catch (err) {
-      const message = String(err?.message || err);
+      if (err?.code === 'SESSION_BUSY') {
+        return { ok: false, code: 'SESSION_BUSY', text: '', ms: 0, error: '会话正在忙', messageId: '' };
+      }
+      const message = modelFailure(err).error;
       store.appendMessage({
         roomId,
         authorType: 'bot',
@@ -1175,6 +1212,12 @@ export class PiRunner {
       return { ok: false, text: '', ms: Date.now() - started, error: message, messageId: '' };
     }
 
+    const turnController = new AbortController();
+    entry.turnController = turnController;
+    const cancelled = () => this.aborting.has(roomId) || turnController.signal.aborted;
+    const checkCancelled = () => {
+      if (cancelled()) throw turnController.signal.reason ?? Object.assign(new Error('已终止'), { name: 'AbortError' });
+    };
     entry.lastUsed = Date.now();
     // ★ 心跳：这一轮从什么时候开始、最后一次动静是什么时候、
     //   以及它正在写的是哪条消息（卡死时要拿这个收尾）。
@@ -1202,6 +1245,7 @@ export class PiRunner {
     const committed = [];
     let buffer = '';
     let usage = null;
+    let responseFailure = null;
     const steps = [];
 
     const render = () => {
@@ -1245,7 +1289,7 @@ export class PiRunner {
             botId: bot.id,
             active: false,
             reason: event.reason,
-            error: event.errorMessage || null,
+            error: event.errorMessage ? modelFailure(event.errorMessage).error : null,
           });
           log(`[${bot.name}] 上下文压缩结束（${event.reason}）`);
           // ★ 压缩这件事必须**出现在对话里**，不能只藏在状态里。
@@ -1301,6 +1345,13 @@ export class PiRunner {
           break;
         case 'message_end':
           if (event.message?.role === 'assistant') {
+            const failure = assistantFailure(event.message);
+            if (failure) {
+              responseFailure = failure;
+              buffer = '';
+              pushDelta.flush();
+              break;
+            }
             const finalText = textOf(event.message) || buffer;
             if (finalText.trim()) committed.push(finalText.trim());
             buffer = '';
@@ -1343,12 +1394,6 @@ export class PiRunner {
 
     const unsubscribe = entry.session.subscribe(onEvent);
     entry.unsubscribe = unsubscribe;
-    // 已经按了终止的会话：这一轮就别起了（排队里被点掉的那些）
-    if (this.aborting.has(roomId)) {
-      log(`${bot.name} 这一轮已经被用户终止，跳过`);
-      return { ok: false, text: '', ms: 0, error: '已终止', messageId: '' };
-    }
-    entry.busy = true;
 
     // 用户带的图 -> 喂给模型（视觉模型能直接看）
     const images = [];
@@ -1373,6 +1418,7 @@ export class PiRunner {
 
     let timeoutHandle = null;
     try {
+      checkCancelled();
       // ★ 兜底：万一还是撞上"这个会话正在处理"（并发下理论上不该有了，
       //   但外部/扩展也能直接调 prompt），**别把红字甩给用户** ——
       //   改成排队投递（followUp），它干完手上的自己会看到。
@@ -1416,6 +1462,7 @@ export class PiRunner {
       if (effectiveTimeout > 0) {
         const timeout = new Promise((_, reject) => {
           timeoutHandle = setTimeout(() => {
+            turnController.abort(new Error('模型请求超时'));
             entry.session.abort().catch(() => {});
             reject(new Error(`超过 ${Math.round(effectiveTimeout / 1000)}s 未完成，已中断`));
           }, effectiveTimeout);
@@ -1424,67 +1471,43 @@ export class PiRunner {
       } else {
         await runPromise;
       }
+      checkCancelled();
 
       let finalText = render().trim();
       let emptyRecovered = false;
-
-      // ★ 空回复兜底。两种失败模式：
-      //   a) 完全没输出（实测某些「模型 × 思考等级」组合会静默吐空）
-      //   b) 工具调了一堆但没说结论（assistant 最后一条是空的）
-      //   两种都不能让用户看到空白。
-      const toolNames = [...new Set(steps.map((s) => s.tool))];
+      if (responseFailure) throw new Error(responseFailure.error);
       if (!finalText && !stepCapHit) {
-        log(`[${bot.name}] ${steps.length ? `${steps.length} 步操作后没给结论` : '空回复'}，催一次…`);
-        const nudge = steps.length
-          ? `你刚才调用了工具（${toolNames.join('、')}）但没有给出结论。请用一两句话说明：你做了什么、结果是什么。不要调用工具。`
-          : '你上一条没有输出任何内容。请直接用文字回答刚才的问题，不要调用工具。';
-        try {
-          await entry.session.prompt(nudge);
-          finalText = render().trim();
-          if (finalText) emptyRecovered = true;
-        } catch (err) {
-          log(`[${bot.name}] 催一次失败：`, err?.message || err);
-        }
-      }
-
-      // 还是空 → 用最稳的模型直接补一段（不带工具，纯文字）
-      //   串多个线路：单模型兜底也可能吐空，多试一个成功率明显更高
-      if (!finalText && !stepCapHit) {
-        log(`[${bot.name}] 仍然空，切兜底模型…`);
         const stepDigest = steps.length
           ? `\n\n你刚才实际执行了这些操作：\n${steps.map((s) => `- ${s.tool} ${s.detail ?? ''}`.slice(0, 160)).join('\n')}`
           : '';
         const userContent = `下面是你（另一个模型）接到的任务：\n\n${prompt.slice(0, 6000)}${stepDigest}\n\n请用几句话给出结论。`;
-        const chain = [
-          this.model,
-          this.resolveModel('selfhost/wbi-deepseek-v4.1-flash'),
-          this.resolveModel('selfhost/wb-glm-5.3-flash'),
-        ]
-          .filter(Boolean)
-          .filter((m, i, arr) => arr.findIndex((x) => `${x.provider}/${x.id}` === `${m.provider}/${m.id}`) === i);
-
-        for (const fallbackModel of chain) {
-          try {
-            const reply = await this.modelRuntime.completeSimple(
-              fallbackModel,
+        const recovery = await recoverModelReply({
+          signal: turnController.signal,
+          isCancelled: cancelled,
+          failure: responseFailure,
+          nudge: () => entry.session.prompt(steps.length
+            ? '请用一两句话说明刚才操作的结果，不要调用工具。'
+            : '请直接用文字回答刚才的问题，不要调用工具。'),
+          readText: () => render(),
+          readFailure: () => responseFailure,
+          models: fallbackModels(entry.session.model ?? (bot.model ? this.resolveModel(bot.model) : this.model), this.model),
+          complete: (model, signal) => this.modelRuntime.completeSimple(
+              model,
               {
                 systemPrompt: `${bot.persona ?? ''}\n\n你是「${bot.name}」。直接给结论，不要客套。`,
                 messages: [{ role: 'user', content: userContent, timestamp: Date.now() }],
               },
-              { maxTokens: 2048, reasoning: 'low' },
-            );
-            const fallbackText = textOf(reply).trim();
-            if (fallbackText) {
-              finalText = fallbackText;
-              emptyRecovered = true;
-              log(`[${bot.name}] 兜底成功（${fallbackModel.provider}/${fallbackModel.id}）`);
-              break;
-            }
-          } catch (err) {
-            log(`[${bot.name}] 兜底 ${fallbackModel.id} 失败：`, err?.message || err);
-          }
+              { maxTokens: Math.min(2048, model.maxTokens ?? 2048), signal },
+            ),
+        });
+        if (recovery.failure) {
+          responseFailure = recovery.failure;
+          throw new Error(recovery.failure.error);
         }
+        finalText = recovery.text;
+        emptyRecovered = recovery.recovered;
       }
+      checkCancelled();
 
       const produced = beforeImages
         ? collectNewImages(config.workspace, beforeImages, {
@@ -1506,7 +1529,7 @@ export class PiRunner {
           {
             text: digest,
             status: 'error',
-            error: `${bot.name} 没有给出内容（已自动重试两次）。可能是当前模型在 thinking ${bot.thinking} 档下不稳定，试试换个思考等级或换模型。`,
+            error: '模型没有返回可展示内容，也未提供明确错误，请检查接口状态与模型配置。',
             steps,
             usage,
             attachments: produced,
@@ -1539,9 +1562,12 @@ export class PiRunner {
       bus.emit('event', { t: 'msg.done', msg });
       return { ok: true, text: finalText, ms: Date.now() - started, messageId: botMsg.id };
     } catch (err) {
-      const message = String(err?.message || err);
+      const failure = cancelled() ? modelFailure(turnController.signal.reason ?? { name: 'AbortError' })
+        : responseFailure ?? modelFailure(err);
+      const previousError = store.getMessage(roomId, botMsg.id)?.error;
+      const message = failure.aborted && previousError === '已按你的要求终止' ? previousError : failure.error;
       const partial = render().trim();
-      if (stepCapHit) {
+      if (stepCapHit && !cancelled()) {
         const msg = store.updateMessage(
           roomId,
           botMsg.id,
@@ -1571,13 +1597,14 @@ export class PiRunner {
         { silent: true },
       );
       bus.emit('event', { t: 'msg.error', roomId, msgId: botMsg.id, error: message, msg });
-      log(`[${bot.name}] 本轮出错：${message}`);
+      log(`模型本轮出错：${message}`);
       return { ok: false, text: partial, ms: Date.now() - started, error: message, messageId: botMsg.id };
     } finally {
       if (timeoutHandle) clearTimeout(timeoutHandle);
       unsubscribe?.();
       entry.unsubscribe = null;
       entry.busy = false;
+      entry.turnController = null;
       entry.liveMsgId = null;
       entry.startedAt = null;
       bus.emit('event', { t: 'typing', roomId, botId: bot.id, active: false });
@@ -1676,6 +1703,7 @@ export class PiRunner {
   }
 
   async abort(roomId) {
+    this.directDeliveryEpochs.set(roomId, (this.directDeliveryEpochs.get(roomId) ?? 0) + 1);
     // 用户按了停止：排队中的轮次一并清掉，不然它会在当前这轮结束后自己接着跑
     this.roundQueue.delete(roomId);
     // ★ 还要告诉**正在跑的那轮**别再往下派人了。
@@ -1689,6 +1717,7 @@ export class PiRunner {
     for (const [key, entry] of this.sessions) {
       if (key.startsWith(`${roomId}:`) && entry.session && entry.busy) {
         live.push({ key, entry });
+        entry.turnController?.abort();
         entry.session.abort().catch(() => {});
         aborted = true;
       }
@@ -1730,7 +1759,7 @@ export class PiRunner {
    * 用户只是想让它"能装更多"，不是想让它忘掉刚才做的事。
    */
   reloadSessionForBot(botId) {
-    const n = disposeMatching(this.sessions, (key) => key.endsWith(`:${botId}`)).length;
+    const n = invalidateSessions(this.sessions, (key) => key.endsWith(`:${botId}`));
     if (n) log(`${store.getBot(botId)?.name ?? botId} 的会话已按新预算重建（历史保留）`);
     return n;
   }

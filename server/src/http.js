@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config.js';
 import { modelGroups, testModelGroup } from './model-groups.js';
+import { capacityError } from './model-capacity.js';
 import { store } from './store.js';
 import { metaFor, pathFor, saveBuffer, saveMovedFile } from './attachments.js';
 import { lanAddresses } from './pairing.js';
@@ -647,9 +648,15 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
       const botMatch = pathname.match(/^\/api\/bots\/([^/]+)$/);
       if (botMatch && req.method === 'PATCH') {
         const body = await readBody(req);
+        const previous = store.getBot(botMatch[1]);
+        if (!previous) return send(res, 404, { error: 'bot 不存在' });
+        const model = runner.resolveModel?.(body.model ?? previous.model) ?? runner.model ?? {};
+        const capacityProblem = capacityError({ ...previous, ...body }, model, { allowNull: true });
+        if (capacityProblem) return send(res, 400, { error: capacityProblem });
         const bot = store.updateBot(botMatch[1], body);
         if (!bot) return send(res, 404, { error: 'bot 不存在' });
-        if (body.model !== undefined || body.thinking !== undefined) runner.resetSessionForBot(bot.id);
+        if (['model', 'thinking', 'contextWindow', 'maxTokens', 'reserveTokens', 'keepRecentTokens']
+          .some((key) => body[key] !== undefined)) runner.reloadSessionForBot(bot.id);
         return send(res, 200, { bot });
       }
       if (botMatch && req.method === 'DELETE') {
@@ -711,7 +718,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         const r = modelGroups.upsert(body);
         if (r.error) return send(res, 400, { error: r.error });
         // 运行时热注册，加完不用重启
-        const total = await runner.applyModelGroupChange();
+        const total = await runner.applyModelGroupChange(r.group.id);
         log(`🔌 新增模型组：${r.group.name}（${r.group.models.length} 个模型），可用模型 ${total} 个`);
         return send(res, 200, { group: r.group.toPublic() });
       }
@@ -735,13 +742,13 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         const body = await readBody(req);
         const r = modelGroups.upsert({ ...body, id: groupMatch[1] });
         if (r.error) return send(res, 400, { error: r.error });
-        await runner.applyModelGroupChange();
+        await runner.applyModelGroupChange(r.group.id);
         return send(res, 200, { group: r.group.toPublic() });
       }
       if (groupMatch && req.method === 'DELETE') {
         const ok2 = modelGroups.remove(groupMatch[1]);
         if (!ok2) return send(res, 404, { error: '模型组不存在' });
-        await runner.applyModelGroupChange();
+        await runner.applyModelGroupChange(groupMatch[1]);
         log(`🔌 删除模型组：${groupMatch[1]}`);
         return send(res, 200, { id: groupMatch[1] });
       }
