@@ -14,10 +14,14 @@ class ModelPickerField extends StatelessWidget {
     super.key,
     required this.controller,
     this.label = '模型（留空用默认）',
+    this.onPicked,
   });
 
   final TextEditingController controller;
   final String label;
+
+  /// 选完/手改后通知调用方重建 —— 思考等级区域要跟着模型变。
+  final ValueChanged<String>? onPicked;
 
   @override
   Widget build(BuildContext context) {
@@ -32,6 +36,7 @@ class ModelPickerField extends StatelessWidget {
           onPressed: () => _pick(context),
         ),
       ),
+      onChanged: onPicked,
     );
   }
 
@@ -113,6 +118,8 @@ class ModelPickerField extends StatelessWidget {
     );
     if (picked != null && picked.isNotEmpty) {
       controller.text = picked;
+      // 选完要让调用方重建：思考等级区域跟着模型走
+      onPicked?.call(picked);
     }
   }
 }

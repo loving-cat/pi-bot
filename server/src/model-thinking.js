@@ -179,3 +179,36 @@ export function describeThinking(thinking = {}) {
   const mapped = THINKING_LEVELS.filter((level) => own(map, level)).length;
   return mapped ? `${format} · ${mapped} 档` : format;
 }
+
+/**
+ * 这个模型**实际可选**的思考档位。
+ *
+ * 前台那段胶囊/侧边栏要按这个来渲染：后台关掉思考 → 返回空数组 → 前台不展示档位；
+ * 只映射了部分档位 → 前台只给这几档，避免选了一个后台根本不传参的档位。
+ *
+ * `off` 永远算可选（它就是“不思考”），但只有在模型开着 reasoning 时才出现在列表里。
+ */
+export function availableThinkingLevels(thinking = {}) {
+  if (!thinking.reasoning) return [];
+  const map = thinking.thinkingLevelMap;
+  // 没给映射 = 七个档位都原样透传
+  if (!map || typeof map !== 'object') return [...THINKING_LEVELS];
+  return THINKING_LEVELS.filter((level) => own(map, level));
+}
+
+/**
+ * 档位可选的上游值。
+ *
+ * 上游可用的取值就那几种（low/medium/high/max 之类），让用户从下拉里选，
+ * 而不是手打 —— 手打一个上游不认识的词（比如给 `off` 填 `on`）不会报错，
+ * 只会让这一档静默失效，正是要防的那种错。
+ */
+export const THINKING_UPSTREAM_VALUES = [
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+  'auto',
+];

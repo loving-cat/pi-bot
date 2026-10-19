@@ -15,6 +15,7 @@ import {
   normalizeThinking,
   thinkingCompat,
   thinkingLevelMapError,
+  availableThinkingLevels,
 } from '../src/model-thinking.js';
 import { mergeGroupModels } from '../src/model-capacity.js';
 
@@ -192,6 +193,36 @@ await test('已有模型不传思考字段时保留原来的思考配置', () =>
   assert.equal(merged.error, undefined);
   assert.equal(merged.models[0].thinkingFormat, 'zai');
   assert.deepEqual(merged.models[0].thinkingLevelMap, { high: 'high' });
+});
+
+
+await test('availableThinkingLevels：关掉思考就没有任何档位', () => {
+  assert.deepEqual(availableThinkingLevels({ reasoning: false }), []);
+  assert.deepEqual(availableThinkingLevels({}), []);
+});
+
+await test('availableThinkingLevels：开了思考但没映射 = 七档全给', () => {
+  assert.deepEqual(
+    availableThinkingLevels({ reasoning: true }),
+    THINKING_LEVELS,
+  );
+});
+
+await test('availableThinkingLevels：只返回映射过的档位（前台靠它渲染）', () => {
+  assert.deepEqual(
+    availableThinkingLevels({
+      reasoning: true,
+      thinkingLevelMap: { off: null, low: 'low', high: 'high' },
+    }),
+    ['off', 'low', 'high'],
+  );
+});
+
+await test('availableThinkingLevels 与 deepseek 预设有七个档位', () => {
+  assert.deepEqual(
+    availableThinkingLevels({ reasoning: true, thinkingLevelMap: preset }),
+    THINKING_LEVELS,
+  );
 });
 
 console.log(`\n${failed ? '✗' : '✓'} ${passed} 通过，${failed} 失败`);

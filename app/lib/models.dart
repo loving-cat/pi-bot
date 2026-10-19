@@ -278,6 +278,15 @@ class Msg {
 
   /// 要不要同时给一个"我自己说"的输入框
   bool get askAllowCustom => meta?['allowCustom'] != false;
+
+  /// 用户已经回答过这张卡片（点了选项或自己写了一句）
+  String? get askAnswer => meta?['answer'] as String?;
+
+  /// 这张卡片是否已经用过 —— 用过就不再接受第二次点击。
+  ///
+  /// 除了服务端写回的 answer，还兼容一种情况：用户刚点了、请求还在路上，
+  /// 由卡片自己先置上本地已答（见 AskCard）。
+  bool get askAnswered => (meta?['answer'] as String?)?.isNotEmpty == true;
   bool get wasSteer => meta?['queued'] != null;
 
   factory Msg.fromJson(Map<String, dynamic> json) => Msg(
@@ -546,6 +555,7 @@ class ModelSpec {
     this.reasoning = false,
     this.thinkingFormat = '',
     this.thinkingLevelMap = const {},
+    this.thinkingLevels = const [],
   });
 
   final String id;
@@ -562,6 +572,17 @@ class ModelSpec {
   /// pi 的档位 → 上游值；null 表示这一档不额外传参数
   Map<String, String?> thinkingLevelMap;
 
+  /// 服务端算好的「这个模型实际可选的档位」。
+  ///
+  /// 后台关掉思考 → 空列表 → 前台不展示思考档位；
+  /// 只映射了部分档位 → 前台只给这几档。
+  /// 仅由 `/api/models` 回包填充，模型组里保存的那份不带这个字段。
+  List<String> thinkingLevels;
+
+  /// 这个模型是否可用某档位（模型组配置里没声明时不做限制，交给后端判断）
+  bool supportsThinkingLevel(String level) =>
+      thinkingLevels.isEmpty ? false : thinkingLevels.contains(level);
+
   factory ModelSpec.fromJson(Map<String, dynamic> json) => ModelSpec(
     id: json['id'] as String? ?? '',
     name: json['name'] as String? ?? '',
@@ -573,6 +594,9 @@ class ModelSpec {
       for (final entry in ((json['thinkingLevelMap'] as Map?) ?? const {}).entries)
         '${entry.key}': entry.value == null ? null : '${entry.value}',
     },
+    thinkingLevels: ((json['thinkingLevels'] as List?) ?? const [])
+        .map((e) => '$e')
+        .toList(),
   );
 }
 
