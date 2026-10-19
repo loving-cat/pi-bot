@@ -24,6 +24,19 @@ import { computeNextRun, validateSchedule } from './automations.js';
 import { VERSION } from './version.js';
 import { checkForUpdate, clearUpdateCache } from './update-checker.js';
 import { parseSkillMarkdown } from './skills.js';
+import {
+  scanLocalCapabilities,
+  localSkillToLibrary,
+  localMcpToLibrary,
+} from './local-capabilities.js';
+import {
+  MCP_LIMITS,
+  MCP_TYPES,
+  MCP_EXPOSURES,
+  mcpRejectReason,
+  normalizeMcpServer,
+  testMcpServer,
+} from './mcp.js';
 import { probeLogin } from './site-probe.js';
 import { createSiteRuntime } from './site-runtime.js';
 import { publicSite } from './sites.js';
@@ -526,6 +539,131 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         const site = store.getSite(id);
         if (!site) return send(res, 404, { error: '系统不存在' });
         const r = await sites.ping(site);
+        return send(res, 200, r);
+      }
+
+      // ---------- 本机已装能力（只读扫描，不碰用户的 pi 配置）----------
+      // 用户在终端里早就装了一堆 skill / MCP，这里让他一键导入，不用手抄。
+      if (pathname === '/api/local-capabilities' && req.method === 'GET') {
+        const found = scanLocalCapabilities({
+          existingSkills: store.skillLibrary(),
+          existingMcp: store.mcpLibrary(),
+        });
+        return send(res, 200, found);
+      }
+
+      // 一键导入：传 kind + 名字列表。同名的不重复导，返回明细。
+      if (pathname === '/api/local-capabilities/import' && req.method === 'POST') {
+        const body = await readBody(req);
+        const kind = String(body.kind ?? '');
+        const wanted = new Set(
+          (Array.isArray(body.names) ? body.names : []).map((n) => String(n).toLowerCase()),
+        );
+        if (!wanted.size) return send(res, 400, { error: '没选要导入的条目' });
+
+        const found = scanLocalCapabilities({
+          existingSkills: store.skillLibrary(),
+          existingMcp: store.mcpLibrary(),
+        });
+        const imported = [];
+        const skipped = [];
+
+        if (kind === 'skill') {
+          for (const entry of found.skills) {
+            if (!wanted.has((entry.title || '').toLowerCase())) continue;
+            if (entry.imported) {
+              skipped.push({ title: entry.title, reason: '已经导入过了' });
+              continue;
+            }
+            const skill = localSkillToLibrary(entry);
+            if (!skill) {
+              skipped.push({ title: entry.title, reason: '内容不合法' });
+              continue;
+            }
+            const r = store.addSkill(skill);
+            if (r.error) skipped.push({ title: entry.title, reason: r.error });
+            else imported.push(r.skill.title);
+          }
+        } else if (kind === 'mcp') {
+          for (const entry of found.mcpServers) {
+            if (!wanted.has((entry.name || '').toLowerCase())) continue;
+            if (entry.imported) {
+              skipped.push({ title: entry.name, reason: '已经导入过了' });
+              continue;
+            }
+            const server = localMcpToLibrary(entry);
+            if (!server) {
+              skipped.push({ title: entry.name, reason: '配置不合法' });
+              continue;
+            }
+            const r = store.addMcpServer(server);
+            if (r.error) skipped.push({ title: entry.name, reason: r.error });
+            else imported.push(r.server.name);
+          }
+        } else {
+          return send(res, 400, { error: 'kind 只能是 skill 或 mcp' });
+        }
+
+        if (imported.length && kind === 'mcp') await runner.applyMcpChange?.();
+        log(`📥 从本机导入 ${imported.length} 个 ${kind}${skipped.length ? `，跳过 ${skipped.length} 个` : ''}`);
+        return send(res, 200, { imported, skipped });
+      }
+
+      // ---------- MCP 服务库（全局，所有 bot 共享） ----------
+      // 跟技能库不一样的地方：这里配的服务会**真去起子进程/连远端**，
+      // 所以默认 enabled=false，而且还要 bot 自己选中才挂载。
+      if (pathname === '/api/mcp' && req.method === 'GET') {
+        return send(res, 200, {
+          servers: store.mcpLibrary(),
+          limits: {
+            types: MCP_TYPES,
+            exposures: MCP_EXPOSURES,
+            maxTotal: MCP_LIMITS.total,
+            maxTimeout: MCP_LIMITS.timeoutSeconds,
+          },
+        });
+      }
+
+      if (pathname === '/api/mcp' && req.method === 'POST') {
+        const body = await readBody(req);
+        const r = store.addMcpServer(body);
+        if (r.error) return send(res, 400, { error: r.error });
+        // 改了服务库，挂着它的会话要重建才能拿到新工具
+        await runner.applyMcpChange?.();
+        return send(res, 200, { server: r.server });
+      }
+
+      const mcpMatch = pathname.match(/^\/api\/mcp\/([^/]+)$/);
+      if (mcpMatch && req.method === 'PATCH') {
+        const body = await readBody(req);
+        const r = store.updateMcpServer(decodeURIComponent(mcpMatch[1]), body);
+        if (r.error) return send(res, 404, { error: r.error });
+        await runner.applyMcpChange?.();
+        return send(res, 200, { server: r.server });
+      }
+      if (mcpMatch && req.method === 'DELETE') {
+        const r = store.removeMcpServer(decodeURIComponent(mcpMatch[1]));
+        if (r.error) return send(res, 404, { error: r.error });
+        await runner.applyMcpChange?.();
+        return send(res, 200, { ok: true });
+      }
+
+      /**
+       * 测一下这个 MCP 服务能不能连上。
+       *
+       * 不分类型写两套逻辑：都是"能不能把 TCP 打通并用得上"。
+       * HTTP 直接打个请求；stdio 真的把命令跑起来看能不能启动。
+       * 不在这里跑完整 MCP 握手（那要拉 SDK，太重），只回答"这条路通不通"。
+       */
+      if (pathname === '/api/mcp/test' && req.method === 'POST') {
+        const body = await readBody(req);
+        const saved = body.id ? store.mcpLibrary().find((s) => s.id === body.id) : null;
+        const merged = { ...(saved ?? {}), ...body };
+        const reason = mcpRejectReason(merged);
+        if (reason) return send(res, 200, { ok: false, error: reason });
+        const probe = normalizeMcpServer(merged);
+        if (!probe) return send(res, 200, { ok: false, error: '配置不合法' });
+        const r = await testMcpServer(probe);
         return send(res, 200, r);
       }
 

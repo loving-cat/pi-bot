@@ -399,10 +399,12 @@ class Bot {
     this.tagline = '',
     this.persona = '',
     List<BotSkill>? skills,
+    List<String>? mcpServers,
     this.enabled = true,
     this.reserveTokens,
     this.keepRecentTokens,
-  }) : skills = skills ?? [];
+  }) : skills = skills ?? [],
+       mcpServers = mcpServers ?? [];
 
   final String id;
   String name;
@@ -422,6 +424,10 @@ class Bot {
 
   /// 用户手把手教给它的做法（SOP）。服务端会拼进系统提示词，让 bot 真的"学会"。
   List<BotSkill> skills;
+
+  /// 这个 bot 要连哪几个 MCP 服务（存**名字**，不存 id）。
+  /// 空 = 不连 —— MCP 会真起子进程，默认一个都不挂。
+  List<String> mcpServers;
   bool enabled;
 
   bool get isMain => role == 'main';
@@ -440,7 +446,185 @@ class Bot {
         .whereType<Map>()
         .map((e) => BotSkill.fromJson(e.cast<String, dynamic>()))
         .toList(),
+    mcpServers: ((json['mcpServers'] as List?) ?? const [])
+        .map((e) => '$e')
+        .where((e) => e.isNotEmpty)
+        .toList(),
     enabled: json['enabled'] as bool? ?? true,
+  );
+}
+
+/// 本机 pi 上已经装好的能力（只读扫描的结果）。
+///
+/// 存在的意义：用户在终端里用 pi 时早就装了一堆 skill / MCP，
+/// 但 pi-bot 是独立进程、默认不加载。扫描出来让他一键导入，
+/// 比让他把已有的东西再手抄一遍合理。
+class LocalCapabilities {
+  LocalCapabilities({
+    List<LocalSkillEntry>? skills,
+    List<LocalMcpEntry>? mcpServers,
+    this.skillsRoot = '',
+    this.mcpFile = '',
+  })  : skills = skills ?? [],
+        mcpServers = mcpServers ?? [];
+
+  final List<LocalSkillEntry> skills;
+  final List<LocalMcpEntry> mcpServers;
+
+  /// 从哪儿扫的（界面上展示，让用户知道去哪个目录看）
+  final String skillsRoot;
+  final String mcpFile;
+
+  bool get isEmpty => skills.isEmpty && mcpServers.isEmpty;
+
+  factory LocalCapabilities.fromJson(Map<String, dynamic> json) {
+    final from = (json['scannedFrom'] as Map?) ?? const {};
+    return LocalCapabilities(
+      skills: ((json['skills'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => LocalSkillEntry.fromJson(e.cast<String, dynamic>()))
+          .toList(),
+      mcpServers: ((json['mcpServers'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => LocalMcpEntry.fromJson(e.cast<String, dynamic>()))
+          .toList(),
+      skillsRoot: '${from['skills'] ?? ''}',
+      mcpFile: '${from['mcp'] ?? ''}',
+    );
+  }
+}
+
+/// 本机扫到的一条 skill
+class LocalSkillEntry {
+  LocalSkillEntry({
+    required this.title,
+    this.summary = '',
+    this.howto = '',
+    this.imported = false,
+    this.truncated = false,
+  });
+
+  final String title;
+  final String summary;
+  final String howto;
+
+  /// 库里已经有了（同名）
+  final bool imported;
+
+  /// 正文太长被截断过
+  final bool truncated;
+
+  factory LocalSkillEntry.fromJson(Map<String, dynamic> json) => LocalSkillEntry(
+    title: json['title'] as String? ?? '',
+    summary: json['summary'] as String? ?? '',
+    howto: json['howto'] as String? ?? '',
+    imported: json['imported'] as bool? ?? false,
+    truncated: json['truncated'] as bool? ?? false,
+  );
+}
+
+/// 本机 mcp.json 里的一条服务
+class LocalMcpEntry {
+  LocalMcpEntry({
+    required this.name,
+    this.type = 'stdio',
+    this.description = '',
+    this.command = '',
+    this.url = '',
+    this.imported = false,
+  });
+
+  final String name;
+  final String type;
+  final String description;
+  final String command;
+  final String url;
+  final bool imported;
+
+  bool get isHttp => type == 'http';
+  String get target => isHttp ? url : command;
+
+  factory LocalMcpEntry.fromJson(Map<String, dynamic> json) => LocalMcpEntry(
+    name: json['name'] as String? ?? '',
+    type: json['type'] as String? ?? 'stdio',
+    description: json['description'] as String? ?? '',
+    command: json['command'] as String? ?? '',
+    url: json['url'] as String? ?? '',
+    imported: json['imported'] as bool? ?? false,
+  );
+}
+
+/// 一个 MCP 服务（设置 → MCP 里配的）。
+///
+/// 与技能的区别：技能是往提示词里塞做法，MCP 是**真去起进程 / 连服务**。
+/// 所以默认 `enabled == false` —— 加进来只是"待配"，要显式打开才开始连。
+class McpServer {
+  McpServer({
+    required this.id,
+    required this.name,
+    this.type = 'stdio',
+    this.description = '',
+    this.enabled = false,
+    this.exposure = 'direct',
+    this.timeout = 60,
+    this.command = '',
+    List<String>? args,
+    Map<String, String>? env,
+    this.cwd = '',
+    this.url = '',
+    Map<String, String>? headers,
+  })  : args = args ?? [],
+        env = env ?? const {},
+        headers = headers ?? const {};
+
+  final String id;
+
+  /// 名字会变成工具前缀（`mcp__<name>__<tool>`），只能是字母数字下划线短横线
+  String name;
+  String type; // stdio | http
+  String description;
+  bool enabled;
+
+  /// 工具怎么暴露给模型：direct / deferred / codemode / hidden
+  String exposure;
+  int timeout;
+
+  // stdio
+  String command;
+  List<String> args;
+  Map<String, String> env;
+  String cwd;
+
+  // http
+  String url;
+  Map<String, String> headers;
+
+  bool get isHttp => type == 'http';
+
+  /// 一句话目标（列表里显示用）
+  String get target =>
+      isHttp ? url : ([command, ...args].where((e) => e.isNotEmpty).join(' '));
+
+  factory McpServer.fromJson(Map<String, dynamic> json) => McpServer(
+    id: json['id'] as String? ?? '',
+    name: json['name'] as String? ?? '',
+    type: json['type'] as String? ?? 'stdio',
+    description: json['description'] as String? ?? '',
+    enabled: json['enabled'] as bool? ?? false,
+    exposure: json['exposure'] as String? ?? 'direct',
+    timeout: (json['timeout'] as num?)?.toInt() ?? 60,
+    command: json['command'] as String? ?? '',
+    args: ((json['args'] as List?) ?? const []).map((e) => '$e').toList(),
+    env: {
+      for (final e in ((json['env'] as Map?) ?? const {}).entries)
+        '${e.key}': '${e.value}',
+    },
+    cwd: json['cwd'] as String? ?? '',
+    url: json['url'] as String? ?? '',
+    headers: {
+      for (final e in ((json['headers'] as Map?) ?? const {}).entries)
+        '${e.key}': '${e.value}',
+    },
   );
 }
 

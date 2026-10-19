@@ -180,6 +180,8 @@ server/
     model-menu.js     模型菜单（来自用户自己配的模型组）
     model-groups.js   模型组：CRUD + 连通性测试 + 转成 pi 的 provider
     model-thinking.js 思考强度：会不会思考 / 各档位映射 / 上游思考格式（纯逻辑）
+    mcp.js            MCP 服务库：规范化 + 校验 + 转成 pi 的 mcpServers
+    mcp-hook.js       按 bot 选择把 MCP 注册进会话（默认一个都不连）
     model-health.js   模型/档位探活
     coding-baseline.js  ★ 开发类 bot 自动挂载的工程铁律
     attachments.js    附件存取
