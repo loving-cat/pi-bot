@@ -20,6 +20,8 @@
 | `pi-runner.js` | 轮次编排：建会话、群轮次、派活、预算、打断、上报、定时任务执行入口 |
 | `session-factory.js` | 造会话：模型/工具/预算/提示词装配；扩展过滤（不加载 context-mode 类） |
 | `session-pool.js` | 会话缓存、pending 去重、LRU 驱逐 |
+| `session-refresh.js` | 配置变更后标记会话待重载；忙碌会话延后释放，取用时同步预留避免竞态 |
+| `direct-message-delivery.js` | 私聊异步输入投递；会话忙时按原模式排队、保留输入并响应取消 |
 | `tools.js` | 工具定义（通用 + 主控）：派活/私信/建部门/后台进程/询问卡片… |
 | `group-prompt.js` | 群聊会话层：谁先开口、每人看到什么、提示词拼装（纯逻辑） |
 | `group-round.js` | 群轮次决策：该跳过/排队/打断/派发、收尾轮判定（纯函数） |
@@ -31,6 +33,8 @@
 | `system-prompt.js` | 系统提示词：身份、说话规矩、部门规矩 |
 | `mentions.js` | @解析与花名册文本 |
 | `model-*.js` | 模型接线：注册（registry）/模型组（groups）/探活（health）/菜单（menu） |
+| `model-capacity.js` | 同 ID 模型元数据合并、容量优先级与正整数/最大输出校验（纯逻辑） |
+| `model-reply.js` | 模型错误分类与脱敏展示、认证失败终止重试、真正空回复的限定模型恢复 |
 | `providers.js` | 额外 provider 注册与默认模型解析 |
 | `context-budget.js` | 上下文预算：容量覆盖 + 压缩阈值 |
 | `attachments.js` / `extract.js` / `upload-sessions.js` | 附件存取、正文提取、**分片上传** |
@@ -65,11 +69,20 @@
 | `update_info.dart` | 更新响应解析 + 要不要提示的规则（纯逻辑，有测试） |
 | `widgets/update_prompt.dart` | 更新提示弹窗、带进度下载、下载完成提示 |
 | `widgets/skills_library.dart` | 技能库面板：搜索/增删改/启停/导入 SKILL.md |
-| `server/` | 启动层：`options` / `locate` / `server_log` / `supervisor` / `launcher` |
+| `server/options.dart` | 启动配置、端口与数据目录的环境变量映射、启动结果 |
+| `server/locate.dart` | 服务端/Node/npm 定位；支持 macOS App Resources、PATH 和常见安装目录 |
+| `server/health.dart` | 有大小上限的健康响应读取与服务身份格式校验（纯逻辑） |
+| `server/spawn_posix.dart` | POSIX 独立进程组启动脚本，日志直写文件并释放辅助进程 |
+| `server/supervisor.dart` / `server/launcher.dart` / `server/server_log.dart` | 进程与 PID 管理、启动编排及日志；Windows/POSIX 平台分流 |
+| `model_group_capacity.dart` | 模型卡片草稿、稳定行标识、容量解析与保存协议（纯逻辑） |
+| `widgets/model_group_editor.dart` | 模型组编辑装配：接口配置、独立模型卡片、连接测试与保存 |
+| `widgets/model_capacity_fields.dart` | 模型卡片与列表摘要展示；单独编辑 ID、显示名、上下文窗口和最大输出，向上回传操作 |
+| `widgets/server_config_section.dart` | 共用本机启动配置对话框，保存后调用状态层重启并报告结果 |
+| `screens/host_connect_screen.dart` | 宿主启动与失败页；重试、查看日志和打开启动配置 |
 | `screens/` | 页面：home_shell / chat_screen / rooms_screen / bots_screen / settings / pair / scan |
 | `widgets/` | 可复用组件：`tool_steps`、`changed_files`、`task_board`、`automation_sheet`、`ask_card`、**`approval_card`**、`md_text`、`attachment_view`、`avatar*`、`window_title_bar`… |
 | `theme.dart` | 颜色/字号/圆角；**图标约束写在这里**（基础字体仅 68 个字形） |
-| `clipboard_image.dart` | 剪贴板图片读取（Windows PowerShell） |
+| `clipboard_image.dart` / `clipboard_image_macos.dart` | 剪贴板图片平台分流；Windows PowerShell、macOS PNG/TIFF 读取与临时文件清理 |
 | `window_state.dart` | 窗口位置/大小记忆：编码、解析、夹回可见区（纯函数） |
 | `app_log.dart` | 界面层错误落盘（app.log）、打开日志目录 |
 
@@ -85,14 +98,17 @@
 
 | 文件 | 行数 | 计划拆法 |
 |---|---|---|
-| `app/lib/screens/chat_screen.dart` | ~1960 | 消息列表 / 输入区 / 顶栏 三块独立；消息气泡单独成文件 |
-| `server/src/pi-runner.js` | ~1700 | 群轮次已抽出，还可把"单轮执行"与"会话生命周期"分开 |
-| `server/src/store.js` | ~1100 | 按域拆：rooms / bots / tasks / automations / persist（保持单一入口导出） |
+| `app/lib/screens/chat_screen.dart` | ~1970 | 消息列表 / 输入区 / 顶栏 三块独立；消息气泡单独成文件 |
+| `server/src/pi-runner.js` | ~1800 | 群轮次已抽出，还可把"单轮执行"与"会话生命周期"分开 |
+| `server/src/store.js` | ~1600 | 按域拆：rooms / bots / tasks / automations / persist（保持单一入口导出） |
 
 ## 测试地图
 
 | 层 | 命令 |
 |---|---|
-| 服务端全量 | `cd server && node tests/<name>.mjs`（unit / auth / disk / tasks / automations / uploads / **approvals** / **hooks** / shells / shell-policy / policy-hook / dm / ask-guard / room-lock / model-health） |
+| 服务端统一入口 | `cd server && node tests/all.mjs`（无需真实模型，具体文件以入口列表为准） |
+| 额外本机中转回归 | `cd server && node tests/relay.mjs`、`node tests/relay-limits.mjs`（随机端口与假服务端） |
+| 自建样本解析 | `cd server && node tests/extract.mjs`（不设置外部样本环境变量时只读自建样本） |
 | 客户端全量 | `cd app && flutter test` |
 | 静态检查 | `cd app && flutter analyze` |
+| macOS 打包 | `./scripts/pack-macos.sh`（完整 Xcode 原生构建；`--no-build` 复用已有 Release App） |

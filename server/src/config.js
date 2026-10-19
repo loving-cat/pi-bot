@@ -1,7 +1,7 @@
 /**
  * pi-bot server 配置。
  *
- * 全部可用环境变量覆盖；默认落在 <repo>/data 下，方便直接看数据。
+ * 全部可用环境变量覆盖；默认使用平台对应的用户数据目录。
  */
 import fs from 'node:fs';
 import os from 'node:os';
