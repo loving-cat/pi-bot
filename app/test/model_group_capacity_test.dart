@@ -153,4 +153,74 @@ void main() {
       isNotNull,
     );
   });
+
+  group('独立模型卡片', () {
+    test('重命名后本行容量跟随卡片，清空输入也不会取另一个模型的值', () {
+      final rows = modelCardDrafts(existing);
+      final result = buildModelCardModels([
+        rows[0].copyWith(
+          id: 'model-renamed',
+          capacity: const ModelCapacityInput(),
+        ),
+        rows[1],
+      ]);
+      expect(result.models, [
+        {
+          'id': 'model-renamed',
+          'name': 'model-renamed',
+          'contextWindow': 12000,
+          'maxTokens': 2000,
+        },
+        {
+          'id': 'model-b',
+          'name': 'model-b',
+          'contextWindow': 64000,
+          'maxTokens': 4000,
+        },
+      ]);
+      expect(rows[0].id, 'model-a');
+    });
+
+    test('删除后新添加的卡片不继承被删除行的容量', () {
+      final rows = modelCardDrafts(existing);
+      final result = buildModelCardModels([
+        rows[1],
+        const ModelCardDraft(rowId: 2, id: 'model-new'),
+      ]);
+      expect(result.models.last, {'id': 'model-new', 'name': 'model-new'});
+      expect(result.models.first['contextWindow'], 64000);
+    });
+
+    test('重复 ID 拦截，不静默丢掉其中一张卡片', () {
+      final rows = modelCardDrafts(existing);
+      final result = buildModelCardModels([
+        rows[0].copyWith(id: ' model-b '),
+        rows[1],
+      ]);
+      expect(result.error, contains('重复'));
+      expect(result.models, isEmpty);
+    });
+
+    test('显示名可独立修改，留空使用当前模型 ID', () {
+      final result = buildModelCardModels([
+        const ModelCardDraft(rowId: 0, id: 'model-a', name: ' 自定义显示名 '),
+        const ModelCardDraft(rowId: 1, id: 'model-b'),
+      ]);
+      expect(result.models[0]['name'], '自定义显示名');
+      expect(result.models[1]['name'], 'model-b');
+    });
+
+    test('空 ID 和多行 ID 均拦截', () {
+      for (final id in ['', 'model-a\nmodel-b', 'model-a\rmodel-b']) {
+        expect(
+          buildModelCardModels([ModelCardDraft(rowId: 0, id: id)]).error,
+          isNotNull,
+        );
+      }
+    });
+
+    test('不能保存没有模型的组', () {
+      expect(buildModelCardModels([]).error, contains('至少'));
+    });
+  });
 }
