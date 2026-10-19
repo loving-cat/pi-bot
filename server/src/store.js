@@ -1510,6 +1510,37 @@ export class Store {
     return msg;
   }
 
+  /**
+   * 把房间里最后一张还没答的“问你”卡片标成已答。
+   *
+   * 为什么要存在：那张卡片是 bot 停下来等用户回话的地方，一旦用户回了
+   * （点了某个选项，或者自己打了一句），这件事就已经往下走了 ——
+   * 卡片还挂着能被再点第二次，只会让人迷惑“我刚才点了吗”／误点拨乱进程。
+   *
+   * 只标**最新一张**：老的卡片在它被回答时就已经标过了；一次回答只对应一张卡。
+   *
+   * @returns {object|null} 被更新的消息
+   */
+  answerPendingAsk(roomId, answer, { silent = false } = {}) {
+    const list = this.messages.get(roomId);
+    if (!Array.isArray(list)) return null;
+    for (let i = list.length - 1; i >= 0; i--) {
+      const msg = list[i];
+      if (msg?.kind !== 'ask') continue;
+      // 已答过的跳过，继续往前找
+      if (msg.meta?.answer != null) continue;
+      const answered = String(answer ?? '').slice(0, 500);
+      const next = this.updateMessage(
+        roomId,
+        msg.id,
+        { meta: { ...(msg.meta ?? {}), answer: answered, answeredAt: now() } },
+        { silent },
+      );
+      return next;
+    }
+    return null;
+  }
+
   reapStaleStreaming() {
     let n = 0;
     for (const [roomId, list] of this.messages) {

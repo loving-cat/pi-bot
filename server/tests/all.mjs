@@ -35,6 +35,7 @@ const TESTS = [
   'change-watch',
   'dm',
   'ask-guard',
+  'ask-card',
   'auth',
   'device-revoke',
   'disk',

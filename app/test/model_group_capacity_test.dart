@@ -233,6 +233,40 @@ void main() {
         expect(result.models[0].containsKey('thinkingLevelMap'), isFalse);
       });
 
+      // ★ 回归：曾经把“用户主动关掉思考”和“没动过”当成一回事，
+      //   导致开关点不掉（关了又弹回来）、而且关掉的动作根本不会被提交。
+      test('主动关闭思考必须显式提交 reasoning:false', () {
+        final result = buildModelCardModels([
+          const ModelCardDraft(
+            rowId: 0,
+            id: 'model-a',
+            // 服务端已存的是“开”，用户手动关掉
+            retainedThinking: ModelThinkingInput(
+              reasoning: true,
+              format: 'deepseek',
+              levels: {'high': 'high'},
+            ),
+            thinking: ModelThinkingInput(reasoning: false),
+          ),
+        ]);
+        final model = result.models[0];
+        expect(model['reasoning'], isFalse);
+        // 关掉之后不该再带格式和映射
+        expect(model.containsKey('thinkingFormat'), isFalse);
+        expect(model.containsKey('thinkingLevelMap'), isFalse);
+      });
+
+      test('touched 能区分「没动过」与「主动关闭」', () {
+        const untouched = ModelThinkingInput();
+        const off = ModelThinkingInput(reasoning: false);
+        const on = ModelThinkingInput(reasoning: true);
+        expect(untouched.touched, isFalse);
+        expect(off.touched, isTrue);
+        expect(on.touched, isTrue);
+        expect(untouched.toJson().containsKey('reasoning'), isFalse);
+        expect(off.toJson()['reasoning'], isFalse);
+      });
+
       test('开启思考后上报开关、上游格式与档位映射', () {
         final result = buildModelCardModels([
           const ModelCardDraft(

@@ -1123,6 +1123,12 @@ export class PiRunner {
       attachments: hydrate(files),
     });
 
+    // ★ 用户回话了 → 那张“问你”卡片就该收起来。
+    //   卡片是 bot 停下来等回话的地方；用户点了选项/自己说了一句，
+    //   事情已经往下走了，卡片还能再点第二次只会让人怀疑自己点没点上。
+    //   把回答也存进去，历史里能看出当时选的是哪个。
+    store.answerPendingAsk(roomId, clean);
+
     if (room.kind === 'group') {
       // ★ 用户说话必须优先。
       //

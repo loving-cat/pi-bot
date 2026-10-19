@@ -233,6 +233,7 @@ class _EditorState extends State<_Editor> {
   /// 思考强度可选项（服务端下发，Windows 与 Mac 共用同一份）
   List<String> _thinkingFormats = const [];
   List<String> _thinkingLevels = const [];
+  List<String> _thinkingUpstreamValues = const [];
 
   /// 连通性测试的结果（null = 还没测过）
   Map<String, dynamic>? _test;
@@ -260,6 +261,9 @@ class _EditorState extends State<_Editor> {
           .map((e) => '$e')
           .toList();
       _thinkingLevels = ((options['levels'] as List?) ?? const [])
+          .map((e) => '$e')
+          .toList();
+      _thinkingUpstreamValues = ((options['upstreamValues'] as List?) ?? const [])
           .map((e) => '$e')
           .toList();
     });
@@ -387,6 +391,7 @@ class _EditorState extends State<_Editor> {
                 enabled: !_saving,
                 thinkingFormats: _thinkingFormats,
                 thinkingLevels: _thinkingLevels,
+                thinkingUpstreamValues: _thinkingUpstreamValues,
                 onChanged: (id, update) => setState(() {
                   _modelRows = [for (final old in _modelRows) old.rowId == id ? update(old) : old];
                 }),
