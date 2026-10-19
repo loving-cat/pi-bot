@@ -543,6 +543,9 @@ class ModelSpec {
     this.name = '',
     this.contextWindow = 0,
     this.maxTokens = 0,
+    this.reasoning = false,
+    this.thinkingFormat = '',
+    this.thinkingLevelMap = const {},
   });
 
   final String id;
@@ -550,11 +553,26 @@ class ModelSpec {
   int contextWindow;
   int maxTokens;
 
+  /// 这个模型会不会思考（上游支持 reasoning / thinking）
+  bool reasoning;
+
+  /// 思考走哪种上游格式（deepseek / openai / zai …）；空 = 用 pi 默认
+  String thinkingFormat;
+
+  /// pi 的档位 → 上游值；null 表示这一档不额外传参数
+  Map<String, String?> thinkingLevelMap;
+
   factory ModelSpec.fromJson(Map<String, dynamic> json) => ModelSpec(
     id: json['id'] as String? ?? '',
     name: json['name'] as String? ?? '',
     contextWindow: _asInt(json['contextWindow']),
     maxTokens: _asInt(json['maxTokens']),
+    reasoning: json['reasoning'] as bool? ?? false,
+    thinkingFormat: json['thinkingFormat'] as String? ?? '',
+    thinkingLevelMap: {
+      for (final entry in ((json['thinkingLevelMap'] as Map?) ?? const {}).entries)
+        '${entry.key}': entry.value == null ? null : '${entry.value}',
+    },
   );
 }
 

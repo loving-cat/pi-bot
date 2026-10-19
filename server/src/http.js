@@ -7,6 +7,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config.js';
 import { modelGroups, testModelGroup } from './model-groups.js';
+import {
+  THINKING_FORMATS,
+  THINKING_LEVELS,
+  THINKING_PRESETS,
+} from './model-thinking.js';
 import { capacityError } from './model-capacity.js';
 import { store } from './store.js';
 import { metaFor, pathFor, saveBuffer, saveMovedFile } from './attachments.js';
@@ -709,6 +714,16 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
       }
 
       // ---------- 模型组（用户自己配的 baseUrl/key/模型）----------
+      // 思考强度的可选值集中由服务端给出：Windows 与 Mac 共用同一套枚举，
+      // 升级只改一处，不会出现一端能选、另一端是死值。
+      if (pathname === '/api/model-thinking/options' && req.method === 'GET') {
+        return send(res, 200, {
+          levels: THINKING_LEVELS,
+          formats: THINKING_FORMATS,
+          presets: THINKING_PRESETS,
+        });
+      }
+
       if (pathname === '/api/model-groups' && req.method === 'GET') {
         return send(res, 200, { modelGroups: modelGroups.listPublic() });
       }

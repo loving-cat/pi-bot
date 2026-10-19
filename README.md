@@ -179,6 +179,7 @@ server/
     mentions.js       ★ @提及解析（调度信号）
     model-menu.js     模型菜单（来自用户自己配的模型组）
     model-groups.js   模型组：CRUD + 连通性测试 + 转成 pi 的 provider
+    model-thinking.js 思考强度：会不会思考 / 各档位映射 / 上游思考格式（纯逻辑）
     model-health.js   模型/档位探活
     coding-baseline.js  ★ 开发类 bot 自动挂载的工程铁律
     attachments.js    附件存取
