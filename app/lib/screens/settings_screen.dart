@@ -301,7 +301,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     onTap: () async {
                       await state.signOut();
-                      if (context.mounted) Navigator.pop(context);
+                      if (mounted) Navigator.pop(context);
                     },
                   ),
                 ),
@@ -574,7 +574,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               onTap: () async {
                 await state.signOut();
-                if (context.mounted) Navigator.pop(context);
+                if (mounted) Navigator.pop(context);
               },
             ),
           ],
