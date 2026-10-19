@@ -101,7 +101,7 @@ class _LessonsSectionState extends State<LessonsSection> {
                 lesson: lesson,
                 onToggle: (status) async {
                   final err = await state.setLessonStatus(lesson.id, status);
-                  if (err != null && context.mounted) toast(context, err);
+                  if (err != null && context.mounted) _showError(err);
                 },
                 onDelete: () => _confirmDelete(state, lesson),
               ),
@@ -204,7 +204,17 @@ class _LessonsSectionState extends State<LessonsSection> {
     );
     if (ok != true) return;
     final err = await state.removeLesson(lesson.id);
-    if (err != null && mounted) toast(context, err);
+    if (err != null && mounted) _showError(err);
+  }
+
+  /// 操作失败时的文案：列表可能已经过期（这条被别处删了），
+  /// 直接甩“经验不存在”用户看不懂，也以为自己点错了。
+  void _showError(String err) {
+    if (!mounted) return;
+    toast(
+      context,
+      err.contains('不存在') ? '这条经验已经不在了（可能被删了），列表已刷新' : err,
+    );
   }
 }
 
