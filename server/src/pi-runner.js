@@ -62,6 +62,7 @@ import { createSessionBuilder } from './session-factory.js';
 import { createBuildInput } from './prompt-input.js';
 import { collectNewImages, snapshotImages } from './image-watch.js';
 import { snapshotWorkspace, diffSnapshots, summarizeChanges } from './change-watch.js';
+import { collectArtifacts } from './artifact-watch.js';
 import {
   composeGroupPrompt,
   departmentOf,
@@ -1734,6 +1735,23 @@ export class PiRunner {
             onError: (err) => log('自动附图失败：', err?.message || err),
           })
         : [];
+
+      // ★ 跑完后把交付物（表格 / 文档 / PDF / 压缩包）也直接发到群里。
+      //   只认这一轮新增或改过的文件，源码不算（那是 changed_files 的事）；
+      //   图片已经在上面处理过，这里排掉避免重复附件。
+      if (config.autoAttachArtifacts !== false && beforeFiles) {
+        try {
+          for (const item of collectArtifacts(config.workspace, beforeFiles)) {
+            try {
+              produced.push(saveFromPath(item.file));
+            } catch (err) {
+              log(`自动带产物失败（${item.rel}）：`, err?.message || err);
+            }
+          }
+        } catch (err) {
+          log('自动带产物失败：', err?.message || err);
+        }
+      }
 
       // 两次都救不回来 → 退而给一份操作摘要（总比一片空白好），并标成错误
       if (!finalText && !stepCapHit) {

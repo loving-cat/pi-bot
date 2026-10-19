@@ -94,6 +94,27 @@ void main() {
     expect(hit?.id, 't2');
   });
 
+  testWidgets('同一句话派给多人：合并成一行，列出执行者', (tester) async {
+    const title = '系统已正式接入，做一次接入自检，让用户看见这个团队确实能用。';
+    final dup = [
+      TaskItem(id: 'd1', title: title, status: 'doing', ownerName: '基金研究员'),
+      TaskItem(id: 'd2', title: title, status: 'doing', ownerName: '组合分析师'),
+      TaskItem(id: 'd3', title: title, status: 'doing', ownerName: '记录核对员'),
+    ];
+    final hits = <String>[];
+    await tester.pumpWidget(host(tasks: dup, onDone: (t) => hits.add(t.id)));
+
+    // 只出现一次标题，副标题说清是谁
+    expect(find.textContaining('系统已正式接入'), findsOneWidget);
+    expect(find.textContaining('3 人：'), findsOneWidget);
+    expect(find.textContaining('基金研究员'), findsOneWidget);
+
+    // 勾一次 = 三条一起标完成（同一条指令，不该只标一个人）
+    await tester.tap(find.byIcon(LucideIcons.loader).first);
+    await tester.pump();
+    expect(hits, containsAll(['d1', 'd2', 'd3']));
+  });
+
   testWidgets('输入标题后按加号会回调 onCreate', (tester) async {
     String? created;
     await tester.pumpWidget(

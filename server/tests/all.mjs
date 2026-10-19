@@ -39,6 +39,7 @@ const TESTS = [
   'policy-hook',
   'shells',
   'change-watch',
+  'artifacts',
   'dm',
   'ask-guard',
   'ask-card',
