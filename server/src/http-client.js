@@ -29,6 +29,7 @@
 import net from 'node:net';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { Worker } from 'node:worker_threads';
 
 const execFileAsync = promisify(execFile);
 
@@ -132,66 +133,149 @@ async function proxyFromMacos() {
 }
 
 /**
+ * Windows：把注册表里的 ProxyServer 取值解成标准代理 URL（纯函数，可单测）。
+ *
+ * 两种形态都见过：
+ *   · `127.0.0.1:7890`                       —— 所有协议同一个
+ *   · `http=127.0.0.1:7890;https=…;socks=…`  —— 按协议分列
+ * 取 https 优先（HTTPS 流量走它最通用），没有再退回 http。
+ */
+export function parseWindowsProxyValue(raw) {
+  const value = String(raw ?? '').trim();
+  if (!value) return '';
+  if (value.includes('=')) {
+    const parts = new Map(
+      value
+        .split(';')
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map((s) => {
+          const i = s.indexOf('=');
+          return i > 0 ? [s.slice(0, i).toLowerCase(), s.slice(i + 1)] : ['', ''];
+        }),
+    );
+    const picked = parts.get('https') || parts.get('http') || parts.get('socks') || '';
+    return picked ? normalizeProxyUrl(`http://${picked}`) : '';
+  }
+  return normalizeProxyUrl(`http://${value}`);
+}
+
+/**
+ * Windows 代理探测的 worker 源码。
+ *
+ * 为什么必须放到 worker 里：Windows 上 `CreateProcessW(reg.exe)` 会被实时防护
+ * 同步扫描，实测首次 ~3 秒、而且隔一两分钟会重来一次。那是 Node 主线程，
+ * 一卡整个服务端（HTTP/WS）都停。worker 线程里卡它自己的，主线程照常干活。
+ *
+ * worker 只负责把注册表原值读出来，解析仍在主线程（纯函数、可测）。
+ */
+const WINDOWS_PROXY_WORKER = `
+const { execFile } = require('node:child_process');
+const { parentPort } = require('node:worker_threads');
+const KEY = 'HKCU\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Internet Settings';
+function run(args) {
+  return new Promise((resolve) => {
+    execFile('reg', args, { timeout: 1500, windowsHide: true }, (err, stdout) => {
+      resolve(err ? '' : String(stdout || ''));
+    });
+  });
+}
+(async () => {
+  const enabled = await run(['query', KEY, '/v', 'ProxyEnable']);
+  if (!/0x1\\b/.test(enabled)) return parentPort.postMessage('');
+  const server = await run(['query', KEY, '/v', 'ProxyServer']);
+  const m = /ProxyServer\\s+REG_SZ\\s+(.+)/i.exec(server);
+  parentPort.postMessage(m ? m[1].trim() : '');
+})();
+`;
+
+/** 在 worker 线程里读 Windows 代理原值；失败/超时都按"没有代理"处理。 */
+function readWindowsProxyValue() {
+  return new Promise((resolve) => {
+    let worker;
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      try {
+        worker?.terminate();
+      } catch {
+        // 已经退了
+      }
+      resolve(typeof value === 'string' ? value : '');
+    };
+    try {
+      worker = new Worker(WINDOWS_PROXY_WORKER, { eval: true });
+    } catch {
+      return finish('');
+    }
+    worker.once('message', finish);
+    worker.once('error', () => finish(''));
+    worker.once('exit', () => finish(''));
+    const timer = setTimeout(() => finish(''), 6000);
+    timer.unref?.();
+  });
+}
+
+/**
  * Windows：读当前用户的 Internet Settings。
  * 注册表里可能是 `host:port`，也可能是 `http=host:port;https=host:port` 这种按协议分列。
  */
 async function proxyFromWindows() {
   try {
-    const key =
-      'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';
-    const { stdout } = await execFileAsync(
-      'reg',
-      ['query', key, '/v', 'ProxyEnable'],
-      { timeout: DETECT_TIMEOUT_MS },
-    );
-    if (!/0x1\b/.test(stdout)) return '';
-    const { stdout: valueOut } = await execFileAsync(
-      'reg',
-      ['query', key, '/v', 'ProxyServer'],
-      { timeout: DETECT_TIMEOUT_MS },
-    );
-    const m = /ProxyServer\s+REG_SZ\s+(.+)/i.exec(valueOut);
-    const raw = m ? m[1].trim() : '';
-    if (!raw) return '';
-    // 形如 `http=127.0.0.1:7890;https=127.0.0.1:7890`
-    if (raw.includes('=')) {
-      const parts = new Map(
-        raw
-          .split(';')
-          .map((s) => s.trim())
-          .filter(Boolean)
-          .map((s) => {
-            const i = s.indexOf('=');
-            return i > 0 ? [s.slice(0, i).toLowerCase(), s.slice(i + 1)] : ['', ''];
-          }),
-      );
-      const picked = parts.get('https') || parts.get('http') || '';
-      return picked ? normalizeProxyUrl(`http://${picked}`) : '';
-    }
-    return normalizeProxyUrl(`http://${raw}`);
+    return parseWindowsProxyValue(await readWindowsProxyValue());
   } catch {
     return '';
   }
 }
 
 /**
+ * 真正做一次锲测（不做缓存判断）。同一时刻只允许一个在飞。
+ */
+let refreshing = null;
+function refreshProxy() {
+  refreshing ??= (async () => {
+    let proxy = proxyFromEnv();
+    if (!proxy) {
+      if (process.platform === 'darwin') proxy = await proxyFromMacos();
+      else if (process.platform === 'win32') proxy = await proxyFromWindows();
+    }
+    cache = { at: Date.now(), proxy };
+    return proxy;
+  })().finally(() => {
+    refreshing = null;
+  });
+  return refreshing;
+}
+
+/**
  * 探测当前系统代理。
  *
+ * ## 为什么要"旧值先返回、后台刷新"
+ *
+ * Windows 上读注册表要起 `reg.exe`，而 `CreateProcessW` 会被实时防护同步扫描，
+ * 实测单次 3~6 秒（worker 里不冻主线程，但调用方还是在等）。如果每次缓存过期
+ * 都让请求等，搜网页 / 探站点就会莫名其妙慢好几秒。
+ *
+ * 所以：
+ *   · 没有旧值（进程刚起）→ 等一次，宁可慢也别拿错结果；
+ *   · 有旧值但过期了 → **立即返回旧值**，后台刷新，下次请求就是新的。
+ * 代理开关切换的感知延迟从"一直等"变成"最多一次请求"。
+ *
  * @param {object} [opts]
- * @param {boolean} [opts.force] 跳过缓存
+ * @param {boolean} [opts.force] 跳过缓存，等新结果
  * @returns {Promise<string>} 代理 URL；没有代理返回空串
  */
 export async function detectProxy({ force = false } = {}) {
   const now = Date.now();
-  if (!force && now - cache.at < PROXY_CACHE_MS) return cache.proxy;
-
-  let proxy = proxyFromEnv();
-  if (!proxy) {
-    if (process.platform === 'darwin') proxy = await proxyFromMacos();
-    else if (process.platform === 'win32') proxy = await proxyFromWindows();
+  const hasValue = typeof cache.proxy === 'string';
+  if (!force && hasValue && now - cache.at < PROXY_CACHE_MS) return cache.proxy;
+  if (!force && hasValue) {
+    // 后台刷新：故意不 await，也不吞异常（refreshProxy 内部会兜底成空串）
+    void refreshProxy().catch(() => {});
+    return cache.proxy;
   }
-  cache = { at: now, proxy };
-  return proxy;
+  return refreshProxy();
 }
 
 /** 手动指定代理（设置里配了就用它，优先于自动探测） */
