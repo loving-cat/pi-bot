@@ -19,6 +19,7 @@ app/*.iml
 # 工具产物
 *.png
 !app/assets/**/*.png
+!app/macos/Runner/Assets.xcassets/**/*.png
 # 应用图标（生成的，不是截图）：Android 各密度 launcher 图标要进仓库
 !app/android/app/src/main/res/mipmap-*/ic_launcher.png
 # 仓库根目录的本地工具脚本（截图之类，跟平台绑定）
@@ -50,3 +51,7 @@ probe.txt
 
 # 打包产物（本地试跑用，不进仓库）
 /dist/
+
+# macOS 本机打包产物
+*.dmg
+*.app/
