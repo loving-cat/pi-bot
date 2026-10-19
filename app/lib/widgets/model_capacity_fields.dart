@@ -14,6 +14,8 @@ class ModelCardsEditor extends StatelessWidget {
     required this.onRemove,
     this.focusedRowId,
     this.enabled = true,
+    this.thinkingFormats = const [],
+    this.thinkingLevels = const [],
   });
 
   final List<ModelCardDraft> rows;
@@ -23,6 +25,13 @@ class ModelCardsEditor extends StatelessWidget {
   final void Function(int rowId) onRemove;
   final int? focusedRowId;
   final bool enabled;
+
+  /// 上游思考格式的可选项（由服务端下发，见 /api/model-thinking/options）。
+  /// 空列表时不给选，但仍保留模型已存的格式。
+  final List<String> thinkingFormats;
+
+  /// 七个思考档位（由服务端下发）
+  final List<String> thinkingLevels;
 
   @override
   Widget build(BuildContext context) => Column(
@@ -145,9 +154,141 @@ class ModelCardsEditor extends StatelessWidget {
             ),
           ],
         ),
+        const SizedBox(height: 10),
+        const Divider(height: 18),
+        _thinking(context, row),
       ],
     ),
   );
+
+  /// 思考强度：开不开启 + 上游格式 + 七个档位映射。
+  ///
+  /// 这里是**唯一**能决定"这个模型到底思不思考"的地方 —— 填错格式不会报错，
+  /// 只会静默不思考，所以每项都要给出"留空 = 用默认"以外的明确含义。
+  Widget _thinking(BuildContext context, ModelCardDraft row) {
+    final current = row.thinking.isEmpty ? row.retainedThinking : row.thinking;
+    final levels = thinkingLevels.isEmpty
+        ? const ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+        : thinkingLevels;
+    void change(ModelThinkingInput Function(ModelThinkingInput) update) =>
+        onChanged(
+          row.rowId,
+          (draft) => draft.copyWith(
+            thinking: update(draft.thinking.isEmpty ? draft.retainedThinking : draft.thinking),
+          ),
+        );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Text(
+              '思考强度',
+              style: TextStyle(
+                fontSize: PB.fsXs,
+                fontWeight: FontWeight.w600,
+                color: PB.textSecondary,
+              ),
+            ),
+            const Spacer(),
+            Switch(
+              key: ValueKey('model-reasoning-${row.rowId}'),
+              value: current.reasoning,
+              onChanged: enabled
+                  ? (value) => change(
+                      (input) => input.copyWith(
+                        reasoning: value,
+                        // 关闭思考就把格式和映射一并清掉，避免残留配置继续生效
+                        format: value ? input.format : '',
+                        levels: value ? input.levels : const {},
+                      ),
+                    )
+                  : null,
+            ),
+          ],
+        ),
+        Text(
+          current.reasoning
+              ? '这个模型会思考。下面选上游格式；档位留空表示这一档不额外传参数。'
+              : '这个模型不思考（或你不需要它的思考过程）。开启后才会下发思考参数。',
+          style: const TextStyle(
+            fontSize: PB.fsXxs,
+            color: PB.textQuaternary,
+            height: 1.5,
+          ),
+        ),
+        if (current.reasoning) ...[
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              const SizedBox(
+                width: 96,
+                child: Text(
+                  '上游格式',
+                  style: TextStyle(fontSize: PB.fsXxs, color: PB.textTertiary),
+                ),
+              ),
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  key: ValueKey('model-thinking-format-${row.rowId}'),
+                  initialValue: current.format.isEmpty ? '' : current.format,
+                  isDense: true,
+                  decoration: const InputDecoration(isDense: true),
+                  items: [
+                    const DropdownMenuItem(value: '', child: Text('用默认（不指定）')),
+                    for (final format in {
+                      ...thinkingFormats,
+                      // 已存的格式即使不在选项里也要能显示，否则会静默丢失
+                      if (current.format.isNotEmpty) current.format,
+                    })
+                      DropdownMenuItem(value: format, child: Text(format)),
+                  ],
+                  onChanged: enabled
+                      ? (value) => change(
+                          (input) => input.copyWith(format: value ?? ''),
+                        )
+                      : null,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          for (final level in levels)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 96,
+                    child: Text(
+                      level,
+                      style: const TextStyle(
+                        fontSize: PB.fsXxs,
+                        color: PB.textTertiary,
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: _field(
+                      'model-thinking-${row.rowId}-$level',
+                      '',
+                      current.levels[level] ?? '',
+                      (value) => change(
+                        (input) => input.copyWith(
+                          levels: {...input.levels, level: value.trim()},
+                        ),
+                      ),
+                      hint: '留空 = 这一档不传',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ],
+    );
+  }
 
   Widget _field(
     String key,
@@ -185,6 +326,14 @@ class ModelGroupModelSummary extends StatelessWidget {
 
   String _tokens(int value) => value > 0 ? '$value tokens' : '服务端默认';
 
+  /// 摘要里的思考状态：不思考 / 格式 + 已映射档位数
+  String _thinking(ModelSpec model) {
+    if (!model.reasoning) return '不思考';
+    final format = model.thinkingFormat.isEmpty ? '默认格式' : model.thinkingFormat;
+    final mapped = model.thinkingLevelMap.values.where((v) => v != null).length;
+    return mapped > 0 ? '$format · $mapped 档' : format;
+  }
+
   @override
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -207,7 +356,8 @@ class ModelGroupModelSummary extends StatelessWidget {
                 ),
               ),
               Text(
-                '上下文：${_tokens(model.contextWindow)} · 最大输出：${_tokens(model.maxTokens)}',
+                '上下文：${_tokens(model.contextWindow)} · 最大输出：${_tokens(model.maxTokens)}'
+                ' · 思考：${_thinking(model)}',
                 style: const TextStyle(
                   fontSize: PB.fsXxs,
                   color: PB.textQuaternary,

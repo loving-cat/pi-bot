@@ -28,6 +28,11 @@ import { config } from './config.js';
 import { log, newId, now, readJson, writeJsonAtomic } from './util.js';
 import { mergeGroupModels } from './model-capacity.js';
 import { modelFailure } from './model-reply.js';
+import {
+  THINKING_LEVELS,
+  thinkingCompat,
+  thinkingLevelMapError,
+} from './model-thinking.js';
 
 /** 支持的接口类型。够用就好，不追求全 —— 加错了比不加更糟。 */
 export const API_TYPES = ['openai-completions', 'openai-responses', 'anthropic-messages'];
@@ -73,6 +78,11 @@ export class ModelGroup {
     const api = API_TYPES.includes(input.api) ? input.api : existing?.api ?? API_TYPES[0];
     // 没改 key 就把老的拿回来（App 拿到的是打码后的，不能拿它覆盖真 key）
     const apiKey = str(input.apiKey, 400) || existing?.apiKey || '';
+
+    const brokenModel = models.find((m) => thinkingLevelMapError(m.thinkingLevelMap));
+    if (brokenModel) {
+      return { error: `模型 ${brokenModel.id}：${thinkingLevelMapError(brokenModel.thinkingLevelMap)}` };
+    }
 
     return {
       group: new ModelGroup({
@@ -143,29 +153,28 @@ export class ModelGroup {
       // 模型级 compat 必填：pi 的 getApiKeyAndHeaders 依据模型上的
       // authHeader / thinkingFormat / supportsReasoningEffort 决定如何附带凭据，
       // 仅设置 provider 级 authHeader 不生效。与 providers.js 中的配置保持一致。
-      models: this.models.map((m) => ({
-        id: m.id,
-        name: m.name,
-        input: m.input,
-        reasoning: m.reasoning,
-        contextWindow: m.contextWindow,
-        maxTokens: m.maxTokens,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-        thinkingLevelMap: {
-          off: 'minimal',
-          minimal: 'minimal',
-          low: 'low',
-          medium: 'medium',
-          high: 'high',
-          xhigh: 'high',
-          max: 'max',
-        },
-        compat: {
-          supportsDeveloperRole: false,
-          supportsReasoningEffort: true,
-          thinkingFormat: 'openai',
-        },
-      })),
+      models: this.models.map((m) => {
+        const reasoning = Boolean(m.reasoning);
+        // 思考档位映射按模型存；没显式给就用深拷贝的默认值（全档位同名）
+        const levelMap = m.thinkingLevelMap ??
+          (reasoning
+            ? Object.fromEntries(THINKING_LEVELS.map((level) => [level, level]))
+            : null);
+        return {
+          id: m.id,
+          name: m.name,
+          input: m.input,
+          reasoning,
+          contextWindow: m.contextWindow,
+          maxTokens: m.maxTokens,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          ...(levelMap ? { thinkingLevelMap: levelMap } : {}),
+          compat: {
+            supportsDeveloperRole: false,
+            ...thinkingCompat({ reasoning, thinkingFormat: m.thinkingFormat }),
+          },
+        };
+      }),
     };
   }
 

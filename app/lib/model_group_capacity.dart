@@ -41,6 +41,44 @@ class ModelGroupModelsPayload {
   final String? error;
 }
 
+/// 思考强度输入。空 = 未设置（回退到服务端按格式给的默认映射）。
+class ModelThinkingInput {
+  const ModelThinkingInput({
+    this.reasoning = false,
+    this.format = '',
+    this.levels = const {},
+  });
+
+  /// 这个模型会不会思考
+  final bool reasoning;
+
+  /// 上游思考格式；空 = 用 pi 默认
+  final String format;
+
+  /// 档位 → 上游值；空串表示这一档不传
+  final Map<String, String> levels;
+
+  ModelThinkingInput copyWith({
+    bool? reasoning,
+    String? format,
+    Map<String, String>? levels,
+  }) => ModelThinkingInput(
+    reasoning: reasoning ?? this.reasoning,
+    format: format ?? this.format,
+    levels: levels ?? this.levels,
+  );
+
+  /// 不含任何显式设置（不思考 + 没填格式和映射）
+  bool get isEmpty => !reasoning && format.isEmpty && levels.isEmpty;
+
+  /// 转成提交给服务端的字段；`isEmpty` 时不提交，保留服务端原有配置。
+  Map<String, dynamic> toJson() => {
+    if (!isEmpty) 'reasoning': reasoning,
+    if (format.isNotEmpty) 'thinkingFormat': format,
+    if (levels.isNotEmpty) 'thinkingLevelMap': levels,
+  };
+}
+
 /// 单张模型卡片的草稿。rowId 仅供界面保持身份，修改模型 ID 不会改变本行容量。
 class ModelCardDraft {
   const ModelCardDraft({
@@ -49,6 +87,8 @@ class ModelCardDraft {
     this.name = '',
     this.capacity = const ModelCapacityInput(),
     this.retainedCapacity = const ModelCapacityInput(),
+    this.thinking = const ModelThinkingInput(),
+    this.retainedThinking = const ModelThinkingInput(),
   });
 
   final int rowId;
@@ -56,17 +96,24 @@ class ModelCardDraft {
   final String name;
   final ModelCapacityInput capacity;
   final ModelCapacityInput retainedCapacity;
+  final ModelThinkingInput thinking;
+
+  /// 服务端已存的那份：界面清空时回退到这里，不能清成"不思考"
+  final ModelThinkingInput retainedThinking;
 
   ModelCardDraft copyWith({
     String? id,
     String? name,
     ModelCapacityInput? capacity,
+    ModelThinkingInput? thinking,
   }) => ModelCardDraft(
     rowId: rowId,
     id: id ?? this.id,
     name: name ?? this.name,
     capacity: capacity ?? this.capacity,
     retainedCapacity: retainedCapacity,
+    thinking: thinking ?? this.thinking,
+    retainedThinking: retainedThinking,
   );
 }
 
@@ -78,6 +125,14 @@ List<ModelCardDraft> modelCardDrafts(Iterable<ModelSpec> models) {
       contextWindow: model.contextWindow > 0 ? '${model.contextWindow}' : '',
       maxTokens: model.maxTokens > 0 ? '${model.maxTokens}' : '',
     );
+    final thinking = ModelThinkingInput(
+      reasoning: model.reasoning,
+      format: model.thinkingFormat,
+      levels: {
+        for (final entry in model.thinkingLevelMap.entries)
+          if (entry.value != null) entry.key: entry.value!,
+      },
+    );
     rows.add(
       ModelCardDraft(
         rowId: rows.length,
@@ -85,6 +140,8 @@ List<ModelCardDraft> modelCardDrafts(Iterable<ModelSpec> models) {
         name: model.name == model.id ? '' : model.name,
         capacity: retained,
         retainedCapacity: retained,
+        thinking: thinking,
+        retainedThinking: thinking,
       ),
     );
   }
@@ -106,6 +163,7 @@ Map<String, dynamic> _modelWithCapacity(
   ModelCapacityInput input, {
   int? previousWindow,
   int? previousOutput,
+  ModelThinkingInput thinking = const ModelThinkingInput(),
 }) {
   final window = _capacityValue(
     input.contextWindow,
@@ -121,6 +179,8 @@ Map<String, dynamic> _modelWithCapacity(
     'id': id,
     if (window != null) 'contextWindow': window,
     if (output != null) 'maxTokens': output,
+    // 思考强度：未设置时不提交，交给服务端保留原值
+    ...thinking.toJson(),
   };
 }
 
@@ -147,6 +207,8 @@ ModelGroupModelsPayload buildModelCardModels(Iterable<ModelCardDraft> rows) {
         row.capacity,
         previousWindow: int.tryParse(row.retainedCapacity.contextWindow),
         previousOutput: int.tryParse(row.retainedCapacity.maxTokens),
+        // 用户没动思考设置时回传已存那份，避免把已有的思考能力清掉
+        thinking: row.thinking.isEmpty ? row.retainedThinking : row.thinking,
       );
       model['name'] = row.name.trim().isEmpty ? id : row.name.trim();
       models.add(model);
@@ -164,6 +226,7 @@ ModelGroupModelsPayload buildModelGroupModels({
   required String modelText,
   required Map<String, ModelCapacityInput> inputs,
   Iterable<ModelSpec> existingModels = const [],
+  Map<String, ModelThinkingInput> thinking = const {},
 }) {
   final ids = modelIdsFromText(modelText);
   if (ids.isEmpty) {
@@ -174,6 +237,18 @@ ModelGroupModelsPayload buildModelGroupModels({
   for (final id in ids) {
     final input = inputs[id] ?? const ModelCapacityInput();
     final old = existing[id];
+    // 没显式改思考设置时，沿用它原来那份（模型名没变才成立）
+    final retainedThinking = old == null
+        ? const ModelThinkingInput()
+        : ModelThinkingInput(
+            reasoning: old.reasoning,
+            format: old.thinkingFormat,
+            levels: {
+              for (final entry in old.thinkingLevelMap.entries)
+                if (entry.value != null) entry.key: entry.value!,
+            },
+          );
+    final explicit = thinking[id];
     try {
       models.add(
         _modelWithCapacity(
@@ -181,6 +256,9 @@ ModelGroupModelsPayload buildModelGroupModels({
           input,
           previousWindow: old?.contextWindow,
           previousOutput: old?.maxTokens,
+          thinking: explicit == null || explicit.isEmpty
+              ? retainedThinking
+              : explicit,
         ),
       );
     } on FormatException catch (error) {
