@@ -108,6 +108,19 @@ try {
   New-Item -ItemType Directory -Path $stageOut -Force | Out-Null
   Copy-Item -Path (Join-Path $release "*") -Destination $stageOut -Recurse -Force
 
+  # Strip local runtime state that may sit next to a dev build:
+  #   .pi/       pi project config (agent name, local relay settings)
+  #   _inbox/    files the user dropped in while testing
+  #   server/    a stale copy from an earlier layout (we build a fresh one below)
+  #   *.log      server/app logs
+  # Shipping these leaks local state and confuses the target machine.
+  foreach ($junk in @(".pi", "_inbox", "server", "logs")) {
+    $path = Join-Path $stageOut $junk
+    if (Test-Path $path) { Remove-Item -Path $path -Recurse -Force -ErrorAction SilentlyContinue }
+  }
+  Get-ChildItem -Path $stageOut -Filter "*.log" -File -ErrorAction SilentlyContinue |
+    Remove-Item -Force -ErrorAction SilentlyContinue
+
   $stageServer = Join-Path $stageOut "server"
   New-Item -ItemType Directory -Path $stageServer -Force | Out-Null
   foreach ($item in @("src", "tools", "package.json", "package-lock.json", ".env.example")) {
@@ -151,6 +164,14 @@ try {
       throw "staged package is missing $required"
     }
   }
+  # never ship local state / credentials / logs
+  foreach ($leak in @(".pi", "_inbox", "server\.env")) {
+    if (Test-Path (Join-Path $stageOut $leak)) {
+      throw "staged package contains local state: $leak"
+    }
+  }
+  $logs = Get-ChildItem -Path $stageOut -Filter "*.log" -File -ErrorAction SilentlyContinue
+  if ($logs) { throw "staged package contains log files: $($logs.Name -join ', ')" }
 
   if ($Zip) {
     $stageZip = Join-Path $stageDir "$outName.zip"
