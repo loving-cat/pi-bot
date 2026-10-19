@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { ShellRegistry } from '../src/shells.js';
+import { ShellRegistry, trimChunks } from '../src/shells.js';
 
 // 用临时脚本文件跑，避免不同平台 shell 对引号/括号的解析差异
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-bot-shells-'));
@@ -115,6 +115,23 @@ await test('按房间清理', async () => {
   await sleep(300);
   assert.equal(reg.killRoom('r_clear'), 1);
   assert.equal(reg.get(started.id), null);
+});
+
+await test('单块超上限也要截尾（不依赖操作系统的分块大小）', () => {
+  const entry = { chunks: ['a'.repeat(200000)], bytes: 200000, truncated: false };
+  trimChunks(entry, 1024);
+  assert.equal(entry.truncated, true);
+  assert.ok(Buffer.byteLength(entry.chunks[0]) <= 1024, `实际 ${Buffer.byteLength(entry.chunks[0])}`);
+});
+
+await test('截尾不会切断 UTF-8 多字节字符', () => {
+  const text = '中'.repeat(1000); // 3000 字节
+  const entry = { chunks: [text], bytes: Buffer.byteLength(text), truncated: false };
+  trimChunks(entry, 1000);
+  const kept = entry.chunks[0];
+  assert.ok(Buffer.byteLength(kept) <= 1000);
+  assert.ok(!kept.startsWith('\uFFFD'), '开头不能是替换符（说明切在了半个字符上）');
+  assert.ok(/^中+$/.test(kept), kept.slice(0, 10));
 });
 
 reg.stopAll();
