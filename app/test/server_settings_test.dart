@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pi_bot/app_state.dart';
+import 'package:pi_bot/screens/host_connect_screen.dart';
 import 'package:pi_bot/scope.dart';
 import 'package:pi_bot/server/launcher.dart';
 import 'package:pi_bot/server/options.dart';
@@ -193,5 +194,47 @@ void main() {
     expect(launcher.starts, 0);
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getInt('server_port'), isNull);
+  });
+
+  Future<void> openOfflineSettings(WidgetTester tester) async {
+    state.serverProblem = '端口 8787 被别的程序占着';
+    state.serverRetryPaused = true;
+    await tester.pumpWidget(
+      AppScope(
+        state: state,
+        child: const MaterialApp(home: HostConnectScreen()),
+      ),
+    );
+    expect(find.text('端口 8787 被别的程序占着'), findsOneWidget);
+    await tester.ensureVisible(find.text('本机服务端设置'));
+    await tester.tap(find.text('本机服务端设置'));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('本机服务端启动配置'), findsOneWidget);
+  }
+
+  testWidgets('离线页可打开本机设置并保存新端口后重启', (tester) async {
+    await openOfflineSettings(tester);
+    await tester.enterText(find.byType(TextField).first, '18787');
+    await tester.tap(find.text('保存并重启'));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(state.serverPort, 18787);
+    expect(launcher.options.port, 18787);
+    expect(launcher.starts, 1);
+    expect(find.text('已保存，本机服务端已启动'), findsOneWidget);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getInt('server_port'), 18787);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('离线页取消设置保留占用原因与原配置', (tester) async {
+    await openOfflineSettings(tester);
+    await tester.tap(find.text('取消'));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('端口 8787 被别的程序占着'), findsOneWidget);
+    expect(state.serverPort, 8787);
+    expect(launcher.starts, 0);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getInt('server_port'), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 }

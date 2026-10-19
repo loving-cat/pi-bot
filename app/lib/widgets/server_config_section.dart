@@ -38,7 +38,7 @@ class ServerConfigSection extends StatelessWidget {
             ),
             const Spacer(),
             TextButton.icon(
-              onPressed: () => _edit(context, state),
+              onPressed: () => showServerConfigDialog(context),
               icon: const Icon(LucideIcons.slidersHorizontal, size: 15),
               label: const Text('修改启动配置'),
             ),
@@ -87,29 +87,32 @@ class ServerConfigSection extends StatelessWidget {
     );
   }
 
-  Future<void> _edit(BuildContext context, state) async {
-    final result = await showDialog<_ServerConfig>(
-      context: context,
-      builder: (_) => _ServerConfigDialog(
-        port: state.serverPort,
-        dataDir: state.serverDataDir,
-        entryPath: state.serverEntryPath,
-        nodePath: state.serverNodePath,
-      ),
-    );
-    if (result == null || !context.mounted) return;
-    await state.applyServerSettings(
-      dataDir: result.dataDir,
-      port: result.port,
-      entryPath: result.entryPath,
-      nodePath: result.nodePath,
-    );
-    if (!context.mounted) return;
-    final problem = state.serverProblem as String?;
-    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-      SnackBar(content: Text(problem ?? '已保存，本机服务端已启动')),
-    );
-  }
+}
+
+/// 打开本机服务端启动配置，保存后重启服务端并显示实际结果。
+Future<void> showServerConfigDialog(BuildContext context) async {
+  final state = AppScope.read(context);
+  final result = await showDialog<_ServerConfig>(
+    context: context,
+    builder: (_) => _ServerConfigDialog(
+      port: state.serverPort,
+      dataDir: state.serverDataDir,
+      entryPath: state.serverEntryPath,
+      nodePath: state.serverNodePath,
+    ),
+  );
+  if (result == null || !context.mounted) return;
+  await state.applyServerSettings(
+    dataDir: result.dataDir,
+    port: result.port,
+    entryPath: result.entryPath,
+    nodePath: result.nodePath,
+  );
+  if (!context.mounted) return;
+  final problem = state.serverProblem;
+  ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+    SnackBar(content: Text(problem ?? '已保存，本机服务端已启动')),
+  );
 }
 
 class _Row extends StatelessWidget {
