@@ -898,6 +898,91 @@ class LibrarySkill {
   }
 }
 
+/// 一条经验（lessons）：从**实际执行**里长出来的"下次别这么做/就这么做"。
+///
+/// 和技能的区别：技能是人整理的做法（静态）；经验是做过之后的成败，带证据、
+/// 可以被推翻。只有 status == active 的会进主控提示词，而且一次最多 3 条。
+class LibraryLesson {
+  LibraryLesson({
+    required this.id,
+    this.roomId = '',
+    this.dept = '',
+    this.cue = '',
+    this.lesson = '',
+    List<LessonEvidence>? evidence,
+    this.verdict = 'confounded',
+    this.status = 'candidate',
+    this.hits = 0,
+    this.createdAt = 0,
+    this.lastUsedAt = 0,
+  }) : evidence = evidence ?? [];
+
+  final String id;
+  final String roomId;
+  final String dept;
+
+  /// 什么情况下用得上（情境的形状，不是这次的事实）
+  final String cue;
+
+  /// 下次具体怎么做
+  final String lesson;
+
+  /// 证据：哪条消息里说过什么（人审计用，不进提示词）
+  final List<LessonEvidence> evidence;
+
+  /// helped / hurt / no_effect / confounded
+  final String verdict;
+
+  /// candidate（候选，不注入）/ active（启用）/ archived（归档）
+  final String status;
+
+  final int hits;
+  final int createdAt;
+  final int lastUsedAt;
+
+  bool get isActive => status == 'active';
+  bool get isCandidate => status == 'candidate';
+
+  static const verdictLabels = {
+    'helped': '有效',
+    'hurt': '不好',
+    'no_effect': '没差别',
+    'confounded': '说不清',
+  };
+
+  String get verdictLabel => verdictLabels[verdict] ?? verdict;
+
+  factory LibraryLesson.fromJson(Map<String, dynamic> json) => LibraryLesson(
+    id: json['id'] as String? ?? '',
+    roomId: json['roomId'] as String? ?? '',
+    dept: json['dept'] as String? ?? '',
+    cue: json['cue'] as String? ?? '',
+    lesson: json['lesson'] as String? ?? '',
+    evidence: ((json['evidence'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => LessonEvidence.fromJson(e.cast<String, dynamic>()))
+        .toList(),
+    verdict: json['verdict'] as String? ?? 'confounded',
+    status: json['status'] as String? ?? 'candidate',
+    hits: (json['hits'] as num?)?.toInt() ?? 0,
+    createdAt: (json['createdAt'] as num?)?.toInt() ?? 0,
+    lastUsedAt: (json['lastUsedAt'] as num?)?.toInt() ?? 0,
+  );
+}
+
+/// 一条经验的证据：引用哪条消息里的哪句话
+class LessonEvidence {
+  LessonEvidence({this.msgId = '', this.quote = ''});
+
+  final String msgId;
+  final String quote;
+
+  factory LessonEvidence.fromJson(Map<String, dynamic> json) => LessonEvidence(
+    msgId: json['msgId'] as String? ?? '',
+    quote: json['quote'] as String? ?? '',
+  );
+}
+
 /// 跨会话引用：bot 给别的 bot 发了私信，在**来源房间**留下一个指针。
 ///
 /// 用户因此能看到“它把活派给了谁”，点开还能看他们聊了什么。

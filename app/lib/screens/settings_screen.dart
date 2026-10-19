@@ -16,6 +16,7 @@ import '../widgets/model_group_editor.dart';
 import '../widgets/server_config_section.dart';
 import '../widgets/log_section.dart';
 import '../widgets/mcp_section.dart';
+import '../widgets/lessons_section.dart';
 import '../widgets/skills_library.dart';
 import '../widgets/sites_section.dart';
 import '../motion.dart';
@@ -111,7 +112,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     children: switch (_tab) {
                       0 => _connectTab,
                       1 => _serverTab,
-                      2 => const [SkillsLibrarySection()],
+                      2 => const [SkillsLibrarySection(), LessonsSection()],
                       3 => const [McpSection()],
                       4 => const [SitesSection()],
                       _ => _advancedTab,
