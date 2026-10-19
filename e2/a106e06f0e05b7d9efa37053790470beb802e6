@@ -1,0 +1,22 @@
+app/lib/screens/chat_screen.dart
+  h_53f14b6641484b 356-423,659-661,663-674,1194-1196,1198-1199,1809-1810,1813
+app/test/room_menu_test.dart
+  h_53f14b6641484b 707,840,953
+server/src/group-round.js
+  h_53f14b6641484b 61-69,76-86,93-109
+server/src/pi-runner.js
+  h_53f14b6641484b 46,257-275,277-285,292-314,818-826,845-861,864-868,875-877,879-882,1276,1278-1285,1287-1291
+server/tests/room-lock.mjs
+  h_53f14b6641484b 343-369
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e2a106e06f0e05b7d9efa37053790470beb802e6",
+  "prompts": {},
+  "humans": {
+    "h_53f14b6641484b": {
+      "author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
