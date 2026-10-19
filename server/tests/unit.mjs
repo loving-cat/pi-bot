@@ -1744,6 +1744,30 @@ await test('模型组：没有 runtime 时原样返回（不炸）', () => {
   assert.equal(syncModelGroups(null, registered, {}), registered);
 });
 
+// ---------------------------------------------------------------------------
+// 系统代理：Windows 注册表值的解析（Windows 上靠它决定要不要走代理）
+// ---------------------------------------------------------------------------
+const { parseWindowsProxyValue } = await import('../src/http-client.js');
+
+await test('proxy: Windows 注册表 host:port', () => {
+  assert.equal(parseWindowsProxyValue('127.0.0.1:7890'), 'http://127.0.0.1:7890');
+  assert.equal(parseWindowsProxyValue(''), '');
+  assert.equal(parseWindowsProxyValue(null), '');
+});
+
+await test('proxy: Windows 注册表按协议分列时优先 https', () => {
+  const raw = 'http=127.0.0.1:7891;https=127.0.0.1:7892;socks=127.0.0.1:7893';
+  assert.equal(parseWindowsProxyValue(raw), 'http://127.0.0.1:7892');
+  assert.equal(parseWindowsProxyValue('http=127.0.0.1:7891;ftp=x'), 'http://127.0.0.1:7891');
+  assert.equal(parseWindowsProxyValue('socks=127.0.0.1:7893'), 'http://127.0.0.1:7893');
+  assert.equal(parseWindowsProxyValue('http='), '');
+});
+
+await test('proxy: 非法代理串退化成空串，不抛', () => {
+  assert.equal(parseWindowsProxyValue('not a proxy'), '');
+  assert.equal(parseWindowsProxyValue('ftp=127.0.0.1:21'), '');
+});
+
 const passed = results.filter((r) => r.ok).length;
 
 console.log('\n================ 单元测试 ================');
