@@ -97,6 +97,12 @@ export const config = {
    * 默认开；PI_BOT_LESSON_REFLECT=0 关掉（关掉后零额外调用）。
    */
   lessonReflect: process.env.PI_BOT_LESSON_REFLECT !== '0',
+  /**
+   * 跑完后把这一轮产出的交付物（表格/文档/PDF/压缩包）自动发到群里。
+   * 图片一直是自动带的（PI_BOT_AUTO_ATTACH）；这个是给非图片产物的，
+   * PI_BOT_AUTO_ATTACH_FILES=0 关掉。
+   */
+  autoAttachArtifacts: process.env.PI_BOT_AUTO_ATTACH_FILES !== '0',
   /** bot 跑完一轮后，自动把工作目录里新生成的图片附到消息上 */
   autoAttachImages: process.env.PI_BOT_AUTO_ATTACH !== '0',
   /**

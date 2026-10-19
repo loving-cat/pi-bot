@@ -98,6 +98,19 @@ await test('按房间过滤 + 删除', () => {
   assert.equal(store.deleteTask('不存在'), false);
 });
 
+await test('重启收尾：遗留的 doing 全部放回待办，并留下说明', () => {
+  const a = store.createTask({ roomId: room.id, title: '跑到一半被打断的活' });
+  const b = store.createTask({ roomId: room.id, title: '正常待办' });
+  store.updateTask(a.id, { status: 'doing' });
+  assert.equal(store.getTask(a.id).status, 'doing');
+
+  const n = store.reconcileTasks();
+  assert.ok(n >= 1, `应该至少收回 1 条，实际 ${n}`);
+  assert.equal(store.getTask(a.id).status, 'open');
+  assert.equal(store.getTask(b.id).status, 'open', '本来就待办的不动');
+  assert.match(store.getTask(a.id).detail, /中断/);
+});
+
 const passed = results.filter((r) => r.ok).length;
 console.log('\n================ 任务板测试 ================');
 for (const r of results) {

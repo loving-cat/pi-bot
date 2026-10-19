@@ -1537,6 +1537,28 @@ export class Store {
     return task?.id ?? null;
   }
 
+  /**
+   * 重启后把上一进程遗留的 `doing` 任务放回待办。
+   *
+   * 进程被 kill / 崩溃时，正在跑的任务会永远停在"进行中" —— 服务端已经
+   * 没有那些会话了，界面却一直显示在干。启动时一律收回待办，并留一句说明，
+   * 让用户知道"这条不是还在跑，是上次被打断了"。
+   */
+  reconcileTasks({ note = '上次运行被中断，已放回待办' } = {}) {
+    const list = Array.isArray(this.state.tasks) ? this.state.tasks : [];
+    let n = 0;
+    for (const task of list) {
+      if (task?.status !== 'doing') continue;
+      task.status = 'open';
+      task.detail = [task.detail, note].filter(Boolean).join('\n').slice(0, 2000);
+      task.updatedAt = now();
+      n++;
+      bus.emit('event', { t: 'task.updated', task });
+    }
+    if (n) this.scheduleSave();
+    return n;
+  }
+
   /** 一轮跑完后收尾：成功/失败都记下来，完成的置为 done 并标记未读 */
   finishTask(id, { ok = true, text = '' } = {}) {
     const task = this.getTask(id);
