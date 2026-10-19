@@ -105,8 +105,9 @@ class ServerConfigSection extends StatelessWidget {
       nodePath: result.nodePath,
     );
     if (!context.mounted) return;
+    final problem = state.serverProblem as String?;
     ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-      const SnackBar(content: Text('已保存，正在重启本机服务端…')),
+      SnackBar(content: Text(problem ?? '已保存，本机服务端已启动')),
     );
   }
 }
@@ -229,7 +230,7 @@ class _ServerConfigDialogState extends State<_ServerConfigDialog> {
               const SizedBox(height: 14),
               _field(_port, '端口', '8787'),
               _field(_entry, '服务端入口（server/src/index.js）', '留空自动查找'),
-              _field(_node, 'node 路径（node.exe）', '留空自动查找'),
+              _field(_node, 'node 路径', '留空自动查找'),
               _field(_dataDir, '数据目录', '留空 = 用户数据目录'),
               if (_error != null) ...[
                 const SizedBox(height: 8),
