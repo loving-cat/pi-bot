@@ -52,7 +52,11 @@ export function whichOnWindows(command, env = process.env) {
   } else {
     const dirs = String(env.PATH || '').split(';').filter(Boolean);
     for (const dir of dirs) {
-      for (const ext of exts) candidates.push(path.win32.join(dir, raw + ext));
+      // 按目录自己的分隔符拼：Windows 的 PATH 里也可能出现 `/c/...` 这种
+      // Git Bash / MSYS 风格路径，一律 path.win32.join 会拼成 `\c\...`，找不到。
+      const sep = dir.includes('/') && !dir.includes('\\') ? '/' : '\\';
+      const base = dir.endsWith(sep) ? dir : dir + sep;
+      for (const ext of exts) candidates.push(base + raw + ext);
     }
   }
   for (const candidate of candidates) {
