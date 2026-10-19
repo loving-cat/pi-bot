@@ -38,9 +38,9 @@ export function whichOnWindows(command, env = process.env) {
   const raw = String(command ?? '').trim();
   if (!raw) return null;
 
-  const pathext = (env.PATHEXT || '.COM;.EXE;.BAT;.CMD')
+  const pathext = (env.PATHEXT || '.com;.exe;.bat;.cmd')
     .split(';')
-    .map((x) => x.trim())
+    .map((x) => x.trim().toLowerCase())
     .filter(Boolean);
   const hasExtension = path.win32.extname(raw) !== '';
   const exts = hasExtension ? [''] : pathext;
