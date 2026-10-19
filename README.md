@@ -219,6 +219,9 @@ app/
   tools/
     icons.cjs         图标生成
 docs/
+  PLATFORMS.md        ★ 平台边界：一条主干、所有平台目录共存、改动检查单
+  WINDOWS.md          Windows 构建 / 平台实现 / 真机验收
+  MACOS.md            macOS 构建 / 平台实现 / 真机验收
   PITFALLS.md         ★ 踩过的坑与修法（含 Flutter/Windows/DPI/字体/并发）
 ```
 
@@ -247,6 +250,7 @@ flutter analyze
 ## 环境变量
 
 模块职责见 [`docs/MODULE-MAP.md`](docs/MODULE-MAP.md)（找东西先看那张表）。
+平台边界与跨平台改动检查单见 [`docs/PLATFORMS.md`](docs/PLATFORMS.md)。
 
 **测试**：`cd server && npm test` 等同 `node tests/all.mjs`，具体测试文件以入口列表为准；
 端到端冒烟 `npm run test:integration` 需要先起隔离服务端并配置可用模型，会发送真实模型请求。
