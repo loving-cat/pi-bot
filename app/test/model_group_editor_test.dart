@@ -89,8 +89,14 @@ void main() {
 
   testWidgets('设置组列表逐模型显示不同容量，点击模型进入对应卡片', (tester) async {
     await showGroups(tester, group: mixedGroup());
-    expect(find.text('上下文：12000 tokens · 最大输出：2000 tokens'), findsOneWidget);
-    expect(find.text('上下文：64000 tokens · 最大输出：4000 tokens'), findsOneWidget);
+    expect(
+      find.text('上下文：12000 tokens · 最大输出：2000 tokens · 思考：不思考'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('上下文：64000 tokens · 最大输出：4000 tokens · 思考：不思考'),
+      findsOneWidget,
+    );
     await press(tester, 'model-summary-group-test-model-b');
     expect(find.text('编辑模型组'), findsOneWidget);
     expect(

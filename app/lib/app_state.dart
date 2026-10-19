@@ -1220,6 +1220,16 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// 思考强度的可选项（档位 / 上游格式）。服务端是唯一的真源，
+  /// Windows 与 Mac 两端都从这里取，不在客户端写死枚举。
+  Future<Map<String, dynamic>> loadThinkingOptions() async {
+    try {
+      return await api?.get('/api/model-thinking/options') ?? {};
+    } catch (err) {
+      return {};
+    }
+  }
+
   Future<void> deleteModelGroup(String id) async {
     try {
       await api?.delete('/api/model-groups/\$id');
