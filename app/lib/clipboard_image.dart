@@ -2,13 +2,11 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-/// 从系统剪贴板读图片（截图直接 Ctrl+V 粘进来）。
+import 'clipboard_image_macos.dart';
+
+/// 剪贴板图片的文件名、内容和可选临时路径。
 ///
-/// Flutter 的 Clipboard 只给文本，拿不到位图；这里在 Windows 上用系统自带的
-/// PowerShell + System.Drawing 把剪贴板里的图存成临时 PNG 再读回来。
-/// 其它平台返回 null —— 那边的粘贴走普通文本，不影响使用。
-///
-/// 返回的临时文件由调用方读完即删（见 [ClipboardImage.dispose]）。
+/// 带临时路径时，调用方读完后调用 [dispose] 清理。
 class ClipboardImage {
   ClipboardImage({required this.name, required this.bytes, this.tempPath});
 
@@ -52,6 +50,14 @@ const String _windowsReadScript =
 
 /// 读剪贴板图片；没有图片返回 null。
 Future<ClipboardImage?> readClipboardImage() async {
+  if (Platform.isMacOS) {
+    final bytes = await readMacOSClipboardPng();
+    if (bytes == null) return null;
+    final now = DateTime.now();
+    final hhmmss =
+        '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}';
+    return ClipboardImage(name: '粘贴图片-$hhmmss.png', bytes: bytes);
+  }
   if (!Platform.isWindows) return null;
   try {
     final r = await Process.run('powershell', [

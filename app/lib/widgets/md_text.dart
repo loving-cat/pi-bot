@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../text_utils.dart';
 import '../highlight.dart';
 import '../theme.dart';
+import 'toast.dart';
 import 'blob_avatar.dart';
 
 import 'package:lucide_icons_flutter/lucide_icons.dart';
@@ -579,12 +580,7 @@ class _CodeBlock extends StatelessWidget {
                 InkWell(
                   onTap: () {
                     Clipboard.setData(ClipboardData(text: code));
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('代码已复制'),
-                        duration: Duration(milliseconds: 1200),
-                      ),
-                    );
+                    toast(context, '代码已复制', kind: ToastKind.success);
                   },
                   borderRadius: BorderRadius.circular(PB.rSm),
                   child: const Padding(

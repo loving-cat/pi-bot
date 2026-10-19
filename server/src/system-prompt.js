@@ -17,8 +17,12 @@ import { CODING_BASELINE_TITLE } from './coding-baseline.js';
  *   2. skills  —— 用户手把手教过的做法（SOP），直接当"你已经会了"
  *   3. 文件规矩 —— 附件在 _inbox/、产出图要 send_image
  *   4. 说话规矩 —— 禁止念模型名/思考等级/token/id、禁止点评谁是老大
+ *   5. mcp —— 只在主控身上出现：库里有哪几个 MCP 能力可以派给成员
  */
-export function buildAppendSystemPrompt(bot = {}, { userName = '', policy = null } = {}) {
+export function buildAppendSystemPrompt(
+  bot = {},
+  { userName = '', policy = null, mcpLines = '' } = {},
+) {
   const skills = Array.isArray(bot.skills) ? bot.skills.filter((s) => s?.title) : [];
   return [
     ...(bot.persona ? [bot.persona] : []),
@@ -74,5 +78,10 @@ export function buildAppendSystemPrompt(bot = {}, { userName = '', policy = null
             '不要只说"改好了"——没有证据的交付按未完成算。',
         ]
       : []),
+    // ★ MCP 清单只给主控。
+    //   为什么不给所有 bot：MCP 真会起子进程，几十个 bot 各连一份就把机器拖死了。
+    //   正确分工是「主控知道有哪些能力 → 派活时给具体那个 bot 配上它需要的」。
+    //   空字符串（库里一个服务都没配）时整段不出现，不白占上下文。
+    ...(mcpLines ? [mcpLines] : []),
   ];
 }

@@ -10,6 +10,7 @@ import '../models.dart';
 import '../open_file.dart';
 import '../save_file.dart';
 import '../theme.dart';
+import 'toast.dart';
 import 'md_text.dart';
 
 import 'package:lucide_icons_flutter/lucide_icons.dart';
@@ -281,9 +282,7 @@ Future<void> openAttachmentExternally(
   required Attachment file,
   required String url,
 }) async {
-  final messenger = ScaffoldMessenger.maybeOf(context);
-  void say(String text) =>
-      messenger?.showSnackBar(SnackBar(duration: const Duration(seconds: 2), content: Text(text)));
+  void say(String text) => toast(context, text);
 
   say('正在打开 ${file.name}…');
   try {
@@ -306,9 +305,7 @@ Future<void> downloadAttachment(
   required String url,
 }) async {
   // 先把 messenger 抓在手里：await 之后 context 可能已经失效
-  final messenger = ScaffoldMessenger.maybeOf(context);
-  void say(String text) =>
-      messenger?.showSnackBar(SnackBar(content: Text(text)));
+  void say(String text) => toast(context, text);
 
   say('正在下载 ${file.name}…');
   try {

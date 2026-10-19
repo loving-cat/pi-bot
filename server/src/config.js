@@ -1,7 +1,7 @@
 /**
  * pi-bot server 配置。
  *
- * 全部可用环境变量覆盖；默认落在 <repo>/data 下，方便直接看数据。
+ * 全部可用环境变量覆盖；默认使用平台对应的用户数据目录。
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -92,6 +92,17 @@ export const config = {
   /** 每个房间内存里保留的消息条数（落盘也按此裁剪） */
   maxMessagesPerRoom: Number(process.env.PI_BOT_MAX_MESSAGES || 500),
   pairTtlMs: Number(process.env.PI_BOT_PAIR_TTL_MS || 10 * 60 * 1000),
+  /**
+   * 收尾复盘：一轮群聊结束后提炼候选经验（只进库，等用户启用才注入）。
+   * 默认开；PI_BOT_LESSON_REFLECT=0 关掉（关掉后零额外调用）。
+   */
+  lessonReflect: process.env.PI_BOT_LESSON_REFLECT !== '0',
+  /**
+   * 跑完后把这一轮产出的交付物（表格/文档/PDF/压缩包）自动发到群里。
+   * 图片一直是自动带的（PI_BOT_AUTO_ATTACH）；这个是给非图片产物的，
+   * PI_BOT_AUTO_ATTACH_FILES=0 关掉。
+   */
+  autoAttachArtifacts: process.env.PI_BOT_AUTO_ATTACH_FILES !== '0',
   /** bot 跑完一轮后，自动把工作目录里新生成的图片附到消息上 */
   autoAttachImages: process.env.PI_BOT_AUTO_ATTACH !== '0',
   /**

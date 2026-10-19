@@ -85,20 +85,70 @@ void main() {
       expect(i.hasNotes, isTrue);
     });
 
-    test('没有 recommended 时退回 assets 里第一个有 url 的', () {
+    test('没有 Mac 推荐包时只保留发布页，不下载其它平台附件', () {
       final i = UpdateInfo.fromJson({
         'ok': true,
         'update': true,
         'current': '1.0.0',
         'latest': '1.1.0',
+        'pageUrl': 'https://example.com/releases',
+        'recommended': null,
         'assets': [
-          {'name': 'empty.exe', 'url': ''},
-          {'name': 'real.dmg', 'url': 'https://x/real.dmg', 'size': 1024},
+          {'name': 'windows.exe', 'url': 'https://x/windows.exe'},
+          {'name': 'android.apk', 'url': 'https://x/android.apk'},
         ],
       });
-      expect(i.assetUrl, 'https://x/real.dmg');
-      expect(i.assetName, 'real.dmg');
+      expect(i.canDownload, isFalse);
+      expect(i.assetUrl, isEmpty);
+      expect(i.assetName, isEmpty);
+      expect(i.sizeLabel, isEmpty);
+      expect(i.pageUrl, 'https://example.com/releases');
+      expect(shouldPromptUpdate(i, null), isTrue);
+    });
+
+    test('混合平台附件使用指定的合法 DMG，不取首个附件', () {
+      final i = UpdateInfo.fromJson({
+        'ok': true,
+        'update': true,
+        'current': '1.1.0',
+        'latest': '1.2.0',
+        'recommended': {
+          'name': 'pi-bot-1.2.0.dmg',
+          'url': 'https://x/pi-bot-1.2.0.dmg?download=1',
+          'size': 1024,
+        },
+        'assets': [
+          {'name': 'windows.exe', 'url': 'https://x/windows.exe'},
+          {'name': 'android.apk', 'url': 'https://x/android.apk'},
+          {
+            'name': 'pi-bot-1.2.0.dmg',
+            'url': 'https://x/pi-bot-1.2.0.dmg?download=1',
+          },
+        ],
+      });
+      expect(i.canDownload, isTrue);
+      expect(i.assetUrl, 'https://x/pi-bot-1.2.0.dmg?download=1');
+      expect(i.assetName, 'pi-bot-1.2.0.dmg');
       expect(i.sizeLabel, '1.0 KB');
+    });
+
+    test('缺少推荐字段或推荐 URL 为空时均不猜测 DMG', () {
+      for (final recommended in [
+        <String, dynamic>{},
+        {'recommended': null},
+        {
+          'recommended': {'name': 'pi-bot.dmg', 'url': ''},
+        },
+      ]) {
+        final i = UpdateInfo.fromJson({
+          ...recommended,
+          'assets': [
+            {'name': 'pi-bot.dmg', 'url': 'https://x/pi-bot.dmg'},
+          ],
+        });
+        expect(i.canDownload, isFalse);
+        expect(i.assetUrl, isEmpty);
+      }
     });
 
     test('没有下载包 → canDownload 为 false，不崩', () {
@@ -134,7 +184,11 @@ void main() {
   group('下载地址校验', () {
     test('只接受 https 直链', () {
       expect(isSafeDownloadUrl('https://github.com/x/y.exe'), isTrue);
-      expect(isSafeDownloadUrl('http://github.com/x/y.exe'), isFalse, reason: 'http 会被降级');
+      expect(
+        isSafeDownloadUrl('http://github.com/x/y.exe'),
+        isFalse,
+        reason: 'http 会被降级',
+      );
       expect(isSafeDownloadUrl('file:///C:/x.exe'), isFalse);
       expect(isSafeDownloadUrl('https://'), isFalse, reason: '没有主机名');
       expect(isSafeDownloadUrl(''), isFalse);
