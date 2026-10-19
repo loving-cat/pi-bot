@@ -1,8 +1,45 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:pi_bot/app_state.dart';
 import 'package:pi_bot/models.dart';
 import 'package:pi_bot/widgets/task_board.dart';
+
+class _TaskState extends AppState {
+  @override
+  Future<void> refreshTasks() async {}
+
+  @override
+  Future<void> createTask({
+    required String roomId,
+    required String title,
+  }) async {
+    tasks = [TaskItem(id: 'fixture-task', roomId: roomId, title: title)];
+    notifyListeners();
+  }
+
+  @override
+  Future<void> updateTask(String id, Map<String, dynamic> patch) async {
+    tasks = tasks
+        .map(
+          (task) => TaskItem(
+            id: task.id,
+            roomId: task.roomId,
+            title: task.title,
+            status: patch['status'] as String? ?? task.status,
+            pinnedAt: patch['pinned'] == true ? 1 : task.pinnedAt,
+          ),
+        )
+        .toList();
+    notifyListeners();
+  }
+
+  @override
+  Future<void> deleteTask(String id) async {
+    tasks = tasks.where((task) => task.id != id).toList();
+    notifyListeners();
+  }
+}
 
 void main() {
   Widget host({
@@ -59,7 +96,9 @@ void main() {
 
   testWidgets('输入标题后按加号会回调 onCreate', (tester) async {
     String? created;
-    await tester.pumpWidget(host(tasks: const [], onCreate: (t) => created = t));
+    await tester.pumpWidget(
+      host(tasks: const [], onCreate: (t) => created = t),
+    );
     await tester.enterText(find.byType(TextField), '  新任务  ');
     await tester.tap(find.byIcon(LucideIcons.plus));
     await tester.pump();
@@ -70,5 +109,42 @@ void main() {
     await tester.pumpWidget(host(tasks: const []));
     expect(find.textContaining('还没有任务'), findsOneWidget);
   });
-}
 
+  testWidgets('打开的任务板随状态更新增删、置顶和完成结果', (tester) async {
+    final state = _TaskState();
+    addTearDown(state.dispose);
+    final room = Room(id: 'fixture-room', kind: 'dm', name: '验证房间', botIds: []);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => TextButton(
+              onPressed: () => showTaskBoard(context, state, room),
+              child: const Text('打开任务板'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('打开任务板'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '验证任务');
+    await tester.tap(find.byIcon(LucideIcons.plus));
+    await tester.pumpAndSettle();
+    expect(find.text('验证任务'), findsOneWidget);
+    expect(find.text('1 个未完成'), findsOneWidget);
+    await tester.tap(find.byTooltip('置顶'));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('取消置顶'), findsOneWidget);
+    await tester.tap(find.byTooltip('标为完成'));
+    await tester.pumpAndSettle();
+    expect(find.text('0 个未完成'), findsOneWidget);
+    await tester.tap(find.textContaining('已完成 1'));
+    await tester.pumpAndSettle();
+    expect(find.text('验证任务'), findsOneWidget);
+    await tester.tap(find.byTooltip('删除'));
+    await tester.pumpAndSettle();
+    expect(find.text('验证任务'), findsNothing);
+    expect(find.textContaining('还没有任务'), findsOneWidget);
+  });
+}
