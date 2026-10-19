@@ -66,6 +66,10 @@ async function main() {
   const reaped = store.reapStaleStreaming();
   if (reaped) log(`清理了 ${reaped} 条上次遗留的 streaming 消息`);
 
+  // 进程被 kill 时正在跑的任务会永远停在“进行中” —— 启动时收回待办
+  const stuck = store.reconcileTasks();
+  if (stuck) log(`收回了 ${stuck} 条上次遗留的“进行中”任务（已放回待办）`);
+
   const runner = await new PiRunner().init();
   // 探活结果 24 小时过期 —— 服务连跑几天也不会让「全员不可用」这种假结论冻在那儿
   runner.health?.startAutoRefresh();

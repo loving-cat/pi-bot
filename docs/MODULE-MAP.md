@@ -53,6 +53,7 @@
 | `dm.js` | 私聊行为：开场文案、进度回执、是否该回执（纯函数） |
 | `hooks.js` | 工具钩子：改写入参 / 拦下（规则存 `data/hooks.json`，判定纯函数） |
 | `change-watch.js` | 工作目录快照与改动对比（本轮改了哪些文件） |
+| `artifact-watch.js` | 产物回传：只挑交付物扩展名、只挑这一轮新增/改过的、单文件/总量有上限 |
 | `automations.js` | 定时任务：排期计算、校验、调度器（时间逻辑纯函数） |
 | `coding-baseline.js` | 开发类 bot 的工程基线提示 |
 | `relay/frames.js` | 中转帧编解码（base64 + deflateRaw 无损压缩，纯函数） |
