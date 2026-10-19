@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'spawn_posix.dart';
+
 /// 启动本机服务端，并让它独立于 App 运行。
 ///
 /// 实现方式：由一个短命的 node 辅助脚本 spawn 真正的服务端，
@@ -19,7 +21,7 @@ import 'dart:io';
 class ServerSupervisor {
   ServerSupervisor(this.stateDir);
 
-  /// 放 pid / 日志 / 辅助脚本的目录（`%LOCALAPPDATA%\pi-bot`）
+  /// 用户状态目录，存放 pid、日志与启动辅助脚本。
   final Directory stateDir;
 
   File get _script =>
@@ -45,8 +47,16 @@ class ServerSupervisor {
     required String logPath,
     required Map<String, String> extraEnv,
   }) async {
-    _script.writeAsStringSync(_scriptSource, flush: true);
+    _script.writeAsStringSync(
+      Platform.isWindows ? _scriptSource : posixServerSpawnScript,
+      flush: true,
+    );
     final extraJson = extraEnv.isEmpty ? '{}' : jsonEncode(extraEnv);
+    final runtimeEnvironment = {
+      'PATH':
+          '${File(nodePath).parent.path}'
+          '${Platform.isWindows ? ';' : ':'}${Platform.environment['PATH'] ?? ''}',
+    };
 
     if (Platform.isWindows) {
       // Dart 的 Process.start 不带 CREATE_NO_WINDOW：GUI 程序拉起控制台子进程时，
@@ -72,36 +82,57 @@ class ServerSupervisor {
         'sh.Run ${q(cmdline)}, 0, False\r\n',
         flush: true,
       );
-      return Process.start('wscript.exe', [vbs.path]);
+      return Process.start('wscript.exe', [
+        vbs.path,
+      ], environment: runtimeEnvironment);
     }
 
-    return Process.start(nodePath, [
-      _script.path,
+    return Process.start(
       nodePath,
-      entryPath,
-      serverDir,
-      logPath,
-      pidFile.path,
-      extraJson,
-    ], workingDirectory: serverDir);
+      [
+        _script.path,
+        nodePath,
+        entryPath,
+        serverDir,
+        logPath,
+        pidFile.path,
+        extraJson,
+      ],
+      workingDirectory: serverDir,
+      environment: runtimeEnvironment,
+    );
   }
 
-  /// 停止服务端（修改配置或重启时使用）
-  Future<void> stop() async {
+  /// Windows 结束服务端及子进程；其它平台等待 SIGTERM 退出，超时保留 pid 并报错。
+  Future<void> stop({Duration timeout = const Duration(seconds: 5)}) async {
     final pid = readPid();
     if (pid == null) return;
-    try {
-      if (Platform.isWindows) {
-        // /T 连子进程一起杀：服务端会派生 rg/fd/git 等工具进程，
-        // 不带上它们就会变成孤儿，继续占着文件和端口。
-        await Process.run('taskkill', ['/PID', '$pid', '/T', '/F']);
-      } else {
-        Process.killPid(pid, ProcessSignal.sigterm);
+    if (Platform.isWindows) {
+      await Process.run('taskkill', ['/PID', '$pid', '/T', '/F']);
+    } else if (await _isRunning(pid)) {
+      if (!Process.killPid(pid, ProcessSignal.sigterm) &&
+          await _isRunning(pid)) {
+        throw StateError('无法向服务端进程 $pid 发送退出信号');
       }
-    } catch (_) {}
-    try {
+      final deadline = DateTime.now().add(timeout);
+      while (await _isRunning(pid)) {
+        if (DateTime.now().isAfter(deadline)) {
+          throw StateError('服务端进程 $pid 未在 ${timeout.inMilliseconds}ms 内退出');
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+    }
+    if (readPid() == pid) {
       pidFile.deleteSync();
-    } catch (_) {}
+    }
+  }
+
+  /// 仅查询 pid 是否仍存在，不读取进程参数或用户数据。
+  Future<bool> _isRunning(int pid) async {
+    final result = await Process.run('/bin/ps', ['-p', '$pid', '-o', 'pid=']);
+    if (result.exitCode == 1) return false;
+    if (result.exitCode != 0) throw StateError('无法查询服务端进程 $pid');
+    return '${result.stdout}'.trim() == '$pid';
   }
 }
 
