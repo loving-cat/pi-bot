@@ -27,6 +27,7 @@
 | `group-round.js` | 群轮次决策：该跳过/排队/打断/派发、收尾轮判定（纯函数） |
 | `transcript-budget.js` | 群聊记录按字数预算裁剪、单条超长保留头尾（纯函数） |
 | `skills.js` | 技能库：规范化、SKILL.md 解析、按任务挑选（纯函数） |
+| `lessons.js` | 经验库：cue/lesson/evidence 校验、按任务挑选、**有上限的注入渲染**（一次≤3条≤600字，只有 active 参与） |
 | `escalation.js` | 出事往上抬：抬给谁、回执写什么 |
 | `watchdog.js` | 心跳与卡死判定、收尾 |
 | `prompt-input.js` | 拼输入：附件正文、图片、自动附图 |

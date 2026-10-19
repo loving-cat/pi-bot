@@ -16,6 +16,7 @@ const TESTS = [
   'closing-turn',
   'transcript-budget',
   'skills',
+  'lessons',
   'site-draft',
   'merge-messages',
   'local-capabilities',

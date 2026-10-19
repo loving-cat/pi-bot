@@ -25,6 +25,11 @@ import { VERSION } from './version.js';
 import { checkForUpdate, clearUpdateCache } from './update-checker.js';
 import { parseSkillMarkdown } from './skills.js';
 import {
+  selectLessonsFor,
+  lessonsPromptLines,
+  LESSON_LIMITS,
+} from './lessons.js';
+import {
   scanLocalCapabilities,
   localSkillToLibrary,
   localMcpToLibrary,
@@ -714,6 +719,56 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
           imported: r.imported,
           skipped: [...r.skipped, ...unparsed],
         });
+      }
+
+      // ---------- 经验库（主控派活前按任务挑 1~3 条注入） ----------
+      // 注意：preview 必须放在 /api/lessons/:id 之前，否则会被当成 id="preview"。
+      if (pathname === '/api/lessons/preview' && req.method === 'GET') {
+        const task = String(url.searchParams.get('task') || '');
+        const roomId = String(url.searchParams.get('roomId') || '');
+        const picked = selectLessonsFor(store.lessonLibrary(), task, { roomId });
+        const lines = lessonsPromptLines(picked);
+        return send(res, 200, {
+          lines,
+          chars: lines.join('\n').length,
+          picked,
+          limits: LESSON_LIMITS,
+        });
+      }
+
+      if (pathname === '/api/lessons' && req.method === 'GET') {
+        return send(res, 200, {
+          lessons: store.lessonLibrary(),
+          limits: LESSON_LIMITS,
+        });
+      }
+
+      if (pathname === '/api/lessons' && req.method === 'POST') {
+        const body = await readBody(req);
+        const r = store.addLesson({
+          roomId: body.roomId,
+          dept: body.dept,
+          cue: body.cue,
+          lesson: body.lesson,
+          evidence: body.evidence,
+          verdict: body.verdict,
+          status: body.status,
+        });
+        if (r.error) return send(res, 400, { error: r.error });
+        return send(res, 200, { lesson: r.lesson });
+      }
+
+      const lessonMatch = pathname.match(/^\/api\/lessons\/([^/]+)$/);
+      if (lessonMatch && req.method === 'PATCH') {
+        const body = await readBody(req);
+        const r = store.updateLesson(decodeURIComponent(lessonMatch[1]), body);
+        if (r.error) return send(res, 404, { error: r.error });
+        return send(res, 200, { lesson: r.lesson });
+      }
+      if (lessonMatch && req.method === 'DELETE') {
+        const r = store.removeLesson(decodeURIComponent(lessonMatch[1]));
+        if (r.error) return send(res, 404, { error: r.error });
+        return send(res, 200, { ok: true });
       }
 
       // 检查更新：只查不装。下载与安装由客户端在用户确认后自己做。
