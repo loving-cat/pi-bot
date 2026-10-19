@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'health.dart';
 import 'locate.dart';
 import 'options.dart';
 import 'server_log.dart';
@@ -21,8 +22,9 @@ class LocalServerLauncher {
     ServerLaunchOptions options = const ServerLaunchOptions(),
   }) : this._(stateDir ?? defaultStateDir(), options);
 
-  LocalServerLauncher._(this.stateDir, this.options)
-    : supervisor = ServerSupervisor(stateDir),
+  LocalServerLauncher._(this.stateDir, ServerLaunchOptions options)
+    : _options = options,
+      supervisor = ServerSupervisor(stateDir),
       log = ServerLog(
         File('${stateDir.path}${Platform.pathSeparator}server.log'),
       );
@@ -40,7 +42,8 @@ class LocalServerLauncher {
       final home = Platform.environment['HOME'] ?? '~';
       base = '$home/Library/Application Support';
     } else {
-      base = Platform.environment['XDG_STATE_HOME'] ??
+      base =
+          Platform.environment['XDG_STATE_HOME'] ??
           '${Platform.environment['HOME'] ?? '~'}/.local/state';
     }
     final dir = Directory('$base${sep}pi-bot');
@@ -55,11 +58,22 @@ class LocalServerLauncher {
   final ServerLog log;
 
   /// 用户配置（改了就换路径 / 换数据目录）
-  ServerLaunchOptions options;
+  ServerLaunchOptions _options;
+  ServerLaunchOptions get options => _options;
+  set options(ServerLaunchOptions value) {
+    if (_options != value) {
+      _entryPath = null;
+      _nodePath = null;
+      _nodeVersion = null;
+      _depsFuture = null;
+    }
+    _options = value;
+  }
 
   String? _entryPath;
   String? _nodePath;
   String? _nodeVersion;
+  String? _lastBaseUrl;
   Process? _serverProcess;
   bool _spawning = false;
   bool _diedDuringStart = false;
@@ -81,8 +95,14 @@ class LocalServerLauncher {
   void resetLogForNewRun() => log.resetForNewRun();
 
   Future<void> stop() async {
-    _serverProcess = null;
+    final baseUrl = _lastBaseUrl;
+    if (supervisor.readPid() == null &&
+        baseUrl != null &&
+        await serverAlive(baseUrl)) {
+      throw StateError('服务端由其它进程启动，无法自动停止；请先手动停止再重启');
+    }
     await supervisor.stop();
+    _serverProcess = null;
   }
 
   /// 确保本机服务端在运行；失败返回原因，不抛异常。
@@ -91,6 +111,7 @@ class LocalServerLauncher {
     Duration waitFor = const Duration(seconds: 30),
     void Function()? onProgress,
   }) async {
+    _lastBaseUrl = baseUrl;
     if (await serverAlive(baseUrl)) {
       return const ServerLaunchResult(ok: true, alreadyRunning: true);
     }
@@ -131,7 +152,10 @@ class LocalServerLauncher {
       if (nodeProblem != null) return nodeProblem;
 
       final serverDirectory = serverDir!;
-      final depsProblem = await _ensureDependencies(serverDirectory, onProgress);
+      final depsProblem = await _ensureDependencies(
+        serverDirectory,
+        onProgress,
+      );
       if (depsProblem != null) {
         return ServerLaunchResult(
           ok: false,
@@ -194,9 +218,17 @@ class LocalServerLauncher {
       final why = _diedDuringStart
           ? '服务端启动后马上退出了（原因见下面的日志尾部）。'
           : '服务端没能在 ${waitFor.inSeconds}s 内应答。';
-      return ServerLaunchResult(ok: false, alreadyRunning: false, error: '$why$tail');
+      return ServerLaunchResult(
+        ok: false,
+        alreadyRunning: false,
+        error: '$why$tail',
+      );
     } catch (err) {
-      return ServerLaunchResult(ok: false, alreadyRunning: false, error: '启动服务端失败：$err');
+      return ServerLaunchResult(
+        ok: false,
+        alreadyRunning: false,
+        error: '启动服务端失败：$err',
+      );
     } finally {
       _spawning = false;
     }
@@ -230,7 +262,7 @@ class LocalServerLauncher {
         alreadyRunning: false,
         error:
             '找不到服务端程序（server/src/index.js）。找过这些位置：\n  $tried\n'
-            '发行包应该把 server 目录放在 pi_bot.exe 旁边；'
+            '发行包应该包含 server 目录（macOS 位于应用的 Contents/Resources）；'
             '也可以在「设置 → 本机服务端」里自己指定。',
       );
     }
@@ -262,7 +294,7 @@ class LocalServerLauncher {
         error:
             '找不到 node —— 服务端要用它跑。\n'
             '· 装一个 Node 22 或更新：https://nodejs.org\n'
-            '· 或者把 node.exe 放到 pi_bot.exe 旁边\n'
+            '· 或者把 node 放到应用可执行文件旁边或 macOS 的 Contents/Resources\n'
             '· 或者在「设置 → 本机服务端」里自己指定 node 路径',
       );
     }
@@ -287,11 +319,17 @@ class LocalServerLauncher {
 
   /// 依赖只安装一次：并发或重试的调用共享同一个 Future，
   /// 避免同时启动多个 npm install。
-  Future<String?> _ensureDependencies(String serverDirectory, void Function()? onProgress) {
+  Future<String?> _ensureDependencies(
+    String serverDirectory,
+    void Function()? onProgress,
+  ) {
     return _depsFuture ??= _installDependencies(serverDirectory, onProgress);
   }
 
-  Future<String?> _installDependencies(String serverDirectory, void Function()? onProgress) async {
+  Future<String?> _installDependencies(
+    String serverDirectory,
+    void Function()? onProgress,
+  ) async {
     final exists = Directory(
       '$serverDirectory${Platform.pathSeparator}node_modules',
     ).existsSync();
@@ -300,7 +338,7 @@ class LocalServerLauncher {
     final npm = npmCommand(_nodePath!);
     if (npm.isEmpty) {
       return '服务端缺依赖（$serverDirectory${Platform.pathSeparator}node_modules 不存在），也没找到 npm。\n'
-          '· 装上带 npm 的 Node 22+（npm.cmd 就会自己出现）；\n'
+          '· 装上带 npm 的 Node 22+；\n'
           '· 或者在下面这个目录里手动跑一次 npm install：\n  $serverDirectory';
     }
 
@@ -313,6 +351,11 @@ class LocalServerLauncher {
         [...npm.skip(1), 'install', '--omit=dev', '--no-audit', '--no-fund'],
         workingDirectory: serverDirectory,
         runInShell: Platform.isWindows && npm.length == 1,
+        environment: {
+          'PATH':
+              '${File(_nodePath!).parent.path}'
+              '${Platform.isWindows ? ';' : ':'}${Platform.environment['PATH'] ?? ''}',
+        },
       );
       if (r.exitCode != 0) {
         _depsFuture = null; // 失败允许下次重试
@@ -339,7 +382,10 @@ class LocalServerLauncher {
     final deadline = DateTime.now().add(waitFor);
     var ticks = 0;
     while (DateTime.now().isBefore(deadline)) {
-      if (await serverAlive(baseUrl, timeout: const Duration(milliseconds: 800))) {
+      if (await serverAlive(
+        baseUrl,
+        timeout: const Duration(milliseconds: 800),
+      )) {
         return true;
       }
       if (watchLog) {
@@ -359,7 +405,7 @@ class LocalServerLauncher {
   }
 }
 
-/// `GET /health`：服务端是否就绪。
+/// `GET /health`：HTTP 成功且响应符合本机服务端身份与就绪规则。
 Future<bool> serverAlive(
   String baseUrl, {
   Duration timeout = const Duration(seconds: 2),
@@ -370,8 +416,11 @@ Future<bool> serverAlive(
         .getUrl(Uri.parse('$baseUrl/health'))
         .timeout(timeout);
     final res = await req.close().timeout(timeout);
-    await res.drain<void>();
-    return res.statusCode == 200;
+    if (res.statusCode != 200 || res.contentLength > maxHealthResponseBytes) {
+      return false;
+    }
+    final body = await readHealthResponseBody(res).timeout(timeout);
+    return body != null && isPiBotHealthResponse(body);
   } catch (_) {
     return false;
   } finally {

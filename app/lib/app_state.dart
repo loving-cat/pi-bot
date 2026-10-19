@@ -236,6 +236,7 @@ class AppState extends ChangeNotifier {
         entryPath: serverEntryPath.isEmpty ? null : serverEntryPath,
         nodePath: serverNodePath.isEmpty ? null : serverNodePath,
         dataDir: serverDataDir.isEmpty ? null : serverDataDir,
+        port: serverPort,
       );
       final result = await serverLauncher.ensureRunning(
         baseUrl: localUrl,
@@ -300,23 +301,46 @@ class AppState extends ChangeNotifier {
     required String entryPath,
     required String nodePath,
   }) async {
-    serverDataDir = dataDir.trim();
-    serverPort = port;
-    serverEntryPath = entryPath.trim();
-    serverNodePath = nodePath.trim();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_kDataDir, serverDataDir);
-    await prefs.setInt(_kPort, serverPort);
-    await prefs.setString(_kEntry, serverEntryPath);
-    await prefs.setString(_kNode, serverNodePath);
+    if (serverStarting) {
+      serverProblem = '本机服务端正在启动或停止，请等待完成后再保存配置';
+      lastError = serverProblem;
+      _notify();
+      return;
+    }
+    serverStarting = true;
+    try {
+      serverDataDir = dataDir.trim();
+      serverPort = port;
+      serverEntryPath = entryPath.trim();
+      serverNodePath = nodePath.trim();
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_kDataDir, serverDataDir);
+      await prefs.setInt(_kPort, serverPort);
+      await prefs.setString(_kEntry, serverEntryPath);
+      await prefs.setString(_kNode, serverNodePath);
+    } finally {
+      serverStarting = false;
+    }
     await restartLocalServer();
   }
 
   /// 重启本机服务端（改完配置用它）
   Future<void> restartLocalServer() async {
     if (!isHostPlatform) return;
+    if (serverStarting) return;
+    serverStarting = true;
     disconnect();
-    await serverLauncher.stop();
+    try {
+      await serverLauncher.stop();
+    } catch (err) {
+      serverProblem = '停止本机服务端失败：$err';
+      lastError = serverProblem;
+      serverRetryPaused = true;
+      serverStarting = false;
+      _notify();
+      return;
+    }
+    serverStarting = false;
     _spawnFails = 0;
     serverRetryPaused = false;
     serverProblem = null;
