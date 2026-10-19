@@ -78,6 +78,12 @@ class _LocalCapabilitiesSectionState extends State<LocalCapabilitiesSection> {
           isSkill ? (e as LocalSkillEntry).title : (e as LocalMcpEntry).name,
     ];
     final root = isSkill ? caps.skillsRoot : caps.mcpFile;
+    // 头部只放计数（名单可能很长，具体是哪些放 tooltip）。
+    // ★ 这里必须写 ${pending.length} 而不是 $pending.length —— 后者会插值整个
+    // List 再拼上字面量 ".length"，一行能扫出一万多像素宽（真实事故）。
+    final summary = pending.isEmpty
+        ? '${entries.length} 个，都导入了'
+        : '${entries.length} 个 · ${pending.length} 个可导入';
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -104,25 +110,39 @@ class _LocalCapabilitiesSectionState extends State<LocalCapabilitiesSection> {
                   const SizedBox(width: 8),
                   Icon(LucideIcons.hardDriveDownload, size: 14, color: PB.accent),
                   const SizedBox(width: 7),
-                  Text(
-                    '本机已装',
-                    style: const TextStyle(
-                      fontSize: PB.fsXs,
-                      fontWeight: FontWeight.w600,
-                      color: PB.textSecondary,
+                  // 左边这段（标题 + 名单）可以缩短，右边的「全部导入」优先保位置
+                  Expanded(
+                    child: Tooltip(
+                      message: pending.isEmpty
+                          ? '${entries.length} 个，都导入了'
+                          : '可导入（点击全部导入）：${pending.join('、')}',
+                      waitDuration: const Duration(milliseconds: 500),
+                      child: Row(
+                        children: [
+                          const Text(
+                            '本机已装',
+                            style: TextStyle(
+                              fontSize: PB.fsXs,
+                              fontWeight: FontWeight.w600,
+                              color: PB.textSecondary,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              summary,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: PB.fsXxs,
+                                color: PB.textQuaternary,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Text(
-                    pending.isEmpty
-                        ? '${entries.length} 个，都导入了'
-                        : '${entries.length} 个 · $pending.length 个可导入',
-                    style: const TextStyle(
-                      fontSize: PB.fsXxs,
-                      color: PB.textQuaternary,
-                    ),
-                  ),
-                  const Spacer(),
                   if (pending.isNotEmpty)
                     TextButton(
                       onPressed: _busy ? null : () => _import(pending),

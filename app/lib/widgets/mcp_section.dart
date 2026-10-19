@@ -46,22 +46,35 @@ class _McpSectionState extends State<McpSection> {
           children: [
             const Icon(LucideIcons.plug, size: 15, color: PB.textTertiary),
             const SizedBox(width: 8),
-            const Text(
-              'MCP 服务',
-              style: TextStyle(
-                fontSize: PB.fsSm,
-                fontWeight: FontWeight.w600,
-                color: PB.textSecondary,
+            // 服务名/数量都可能变长，右边的「添加」优先保位置（同本机已装那一行）
+            Expanded(
+              child: Row(
+                children: [
+                  const Text(
+                    'MCP 服务',
+                    style: TextStyle(
+                      fontSize: PB.fsSm,
+                      fontWeight: FontWeight.w600,
+                      color: PB.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      servers.isEmpty
+                          ? '还没配'
+                          : '${servers.length} 个 · $enabled 个已启用',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: PB.fsXxs,
+                        color: PB.textQuaternary,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(width: 8),
-            Text(
-              servers.isEmpty
-                  ? '还没配'
-                  : '${servers.length} 个 · $enabled 个已启用',
-              style: const TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
-            ),
-            const Spacer(),
             TextButton.icon(
               onPressed: () => _openEditor(context, null),
               icon: const Icon(LucideIcons.plus, size: 15),
