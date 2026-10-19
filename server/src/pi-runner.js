@@ -55,6 +55,7 @@ import { createEscalator } from './escalation.js';
 import { modelLabel, resolveModel, syncModelGroups } from './model-registry.js';
 import { buildAppendSystemPrompt } from './system-prompt.js';
 import { selectSkillsFor, skillsPromptLines } from './skills.js';
+import { selectLessonsFor, lessonsPromptLines } from './lessons.js';
 import { decideRetry, retryHint, failureNote } from './retry-policy.js';
 import { createSessionBuilder } from './session-factory.js';
 import { createBuildInput } from './prompt-input.js';
@@ -1622,9 +1623,36 @@ export class PiRunner {
         }
       };
 
+      // ★ 经验注入：只给主控，且只给 active、最多 3 条、总共 600 字。
+      //   为什么不给成员：派活质量决定后面所有轮次；成员层每轮都注入一份，
+      //   既稀释信号又撑大上下文（这是用户最担心的那件事）。
+      //   为什么放在这里（每轮挑）而不是 appendSystemPrompt：会话是复用的，
+      //   经验会变（启用/归档/被推翻），固化进去就再也刷不掉了。
+      const withLessons = (text) => {
+        try {
+          if (bot?.role !== 'main') return text;
+          const library = store.lessonLibrary();
+          if (!library.length) return text;
+          const task = text + "\n" + String(meta?.text ?? "");
+          const picked = selectLessonsFor(library, task, { roomId });
+          const lines = lessonsPromptLines(picked);
+          if (!lines.length) return text;
+          try {
+            store.touchLessons(picked.map((l) => l.id));
+          } catch {
+            // 记命中失败不能影响这一轮
+          }
+          return lines.join("\n") + "\n\n" + text;
+        } catch (err) {
+          // 经验挑不出来不能影响正常干活
+          log("经验库匹配失败：", err?.message || err);
+          return text;
+        }
+      };
+
       const startTurn = async () => {
         try {
-          const finalPrompt = withSkills(prompt);
+          const finalPrompt = withLessons(withSkills(prompt));
           return images.length
             ? await entry.session.prompt(finalPrompt, { images })
             : await entry.session.prompt(finalPrompt);
