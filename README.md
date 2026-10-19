@@ -26,7 +26,7 @@
 
 | 平台 | 文件 |
 |---|---|
-| **Windows** | [pi-bot-windows-v1.0.5.zip](https://github.com/loving-cat/pi-bot/releases/latest) — 解压双击 `pi_bot.exe`，免安装 |
+| **Windows** | [pi-bot-windows-v1.0.5.zip](https://github.com/loving-cat/pi-bot/releases/latest) — 解压双击 `pi_bot.exe`，免安装；从源码打包见 [Windows 构建说明](docs/WINDOWS.md) |
 | **Android** | [pi-bot-android-v1.0.5.apk](https://github.com/loving-cat/pi-bot/releases/latest) — 手机浏览器直接下载安装 |
 | **macOS** | 从源码运行 `./scripts/pack-macos.sh` 生成 App 与 DMG，见 [macOS 构建说明](docs/MACOS.md) |
 
@@ -238,8 +238,11 @@ flutter analyze
 ```
 
 `scripts/pack-windows.ps1` 生成可分发目录（exe + server + 依赖）：
-`-WithNode` 附带 `node.exe`（目标机器无需安装 Node），`-Zip` 同时打包压缩文件。
-macOS 使用 `./scripts/pack-macos.sh`，详见 [构建与验收清单](docs/MACOS.md)。
+`-WithNode` 附带 `node.exe`（目标机器无需安装 Node），`-Zip` 同时打包压缩文件，
+`-NoBuild` 复用已有 Release 产物，`-SkipDeps` 不预装服务端依赖。
+打包会先暂存再换成品，失败不会破坏上一版。完整步骤、平台实现与真机验收记录见
+[docs/WINDOWS.md](docs/WINDOWS.md)；macOS 使用 `./scripts/pack-macos.sh`，
+详见 [构建与验收清单](docs/MACOS.md)。
 
 ## 环境变量
 

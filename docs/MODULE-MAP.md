@@ -38,6 +38,7 @@
 | `mcp.js` | MCP 服务库：规范化、校验、转 pi 配置、测连接（纯逻辑 + 一个 probe） |
 | `mcp-hook.js` | 把用户配的 MCP 按 bot 选择注册进会话；给主控的能力清单 |
 | `local-capabilities.js` | 只读扫描本机 pi 已装的 skill / MCP，供一键导入 |
+| `spawn-command.js` | 跨平台启动用户填的命令：Windows 上按 PATHEXT 解析 `.cmd/.bat`、cmd.exe 参数转义、探测进程收尾 |
 | `site-draft.js` | 站点接入草稿：抓 → 存草稿 → 用户确认 → 才入库（草稿只在内存） |
 | `model-reply.js` | 模型错误分类与脱敏展示、认证失败终止重试、真正空回复的限定模型恢复 |
 | `providers.js` | 额外 provider 注册与默认模型解析 |
@@ -75,7 +76,7 @@
 | `widgets/update_prompt.dart` | 更新提示弹窗、带进度下载、下载完成提示 |
 | `widgets/skills_library.dart` | 技能库面板：搜索/增删改/启停/导入 SKILL.md |
 | `server/options.dart` | 启动配置、端口与数据目录的环境变量映射、启动结果 |
-| `server/locate.dart` | 服务端/Node/npm 定位；支持 macOS App Resources、PATH 和常见安装目录 |
+| `server/locate.dart` | 服务端/Node/npm 定位；支持 macOS App Resources、Windows 的 nvm-windows / fnm / Volta / Scoop、PATH 与用户覆盖；版本目录按数值降序 |
 | `server/health.dart` | 有大小上限的健康响应读取与服务身份格式校验（纯逻辑） |
 | `server/spawn_posix.dart` | POSIX 独立进程组启动脚本，日志直写文件并释放辅助进程 |
 | `server/supervisor.dart` / `server/launcher.dart` / `server/server_log.dart` | 进程与 PID 管理、启动编排及日志；Windows/POSIX 平台分流 |
@@ -117,3 +118,4 @@
 | 客户端全量 | `cd app && flutter test` |
 | 静态检查 | `cd app && flutter analyze` |
 | macOS 打包 | `./scripts/pack-macos.sh`（完整 Xcode 原生构建；`--no-build` 复用已有 Release App） |
+| Windows 打包 | `powershell -File scripts/pack-windows.ps1`（暂存后换成品；`-NoBuild` 复用、`-WithNode` 带 node.exe、`-Zip` 出压缩包） |
