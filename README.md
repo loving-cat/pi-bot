@@ -6,12 +6,12 @@
 
 ```
 ┌────────────────── 客户端（Flutter，一套代码两端）──────────────────┐
-│  Windows：三栏（会话 / 对话 / 详情）· 无边框窗口 · 八向缩放          │
+│  Windows/macOS：桌面宿主 · 会话 / 对话 / 详情 · 自启本机服务端     │
 │  Android：会话列表 · 群聊流式输出 · 图片/文件渲染 · Markdown · 插话   │
 └───────────────────────────────┬──────────────────────────────────┘
                                 │ WSS + JSON（配对码换 token）
 ┌───────────────────────────────▼──────────────────────────────────┐
-│  pi-bot server（Node 24，纯 ESM，无构建）                          │
+│  pi-bot server（Node 22+，纯 ESM，无构建）                         │
 │                                                                  │
 │   总经理(main bot) ──► 部门(群) ──► 部门老大(lead) ──► 成员(member) │
 │        │                  │              │              │        │
@@ -26,8 +26,9 @@
 
 | 平台 | 文件 |
 |---|---|
-| **Windows** | [pi-bot-windows-v1.0.5.zip](https://github.com/loving-cat/pi-bot/releases/latest) — 解压双击 `pi_bot.exe`，免安装 |
+| **Windows** | [pi-bot-windows-v1.0.5.zip](https://github.com/loving-cat/pi-bot/releases/latest) — 解压双击 `pi_bot.exe`，免安装；从源码打包见 [Windows 构建说明](docs/WINDOWS.md) |
 | **Android** | [pi-bot-android-v1.0.5.apk](https://github.com/loving-cat/pi-bot/releases/latest) — 手机浏览器直接下载安装 |
+| **macOS** | 从源码运行 `./scripts/pack-macos.sh` 生成 App 与 DMG，见 [macOS 构建说明](docs/MACOS.md) |
 
 **包里不含任何地址和密钥**——服务端地址、配对码、模型 baseUrl/API key 全部由你自己填（见下面「快速开始」）。
 
@@ -47,7 +48,7 @@
 - **上级可以打断**：老大 / 主控 / 用户 `@` 一个正在忙的成员时，它会**先停下来汇报进度**、再按新要求继续；同级同事 `@` 它则进它的待办（不打断，也不丢）。
 - **不静默丢弃**：派不出去、被跳过、被时间上限打断，都会在日志和群里留痕。
 - **心跳看门狗**：谁卡死超过一段时间没动静 → 收尾这一轮，并把「这单断了」报给组长/主控。
-- **预算**：老大每轮最多 4 次发言、成员 2 次；一条用户消息最多触发 10 次 bot 运行；单轮最多 30 个来回、最长 10 分钟。全部可在 App 的「部门预算」里改。
+- **预算**：老大每轮最多 4 次发言、成员 2 次；一条用户消息最多触发 10 次 bot 运行；单轮最多 30 个来回、默认最长 5 分钟。全部可在 App 的「部门预算」里改。
 
 ## 功能
 
@@ -72,8 +73,9 @@
 
 **运维**
 - **模型菜单完全来自你自己配的模型组**（任何 OpenAI 兼容接口：baseUrl + key + 模型名）
+- **独立模型卡片**：Windows/macOS 共用，每个模型分别填写 ID、显示名、上下文窗口与最大输出（tokens）
 - 实测探活 + **档位矩阵**（模型 × 思考等级，自动避开会静默吐空的组合）
-- **空回复自动兜底**：模型静默吐空 或 调完工具不给结论 → 自动催一次 → 再切最稳模型补一段 → 都不行才报错，绝不给你一片空白
+- **空回复恢复**：真正空回复或操作后无结论时催一次，再限于本轮选中模型和默认模型补答；认证失败直接展示脱敏后的 HTTP 状态，不再归为思考档位问题
 - **工程基线**：造开发类 bot 时自动挂上一份通用工程铁律（先读再改、破坏性操作先问、跑通测试才算完、不许静默丢活…）
 - 上下文占用可见 + 自动压缩（对话里留一条小横条，不让你以为消息丢了）
 - 会话 LRU、脏房间增量落盘、流式更新细粒度通知
@@ -105,17 +107,31 @@ node src/index.js
 
 ### 2. 电脑端（宿主）
 
-解压 Windows 包，双击 `pi_bot.exe`。桌面端就是宿主，启动时会自动把服务端跑起来：
+Windows 解压后打开 `pi_bot.exe`；macOS 打包后打开 `dist/pi-bot.app`。
+目标机器需安装 Node 22+。桌面端就是宿主，启动时会自动把服务端跑起来：
 
 1. 先探本机 `127.0.0.1:8787`，已有服务端就直接连（不会重复启动）；
-2. 没有就定位 `server/src/index.js`（exe 同级 → 上层目录 → `PI_BOT_SERVER`）；
-3. 定位 node（exe 同级 → Program Files → PATH → `PI_BOT_NODE`），要求 22+；
+2. 没有就定位 `server/src/index.js`（用户设置、`PI_BOT_SERVER`、App Resources、可执行文件同级或上层目录）；
+3. 定位 Node（用户设置、`PI_BOT_NODE`、应用目录、PATH；按平台补查常见安装目录）；
 4. 首次缺少 `node_modules` 时自动执行 `npm install`；
 5. 启动后轮询 `/health`，就绪即进主界面。
 
 服务端与界面解耦：关掉界面服务端仍在，再次打开直接连上；服务端异常退出会按退避间隔自动重启。
 
-需要改端口 / 数据目录 / node 路径：设置 →「本机服务端」（留空即自动探测，保存后自动重启）。
+需要改端口 / 数据目录 / Node 路径：设置 →「本机服务端」（路径留空即自动探测，保存后自动重启）。
+启动失败页也提供同一配置入口。
+
+macOS 首次原生构建需要完整 Xcode 与 Flutter macOS desktop：
+
+```bash
+flutter config --enable-macos-desktop
+./scripts/pack-macos.sh
+```
+
+产物为 `dist/pi-bot.app` 和 `dist/pi-bot-<服务端版本>.dmg`；服务端和生产依赖在 App 内，
+Node 仍由目标机器提供。已有 Release App 时，`./scripts/pack-macos.sh --no-build` 可跳过
+Xcode 检查与 Flutter 构建，仅重新组装安装包。当前使用 ad-hoc 签名，未做 Developer ID
+公证；`--clear-quarantine` 为可选参数，默认关闭。完整步骤与待验项目见 [docs/MACOS.md](docs/MACOS.md)。
 
 数据存放在**用户目录**，与安装位置无关：
 
@@ -140,7 +156,12 @@ node src/index.js
 
 - **用你本机已配好的 pi**（`~/.pi/agent`）——启动时会自动导入成「正在用」的模型组。
 - **在 App 里自己加一组**：设置 →「模型」→ 新建 → 填 `baseUrl` + `API key` →
-  点「测试连接」拉出模型列表 → 勾上你要用的。任何 OpenAI 兼容接口都行。
+  选择接口类型 → 为每个模型添加独立卡片，填写模型 ID；显示名可留空使用 ID。
+  每张卡片可分别设置上下文窗口与最大输出，保存后供 Bot 选择。
+
+容量单位为 tokens，填正整数且最大输出不超过上下文窗口；已有模型留空保留原值，
+新模型留空使用服务端默认值。容量须按接口实际支持的值填写。编辑已有组时，API key
+留空保留原凭据；“测试连接”的模型列表可达不等于推理鉴权已通过。
 
 > 自检：`node server/tools/check-model-runtime.mjs`
 > 它会照 App 的方式新建一个模型组、造个临时 bot 真跑一句话，然后自己清理干净。
@@ -158,6 +179,9 @@ server/
     mentions.js       ★ @提及解析（调度信号）
     model-menu.js     模型菜单（来自用户自己配的模型组）
     model-groups.js   模型组：CRUD + 连通性测试 + 转成 pi 的 provider
+    model-thinking.js 思考强度：会不会思考 / 各档位映射 / 上游思考格式（纯逻辑）
+    mcp.js            MCP 服务库：规范化 + 校验 + 转成 pi 的 mcpServers
+    mcp-hook.js       按 bot 选择把 MCP 注册进会话（默认一个都不连）
     model-health.js   模型/档位探活
     coding-baseline.js  ★ 开发类 bot 自动挂载的工程铁律
     attachments.js    附件存取
@@ -167,11 +191,13 @@ server/
   tools/
     check-model-runtime.mjs   模型自检（真跑一句话）
   tests/
-    unit.mjs          104 项单元测试（不需要网络/模型）
+    all.mjs           服务端统一测试入口（无需真实模型）
+    unit.mjs          通用单元测试
     room-lock.mjs     群调度回归：并发/终止/打断/投递/竞态
     bench.mjs         性能基准（1 万条消息）
     model-matrix.mjs  模型 × 思考等级 全矩阵
-    smoke.mjs / attach.mjs / steer.mjs / extract.mjs   端到端
+    smoke.mjs / attach.mjs / steer.mjs   真实服务端集成测试
+    extract.mjs       自建文件样本解析测试
 app/
   lib/
     theme.dart        ★ 设计系统（颜色/字阶/圆角，逐点校准）
@@ -193,6 +219,9 @@ app/
   tools/
     icons.cjs         图标生成
 docs/
+  PLATFORMS.md        ★ 平台边界：一条主干、所有平台目录共存、改动检查单
+  WINDOWS.md          Windows 构建 / 平台实现 / 真机验收
+  MACOS.md            macOS 构建 / 平台实现 / 真机验收
   PITFALLS.md         ★ 踩过的坑与修法（含 Flutter/Windows/DPI/字体/并发）
 ```
 
@@ -200,24 +229,31 @@ docs/
 
 ```bash
 cd server
-node tests/unit.mjs          # 104 项单测，不需要网络/模型
-node tests/room-lock.mjs     # 群调度回归（并发 / 终止 / 打断 / 竞态）
-node tests/bench.mjs         # 性能基准（1 万条消息）
+node tests/all.mjs           # 统一测试入口，无需起真实服务端或配置模型
+node tests/relay.mjs         # 额外中转回归：本机随机端口和假服务端
+node tests/relay-limits.mjs  # 额外中转边界与故障回归
+node tests/extract.mjs       # 自建样本解析，不设置外部样本环境变量
+node tests/bench.mjs         # 本地性能基准
 
 cd ../app
-flutter test                 # 124 项测试（含启动层：入口定位 / node·npm 定位 / 探活）
+flutter test
 flutter analyze
 ```
 
 `scripts/pack-windows.ps1` 生成可分发目录（exe + server + 依赖）：
-`-WithNode` 附带 `node.exe`（目标机器无需安装 Node），`-Zip` 同时打包压缩文件。
+`-WithNode` 附带 `node.exe`（目标机器无需安装 Node），`-Zip` 同时打包压缩文件，
+`-NoBuild` 复用已有 Release 产物，`-SkipDeps` 不预装服务端依赖。
+打包会先暂存再换成品，失败不会破坏上一版。完整步骤、平台实现与真机验收记录见
+[docs/WINDOWS.md](docs/WINDOWS.md)；macOS 使用 `./scripts/pack-macos.sh`，
+详见 [构建与验收清单](docs/MACOS.md)。
 
 ## 环境变量
 
 模块职责见 [`docs/MODULE-MAP.md`](docs/MODULE-MAP.md)（找东西先看那张表）。
+平台边界与跨平台改动检查单见 [`docs/PLATFORMS.md`](docs/PLATFORMS.md)。
 
-**测试**：服务端纯单测 `cd server && npm test`（17 个文件，不需要起服务、不需要网络）；
-端到端冒烟 `npm run test:integration`（需要先起服务端）。
+**测试**：`cd server && npm test` 等同 `node tests/all.mjs`，具体测试文件以入口列表为准；
+端到端冒烟 `npm run test:integration` 需要先起隔离服务端并配置可用模型，会发送真实模型请求。
 
 **跨网访问**：默认就是局域网直连（手机连电脑的 IP）。想在外网用，可以套现成隧道
 （frp / Cloudflare Tunnel / Tailscale），或使用我们附带的参考中转 —— 接口与用法见
@@ -236,7 +272,7 @@ flutter analyze
 | `PI_BOT_TOKEN` | — | 固定 token（设了就跳过配对码） |
 | `PI_BOT_HOME` / `PI_BOT_WORKSPACE` | 用户数据目录（见上表） | 数据目录 / agent 的工作目录 |
 | `PI_BOT_GROUP_MAX_STEPS` | 30 | 部门里单轮最多几个来回（**对话轮次**，不是工具调用次数） |
-| `PI_BOT_GROUP_TURN_MAX_MS` | 600000 | 部门里单轮最长跑多久 |
+| `PI_BOT_GROUP_TURN_MAX_MS` | 300000 | 部门里单轮最长跑多久 |
 | `PI_BOT_GROUP_BUSY_WAIT_MS` | 120000 | 要派的活碰上成员正忙，最多等它多久 |
 | `PI_BOT_HEARTBEAT_MS` / `PI_BOT_STALL_MS` | 15000 / 360000 | 心跳间隔 / 多久没动静算断了 |
 | `PI_BOT_MAX_SESSIONS` | 40 | 驻留会话上限（LRU） |

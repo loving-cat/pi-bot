@@ -5,17 +5,37 @@ import '../models.dart';
 import '../theme.dart';
 import '../scope.dart';
 
-/// 工具调用：默认**收起成一行**。
+/// 工具调用状态：**跑完就不显示**。
 ///
-/// 用户看的是"它干成了没有"，不是每一步跑了什么命令 —— 展开十几个 `bash`
-/// 会盖住正文，反而看不清结论。所以：
-///   · 默认只显示一行：`工具调用 · 19 步`（正在跑时显示当前这一步）；
-///   · 出错的行**无论如何都露出来**（红字），失败不能藏；
-///   · 点一下展开全部，连续的相同调用合并成 `× N`（连续 6 个 bash 只占一行）。
+/// ## 为什么干脆不展示
+///
+/// 这不是终端。用户要看的是"它干成了没有、结果是什么"，不是
+/// `read_shell / run_background / kill_shell` 这些内部命令名 ——
+/// 既看不懂，又把真正的回答顶到屏幕外（截屏里一整列工具调用就是这么来的）。
+///
+/// ## 那还留什么
+///
+/// 只保留两个**有信息量**的瞬间：
+///   · 正在跑 —— 显示一行"正在干活…"，否则用户以为什么都没发生
+///     （长任务几十秒，没有反馈会以为卡死）
+///   · 出错了 —— 把失败露出来，失败不能藏
+///
+/// 跑完且没出错 → 整个组件返回 `SizedBox.shrink()`，一个像素都不占。
+///
+/// 明细仍然留在 store 里（会话记录里有），
+/// 只是不再糊到用户脸上 —— 需要排查时看日志/记录即可。
 class ToolSteps extends StatefulWidget {
-  const ToolSteps({super.key, required this.steps});
+  const ToolSteps({
+    super.key,
+    required this.steps,
+    this.quietWhenDone = true,
+  });
 
   final List<ToolStep> steps;
+
+  /// true（默认）= 跑完且无错就完全不渲染。
+  /// 传 false 会回到"收起成一行"的老行为（给以后的调试面板留个口子）。
+  final bool quietWhenDone;
 
   @override
   State<ToolSteps> createState() => _ToolStepsState();
@@ -47,6 +67,81 @@ class _ToolStepsState extends State<ToolSteps> {
 
     final running = steps.any((s) => s.status == 'running');
     final failed = steps.where((s) => s.status == 'error').toList();
+
+    // ★ 跑完且没出错 → 什么都不画。
+    //   这是主路径：绝大多数时候用户看到的应该是干净的结论，
+    //   而不是一列他看不懂的命令名。
+    if (widget.quietWhenDone && !running && failed.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    // ★ 正在跑的时候也**不展开、不露命令名**。
+    //
+    //   用户截屏里那一整列 `run_background / read_shell {shell_id...}`
+    //   就是这么漏出来的：虽然收起了，但头部那行仍然写着工具名和参数，
+    //   而且一旦 _open 被置上（比如状态刷新时组件重建前点过一下），
+    //   整列明细就铺开了。
+    //
+    //   对用户来说"它正在干活"这一个信息就够了。具体调了什么、跑到第几步，
+    //   属于排查时看的日志，不属于聊天界面。
+    if (widget.quietWhenDone) {
+      // 有失败才多给一句：具体是哪步、报了什么。
+      // 成功步骤的命令名依旧不出——那是日志内容，不是聊天内容。
+      final firstFail = failed.isEmpty ? null : failed.first;
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (failed.isEmpty)
+                  SizedBox(
+                    width: 11,
+                    height: 11,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 1.6,
+                      color: PB.accent.withValues(alpha: 0.8),
+                    ),
+                  )
+                else
+                  const Icon(LucideIcons.alertCircle, size: 12, color: PB.danger),
+                const SizedBox(width: 7),
+                Text(
+                  // 不说工具名，只说人话
+                  failed.isEmpty ? '正在干活…' : '有一步没成功',
+                  style: TextStyle(
+                    fontSize: PB.fsXxs,
+                    color: failed.isEmpty ? PB.textQuaternary : PB.danger,
+                  ),
+                ),
+              ],
+            ),
+            // 失败的那一步得说清楚是什么 —— 只给"有一步没成功"等于没说。
+            if (firstFail != null)
+              Padding(
+                padding: const EdgeInsets.only(left: 19, top: 3),
+                child: Text(
+                  // ToolStep 没有单独的 error 字段，失败信息就在 detail 里
+                  firstFail.detail.isNotEmpty
+                      ? firstFail.detail.split('\n').first
+                      : '（没有更多信息）',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: PB.fsXxs,
+                    color: PB.textQuaternary,
+                    height: 1.4,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      );
+    }
+
     final current = steps.lastWhere(
       (s) => s.status == 'running',
       orElse: () => steps.last,

@@ -55,7 +55,7 @@ await new Promise((r) => host.listen(0, '127.0.0.1', r));
 const hostPort = host.address().port;
 
 // ---------- relay + agent ----------
-const secret = 'limits-secret';
+const secret = 'fixture-secret';
 const relay = createRelay({ secret, port: 0, host: '127.0.0.1' });
 const addr = await relay.listen();
 const relayPort = addr.port;

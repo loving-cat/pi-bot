@@ -11,6 +11,50 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 const _thinkingLevels = ['off', 'low', 'medium', 'high', 'max'];
 
+/// 解析 bot 当前选的模型属于哪个模型组里的哪个模型。
+///
+/// bot.model 的写法有两种：`<组id>/<模型id>`（正规）、或者裸 `<模型id>`（只给了后半截）。
+/// 解不出来就返回 null —— 宁可不展示思考档位，也不要瞎猜一个。
+ModelSpec? _modelSpecFor(List<ModelGroup> groups, String? slug) {
+  final raw = (slug ?? '').trim();
+  if (raw.isEmpty) return null;
+  final slash = raw.indexOf('/');
+  if (slash > 0) {
+    final groupId = raw.substring(0, slash);
+    final modelId = raw.substring(slash + 1);
+    for (final g in groups) {
+      if (g.id != groupId) continue;
+      for (final m in g.models) {
+        if (m.id == modelId) return m;
+      }
+    }
+    return null;
+  }
+  // 裸模型名：只有唯一匹配才认
+  final hits = [
+    for (final g in groups)
+      for (final m in g.models)
+        if (m.id == raw) m,
+  ];
+  return hits.length == 1 ? hits.single : null;
+}
+
+/// 前台要展示的思考档位。
+///
+/// 后台关掉思考 → 返回空 → 整个思考等级区域不展示。
+/// 模型配置里没声明过（旧配置/默认模型）→ 退回内置五档，保持兼容。
+List<String> _levelsFor(ModelSpec? spec) {
+  if (spec == null) return _thinkingLevels;
+  if (!spec.reasoning) return const [];
+  final levels = spec.thinkingLevels;
+  if (levels.isEmpty) return _thinkingLevels;
+  // 只保留前台认识的那几档，顺序跟着前台走
+  return [
+    for (final level in _thinkingLevels)
+      if (levels.contains(level)) level,
+  ];
+}
+
 class BotsScreen extends StatelessWidget {
   const BotsScreen({super.key});
 
@@ -239,6 +283,8 @@ class _BotRow extends StatelessWidget {
     final emojiController = TextEditingController(text: bot.emoji ?? '');
     final modelController = TextEditingController(text: bot.model ?? '');
     var thinking = bot.thinking ?? 'medium';
+    // 这个 bot 选中的 MCP 服务（名字）。默认空 = 一个都不挂。
+    var pickedMcp = [...bot.mcpServers];
 
     final saved = await showModalBottomSheet<bool>(
       context: context,
@@ -304,39 +350,163 @@ class _BotRow extends StatelessWidget {
                       onChanged: (_) => setLocal(() {}),
                     ),
                     const SizedBox(height: 10),
-                    ModelPickerField(controller: modelController),
-                    const SizedBox(height: 14),
-                    const Text(
-                      '思考等级',
-                      style: TextStyle(
-                        fontSize: PB.fsXs,
-                        color: PB.textTertiary,
-                      ),
+                    ModelPickerField(
+                      controller: modelController,
+                      onPicked: (_) => setLocal(() {}),
                     ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 6,
-                      children: [
-                        for (final level in _thinkingLevels)
-                          ChoiceChip(
-                            label: Text(
-                              level,
-                              style: const TextStyle(fontSize: PB.fsXs),
-                            ),
-                            selected: thinking == level,
-                            onSelected: (_) => setLocal(() => thinking = level),
-                            backgroundColor: PB.bgPane,
-                            selectedColor: PB.accentSoft,
-                            side: const BorderSide(color: PB.borderTertiary),
-                            labelStyle: TextStyle(
-                              color: thinking == level
-                                  ? PB.accent
-                                  : PB.textTertiary,
-                              fontSize: PB.fsXs,
+                    // ★ 思考等级只在当前模型开了思考时才展示。
+                    //   后台模型组里关掉思考 → 这里整块不出现，
+                    //   避免用户选了一个根本不生效的档位。
+                    ...(() {
+                      final spec = _modelSpecFor(
+                        state.modelGroups,
+                        modelController.text,
+                      );
+                      final levels = _levelsFor(spec);
+                      if (levels.isEmpty) {
+                        return const <Widget>[
+                          SizedBox(height: 12),
+                          Text(
+                            '当前模型没有开启思考（在「设置 → 模型组」里打开思考强度后，'
+                            '这里才能选思考等级）',
+                            style: TextStyle(
+                              fontSize: PB.fsXxs,
+                              color: PB.textQuaternary,
+                              height: 1.5,
                             ),
                           ),
-                      ],
-                    ),
+                        ];
+                      }
+                      // 切了模型/档位被关掉时，别让残留的档位带去后端
+                      if (!levels.contains(thinking)) {
+                        thinking = levels.first;
+                      }
+                      return <Widget>[
+                        const SizedBox(height: 14),
+                        Text(
+                          '思考等级',
+                          style: const TextStyle(
+                            fontSize: PB.fsXs,
+                            color: PB.textTertiary,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 6,
+                          children: [
+                            for (final level in levels)
+                              ChoiceChip(
+                                label: Text(
+                                  level,
+                                  style: const TextStyle(fontSize: PB.fsXs),
+                                ),
+                                selected: thinking == level,
+                                onSelected: (_) =>
+                                    setLocal(() => thinking = level),
+                                backgroundColor: PB.bgPane,
+                                selectedColor: PB.accentSoft,
+                                side: const BorderSide(
+                                  color: PB.borderTertiary,
+                                ),
+                                labelStyle: TextStyle(
+                                  color: thinking == level
+                                      ? PB.accent
+                                      : PB.textTertiary,
+                                  fontSize: PB.fsXs,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ];
+                    })(),
+                    const SizedBox(height: 14),
+                    // ★ MCP 能力：只列**已启用**的服务。
+                    //   没启用的连都连不上，摆出来只会让人选了却没反应。
+                    ...(() {
+                      final available =
+                          state.mcpServers.where((s) => s.enabled).toList();
+                      if (available.isEmpty) {
+                        return const <Widget>[
+                          Text(
+                            'MCP 能力',
+                            style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+                          ),
+                          SizedBox(height: 6),
+                          Text(
+                            '还没有启用的 MCP 服务。去「设置 → MCP」加一个并打开开关，'
+                            '这里就能给这个人挂上额外能力。',
+                            style: TextStyle(
+                              fontSize: PB.fsXxs,
+                              color: PB.textQuaternary,
+                              height: 1.5,
+                            ),
+                          ),
+                        ];
+                      }
+                      return <Widget>[
+                        Row(
+                          children: [
+                            const Text(
+                              'MCP 能力',
+                              style: TextStyle(
+                                fontSize: PB.fsXs,
+                                color: PB.textTertiary,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              pickedMcp.isEmpty ? '（没挂）' : '已挂 ${pickedMcp.length} 个',
+                              style: const TextStyle(
+                                fontSize: PB.fsXxs,
+                                color: PB.textQuaternary,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: [
+                            for (final server in available)
+                              ChoiceChip(
+                                label: Text(
+                                  server.name,
+                                  style: const TextStyle(fontSize: PB.fsXs),
+                                ),
+                                selected: pickedMcp.contains(server.name),
+                                onSelected: (on) => setLocal(() {
+                                  if (on) {
+                                    if (!pickedMcp.contains(server.name)) {
+                                      pickedMcp.add(server.name);
+                                    }
+                                  } else {
+                                    pickedMcp.remove(server.name);
+                                  }
+                                }),
+                                backgroundColor: PB.bgPane,
+                                selectedColor: PB.accentSoft,
+                                side: const BorderSide(color: PB.borderTertiary),
+                                labelStyle: TextStyle(
+                                  color: pickedMcp.contains(server.name)
+                                      ? PB.accent
+                                      : PB.textTertiary,
+                                  fontSize: PB.fsXs,
+                                ),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        const Text(
+                          '每个 MCP 都会起进程吃内存，只挂这个人真正需要的。',
+                          style: TextStyle(
+                            fontSize: PB.fsXxs,
+                            color: PB.textQuaternary,
+                            height: 1.5,
+                          ),
+                        ),
+                      ];
+                    })(),
                     const SizedBox(height: 14),
                     TextField(
                       controller: personaController,
@@ -374,6 +544,7 @@ class _BotRow extends StatelessWidget {
                                 'persona': personaController.text,
                                 'model': modelController.text.trim(),
                                 'thinking': thinking,
+                                'mcpServers': pickedMcp,
                               });
                             },
                             child: const Text('保存'),

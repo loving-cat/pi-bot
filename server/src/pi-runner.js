@@ -24,6 +24,18 @@ import { store, toolsForPolicy } from './store.js';
 import { dmOpeningPrompt, shouldMirrorProgress, mirrorProgress } from './dm.js';
 import { loadExtraProviders, settingsDefaultModel } from './providers.js';
 import { modelGroups } from './model-groups.js';
+import { assistantFailure, fallbackModels, modelFailure, recoverModelReply } from './model-reply.js';
+import { invalidateSessions, retireStaleSession, reserveSession } from './session-refresh.js';
+import { deliverDirectInput } from './direct-message-delivery.js';
+import { MergeQueue, MERGE_QUIET_MS } from './merge-messages.js';
+
+/**
+ * 多久之内又来一条，算"连发"（于是开始攒）。
+ *
+ * 比静默窗口略长：用户打完一条、想了两秒、再打一条，
+ * 那是两件事，不该合并；差几百毫秒紧挨着发的，才是一段话被拆开。
+ */
+const MERGE_BURST_MS = MERGE_QUIET_MS + 900;
 import { ModelHealth } from './model-health.js';
 import { buildChiefTools, buildCommonTools } from './tools.js';
 import { defaultMenuSlug, logMenu, menuSlugs, resolveMenu } from './model-menu.js';
@@ -31,7 +43,7 @@ import { attachmentBlock } from './extract.js';
 import { inboxPath, metaFor, readForModel, saveFromPath } from './attachments.js';
 import { parseMentions } from './mentions.js';
 import { log, pickEscalationHost, isSuperiorCall } from './util.js';
-import { planItem, shouldStopRound, leftBehind, planClosing } from './group-round.js';
+import { planItem, shouldStopRound, leftBehind, planClosing, isUserInitiatedRound } from './group-round.js';
 import {
   applyCompactionBudget,
   readContext,
@@ -43,11 +55,14 @@ import { createEscalator } from './escalation.js';
 import { modelLabel, resolveModel, syncModelGroups } from './model-registry.js';
 import { buildAppendSystemPrompt } from './system-prompt.js';
 import { selectSkillsFor, skillsPromptLines } from './skills.js';
+import { selectLessonsFor, lessonsPromptLines } from './lessons.js';
+import { createLessonReflector } from './lesson-reflect.js';
 import { decideRetry, retryHint, failureNote } from './retry-policy.js';
 import { createSessionBuilder } from './session-factory.js';
 import { createBuildInput } from './prompt-input.js';
 import { collectNewImages, snapshotImages } from './image-watch.js';
 import { snapshotWorkspace, diffSnapshots, summarizeChanges } from './change-watch.js';
+import { collectArtifacts } from './artifact-watch.js';
 import {
   composeGroupPrompt,
   departmentOf,
@@ -163,6 +178,52 @@ export class PiRunner {
     this.dispatching = new Set();
     /** roomId -> { text, files }：锁被占时进来的消息，合并到这里等下一轮 */
     this.roundQueue = new Map();
+    this.directDeliveryEpochs = new Map();
+    /** roomId -> 上一条用户消息的时间（判断是不是在连发） */
+    this.lastUserSendAt = new Map();
+
+    /**
+     * 连发消息的合并队列（只在它空闲时用）。
+     *
+     * 到期后走的仍然是原来那条投递路径（deliverDirectInput），
+     * 只是把几条文本拼成一段 —— 不另起一套投递逻辑，
+     * 免得"合并投递"和"普通投递"出现两套行为差异。
+     */
+    this.mergeQueue = new MergeQueue({
+      flush: (roomId, merged) => this.#deliverMerged(roomId, merged),
+      log: (msg) => log(msg),
+    });
+  }
+
+  /**
+   * 合并后的投递（由 MergeQueue 在静默窗口到期时调用）。
+   *
+   * 复用原有路径：拿会话 → deliverDirectInput。
+   * 这里**不重新 appendMessage** —— 用户那几条消息早就各自入库了，
+   * 再写一条"合并后的"会让聊天记录出现重复。
+   */
+  async #deliverMerged(roomId, merged) {
+    const room = store.getRoom(roomId);
+    if (!room) return;
+    const botId = room.leadBotId ?? room.botIds?.[0];
+    if (!botId) return;
+    const deliveryEpoch = this.directDeliveryEpochs.get(roomId) ?? 0;
+    try {
+      await deliverDirectInput({
+        prepare: () => this.#buildInput(merged, []),
+        run: ({ promptText }) =>
+          this.run(roomId, botId, promptText, { skipUserMessage: true, attachments: [] }),
+        getEntry: () => this.sessions.get(this.#key(roomId, botId)),
+        isCancelled: () =>
+          this.aborting.has(roomId) ||
+          (this.directDeliveryEpochs.get(roomId) ?? 0) !== deliveryEpoch,
+        queue: (session, { promptText }) => session.followUp(promptText),
+        accepted: () => {},
+      });
+    } catch (err) {
+      if (err?.name === 'AbortError') return; // 正常终止，不报错
+      log(`合并消息投递失败：${err?.message ?? err}`);
+    }
   }
 
   /**
@@ -196,17 +257,62 @@ export class PiRunner {
   }
 
   #dispatchGroupRound(roomId, text, files) {
+    // ★ 用户说话 = 最高优先级，**先让所有人停下**。
+    //
+    //   以前这里是“房间忙就排队等下一轮”：用户在群里补一句
+    //   「没完成的再完成一次」，结果成员还在跑上一轮的活，
+    //   界面显示“它下一步会看到” —— 用户看到的是“我说了但没反应”。
+    //
+    //   现在的语义：用户一开口，这一轮就作废。
+    //     · 正在跑的 bot 全部打断（不保留它们的中间输出）
+    //     · 旧轮次的队列清空
+    //     · 新的一轮由负责人带新 query 重新想、重新派
+    //
+    //   为什么可以这么硬：用户是唯一决策者。让它等几十秒甚至几分钟，
+    //   等来的还是基于旧需求的结果，比直接重来更糟。
+    //
+    //   ★ 注意：**房间锁不能被摘掉**。
+    //     锁的作用是“同一个房间不能并发跑两轮”，它跟“谁在跑”是两件事：
+    //     打断只是让旧轮的 bot 停下，旧轮本身还在走它的循环（要看到 abort
+    //     才会退出）。这里保留锁，新的那一轮自然排在旧轮退出之后 ——
+    //     否则两个 runRound 会同时在同一个房间里派活，消息会乱。
     if (this.roundLocks.has(roomId) || this.isRoomBusy(roomId)) {
-      const pending = this.roundQueue.get(roomId);
-      this.roundQueue.set(roomId, {
-        text: pending ? `${pending.text}\n${text}` : text,
-        files: pending ? [...pending.files, ...files] : [...files],
-      });
-      log(`【${store.getRoom(roomId)?.name ?? roomId}】房间正忙，这条消息排队等下一轮`);
+      log(
+        `【${store.getRoom(roomId)?.name ?? roomId}】用户插话 → 打断进行中的一轮，按新要求重来`,
+      );
+      this.#interruptRoundForUser(roomId);
+      // 旧轮攒着还没派的内容属于旧需求，丢掉
+      this.roundQueue.delete(roomId);
+      this.mergeQueue.drop(roomId);
+      // 把这条新消息登记成“下一轮”，等旧轮退出后 #drainGroupRounds 会接上
+      this.roundQueue.set(roomId, { text, files: [...files] });
       return Promise.resolve();
     }
     this.roundLocks.add(roomId);
     return this.#drainGroupRounds(roomId, { text, files });
+  }
+
+  /**
+   * 用户插话：把这一轮里**正在跑的所有 bot** 立刻停下来。
+   *
+   * 只 abort 会话、不碰消息状态：被中断的那几条消息会由 run() 自己的
+   * 失败分支处理（写成 aborted，前端不渲染）—— 跟用户按 Esc 终止是同一套语义。
+   * 区别只在于：这里不停房间锁，紧接着就要开新一轮。
+   */
+  #interruptRoundForUser(roomId) {
+    let n = 0;
+    for (const [key, entry] of this.sessions) {
+      if (!key.startsWith(`${roomId}:`)) continue;
+      if (!entry?.session || !entry.busy) continue;
+      try {
+        entry.turnController?.abort();
+        entry.session.abort?.().catch(() => {});
+        n++;
+      } catch {
+        // 单个会话打断失败不能挡住其他人停下
+      }
+    }
+    if (n) log(`已打断 ${n} 个正在跑的会话（用户插话）`);
   }
 
   /** 把排队的一轮轮跑掉；跑完（或出错）都要释放房间锁 */
@@ -262,6 +368,7 @@ export class PiRunner {
 
   /** 收尾：捣掉这一轮 + 把它正在写的消息结掉（不收的话客户端永远转圈） */
   #stallCleanup(info) {
+    info.entry?.turnController?.abort();
     return stallCleanup({ store })(info);
   }
 
@@ -287,6 +394,8 @@ export class PiRunner {
 
   async init() {
     this.modelRuntime = await ModelRuntime.create();
+    // 收尾复盘器：每次新建一个"无工具"的一次性会话，不污染 bot 的聊天记录
+    this.reflect = createLessonReflector({ runner: this });
     // 心跳看门狗：发现的“卡死不动”由它负责收尾 + 上报
     this.startWatchdog();
     // 部门规矩变了 → 作废空闲会话（工具集和系统提示是建会话时定的，不重建不生效）
@@ -384,7 +493,7 @@ export class PiRunner {
         reasoning: Boolean(m.reasoning),
       }));
     } catch (err) {
-      log('⚠️  取可用模型列表失败：', err?.message || err);
+      log('取可用模型列表失败：', modelFailure(err).error);
     }
   }
 
@@ -404,17 +513,38 @@ export class PiRunner {
       modelGroups.toProviderConfigs(),
       {
         onLog: log,
-        onError: (id, err) => log(`⚠️  模型组 ${id} 同步失败：`, err?.message || err),
+        onError: (_id, err) => log('模型组同步失败：', modelFailure(err).error),
       },
     );
   }
 
   /** 改完模型组：重新注册 + 刷新列表，然后广播一声让 App 更新 */
-  async applyModelGroupChange() {
+  async applyModelGroupChange(groupId = null) {
     this.syncModelGroups();
     await this.refreshAvailableModels();
+    this.model = this.resolveModel(this.modelLabel()) ?? this.resolveModel(config.model)
+      ?? this.resolveModel(defaultMenuSlug(this.health)) ?? null;
+    this.routerModel = this.model;
+    this.initNote = this.model ? null : '没有可用模型，请先配置模型组';
+    invalidateSessions(this.sessions, (_key, entry) => !groupId || !entry.bot?.model
+      || entry.session?.model?.provider === groupId || entry.bot.model.startsWith(`${groupId}/`));
     bus.emit('event', { t: 'models.changed' });
     return this.availableModels?.length ?? 0;
+  }
+
+  /**
+   * 模型组里的 MCP 服务变了。
+   *
+   * MCP 无法"热替换" —— 它是在建会话时注册进 pi 的（工具的 schema 那时就定了）。
+   * 所以要全部作废重建：只作废那些真的挂了 MCP 的 bot，没挂的不动，
+   * 否则改一个服务会把一堆无关的会话都重启，正在跑的活就断了。
+   */
+  async applyMcpChange() {
+    invalidateSessions(this.sessions, (_key, entry) => {
+      const names = Array.isArray(entry.bot?.mcpServers) ? entry.bot.mcpServers : [];
+      return names.length > 0;
+    });
+    bus.emit('event', { t: 'mcp.changed' });
   }
 
   // ---------------------------------------------------------------- 会话
@@ -431,9 +561,13 @@ export class PiRunner {
    */
   async #ensureSession(roomId, botId) {
     const key = this.#key(roomId, botId);
+    retireStaleSession(this.sessions, key);
     const existing = this.sessions.get(key);
-    if (existing?.session) return existing;
-    if (existing?.pending) return existing.pending;
+    if (existing?.session) return reserveSession(existing);
+    if (existing?.pending) {
+      await existing.pending;
+      return this.#ensureSession(roomId, botId);
+    }
 
     this.__buildSession ??= createSessionBuilder({
       runner: this,
@@ -451,8 +585,11 @@ export class PiRunner {
     this.sessions.set(key, { session: null, busy: false, pending: promise, unsubscribe: null });
     try {
       const entry = await promise;
+      entry.reloadPending = this.sessions.get(key)?.reloadPending ?? false;
       entry.lastUsed = Date.now();
       this.sessions.set(key, entry);
+      if (retireStaleSession(this.sessions, key)) return this.#ensureSession(roomId, botId);
+      reserveSession(entry);
       this.#evictSessions();
       return entry;
     } catch (err) {
@@ -683,6 +820,15 @@ export class PiRunner {
         budget: budget(bot.id),
         busy: busyNow,
         superior,
+        // ★ 只有"用户直接叫的"才享受打断特权。
+        //
+        //   为什么不能整轮都算：一轮里成员之间会互相 @，那些是日常协作。
+        //   若整轮都按"用户新需求"处理，同事一句 @ 就能打断别人手上的活 ——
+        //   群里会互相擂断（这正是 room-lock 那条测试守着的边界）。
+        //
+        //   判断依据看 item.fromId：为空说明这一条是用户直接点的名；
+        //   有值说明是某个 bot 在 @ 它，按上下级规则走。
+        userRound: !item.fromId && isUserInitiatedRound({ openerBotId }),
       });
       if (plan.kind === 'skip') {
         log(`【${room.name}】${plan.why} → 不再叫它`);
@@ -701,24 +847,44 @@ export class PiRunner {
       if (plan.kind === 'interrupt' || plan.kind === 'queue') {
         const entry = this.sessions.get(this.#key(roomId, bot.id));
         if (plan.kind === 'interrupt' && entry?.session) {
-          const steered =
-            `【${item.fromName || '上级'} 叫停】先把你手上正在做的事停一下。\n\n` +
-            `${item.fromName || '上级'} 刚刚说：\n` +
-            `${(item.fromText || '').slice(0, 1200) || '（看群里的最新消息）'}\n\n` +
-            '请先回报一句：你现在做到哪一步了、还差什么。\n' +
-            '然后按上面的新要求继续 —— 新要求优先于你手上正在做的事。';
+          const userRound = isUserInitiatedRound({ openerBotId });
+          const from = item.fromName || '上级';
+          // ★ 用户发起的新需求 vs 上级中途改主意，措辞不一样。
+          //
+          //   用户那一路要更硬：**旧活直接作废**，不要它"先报进度再继续"——
+          //   用户要的是"停，按新的来"，不是"你先把旧的收个尾"。
+          //   留着旧的收尾，用户会看到一堆跟新需求无关的产出。
+          const steered = userRound
+            ? `【用户叫停】用户刚发了新要求，**你手上那件立刻停下、不要再继续**。\n\n` +
+              `用户说：\n${(item.fromText || '').slice(0, 1200) || '（看群里的最新消息）'}\n\n` +
+              '旧任务的产出作废，不要再补完、也不要再汇报旧进度。\n' +
+              '直接按用户的新要求重新开始；如果这活不该你干，说一句就停，等负责人重新安排。'
+            : `【${from} 叫停】先把你手上正在做的事停一下。\n\n` +
+              `${from} 刚刚说：\n` +
+              `${(item.fromText || '').slice(0, 1200) || '（看群里的最新消息）'}\n\n` +
+              '请先回报一句：你现在做到哪一步了、还差什么。\n' +
+              '然后按上面的新要求继续 —— 新要求优先于你手上正在做的事。';
           try {
             await entry.session.steer(steered);
-            log(`【${room.name}】上级改主意了 → 叫停 ${bot.name}（它正忙，让它先报进度再接新要求）`);
+            log(
+              userRound
+                ? `【${room.name}】用户新需求 → 叫停 ${bot.name}（旧活作废，按新的重来）`
+                : `【${room.name}】上级改主意了 → 叫停 ${bot.name}（它正忙，让它先报进度再接新要求）`,
+            );
             store.appendMessage(
               {
                 roomId,
                 authorType: 'system',
                 authorId: bot.id,
                 authorName: '叫停回执',
-                text: `已叫停${bot.name}：让它先报进度，再按新的要求继续。`,
+                text: userRound
+                  ? `已让${bot.name}停下，按你的新要求重来。`
+                  : `已叫停${bot.name}：让它先报进度，再按新的要求继续。`,
                 status: 'done',
-                meta: { via: 'steer_by_superior', fromId: item.fromId ?? null },
+                meta: {
+                  via: userRound ? 'steer_by_user' : 'steer_by_superior',
+                  fromId: item.fromId ?? null,
+                },
               },
               // 插在它正在写的那条之前 —— 读起来是“叫停 → 它的回应”
               { beforeStreaming: true },
@@ -1031,6 +1197,14 @@ export class PiRunner {
     for (const m of members) {
       if (!used.has(m.id)) store.setCursor(roomId, m.id, lastId);
     }
+
+    // 收尾复盘：从这一轮里提炼候选经验（只进库，不进提示词）。
+    // 放后台跑 —— 用户不该等复盘；失败只写日志，不影响这一轮已经交付的结果。
+    if (roundStartIndex >= 0 && store.lessonsEnabled()) {
+      void this.reflect?.({ roomId, sinceIndex: roundStartIndex }).catch((err) =>
+        log(`【${room.name}】复盘异常：`, err?.message || err),
+      );
+    }
   }
 
   // ---------------------------------------------------------------- 用户发消息
@@ -1041,7 +1215,7 @@ export class PiRunner {
    * - 群（部门）：交给部门老大先接，老大用 @ 往下派
    * - 正在跑：不报错，而是插话引导（steer）或排队（followUp）
    */
-  async send(roomId, text, { mode = 'steer', attachments = [] } = {}) {
+  async send(roomId, text, { mode = 'steer', attachments = [], flushMerge = true } = {}) {
     const room = store.getRoom(roomId);
     if (!room) throw Object.assign(new Error('会话不存在'), { code: 'NO_ROOM' });
     const clean = String(text ?? '').trim();
@@ -1061,10 +1235,11 @@ export class PiRunner {
       const effective = mode === 'followUp' ? 'followUp' : 'steer';
       let queued;
       try {
-        queued =
-          effective === 'followUp' ? await entry.session.followUp(clean) : await entry.session.steer(clean);
+        const { promptText } = await this.#buildInput(clean, files);
+        if (this.aborting.has(roomId)) throw Object.assign(new Error('已终止'), { name: 'AbortError' });
+        queued = await entry.session[effective](promptText, files.map(readForModel).filter(Boolean));
       } catch (err) {
-        throw Object.assign(new Error(`插话失败：${err?.message || err}`), { code: 'STEER_FAILED' });
+        throw Object.assign(new Error(`插话失败：${modelFailure(err).error}`), { code: 'STEER_FAILED' });
       }
       const userMessage = store.appendMessage(
         {
@@ -1104,35 +1279,86 @@ export class PiRunner {
       attachments: hydrate(files),
     });
 
+    // ★ 用户回话了 → 那张“问你”卡片就该收起来。
+    //   卡片是 bot 停下来等回话的地方；用户点了选项/自己说了一句，
+    //   事情已经往下走了，卡片还能再点第二次只会让人怀疑自己点没点上。
+    //   把回答也存进去，历史里能看出当时选的是哪个。
+    store.answerPendingAsk(roomId, clean);
+
     if (room.kind === 'group') {
-      // ★ 用户说话必须优先。
+      // ★ 用户说话 = 这一轮作废，全部停下重来。
       //
-      //   真事：一个成员挂了（超时被收住），用户在群里发话 —— 组长半天不响。
-      //   因为群聊有房间锁，而这锁是“忙则排队”：只要还有人在跑，
-      //   用户这条就被排到下一轮（日志里是“房间正忙，这条消息排队等下一轮”），
-      //   而那个成员可能还要跑好几分钟。
+      //   演进过程（三段历史都在这段注释里，免得以后又被改回去）：
+      //   1. 最早：房间忙就排队等下一轮 → 用户看到"它下一步会看到"，
+      //      但成员还在跑旧需求，用户的话等于没生效。
+      //   2. 后来：让组长另开一个会话当场回一句，其他人继续跑 →
+      //      用户看到有人回了，但群里的活还是按旧需求在干，产出对不上。
+      //   3. 现在：**打断所有正在跑的会话，丢掉旧队列，由负责人带新 query
+      //      重新想、重新派**。用户是唯一决策者，让他等旧活干完没有意义 ——
+      //      等来的结果基于已经被推翻的需求。
       //
-      //   用户是最高权威，不该排在机器后面。所以：别人继续跑（各干各的），
-      //   但组长当场回你一句 —— 它自己的会话是独立的，不会把正在干的人打断。
-      const roomBusy =
-        this.roundLocks.has(roomId) || this.isRoomBusy(roomId);
-      if (roomBusy && !this.isBusy(roomId, botId)) {
-        log(`【${room.name}】房间在忙，但用户说话了 → 让组长当场先回`);
-        this.#answerUserNow(roomId, bot, files).catch((err) =>
-          log('当场回应失败：', err?.message || err),
-        );
-      } else {
-        // 部门：老大先接，再往下派（房间级串行，忙则排队）
-        this.#dispatchGroupRound(roomId, clean, files).catch((err) =>
-          log('runRound 异常：', err?.stack || err),
-        );
-      }
+      //   打断动作在 #dispatchGroupRound 里做（那里能同时清掉 roundQueue），
+      //   这里只负责把新的一轮发起来。
+      this.#dispatchGroupRound(roomId, clean, files).catch((err) =>
+        log('runRound 异常：', err?.stack || err),
+      );
     } else {
-      this.#buildInput(clean, files)
-        .then(({ promptText }) =>
-          this.run(roomId, botId, promptText, { skipUserMessage: true, attachments: files }),
-        )
-        .catch((err) => log('run 异常：', err?.stack || err));
+      // ★ 私聊且**它当前空闲** → 先攒一下，把"连发的几条"合成一段再投递。
+      //
+      //   为什么不干脆每条都立刻投：用户说话像打字，「帮我看下这个系统」
+      //   「https://xxx.com」「账号 admin 密码 123」是三条消息，
+      //   逐条投递时 agent 第一条只看到半句就开始瞎猜，后面只能靠 steer 纠偏，
+      //   三份互相打架的理解叠在一起。合并成一段它一次就能看懂完整意图。
+      //
+      //   正在跑的时候**不能合并**：那是"中断/插队"，必须立刻送进去让它改计划，
+      //   等 700ms 反而让它多跑错一段。
+      const idle = !this.isBusy(roomId, botId);
+
+      // ★ 合并只在"真的在连发"时才启动，绝不给正常发送加延迟。
+      //
+      //   两条路径：
+      //     · flushMerge=true（默认，= 用户明确按了发送键）
+      //       → **立刻投递**。如果之前因为连发攒了几条，一起带上去，
+      //         体感是"咔一下全部生效"。
+      //     · flushMerge=false（前端判定"用户还在打字"，见 app_state 的
+      //       flushMerge 参数）
+      //       → 攒 700ms 静默窗口，把"想到一句发一句"合成一段再给模型。
+      //
+      //   为什么必须区分：逐条投递时 agent 第一条只看到半句话就开始瞎猜，
+      //   后面只能靠 steer 纠偏，三份打架的理解叠在一起。
+      //   但反过来，正常发一句也要等 700ms 就是卡顿 —— 两个都不能接受。
+      //
+      //   正在跑的时候**绝不合并**：那是中断/插队，必须立刻送进去。
+      if (idle && !files.length && !flushMerge) {
+        this.mergeQueue.push(roomId, clean);
+        return { userMessage, bot, group: false, merging: true };
+      }
+      if (flushMerge && this.mergeQueue.hasPending(roomId)) {
+        // 有攒着的：把这条也放进去，然后立刻全部发出
+        this.mergeQueue.push(roomId, clean);
+        await this.mergeQueue.flushAll();
+        return { userMessage, bot, group: false, merging: false };
+      }
+
+      const effective = mode === 'followUp' ? 'followUp' : 'steer';
+      const deliveryEpoch = this.directDeliveryEpochs.get(roomId) ?? 0;
+      deliverDirectInput({
+        prepare: () => this.#buildInput(clean, files),
+        run: ({ promptText }) => this.run(roomId, botId, promptText, { skipUserMessage: true, attachments: files }),
+        getEntry: () => this.sessions.get(this.#key(roomId, botId)),
+        isCancelled: () => this.aborting.has(roomId)
+          || (this.directDeliveryEpochs.get(roomId) ?? 0) !== deliveryEpoch,
+        queue: (session, { promptText }) => session[effective](promptText, files.map(readForModel).filter(Boolean)),
+        accepted: (queued) => {
+          store.updateMessage(roomId, userMessage.id,
+            { meta: { ...(userMessage.meta ?? {}), queued: effective, queuedState: queued ?? 'queued' } });
+          bus.emit('event', { t: 'steer.accepted', roomId, mode: effective, text: clean, messageId: userMessage.id });
+        },
+      }).catch((err) => {
+        const error = modelFailure(err).error;
+        const msg = store.updateMessage(roomId, userMessage.id, { status: 'error', error });
+        bus.emit('event', { t: 'msg.error', roomId, msgId: userMessage.id, error, msg });
+      });
     }
     return { userMessage, bot, group: room.kind === 'group' };
   }
@@ -1157,12 +1383,16 @@ export class PiRunner {
     const started = Date.now();
     const room = store.getRoom(roomId);
     if (!room) return { ok: false, text: '', ms: 0, error: '会话不存在', messageId: '' };
+    if (this.aborting.has(roomId)) return { ok: false, text: '', ms: 0, error: '已终止', messageId: '' };
 
     let entry;
     try {
       entry = await this.#ensureSession(roomId, botId);
     } catch (err) {
-      const message = String(err?.message || err);
+      if (err?.code === 'SESSION_BUSY') {
+        return { ok: false, code: 'SESSION_BUSY', text: '', ms: 0, error: '会话正在忙', messageId: '' };
+      }
+      const message = modelFailure(err).error;
       store.appendMessage({
         roomId,
         authorType: 'bot',
@@ -1175,6 +1405,12 @@ export class PiRunner {
       return { ok: false, text: '', ms: Date.now() - started, error: message, messageId: '' };
     }
 
+    const turnController = new AbortController();
+    entry.turnController = turnController;
+    const cancelled = () => this.aborting.has(roomId) || turnController.signal.aborted;
+    const checkCancelled = () => {
+      if (cancelled()) throw turnController.signal.reason ?? Object.assign(new Error('已终止'), { name: 'AbortError' });
+    };
     entry.lastUsed = Date.now();
     // ★ 心跳：这一轮从什么时候开始、最后一次动静是什么时候、
     //   以及它正在写的是哪条消息（卡死时要拿这个收尾）。
@@ -1202,6 +1438,7 @@ export class PiRunner {
     const committed = [];
     let buffer = '';
     let usage = null;
+    let responseFailure = null;
     const steps = [];
 
     const render = () => {
@@ -1245,7 +1482,7 @@ export class PiRunner {
             botId: bot.id,
             active: false,
             reason: event.reason,
-            error: event.errorMessage || null,
+            error: event.errorMessage ? modelFailure(event.errorMessage).error : null,
           });
           log(`[${bot.name}] 上下文压缩结束（${event.reason}）`);
           // ★ 压缩这件事必须**出现在对话里**，不能只藏在状态里。
@@ -1301,6 +1538,13 @@ export class PiRunner {
           break;
         case 'message_end':
           if (event.message?.role === 'assistant') {
+            const failure = assistantFailure(event.message);
+            if (failure) {
+              responseFailure = failure;
+              buffer = '';
+              pushDelta.flush();
+              break;
+            }
             const finalText = textOf(event.message) || buffer;
             if (finalText.trim()) committed.push(finalText.trim());
             buffer = '';
@@ -1343,12 +1587,6 @@ export class PiRunner {
 
     const unsubscribe = entry.session.subscribe(onEvent);
     entry.unsubscribe = unsubscribe;
-    // 已经按了终止的会话：这一轮就别起了（排队里被点掉的那些）
-    if (this.aborting.has(roomId)) {
-      log(`${bot.name} 这一轮已经被用户终止，跳过`);
-      return { ok: false, text: '', ms: 0, error: '已终止', messageId: '' };
-    }
-    entry.busy = true;
 
     // 用户带的图 -> 喂给模型（视觉模型能直接看）
     const images = [];
@@ -1373,6 +1611,7 @@ export class PiRunner {
 
     let timeoutHandle = null;
     try {
+      checkCancelled();
       // ★ 兜底：万一还是撞上"这个会话正在处理"（并发下理论上不该有了，
       //   但外部/扩展也能直接调 prompt），**别把红字甩给用户** ——
       //   改成排队投递（followUp），它干完手上的自己会看到。
@@ -1396,9 +1635,36 @@ export class PiRunner {
         }
       };
 
+      // ★ 经验注入：只给主控，且只给 active、最多 3 条、总共 600 字。
+      //   为什么不给成员：派活质量决定后面所有轮次；成员层每轮都注入一份，
+      //   既稀释信号又撑大上下文（这是用户最担心的那件事）。
+      //   为什么放在这里（每轮挑）而不是 appendSystemPrompt：会话是复用的，
+      //   经验会变（启用/归档/被推翻），固化进去就再也刷不掉了。
+      const withLessons = (text) => {
+        try {
+          if (bot?.role !== 'main') return text;
+          const library = store.lessonLibrary();
+          if (!library.length) return text;
+          const task = text + "\n" + String(meta?.text ?? "");
+          const picked = selectLessonsFor(library, task, { roomId });
+          const lines = lessonsPromptLines(picked);
+          if (!lines.length) return text;
+          try {
+            store.touchLessons(picked.map((l) => l.id));
+          } catch {
+            // 记命中失败不能影响这一轮
+          }
+          return lines.join("\n") + "\n\n" + text;
+        } catch (err) {
+          // 经验挑不出来不能影响正常干活
+          log("经验库匹配失败：", err?.message || err);
+          return text;
+        }
+      };
+
       const startTurn = async () => {
         try {
-          const finalPrompt = withSkills(prompt);
+          const finalPrompt = withLessons(withSkills(prompt));
           return images.length
             ? await entry.session.prompt(finalPrompt, { images })
             : await entry.session.prompt(finalPrompt);
@@ -1416,6 +1682,7 @@ export class PiRunner {
       if (effectiveTimeout > 0) {
         const timeout = new Promise((_, reject) => {
           timeoutHandle = setTimeout(() => {
+            turnController.abort(new Error('模型请求超时'));
             entry.session.abort().catch(() => {});
             reject(new Error(`超过 ${Math.round(effectiveTimeout / 1000)}s 未完成，已中断`));
           }, effectiveTimeout);
@@ -1424,67 +1691,43 @@ export class PiRunner {
       } else {
         await runPromise;
       }
+      checkCancelled();
 
       let finalText = render().trim();
       let emptyRecovered = false;
-
-      // ★ 空回复兜底。两种失败模式：
-      //   a) 完全没输出（实测某些「模型 × 思考等级」组合会静默吐空）
-      //   b) 工具调了一堆但没说结论（assistant 最后一条是空的）
-      //   两种都不能让用户看到空白。
-      const toolNames = [...new Set(steps.map((s) => s.tool))];
+      if (responseFailure) throw new Error(responseFailure.error);
       if (!finalText && !stepCapHit) {
-        log(`[${bot.name}] ${steps.length ? `${steps.length} 步操作后没给结论` : '空回复'}，催一次…`);
-        const nudge = steps.length
-          ? `你刚才调用了工具（${toolNames.join('、')}）但没有给出结论。请用一两句话说明：你做了什么、结果是什么。不要调用工具。`
-          : '你上一条没有输出任何内容。请直接用文字回答刚才的问题，不要调用工具。';
-        try {
-          await entry.session.prompt(nudge);
-          finalText = render().trim();
-          if (finalText) emptyRecovered = true;
-        } catch (err) {
-          log(`[${bot.name}] 催一次失败：`, err?.message || err);
-        }
-      }
-
-      // 还是空 → 用最稳的模型直接补一段（不带工具，纯文字）
-      //   串多个线路：单模型兜底也可能吐空，多试一个成功率明显更高
-      if (!finalText && !stepCapHit) {
-        log(`[${bot.name}] 仍然空，切兜底模型…`);
         const stepDigest = steps.length
           ? `\n\n你刚才实际执行了这些操作：\n${steps.map((s) => `- ${s.tool} ${s.detail ?? ''}`.slice(0, 160)).join('\n')}`
           : '';
         const userContent = `下面是你（另一个模型）接到的任务：\n\n${prompt.slice(0, 6000)}${stepDigest}\n\n请用几句话给出结论。`;
-        const chain = [
-          this.model,
-          this.resolveModel('selfhost/wbi-deepseek-v4.1-flash'),
-          this.resolveModel('selfhost/wb-glm-5.3-flash'),
-        ]
-          .filter(Boolean)
-          .filter((m, i, arr) => arr.findIndex((x) => `${x.provider}/${x.id}` === `${m.provider}/${m.id}`) === i);
-
-        for (const fallbackModel of chain) {
-          try {
-            const reply = await this.modelRuntime.completeSimple(
-              fallbackModel,
+        const recovery = await recoverModelReply({
+          signal: turnController.signal,
+          isCancelled: cancelled,
+          failure: responseFailure,
+          nudge: () => entry.session.prompt(steps.length
+            ? '请用一两句话说明刚才操作的结果，不要调用工具。'
+            : '请直接用文字回答刚才的问题，不要调用工具。'),
+          readText: () => render(),
+          readFailure: () => responseFailure,
+          models: fallbackModels(entry.session.model ?? (bot.model ? this.resolveModel(bot.model) : this.model), this.model),
+          complete: (model, signal) => this.modelRuntime.completeSimple(
+              model,
               {
                 systemPrompt: `${bot.persona ?? ''}\n\n你是「${bot.name}」。直接给结论，不要客套。`,
                 messages: [{ role: 'user', content: userContent, timestamp: Date.now() }],
               },
-              { maxTokens: 2048, reasoning: 'low' },
-            );
-            const fallbackText = textOf(reply).trim();
-            if (fallbackText) {
-              finalText = fallbackText;
-              emptyRecovered = true;
-              log(`[${bot.name}] 兜底成功（${fallbackModel.provider}/${fallbackModel.id}）`);
-              break;
-            }
-          } catch (err) {
-            log(`[${bot.name}] 兜底 ${fallbackModel.id} 失败：`, err?.message || err);
-          }
+              { maxTokens: Math.min(2048, model.maxTokens ?? 2048), signal },
+            ),
+        });
+        if (recovery.failure) {
+          responseFailure = recovery.failure;
+          throw new Error(recovery.failure.error);
         }
+        finalText = recovery.text;
+        emptyRecovered = recovery.recovered;
       }
+      checkCancelled();
 
       const produced = beforeImages
         ? collectNewImages(config.workspace, beforeImages, {
@@ -1492,6 +1735,23 @@ export class PiRunner {
             onError: (err) => log('自动附图失败：', err?.message || err),
           })
         : [];
+
+      // ★ 跑完后把交付物（表格 / 文档 / PDF / 压缩包）也直接发到群里。
+      //   只认这一轮新增或改过的文件，源码不算（那是 changed_files 的事）；
+      //   图片已经在上面处理过，这里排掉避免重复附件。
+      if (config.autoAttachArtifacts !== false && beforeFiles) {
+        try {
+          for (const item of collectArtifacts(config.workspace, beforeFiles)) {
+            try {
+              produced.push(saveFromPath(item.file));
+            } catch (err) {
+              log(`自动带产物失败（${item.rel}）：`, err?.message || err);
+            }
+          }
+        } catch (err) {
+          log('自动带产物失败：', err?.message || err);
+        }
+      }
 
       // 两次都救不回来 → 退而给一份操作摘要（总比一片空白好），并标成错误
       if (!finalText && !stepCapHit) {
@@ -1506,7 +1766,7 @@ export class PiRunner {
           {
             text: digest,
             status: 'error',
-            error: `${bot.name} 没有给出内容（已自动重试两次）。可能是当前模型在 thinking ${bot.thinking} 档下不稳定，试试换个思考等级或换模型。`,
+            error: '模型没有返回可展示内容，也未提供明确错误，请检查接口状态与模型配置。',
             steps,
             usage,
             attachments: produced,
@@ -1539,9 +1799,12 @@ export class PiRunner {
       bus.emit('event', { t: 'msg.done', msg });
       return { ok: true, text: finalText, ms: Date.now() - started, messageId: botMsg.id };
     } catch (err) {
-      const message = String(err?.message || err);
+      const failure = cancelled() ? modelFailure(turnController.signal.reason ?? { name: 'AbortError' })
+        : responseFailure ?? modelFailure(err);
+      const previousError = store.getMessage(roomId, botMsg.id)?.error;
+      const message = failure.aborted && previousError === '已按你的要求终止' ? previousError : failure.error;
       const partial = render().trim();
-      if (stepCapHit) {
+      if (stepCapHit && !cancelled()) {
         const msg = store.updateMessage(
           roomId,
           botMsg.id,
@@ -1571,13 +1834,14 @@ export class PiRunner {
         { silent: true },
       );
       bus.emit('event', { t: 'msg.error', roomId, msgId: botMsg.id, error: message, msg });
-      log(`[${bot.name}] 本轮出错：${message}`);
+      log(`模型本轮出错：${message}`);
       return { ok: false, text: partial, ms: Date.now() - started, error: message, messageId: botMsg.id };
     } finally {
       if (timeoutHandle) clearTimeout(timeoutHandle);
       unsubscribe?.();
       entry.unsubscribe = null;
       entry.busy = false;
+      entry.turnController = null;
       entry.liveMsgId = null;
       entry.startedAt = null;
       bus.emit('event', { t: 'typing', roomId, botId: bot.id, active: false });
@@ -1676,8 +1940,12 @@ export class PiRunner {
   }
 
   async abort(roomId) {
+    this.directDeliveryEpochs.set(roomId, (this.directDeliveryEpochs.get(roomId) ?? 0) + 1);
     // 用户按了停止：排队中的轮次一并清掉，不然它会在当前这轮结束后自己接着跑
     this.roundQueue.delete(roomId);
+    // ★ 同理，连发合并队列里攥着的也要丢 ——
+    //   用户按了停止，接着再冒出一条刚攒好的消息，看起来就像"停不住"。
+    this.mergeQueue.drop(roomId);
     // ★ 还要告诉**正在跑的那轮**别再往下派人了。
     //
     //   真事：用户点终止之后"还要等很久"。因为以前只 abort 了当前这个 session ——
@@ -1689,6 +1957,7 @@ export class PiRunner {
     for (const [key, entry] of this.sessions) {
       if (key.startsWith(`${roomId}:`) && entry.session && entry.busy) {
         live.push({ key, entry });
+        entry.turnController?.abort();
         entry.session.abort().catch(() => {});
         aborted = true;
       }
@@ -1704,7 +1973,14 @@ export class PiRunner {
         roomId,
         msg.id,
         {
-          status: 'error',
+          // ★ 用 'aborted' 而不是 'error'：用户主动按 Esc 不是"出错"。
+          //   渲染成红色错误气泡会让人以为程序坏了 —— 而在 pi agent 里
+          //   按 Esc 终止就是终止，界面不留痕。
+          //   前端据这个 status 直接不画气泡（见 chat_screen 的 isAborted）。
+          //
+          //   error 文本保留：上层（run 的返回值、日志）还要用它区分原因；
+          //   只是前端拿到 status='aborted' 就不再渲染这一条。
+          status: 'aborted',
           error: '已按你的要求终止',
           steps: (msg.steps ?? []).map((s) =>
             s?.status === 'running' ? { ...s, status: 'error', error: '已终止' } : s,
@@ -1730,7 +2006,7 @@ export class PiRunner {
    * 用户只是想让它"能装更多"，不是想让它忘掉刚才做的事。
    */
   reloadSessionForBot(botId) {
-    const n = disposeMatching(this.sessions, (key) => key.endsWith(`:${botId}`)).length;
+    const n = invalidateSessions(this.sessions, (key) => key.endsWith(`:${botId}`));
     if (n) log(`${store.getBot(botId)?.name ?? botId} 的会话已按新预算重建（历史保留）`);
     return n;
   }

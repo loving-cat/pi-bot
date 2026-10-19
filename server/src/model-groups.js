@@ -26,22 +26,19 @@ import path from 'node:path';
 
 import { config } from './config.js';
 import { log, newId, now, readJson, writeJsonAtomic } from './util.js';
-
-/** 一个模型没写 contextWindow/maxTokens 时用的兜底值（偏保守，用户可覆盖） */
-const DEFAULT_CONTEXT_WINDOW = 128_000;
-const DEFAULT_MAX_TOKENS = 8_192;
+import { mergeGroupModels } from './model-capacity.js';
+import { modelFailure } from './model-reply.js';
+import {
+  THINKING_LEVELS,
+  thinkingCompat,
+  thinkingLevelMapError,
+} from './model-thinking.js';
 
 /** 支持的接口类型。够用就好，不追求全 —— 加错了比不加更糟。 */
 export const API_TYPES = ['openai-completions', 'openai-responses', 'anthropic-messages'];
 
 function str(v, max = 400) {
   return String(v ?? '').trim().slice(0, max);
-}
-
-function positiveIntOrNull(v) {
-  const n = Number(v);
-  if (!Number.isFinite(n) || n <= 0) return null;
-  return Math.floor(n);
 }
 
 /** key 打码：只留头尾，中间固定省略号。空就是空，别假装有。 */
@@ -64,42 +61,28 @@ export class ModelGroup {
    *   这是"用户填错了"，不是"程序坏了"，调用方要原样显示给用户看。
    */
   static fromInput(input = {}, { existing = null } = {}) {
-    const baseUrl = str(input.baseUrl, 400).replace(/\/+$/, '');
+    const baseUrl = str(input.baseUrl ?? existing?.baseUrl, 400).replace(/\/+$/, '');
     if (!baseUrl) return { error: 'baseUrl 不能为空' };
     if (!/^https?:\/\//i.test(baseUrl)) {
       return { error: 'baseUrl 要以 http:// 或 https:// 开头' };
     }
 
-    const name = str(input.name, 60) || '未命名模型组';
+    const name = str(input.name ?? existing?.name, 60) || '未命名模型组';
 
     // 支持两种写法：字符串数组，或者带覆盖项的对象数组
-    const rawModels = Array.isArray(input.models) ? input.models : [];
-    const seen = new Set();
-    const models = [];
-    for (const raw of rawModels) {
-      const src = typeof raw === 'string' ? { id: raw } : raw || {};
-      const id = str(src.id, 200);
-      if (!id || seen.has(id)) continue;
-      seen.add(id);
-      const cw = positiveIntOrNull(src.contextWindow) ?? positiveIntOrNull(input.contextWindow);
-      const mt = positiveIntOrNull(src.maxTokens) ?? positiveIntOrNull(input.maxTokens);
-      models.push({
-        id,
-        name: str(src.name, 120) || id,
-        contextWindow: cw ?? DEFAULT_CONTEXT_WINDOW,
-        maxTokens: mt ?? DEFAULT_MAX_TOKENS,
-        // 默认只声明 text：图片支持各接口差异太大，猜错了会直接把请求打挂
-        input: Array.isArray(src.input) && src.input.includes('image')
-          ? ['text', 'image']
-          : ['text'],
-        reasoning: Boolean(src.reasoning),
-      });
-    }
-    if (!models.length) return { error: '至少要给一个 modelId' };
+    const rawModels = input.models === undefined ? existing?.models ?? [] : input.models;
+    const merged = mergeGroupModels(Array.isArray(rawModels) ? rawModels : [], input, existing?.models);
+    if (merged.error) return { error: merged.error };
+    const models = merged.models;
 
-    const api = API_TYPES.includes(input.api) ? input.api : API_TYPES[0];
+    const api = API_TYPES.includes(input.api) ? input.api : existing?.api ?? API_TYPES[0];
     // 没改 key 就把老的拿回来（App 拿到的是打码后的，不能拿它覆盖真 key）
     const apiKey = str(input.apiKey, 400) || existing?.apiKey || '';
+
+    const brokenModel = models.find((m) => thinkingLevelMapError(m.thinkingLevelMap));
+    if (brokenModel) {
+      return { error: `模型 ${brokenModel.id}：${thinkingLevelMapError(brokenModel.thinkingLevelMap)}` };
+    }
 
     return {
       group: new ModelGroup({
@@ -111,7 +94,7 @@ export class ModelGroup {
         apiKey,
         api,
         models,
-        enabled: input.enabled === undefined ? true : Boolean(input.enabled),
+        enabled: input.enabled === undefined ? existing?.enabled ?? true : Boolean(input.enabled),
         // 内置组（从本机已有配置里带出来的，比如我们自己在用的 cline 线路）——
         // 不给删：它就是当前跑着的配置，删掉等于把自己踢下线。
         builtin: existing?.builtin ?? Boolean(input.builtin),
@@ -170,29 +153,28 @@ export class ModelGroup {
       // 模型级 compat 必填：pi 的 getApiKeyAndHeaders 依据模型上的
       // authHeader / thinkingFormat / supportsReasoningEffort 决定如何附带凭据，
       // 仅设置 provider 级 authHeader 不生效。与 providers.js 中的配置保持一致。
-      models: this.models.map((m) => ({
-        id: m.id,
-        name: m.name,
-        input: m.input,
-        reasoning: m.reasoning,
-        contextWindow: m.contextWindow,
-        maxTokens: m.maxTokens,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-        thinkingLevelMap: {
-          off: 'minimal',
-          minimal: 'minimal',
-          low: 'low',
-          medium: 'medium',
-          high: 'high',
-          xhigh: 'high',
-          max: 'max',
-        },
-        compat: {
-          supportsDeveloperRole: false,
-          supportsReasoningEffort: true,
-          thinkingFormat: 'openai',
-        },
-      })),
+      models: this.models.map((m) => {
+        const reasoning = Boolean(m.reasoning);
+        // 思考档位映射按模型存；没显式给就用深拷贝的默认值（全档位同名）
+        const levelMap = m.thinkingLevelMap ??
+          (reasoning
+            ? Object.fromEntries(THINKING_LEVELS.map((level) => [level, level]))
+            : null);
+        return {
+          id: m.id,
+          name: m.name,
+          input: m.input,
+          reasoning,
+          contextWindow: m.contextWindow,
+          maxTokens: m.maxTokens,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          ...(levelMap ? { thinkingLevelMap: levelMap } : {}),
+          compat: {
+            supportsDeveloperRole: false,
+            ...thinkingCompat({ reasoning, thinkingFormat: m.thinkingFormat }),
+          },
+        };
+      }),
     };
   }
 
@@ -293,7 +275,7 @@ export async function testModelGroup({
     }
     // 其他状态（404/405…）继续往下试 chat
   } catch (err) {
-    netError = err?.message || String(err);
+    netError = modelFailure(err).error;
   }
 
   // ② 最小 chat 请求（一些中转站没有 /models）
@@ -318,7 +300,7 @@ export async function testModelGroup({
     }
     return { ok: false, ms: Date.now() - t0, error: explain(res.status) };
   } catch (err) {
-    const e = err?.message || String(err);
+    const e = modelFailure(err).error;
     return {
       ok: false,
       ms: Date.now() - t0,

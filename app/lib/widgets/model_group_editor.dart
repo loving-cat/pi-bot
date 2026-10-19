@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../models.dart';
+import '../model_group_capacity.dart';
 import '../scope.dart';
 import '../theme.dart';
+import 'model_capacity_fields.dart';
 
 /// 设置里的「模型组」区块。
 ///
@@ -142,6 +144,10 @@ class ModelGroupsSection extends StatelessWidget {
                   color: PB.textTertiary,
                 ),
               ),
+              ModelGroupModelSummary(
+                group: g,
+                onEdit: (model) => _openEditor(context, group: g, modelId: model.id),
+              ),
             ],
           ),
         ),
@@ -193,18 +199,19 @@ class ModelGroupsSection extends StatelessWidget {
     );
   }
 
-  Future<void> _openEditor(BuildContext context, {ModelGroup? group}) async {
+  Future<void> _openEditor(BuildContext context, {ModelGroup? group, String? modelId}) async {
     await showDialog<void>(
       context: context,
-      builder: (ctx) => _Editor(group: group),
+      builder: (ctx) => _Editor(group: group, modelId: modelId),
     );
   }
 }
 
 class _Editor extends StatefulWidget {
-  const _Editor({this.group});
+  const _Editor({this.group, this.modelId});
 
   final ModelGroup? group;
+  final String? modelId;
 
   @override
   State<_Editor> createState() => _EditorState();
@@ -216,12 +223,17 @@ class _EditorState extends State<_Editor> {
     text: widget.group?.baseUrl ?? '',
   );
   final _key = TextEditingController();
-  late final _models = TextEditingController(
-    text: (widget.group?.models ?? []).map((m) => m.id).join('\n'),
-  );
+  late List<ModelCardDraft> _modelRows = modelCardDrafts(widget.group?.models ?? []);
+  int _nextRowId = 0;
+  int? _focusedRowId;
   String _api = 'openai-completions';
   String? _error;
   bool _saving = false;
+
+  /// 思考强度可选项（服务端下发，Windows 与 Mac 共用同一份）
+  List<String> _thinkingFormats = const [];
+  List<String> _thinkingLevels = const [];
+  List<String> _thinkingUpstreamValues = const [];
 
   /// 连通性测试的结果（null = 还没测过）
   Map<String, dynamic>? _test;
@@ -231,6 +243,30 @@ class _EditorState extends State<_Editor> {
   void initState() {
     super.initState();
     _api = widget.group?.api ?? 'openai-completions';
+    if (_modelRows.isEmpty) _modelRows = [const ModelCardDraft(rowId: 0)];
+    _nextRowId = _modelRows.length;
+    for (final row in _modelRows) {
+      if (row.id == widget.modelId) _focusedRowId = row.rowId;
+    }
+    _loadThinkingOptions();
+  }
+
+  /// 思考强度的可选项从服务端取（Windows 与 Mac 共用同一套枚举）。
+  /// 拿不到时界面会自动回退内置的七档，不会白屏。
+  Future<void> _loadThinkingOptions() async {
+    final options = await AppScope.read(context).loadThinkingOptions();
+    if (!mounted) return;
+    setState(() {
+      _thinkingFormats = ((options['formats'] as List?) ?? const [])
+          .map((e) => '$e')
+          .toList();
+      _thinkingLevels = ((options['levels'] as List?) ?? const [])
+          .map((e) => '$e')
+          .toList();
+      _thinkingUpstreamValues = ((options['upstreamValues'] as List?) ?? const [])
+          .map((e) => '$e')
+          .toList();
+    });
   }
 
   @override
@@ -238,7 +274,6 @@ class _EditorState extends State<_Editor> {
     _name.dispose();
     _baseUrl.dispose();
     _key.dispose();
-    _models.dispose();
     super.dispose();
   }
 
@@ -253,9 +288,8 @@ class _EditorState extends State<_Editor> {
       'baseUrl': _baseUrl.text.trim(),
       if (_key.text.trim().isNotEmpty) 'apiKey': _key.text.trim(),
       'api': _api,
-      'model': _models.text
-          .split('\n')
-          .map((l) => l.trim())
+      'model': _modelRows
+          .map((row) => row.id.trim())
           .firstWhere((l) => l.isNotEmpty, orElse: () => ''),
     });
     if (!mounted) return;
@@ -266,13 +300,9 @@ class _EditorState extends State<_Editor> {
   }
 
   Future<void> _save() async {
-    final models = _models.text
-        .split('\n')
-        .map((l) => l.trim())
-        .where((l) => l.isNotEmpty)
-        .toList();
-    if (models.isEmpty) {
-      setState(() => _error = '至少要填一个模型名（一行一个）');
+    final payload = buildModelCardModels(_modelRows);
+    if (payload.error != null) {
+      setState(() => _error = payload.error);
       return;
     }
     setState(() {
@@ -286,7 +316,7 @@ class _EditorState extends State<_Editor> {
       'api': _api,
       // 留空 = 不改原来的 key（App 拿到的是打码后的，不能拿它覆盖真 key）
       if (_key.text.trim().isNotEmpty) 'apiKey': _key.text.trim(),
-      'models': models,
+      'models': payload.models,
     });
     if (!mounted) return;
     if (err != null) {
@@ -355,11 +385,24 @@ class _EditorState extends State<_Editor> {
                 onChanged: (v) => setState(() => _api = v ?? _api),
               ),
               const SizedBox(height: 10),
-              _field('模型名（一行一个）', _models, 'gpt-5\ndeepseek-v3', lines: 4),
-              const SizedBox(height: 2),
-              const Text(
-                '模型名要跟接口那边完全一致。填完保存就能在给 bot 选模型时看到。',
-                style: TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
+              ModelCardsEditor(
+                rows: _modelRows,
+                focusedRowId: _focusedRowId,
+                enabled: !_saving,
+                thinkingFormats: _thinkingFormats,
+                thinkingLevels: _thinkingLevels,
+                thinkingUpstreamValues: _thinkingUpstreamValues,
+                onChanged: (id, update) => setState(() {
+                  _modelRows = [for (final old in _modelRows) old.rowId == id ? update(old) : old];
+                }),
+                onAdd: () => setState(() {
+                  final row = ModelCardDraft(rowId: _nextRowId++);
+                  _modelRows = [..._modelRows, row];
+                  _focusedRowId = row.rowId;
+                }),
+                onRemove: (id) => setState(() {
+                  _modelRows = _modelRows.where((row) => row.rowId != id).toList();
+                }),
               ),
               const SizedBox(height: 6),
               Row(

@@ -1,47 +1,98 @@
 # macOS（DMG）支持清单
 
-目标：在 MacBook 上双击图标就能用，体验与 Windows 版一致。
-构建脚本：`scripts/pack-macos.sh`（必须在 macOS 上跑）。
+桌面端负责启动本机 Node 服务端，数据保存在用户目录。构建与打包入口为
+`scripts/pack-macos.sh`，脚本必须在 macOS 上运行。
 
-## 已经跨平台的
+## 构建与打包
+
+准备完整 Xcode 并完成首次启动、许可与组件安装；只有 Xcode 命令行工具不足以完成
+Flutter 原生构建。另需 Flutter macOS desktop、Node 22+ 和 npm：
+
+```bash
+flutter config --enable-macos-desktop
+cd app
+flutter pub get
+flutter analyze
+flutter test
+cd ..
+./scripts/pack-macos.sh
+```
+
+多个 Xcode 并存时，用 `xcode-select` 或 `DEVELOPER_DIR` 选择对应的 Developer 目录。
+脚本会检查 Xcode 初始化和 macOS SDK，再执行 `flutter build macos --release`。
+
+- 构建来源：`app/build/macos/Build/Products/Release/pi-bot.app`，兼容 `pi_bot.app`。
+- 发行 App：`dist/pi-bot.app`；服务端位于其 `Contents/Resources/server`。
+- DMG：`dist/pi-bot-<服务端版本>.dmg`，版本取自 `server/package.json`。
+- 服务端目录内执行 `npm install --omit=dev` 并检查声明依赖可解析；包内不附带 Node。
+- App 使用 ad-hoc 签名，脚本执行签名与 DMG 完整性校验后才替换旧成品；重复运行保留
+  `dist` 中其他文件，失败时保留或恢复旧成品。
+
+已有 Release App 时可只重新组装服务端和 DMG：
+
+```bash
+./scripts/pack-macos.sh --no-build
+```
+
+`--no-build` 不检查完整 Xcode、不调用 Flutter，但仍需已有构建产物、macOS、Node 与 npm。
+只修改服务端时可以复用；修改 Flutter 或原生工程后须重新构建。
+`--clear-quarantine` 仅在显式传入时清除本轮产物的隔离属性，默认关闭。
+`.app`、`.dmg` 和 `node_modules` 不应提交到仓库；发布安装包时使用 Release 附件。
+
+## 平台实现
 
 | 位置 | 说明 |
 |---|---|
-| `server/src/config.js` | 数据目录按平台选（macOS `~/Library/Application Support/pi-bot/data`） |
-| `app/lib/server/locate.dart` | 找 node：`PI_BOT_NODE` → 可执行文件同级 → `which node`；只在 Windows 查 Program Files |
-| `app/lib/server/supervisor.dart` | 停进程按平台分流（Windows `taskkill` / 其它 `killPid`） |
-| `app/lib/server/launcher.dart` | 状态目录按平台选（已补 macOS，不再落到临时目录） |
-| `server/src/shells.js` | `spawn(command, { shell: true })`，两种系统都走各自 shell |
-| 窗口 | `window_manager` 支持 macOS；无标题栏与自绘按钮同一套代码 |
+| `server/src/config.js` | macOS 默认数据目录为 `~/Library/Application Support/pi-bot/data` |
+| `app/lib/server/locate.dart` | 查找 App Resources 中的服务端；Node 支持用户设置、环境变量、应用目录、PATH 与 macOS 常见安装目录 |
+| `app/lib/server/health.dart` | 限制健康响应大小，校验成功标记、服务名和版本 |
+| `app/lib/server/spawn_posix.dart` | 独立进程组启动服务端，标准输出直接写日志，释放辅助进程 |
+| `app/lib/server/supervisor.dart` | Windows 与 POSIX 分流启动、停止和 PID 管理 |
+| `app/lib/server/launcher.dart` | 启动编排；macOS 状态与日志保存在 `~/Library/Application Support/pi-bot` |
+| `app/lib/clipboard_image_macos.dart` | 使用系统 `osascript` 与 AppKit 读取 PNG，支持 TIFF 转 PNG；读取完成或失败后清理私有临时目录 |
+| `app/lib/widgets/server_config_section.dart` | 正常设置页与启动失败页共用启动配置入口，可修改端口、数据目录、服务端入口和 Node 路径 |
+| 模型配置 | Windows/macOS 共用独立模型卡片，每个模型分别编辑 ID、显示名、上下文窗口与最大输出 |
 
-## 需要在本机验证或改的
+模型容量单位为 tokens，必须是正整数，最大输出不能超过上下文窗口。已有模型的容量
+留空保留原值，新模型留空采用服务端默认值；配置值不代表接口已确认支持该容量。
+`/models` 可访问只证明模型列表接口可达，仍需实际推理鉴权通过。
 
-1. **剪贴板贴图**：`app/lib/clipboard_image.dart` 目前只实现了 Windows
-   （PowerShell + `Clipboard.GetImage`）。macOS 上现在会返回 null —— 纯文本粘贴正常，
-   截图粘贴不可用。要补：用 `osascript` 写临时 PNG，或用 `pngpaste`/`NSPasteboard` 原生调用。
-2. **Node 依赖**：安装包不内置 node（体积考虑）。用户机器需要 Node 22+；
-   也可以在 `Contents/Resources` 里放 `node` 并让 locator 优先用它。
-3. **签名 / 公证**：分发 DMG 给外部用户时，macOS 会拦未签名应用。
-   需要 Apple Developer 证书 + `codesign` + `notarytool`（这一步不影响本机自用）。
-4. **服务端进程生命周期**：macOS 上父进程退出不会带走子进程（我们本来就要这个行为），
-   但"关掉 App 后服务端还在"要验证一次；看 `ps aux | grep server/src/index.js`。
-5. **firewall**：首次启动 node 监听 0.0.0.0 时 macOS 会弹"是否允许接受传入连接"，
-   要点允许，否则手机连不上。
+## 验证状态
 
-## 验证清单（在 Mac 上跑一遍）
+2026-10-19 已使用 Xcode 16.4 在真实 Mac 上完成 Flutter Release 构建，真实打包得到
+`.app` 与 `.dmg`，并通过脚本内签名和 DMG 校验。命令桩测试只覆盖脚本分支与失败恢复，
+不能替代这项原生构建验证。
 
-- [ ] `flutter analyze` / `flutter test` 全绿
-- [ ] `./scripts/pack-macos.sh` 产出 `.app` 与 `.dmg`
-- [ ] 双击 App：自动拉起服务端（`/health` 通），界面进主界面
-- [ ] 关掉 App：服务端仍在（`ps` 能看到），再打开直接连上
-- [ ] 杀掉服务端：4~5 秒自动重启
-- [ ] 私聊开场（自我介绍 + 卡片）、任务板、审批卡片、改动文件卡片都正常
-- [ ] 群聊：派活 → 私聊回执；`ask_user` 在群里被拒
-- [ ] 附件：拖 PDF/Word/Excel 进窗口；>8MB 走分片
-- [ ] 设置里能改端口 / 数据目录 / node 路径，保存后自动重启
+以下是 2026-10-19 本轮真实 Mac 验证结果。模型调用观察到 HTTP 401 认证拒绝与
+HTTP 403 权限拒绝，相关聊天流程仍需在凭据及模型权限有效后复验。未勾选项不能
+因编译、单元测试或假模型测试通过而视为通过。
 
-## 已知差异（可接受）
+- [x] 打开 `dist/pi-bot.app`，自动拉起服务端并进入主界面。
+- [x] `/health` 返回 `ok:true`；本轮使用空闲端口 18787，保留原占用端口上的其他程序。
+- [x] 数据落在默认用户数据目录，而非临时目录。
+- [x] 正常退出 App 后原服务端 PID 仍在，再次打开复用同一进程。
+- [x] 强制结束已核对归属的服务端后，4379ms 内恢复健康检查并产生新 PID。
+- [ ] 空私聊先自我介绍再出选项卡片：本轮模型请求被拒绝，未通过。
+- [x] 任务板真实完成新增、置顶、勾完成、展开与删除，面板即时刷新。
+- [ ] 审批后实际写文件并继续执行：受模型认证/权限阻塞，完整流程未完成。
+- [ ] 附件部分通过：文件选择器上传 PDF、Excel 与 9437783 字节 PDF，落盘及下载
+  字节均一致；大文件按客户端大于 8MB 的分支使用分片上传，未另抓网络路由；
+  Finder 拖拽入口未完成实测，整项不能记为通过。
+- [ ] 群聊派活与两条私聊回执：受模型认证/权限阻塞，完整流程未完成。
+- [x] 设置页切换到 18788、指定 Node 与隔离数据目录后生效；再通过设置页恢复
+  18787、自动 Node 和默认目录，原模型组仍在。
 
-- 剪贴板贴图（上表第 1 条）暂缺；
-- 托盘/通知与 Windows 实现不同（`flutter_local_notifications` 在 macOS 需要额外权限声明）；
-- 字体渲染差异：中文回退到苹方（Windows 是微软雅黑），排版已在设计时按两套字体留了余量。
+设置页已真实展示逐模型容量，编辑窗口可新增第二张独立卡片；验证草稿取消后原配置保留。
+本轮最终静态检查无问题，Flutter 267 项通过、1 项跳过；服务端测试报告 495 项通过，
+其中上游 `secrets` 的 3 个异步用例没有可靠等待，可靠完成数为 492，不能将其计为完整证明。
+
+后续验收应在可用模型配置下补齐未通过项，并复验系统剪贴板截图粘贴、纯文本回退及无图场景。
+
+## 已知限制
+
+- 目标机器需自行安装 Node 22+；安装包不包含 Node。
+- 当前为 ad-hoc 签名，未做 Developer ID 签名与公证。对外分发需另行配置证书与公证流程；
+  清除隔离属性不等于完成公证。
+- 本地通知目前仅在 Android/iOS 启用；macOS 不初始化该插件，暂不提供本地通知。
+- 首次监听局域网地址时可能出现系统防火墙提示；手机连接需网络权限与可达性。
+- 中文使用系统字体回退；不同平台的字体渲染可能存在差异。

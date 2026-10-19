@@ -9,11 +9,14 @@ import '../native.dart';
 import '../notify.dart';
 import '../scope.dart';
 import '../theme.dart';
+import '../widgets/toast.dart';
 import '../widgets/group_limits_section.dart';
 import '../widgets/user_name_section.dart';
 import '../widgets/model_group_editor.dart';
 import '../widgets/server_config_section.dart';
 import '../widgets/log_section.dart';
+import '../widgets/mcp_section.dart';
+import '../widgets/lessons_section.dart';
 import '../widgets/skills_library.dart';
 import '../widgets/sites_section.dart';
 import '../motion.dart';
@@ -109,8 +112,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     children: switch (_tab) {
                       0 => _connectTab,
                       1 => _serverTab,
-                      2 => const [SkillsLibrarySection()],
-                      3 => const [SitesSection()],
+                      2 => const [SkillsLibrarySection(), LessonsSection()],
+                      3 => const [McpSection()],
+                      4 => const [SitesSection()],
                       _ => _advancedTab,
                     },
                   ),
@@ -178,12 +182,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     icon: const Icon(LucideIcons.copy, size: 15),
                     onPressed: () {
                       Clipboard.setData(ClipboardData(text: base));
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('地址已复制'),
-                          duration: Duration(milliseconds: 1200),
-                        ),
-                      );
+                      toast(context, '地址已复制');
                     },
                   ),
                 ],
@@ -209,12 +208,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       Clipboard.setData(
                         ClipboardData(text: '${pairing['code']}'),
                       );
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('配对码已复制'),
-                          duration: Duration(milliseconds: 1200),
-                        ),
-                      );
+                      toast(context, '配对码已复制');
                     },
                     child: const Icon(
                       LucideIcons.copy,
@@ -301,7 +295,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     onTap: () async {
                       await state.signOut();
-                      if (context.mounted) Navigator.pop(context);
+                      if (mounted) Navigator.pop(context);
                     },
                   ),
                 ),
@@ -574,7 +568,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               onTap: () async {
                 await state.signOut();
-                if (context.mounted) Navigator.pop(context);
+                if (mounted) Navigator.pop(context);
               },
             ),
           ],
@@ -602,7 +596,8 @@ class _SettingsTabs extends StatelessWidget {
     (icon: LucideIcons.smartphone, label: '连接'),
     (icon: LucideIcons.server, label: '服务端'),
     (icon: LucideIcons.sparkles, label: '技能'),
-    (icon: LucideIcons.plug, label: '系统'),
+    (icon: LucideIcons.plug, label: 'MCP'),
+    (icon: LucideIcons.network, label: '系统'),
     (icon: LucideIcons.slidersHorizontal, label: '高级'),
   ];
 
@@ -806,18 +801,15 @@ class _UpdateRowState extends State<_UpdateRow> {
     setState(() => _checking = false);
 
     if (info == null) {
-      ScaffoldMessenger.maybeOf(context)
-          ?.showSnackBar(const SnackBar(content: Text('检查更新失败（服务端没连上或网络不通）')));
+      toast(context, '检查更新失败（服务端没连上或网络不通）');
       return;
     }
     if (!info.ok) {
-      ScaffoldMessenger.maybeOf(context)
-          ?.showSnackBar(SnackBar(content: Text(info.reason)));
+      toast(context, info.reason);
       return;
     }
     if (!info.update) {
-      ScaffoldMessenger.maybeOf(context)
-          ?.showSnackBar(SnackBar(content: Text('已经是最新版本（${info.current}）')));
+      toast(context, '已经是最新版本（${info.current}）');
       return;
     }
     // 有新版本：走同一个提示流程，用户确认后下载
@@ -842,8 +834,7 @@ class _UpdateRowState extends State<_UpdateRow> {
       if (result.ok) {
         await showDownloadDoneDialog(context, path: result.path!, info: info);
       } else if (result.error != null && result.error != '已取消') {
-        ScaffoldMessenger.maybeOf(context)
-            ?.showSnackBar(SnackBar(content: Text('下载失败：${result.error}')));
+        toast(context, '下载失败：${result.error}');
       }
     }
   }

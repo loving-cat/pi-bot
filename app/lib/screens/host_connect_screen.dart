@@ -8,6 +8,7 @@ import '../platform.dart';
 import '../scope.dart';
 import '../theme.dart';
 import '../widgets/app_logo.dart';
+import '../widgets/server_config_section.dart';
 
 /// 桌面端专用：本机服务端连不上时的兜底页。
 ///
@@ -140,6 +141,11 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
                     ),
                     const SizedBox(height: 12),
                   ],
+                  TextButton(
+                    onPressed: () => showServerConfigDialog(context),
+                    child: const Text('本机服务端设置'),
+                  ),
+                  const SizedBox(height: 12),
                   if (state.serverLog.isNotEmpty) ...[
                     Container(
                       width: double.infinity,

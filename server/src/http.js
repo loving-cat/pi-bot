@@ -7,6 +7,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config.js';
 import { modelGroups, testModelGroup } from './model-groups.js';
+import {
+  THINKING_FORMATS,
+  THINKING_LEVELS,
+  THINKING_PRESETS,
+  THINKING_UPSTREAM_VALUES,
+  availableThinkingLevels,
+} from './model-thinking.js';
+import { capacityError } from './model-capacity.js';
 import { store } from './store.js';
 import { metaFor, pathFor, saveBuffer, saveMovedFile } from './attachments.js';
 import { lanAddresses } from './pairing.js';
@@ -16,6 +24,24 @@ import { computeNextRun, validateSchedule } from './automations.js';
 import { VERSION } from './version.js';
 import { checkForUpdate, clearUpdateCache } from './update-checker.js';
 import { parseSkillMarkdown } from './skills.js';
+import {
+  selectLessonsFor,
+  lessonsPromptLines,
+  LESSON_LIMITS,
+} from './lessons.js';
+import {
+  scanLocalCapabilities,
+  localSkillToLibrary,
+  localMcpToLibrary,
+} from './local-capabilities.js';
+import {
+  MCP_LIMITS,
+  MCP_TYPES,
+  MCP_EXPOSURES,
+  mcpRejectReason,
+  normalizeMcpServer,
+  testMcpServer,
+} from './mcp.js';
 import { probeLogin } from './site-probe.js';
 import { createSiteRuntime } from './site-runtime.js';
 import { publicSite } from './sites.js';
@@ -384,7 +410,26 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         const keyword = (url.searchParams.get('q') || '').toLowerCase();
         const all = runner.availableModels;
         const list = keyword ? all.filter((m) => `${m.provider}/${m.id}`.toLowerCase().includes(keyword)) : all;
-        return send(res, 200, { total: list.length, models: list.slice(0, 200) });
+        // ★ 带上模型组里的思考声明：前台靠它决定要不要展示思考档位。
+        //   注册到 pi runtime 的模型对象不会带我们自己的 thinkingLevelMap，
+        //   所以要回去查模型组那份原始配置。
+        const thinkingBySlug = new Map();
+        for (const group of modelGroups.list()) {
+          for (const model of group.models) {
+            thinkingBySlug.set(`${group.id}/${model.id}`, model);
+          }
+        }
+        const decorate = (m) => {
+          const own = thinkingBySlug.get(`${m.provider}/${m.id}`);
+          if (!own) return m;
+          return {
+            ...m,
+            reasoning: Boolean(own.reasoning),
+            thinkingFormat: own.thinkingFormat || '',
+            thinkingLevels: availableThinkingLevels(own),
+          };
+        };
+        return send(res, 200, { total: list.length, models: list.slice(0, 200).map(decorate) });
       }
 
       // ---------- 外部 Web 系统接入 ----------
@@ -502,6 +547,131 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         return send(res, 200, r);
       }
 
+      // ---------- 本机已装能力（只读扫描，不碰用户的 pi 配置）----------
+      // 用户在终端里早就装了一堆 skill / MCP，这里让他一键导入，不用手抄。
+      if (pathname === '/api/local-capabilities' && req.method === 'GET') {
+        const found = scanLocalCapabilities({
+          existingSkills: store.skillLibrary(),
+          existingMcp: store.mcpLibrary(),
+        });
+        return send(res, 200, found);
+      }
+
+      // 一键导入：传 kind + 名字列表。同名的不重复导，返回明细。
+      if (pathname === '/api/local-capabilities/import' && req.method === 'POST') {
+        const body = await readBody(req);
+        const kind = String(body.kind ?? '');
+        const wanted = new Set(
+          (Array.isArray(body.names) ? body.names : []).map((n) => String(n).toLowerCase()),
+        );
+        if (!wanted.size) return send(res, 400, { error: '没选要导入的条目' });
+
+        const found = scanLocalCapabilities({
+          existingSkills: store.skillLibrary(),
+          existingMcp: store.mcpLibrary(),
+        });
+        const imported = [];
+        const skipped = [];
+
+        if (kind === 'skill') {
+          for (const entry of found.skills) {
+            if (!wanted.has((entry.title || '').toLowerCase())) continue;
+            if (entry.imported) {
+              skipped.push({ title: entry.title, reason: '已经导入过了' });
+              continue;
+            }
+            const skill = localSkillToLibrary(entry);
+            if (!skill) {
+              skipped.push({ title: entry.title, reason: '内容不合法' });
+              continue;
+            }
+            const r = store.addSkill(skill);
+            if (r.error) skipped.push({ title: entry.title, reason: r.error });
+            else imported.push(r.skill.title);
+          }
+        } else if (kind === 'mcp') {
+          for (const entry of found.mcpServers) {
+            if (!wanted.has((entry.name || '').toLowerCase())) continue;
+            if (entry.imported) {
+              skipped.push({ title: entry.name, reason: '已经导入过了' });
+              continue;
+            }
+            const server = localMcpToLibrary(entry);
+            if (!server) {
+              skipped.push({ title: entry.name, reason: '配置不合法' });
+              continue;
+            }
+            const r = store.addMcpServer(server);
+            if (r.error) skipped.push({ title: entry.name, reason: r.error });
+            else imported.push(r.server.name);
+          }
+        } else {
+          return send(res, 400, { error: 'kind 只能是 skill 或 mcp' });
+        }
+
+        if (imported.length && kind === 'mcp') await runner.applyMcpChange?.();
+        log(`📥 从本机导入 ${imported.length} 个 ${kind}${skipped.length ? `，跳过 ${skipped.length} 个` : ''}`);
+        return send(res, 200, { imported, skipped });
+      }
+
+      // ---------- MCP 服务库（全局，所有 bot 共享） ----------
+      // 跟技能库不一样的地方：这里配的服务会**真去起子进程/连远端**，
+      // 所以默认 enabled=false，而且还要 bot 自己选中才挂载。
+      if (pathname === '/api/mcp' && req.method === 'GET') {
+        return send(res, 200, {
+          servers: store.mcpLibrary(),
+          limits: {
+            types: MCP_TYPES,
+            exposures: MCP_EXPOSURES,
+            maxTotal: MCP_LIMITS.total,
+            maxTimeout: MCP_LIMITS.timeoutSeconds,
+          },
+        });
+      }
+
+      if (pathname === '/api/mcp' && req.method === 'POST') {
+        const body = await readBody(req);
+        const r = store.addMcpServer(body);
+        if (r.error) return send(res, 400, { error: r.error });
+        // 改了服务库，挂着它的会话要重建才能拿到新工具
+        await runner.applyMcpChange?.();
+        return send(res, 200, { server: r.server });
+      }
+
+      const mcpMatch = pathname.match(/^\/api\/mcp\/([^/]+)$/);
+      if (mcpMatch && req.method === 'PATCH') {
+        const body = await readBody(req);
+        const r = store.updateMcpServer(decodeURIComponent(mcpMatch[1]), body);
+        if (r.error) return send(res, 404, { error: r.error });
+        await runner.applyMcpChange?.();
+        return send(res, 200, { server: r.server });
+      }
+      if (mcpMatch && req.method === 'DELETE') {
+        const r = store.removeMcpServer(decodeURIComponent(mcpMatch[1]));
+        if (r.error) return send(res, 404, { error: r.error });
+        await runner.applyMcpChange?.();
+        return send(res, 200, { ok: true });
+      }
+
+      /**
+       * 测一下这个 MCP 服务能不能连上。
+       *
+       * 不分类型写两套逻辑：都是"能不能把 TCP 打通并用得上"。
+       * HTTP 直接打个请求；stdio 真的把命令跑起来看能不能启动。
+       * 不在这里跑完整 MCP 握手（那要拉 SDK，太重），只回答"这条路通不通"。
+       */
+      if (pathname === '/api/mcp/test' && req.method === 'POST') {
+        const body = await readBody(req);
+        const saved = body.id ? store.mcpLibrary().find((s) => s.id === body.id) : null;
+        const merged = { ...(saved ?? {}), ...body };
+        const reason = mcpRejectReason(merged);
+        if (reason) return send(res, 200, { ok: false, error: reason });
+        const probe = normalizeMcpServer(merged);
+        if (!probe) return send(res, 200, { ok: false, error: '配置不合法' });
+        const r = await testMcpServer(probe);
+        return send(res, 200, r);
+      }
+
       // ---------- 技能库（全局，所有 bot 共享） ----------
       if (pathname === '/api/skills' && req.method === 'GET') {
         return send(res, 200, { skills: store.skillLibrary() });
@@ -549,6 +719,56 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
           imported: r.imported,
           skipped: [...r.skipped, ...unparsed],
         });
+      }
+
+      // ---------- 经验库（主控派活前按任务挑 1~3 条注入） ----------
+      // 注意：preview 必须放在 /api/lessons/:id 之前，否则会被当成 id="preview"。
+      if (pathname === '/api/lessons/preview' && req.method === 'GET') {
+        const task = String(url.searchParams.get('task') || '');
+        const roomId = String(url.searchParams.get('roomId') || '');
+        const picked = selectLessonsFor(store.lessonLibrary(), task, { roomId });
+        const lines = lessonsPromptLines(picked);
+        return send(res, 200, {
+          lines,
+          chars: lines.join('\n').length,
+          picked,
+          limits: LESSON_LIMITS,
+        });
+      }
+
+      if (pathname === '/api/lessons' && req.method === 'GET') {
+        return send(res, 200, {
+          lessons: store.lessonLibrary(),
+          limits: LESSON_LIMITS,
+        });
+      }
+
+      if (pathname === '/api/lessons' && req.method === 'POST') {
+        const body = await readBody(req);
+        const r = store.addLesson({
+          roomId: body.roomId,
+          dept: body.dept,
+          cue: body.cue,
+          lesson: body.lesson,
+          evidence: body.evidence,
+          verdict: body.verdict,
+          status: body.status,
+        });
+        if (r.error) return send(res, 400, { error: r.error });
+        return send(res, 200, { lesson: r.lesson });
+      }
+
+      const lessonMatch = pathname.match(/^\/api\/lessons\/([^/]+)$/);
+      if (lessonMatch && req.method === 'PATCH') {
+        const body = await readBody(req);
+        const r = store.updateLesson(decodeURIComponent(lessonMatch[1]), body);
+        if (r.error) return send(res, 404, { error: r.error });
+        return send(res, 200, { lesson: r.lesson });
+      }
+      if (lessonMatch && req.method === 'DELETE') {
+        const r = store.removeLesson(decodeURIComponent(lessonMatch[1]));
+        if (r.error) return send(res, 404, { error: r.error });
+        return send(res, 200, { ok: true });
       }
 
       // 检查更新：只查不装。下载与安装由客户端在用户确认后自己做。
@@ -647,9 +867,15 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
       const botMatch = pathname.match(/^\/api\/bots\/([^/]+)$/);
       if (botMatch && req.method === 'PATCH') {
         const body = await readBody(req);
+        const previous = store.getBot(botMatch[1]);
+        if (!previous) return send(res, 404, { error: 'bot 不存在' });
+        const model = runner.resolveModel?.(body.model ?? previous.model) ?? runner.model ?? {};
+        const capacityProblem = capacityError({ ...previous, ...body }, model, { allowNull: true });
+        if (capacityProblem) return send(res, 400, { error: capacityProblem });
         const bot = store.updateBot(botMatch[1], body);
         if (!bot) return send(res, 404, { error: 'bot 不存在' });
-        if (body.model !== undefined || body.thinking !== undefined) runner.resetSessionForBot(bot.id);
+        if (['model', 'thinking', 'contextWindow', 'maxTokens', 'reserveTokens', 'keepRecentTokens']
+          .some((key) => body[key] !== undefined)) runner.reloadSessionForBot(bot.id);
         return send(res, 200, { bot });
       }
       if (botMatch && req.method === 'DELETE') {
@@ -702,6 +928,17 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
       }
 
       // ---------- 模型组（用户自己配的 baseUrl/key/模型）----------
+      // 思考强度的可选值集中由服务端给出：Windows 与 Mac 共用同一套枚举，
+      // 升级只改一处，不会出现一端能选、另一端是死值。
+      if (pathname === '/api/model-thinking/options' && req.method === 'GET') {
+        return send(res, 200, {
+          levels: THINKING_LEVELS,
+          formats: THINKING_FORMATS,
+          presets: THINKING_PRESETS,
+          upstreamValues: THINKING_UPSTREAM_VALUES,
+        });
+      }
+
       if (pathname === '/api/model-groups' && req.method === 'GET') {
         return send(res, 200, { modelGroups: modelGroups.listPublic() });
       }
@@ -711,7 +948,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         const r = modelGroups.upsert(body);
         if (r.error) return send(res, 400, { error: r.error });
         // 运行时热注册，加完不用重启
-        const total = await runner.applyModelGroupChange();
+        const total = await runner.applyModelGroupChange(r.group.id);
         log(`🔌 新增模型组：${r.group.name}（${r.group.models.length} 个模型），可用模型 ${total} 个`);
         return send(res, 200, { group: r.group.toPublic() });
       }
@@ -735,14 +972,24 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         const body = await readBody(req);
         const r = modelGroups.upsert({ ...body, id: groupMatch[1] });
         if (r.error) return send(res, 400, { error: r.error });
-        await runner.applyModelGroupChange();
+        // 同 DELETE：刷新含真实网络请求（checkAuth），不等它 ——
+        // 否则 baseUrl 不通时保存也卡死。配置已落盘，后台同步菜单即可。
+        runner
+          .applyModelGroupChange(r.group.id)
+          .catch((err) => log(`保存后刷新失败（不影响保存本身）：${err?.message ?? err}`));
         return send(res, 200, { group: r.group.toPublic() });
       }
       if (groupMatch && req.method === 'DELETE') {
         const ok2 = modelGroups.remove(groupMatch[1]);
         if (!ok2) return send(res, 404, { error: '模型组不存在' });
-        await runner.applyModelGroupChange();
-        log(`🔌 删除模型组：${groupMatch[1]}`);
+        // ★ 删除不等刷新完成就回 —— 刷新要对每个 provider 做真实网络请求
+        //   （checkAuth），baseUrl 挂了的话会卡到超时（几十秒），
+        //   用户看到的就是“删不掉”。
+        //   删除本身已经落盘了，刷新只是同步内存里的菜单，后台跑完自然生效。
+        runner
+          .applyModelGroupChange(groupMatch[1])
+          .then(() => log(`🔌 删除模型组：${groupMatch[1]}`))
+          .catch((err) => log(`删除后刷新失败（不影响删除本身）：${err?.message ?? err}`));
         return send(res, 200, { id: groupMatch[1] });
       }
 

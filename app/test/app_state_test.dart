@@ -46,6 +46,14 @@ void main() {
   setUpAll(() => HttpOverrides.global = null);
 
   test('配对 + 拉状态 + 发消息 + 收流式回复', () async {
+    // 先看开关：默认不跑就别 bootstrap —— bootstrap 会真的去连本机服务端，
+    // CI 上没有服务端，WebSocket 会在用例"跳过之后"抛 Connection refused，
+    // 变成一条假失败（macOS runner 上就是这样红的）。
+    if (!runE2E) {
+      markTestSkipped('集成用例默认不跑（加 --dart-define=PI_BOT_E2E=true 才跑）');
+      return;
+    }
+
     SharedPreferences.setMockInitialValues({});
     final state = AppState();
     addTearDown(state.dispose);
@@ -56,10 +64,6 @@ void main() {
     if (state.paired) await state.signOut();
     expect(state.paired, isFalse);
 
-    if (!runE2E) {
-      markTestSkipped('集成用例默认不跑（加 --dart-define=PI_BOT_E2E=true 才跑）');
-      return;
-    }
     await state.useToken(serverUrl, token, device: 'flutter-test');
     expect(state.paired, isTrue, reason: '换 token 失败：${state.lastError}');
     await waitFor(() => state.link == LinkState.online, 20, 'WebSocket 连上');

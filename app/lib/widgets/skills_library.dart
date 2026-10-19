@@ -9,6 +9,9 @@ import '../models.dart';
 import '../motion.dart';
 import '../scope.dart';
 import '../theme.dart';
+import 'md_text.dart';
+import 'toast.dart';
+import 'local_capabilities_section.dart';
 
 /// 技能库面板（设置在「技能」标签页里）。
 ///
@@ -60,6 +63,8 @@ class _SkillsLibrarySectionState extends State<SkillsLibrarySection> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // 用户在终端里装过的 skill，一键导进来（只读扫描，不改他的配置）
+        const LocalCapabilitiesSection(kind: 'skill', title: '技能'),
         _Toolbar(
           total: all.length,
           shown: list.length,
@@ -107,8 +112,7 @@ class _SkillsLibrarySectionState extends State<SkillsLibrarySection> {
   }
 
   void _toast(BuildContext context, String text) {
-    ScaffoldMessenger.maybeOf(context)
-        ?.showSnackBar(SnackBar(content: Text(text)));
+    toast(context, text);
   }
 
   Future<void> _confirmDelete(
@@ -616,16 +620,28 @@ class _SkillCardState extends State<_SkillCard> {
               secondChild: Container(
                 width: double.infinity,
                 padding: const EdgeInsets.fromLTRB(35, 0, 12, 12),
-                child: SelectableText(
-                  s.howto.isEmpty ? '（还没写做法）' : s.howto,
-                  style: TextStyle(
-                    fontSize: PB.fsXs,
-                    color: s.howto.isEmpty
-                        ? PB.textQuaternary
-                        : PB.textSecondary,
-                    height: 1.7,
-                  ),
-                ),
+                // ★ 做法用 markdown 渲染，不是原样贴纯文本。
+                //   SKILL.md 里全是 `#` 标题、列表、```代码块```、表格 ——
+                //   原样显示就是一坨符号，既难读也看不出结构。
+                child: s.howto.isEmpty
+                    ? const SelectableText(
+                        '（还没写做法）',
+                        style: TextStyle(
+                          fontSize: PB.fsXs,
+                          color: PB.textQuaternary,
+                          height: 1.7,
+                        ),
+                      )
+                    : MdText(
+                        s.howto,
+                        selectable: true,
+                        compact: true,
+                        style: const TextStyle(
+                          fontSize: PB.fsXs,
+                          color: PB.textSecondary,
+                          height: 1.7,
+                        ),
+                      ),
               ),
               crossFadeState: _open
                   ? CrossFadeState.showSecond
