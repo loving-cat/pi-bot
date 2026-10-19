@@ -1,0 +1,23 @@
+app/test/task_board_test.dart
+  s_06973911ad2cd6::t_fb0331552d1e30 4,8-36,135
+  s_06973911ad2cd6::t_0637073e41f73f 37-43,99-101,113-134,136-150
+app/lib/widgets/task_board.dart
+  s_06973911ad2cd6::t_e66e859e8b8e6d 311-321
+  s_06973911ad2cd6::t_3246052dd8d3ab 66-70,83-86,138-141,181-182,322-323
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e3745b66ca9a7bb0851c6b4f96258e25cefe6e50",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
