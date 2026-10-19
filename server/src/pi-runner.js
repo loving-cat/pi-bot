@@ -43,7 +43,7 @@ import { attachmentBlock } from './extract.js';
 import { inboxPath, metaFor, readForModel, saveFromPath } from './attachments.js';
 import { parseMentions } from './mentions.js';
 import { log, pickEscalationHost, isSuperiorCall } from './util.js';
-import { planItem, shouldStopRound, leftBehind, planClosing } from './group-round.js';
+import { planItem, shouldStopRound, leftBehind, planClosing, isUserInitiatedRound } from './group-round.js';
 import {
   applyCompactionBudget,
   readContext,
@@ -254,17 +254,62 @@ export class PiRunner {
   }
 
   #dispatchGroupRound(roomId, text, files) {
+    // ★ 用户说话 = 最高优先级，**先让所有人停下**。
+    //
+    //   以前这里是“房间忙就排队等下一轮”：用户在群里补一句
+    //   「没完成的再完成一次」，结果成员还在跑上一轮的活，
+    //   界面显示“它下一步会看到” —— 用户看到的是“我说了但没反应”。
+    //
+    //   现在的语义：用户一开口，这一轮就作废。
+    //     · 正在跑的 bot 全部打断（不保留它们的中间输出）
+    //     · 旧轮次的队列清空
+    //     · 新的一轮由负责人带新 query 重新想、重新派
+    //
+    //   为什么可以这么硬：用户是唯一决策者。让它等几十秒甚至几分钟，
+    //   等来的还是基于旧需求的结果，比直接重来更糟。
+    //
+    //   ★ 注意：**房间锁不能被摘掉**。
+    //     锁的作用是“同一个房间不能并发跑两轮”，它跟“谁在跑”是两件事：
+    //     打断只是让旧轮的 bot 停下，旧轮本身还在走它的循环（要看到 abort
+    //     才会退出）。这里保留锁，新的那一轮自然排在旧轮退出之后 ——
+    //     否则两个 runRound 会同时在同一个房间里派活，消息会乱。
     if (this.roundLocks.has(roomId) || this.isRoomBusy(roomId)) {
-      const pending = this.roundQueue.get(roomId);
-      this.roundQueue.set(roomId, {
-        text: pending ? `${pending.text}\n${text}` : text,
-        files: pending ? [...pending.files, ...files] : [...files],
-      });
-      log(`【${store.getRoom(roomId)?.name ?? roomId}】房间正忙，这条消息排队等下一轮`);
+      log(
+        `【${store.getRoom(roomId)?.name ?? roomId}】用户插话 → 打断进行中的一轮，按新要求重来`,
+      );
+      this.#interruptRoundForUser(roomId);
+      // 旧轮攒着还没派的内容属于旧需求，丢掉
+      this.roundQueue.delete(roomId);
+      this.mergeQueue.drop(roomId);
+      // 把这条新消息登记成“下一轮”，等旧轮退出后 #drainGroupRounds 会接上
+      this.roundQueue.set(roomId, { text, files: [...files] });
       return Promise.resolve();
     }
     this.roundLocks.add(roomId);
     return this.#drainGroupRounds(roomId, { text, files });
+  }
+
+  /**
+   * 用户插话：把这一轮里**正在跑的所有 bot** 立刻停下来。
+   *
+   * 只 abort 会话、不碰消息状态：被中断的那几条消息会由 run() 自己的
+   * 失败分支处理（写成 aborted，前端不渲染）—— 跟用户按 Esc 终止是同一套语义。
+   * 区别只在于：这里不停房间锁，紧接着就要开新一轮。
+   */
+  #interruptRoundForUser(roomId) {
+    let n = 0;
+    for (const [key, entry] of this.sessions) {
+      if (!key.startsWith(`${roomId}:`)) continue;
+      if (!entry?.session || !entry.busy) continue;
+      try {
+        entry.turnController?.abort();
+        entry.session.abort?.().catch(() => {});
+        n++;
+      } catch {
+        // 单个会话打断失败不能挡住其他人停下
+      }
+    }
+    if (n) log(`已打断 ${n} 个正在跑的会话（用户插话）`);
   }
 
   /** 把排队的一轮轮跑掉；跑完（或出错）都要释放房间锁 */
@@ -770,6 +815,15 @@ export class PiRunner {
         budget: budget(bot.id),
         busy: busyNow,
         superior,
+        // ★ 只有"用户直接叫的"才享受打断特权。
+        //
+        //   为什么不能整轮都算：一轮里成员之间会互相 @，那些是日常协作。
+        //   若整轮都按"用户新需求"处理，同事一句 @ 就能打断别人手上的活 ——
+        //   群里会互相擂断（这正是 room-lock 那条测试守着的边界）。
+        //
+        //   判断依据看 item.fromId：为空说明这一条是用户直接点的名；
+        //   有值说明是某个 bot 在 @ 它，按上下级规则走。
+        userRound: !item.fromId && isUserInitiatedRound({ openerBotId }),
       });
       if (plan.kind === 'skip') {
         log(`【${room.name}】${plan.why} → 不再叫它`);
@@ -788,24 +842,44 @@ export class PiRunner {
       if (plan.kind === 'interrupt' || plan.kind === 'queue') {
         const entry = this.sessions.get(this.#key(roomId, bot.id));
         if (plan.kind === 'interrupt' && entry?.session) {
-          const steered =
-            `【${item.fromName || '上级'} 叫停】先把你手上正在做的事停一下。\n\n` +
-            `${item.fromName || '上级'} 刚刚说：\n` +
-            `${(item.fromText || '').slice(0, 1200) || '（看群里的最新消息）'}\n\n` +
-            '请先回报一句：你现在做到哪一步了、还差什么。\n' +
-            '然后按上面的新要求继续 —— 新要求优先于你手上正在做的事。';
+          const userRound = isUserInitiatedRound({ openerBotId });
+          const from = item.fromName || '上级';
+          // ★ 用户发起的新需求 vs 上级中途改主意，措辞不一样。
+          //
+          //   用户那一路要更硬：**旧活直接作废**，不要它"先报进度再继续"——
+          //   用户要的是"停，按新的来"，不是"你先把旧的收个尾"。
+          //   留着旧的收尾，用户会看到一堆跟新需求无关的产出。
+          const steered = userRound
+            ? `【用户叫停】用户刚发了新要求，**你手上那件立刻停下、不要再继续**。\n\n` +
+              `用户说：\n${(item.fromText || '').slice(0, 1200) || '（看群里的最新消息）'}\n\n` +
+              '旧任务的产出作废，不要再补完、也不要再汇报旧进度。\n' +
+              '直接按用户的新要求重新开始；如果这活不该你干，说一句就停，等负责人重新安排。'
+            : `【${from} 叫停】先把你手上正在做的事停一下。\n\n` +
+              `${from} 刚刚说：\n` +
+              `${(item.fromText || '').slice(0, 1200) || '（看群里的最新消息）'}\n\n` +
+              '请先回报一句：你现在做到哪一步了、还差什么。\n' +
+              '然后按上面的新要求继续 —— 新要求优先于你手上正在做的事。';
           try {
             await entry.session.steer(steered);
-            log(`【${room.name}】上级改主意了 → 叫停 ${bot.name}（它正忙，让它先报进度再接新要求）`);
+            log(
+              userRound
+                ? `【${room.name}】用户新需求 → 叫停 ${bot.name}（旧活作废，按新的重来）`
+                : `【${room.name}】上级改主意了 → 叫停 ${bot.name}（它正忙，让它先报进度再接新要求）`,
+            );
             store.appendMessage(
               {
                 roomId,
                 authorType: 'system',
                 authorId: bot.id,
                 authorName: '叫停回执',
-                text: `已叫停${bot.name}：让它先报进度，再按新的要求继续。`,
+                text: userRound
+                  ? `已让${bot.name}停下，按你的新要求重来。`
+                  : `已叫停${bot.name}：让它先报进度，再按新的要求继续。`,
                 status: 'done',
-                meta: { via: 'steer_by_superior', fromId: item.fromId ?? null },
+                meta: {
+                  via: userRound ? 'steer_by_user' : 'steer_by_superior',
+                  fromId: item.fromId ?? null,
+                },
               },
               // 插在它正在写的那条之前 —— 读起来是“叫停 → 它的回应”
               { beforeStreaming: true },
@@ -1199,28 +1273,22 @@ export class PiRunner {
     store.answerPendingAsk(roomId, clean);
 
     if (room.kind === 'group') {
-      // ★ 用户说话必须优先。
+      // ★ 用户说话 = 这一轮作废，全部停下重来。
       //
-      //   真事：一个成员挂了（超时被收住），用户在群里发话 —— 组长半天不响。
-      //   因为群聊有房间锁，而这锁是“忙则排队”：只要还有人在跑，
-      //   用户这条就被排到下一轮（日志里是“房间正忙，这条消息排队等下一轮”），
-      //   而那个成员可能还要跑好几分钟。
+      //   演进过程（三段历史都在这段注释里，免得以后又被改回去）：
+      //   1. 最早：房间忙就排队等下一轮 → 用户看到"它下一步会看到"，
+      //      但成员还在跑旧需求，用户的话等于没生效。
+      //   2. 后来：让组长另开一个会话当场回一句，其他人继续跑 →
+      //      用户看到有人回了，但群里的活还是按旧需求在干，产出对不上。
+      //   3. 现在：**打断所有正在跑的会话，丢掉旧队列，由负责人带新 query
+      //      重新想、重新派**。用户是唯一决策者，让他等旧活干完没有意义 ——
+      //      等来的结果基于已经被推翻的需求。
       //
-      //   用户是最高权威，不该排在机器后面。所以：别人继续跑（各干各的），
-      //   但组长当场回你一句 —— 它自己的会话是独立的，不会把正在干的人打断。
-      const roomBusy =
-        this.roundLocks.has(roomId) || this.isRoomBusy(roomId);
-      if (roomBusy && !this.isBusy(roomId, botId)) {
-        log(`【${room.name}】房间在忙，但用户说话了 → 让组长当场先回`);
-        this.#answerUserNow(roomId, bot, files).catch((err) =>
-          log('当场回应失败：', err?.message || err),
-        );
-      } else {
-        // 部门：老大先接，再往下派（房间级串行，忙则排队）
-        this.#dispatchGroupRound(roomId, clean, files).catch((err) =>
-          log('runRound 异常：', err?.stack || err),
-        );
-      }
+      //   打断动作在 #dispatchGroupRound 里做（那里能同时清掉 roundQueue），
+      //   这里只负责把新的一轮发起来。
+      this.#dispatchGroupRound(roomId, clean, files).catch((err) =>
+        log('runRound 异常：', err?.stack || err),
+      );
     } else {
       // ★ 私聊且**它当前空闲** → 先攒一下，把"连发的几条"合成一段再投递。
       //
