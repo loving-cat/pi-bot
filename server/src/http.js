@@ -11,6 +11,8 @@ import {
   THINKING_FORMATS,
   THINKING_LEVELS,
   THINKING_PRESETS,
+  THINKING_UPSTREAM_VALUES,
+  availableThinkingLevels,
 } from './model-thinking.js';
 import { capacityError } from './model-capacity.js';
 import { store } from './store.js';
@@ -390,7 +392,26 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         const keyword = (url.searchParams.get('q') || '').toLowerCase();
         const all = runner.availableModels;
         const list = keyword ? all.filter((m) => `${m.provider}/${m.id}`.toLowerCase().includes(keyword)) : all;
-        return send(res, 200, { total: list.length, models: list.slice(0, 200) });
+        // ★ 带上模型组里的思考声明：前台靠它决定要不要展示思考档位。
+        //   注册到 pi runtime 的模型对象不会带我们自己的 thinkingLevelMap，
+        //   所以要回去查模型组那份原始配置。
+        const thinkingBySlug = new Map();
+        for (const group of modelGroups.list()) {
+          for (const model of group.models) {
+            thinkingBySlug.set(`${group.id}/${model.id}`, model);
+          }
+        }
+        const decorate = (m) => {
+          const own = thinkingBySlug.get(`${m.provider}/${m.id}`);
+          if (!own) return m;
+          return {
+            ...m,
+            reasoning: Boolean(own.reasoning),
+            thinkingFormat: own.thinkingFormat || '',
+            thinkingLevels: availableThinkingLevels(own),
+          };
+        };
+        return send(res, 200, { total: list.length, models: list.slice(0, 200).map(decorate) });
       }
 
       // ---------- 外部 Web 系统接入 ----------
@@ -721,6 +742,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
           levels: THINKING_LEVELS,
           formats: THINKING_FORMATS,
           presets: THINKING_PRESETS,
+          upstreamValues: THINKING_UPSTREAM_VALUES,
         });
       }
 

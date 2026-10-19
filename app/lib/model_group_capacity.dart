@@ -41,16 +41,25 @@ class ModelGroupModelsPayload {
   final String? error;
 }
 
-/// 思考强度输入。空 = 未设置（回退到服务端按格式给的默认映射）。
+/// 思考强度输入。
+///
+/// 这里有**三种**状态，以前把它们塞进一个 `isEmpty` 里，导致“用户主动关掉思考”
+/// 和“用户没动过思考设置”长得一模一样 —— 表现就是开关点不掉、关了又弹回来：
+///
+/// | 状态 | reasoning | 是否提交 | 含义 |
+/// |---|---|---|---|
+/// | 未动过 | null | 不提交 | 保留服务端原有配置 |
+/// | 主动关闭 | false | `reasoning:false` | 真的不要思考 |
+/// | 开启 | true | 全量提交 | 开启并下发档位 |
 class ModelThinkingInput {
   const ModelThinkingInput({
-    this.reasoning = false,
+    this.reasoning,
     this.format = '',
     this.levels = const {},
   });
 
-  /// 这个模型会不会思考
-  final bool reasoning;
+  /// null = 用户没动过（继承服务端配置）；true/false = 用户明确设过
+  final bool? reasoning;
 
   /// 上游思考格式；空 = 用 pi 默认
   final String format;
@@ -68,14 +77,20 @@ class ModelThinkingInput {
     levels: levels ?? this.levels,
   );
 
-  /// 不含任何显式设置（不思考 + 没填格式和映射）
-  bool get isEmpty => !reasoning && format.isEmpty && levels.isEmpty;
+  /// 用户是否动过这个模型条目的思考设置
+  bool get touched => reasoning != null || format.isNotEmpty || levels.isNotEmpty;
 
-  /// 转成提交给服务端的字段；`isEmpty` 时不提交，保留服务端原有配置。
+  /// 开启思考且带了配置
+  bool get enabled => reasoning == true;
+
+  /// 转成提交给服务端的字段。
+  ///
+  /// 未动过（`touched == false`）时不提交，保留服务端原有配置；
+  /// 主动关闭时必须显式提 `reasoning:false`，否则服务端会当成“没改”而保留旧值。
   Map<String, dynamic> toJson() => {
-    if (!isEmpty) 'reasoning': reasoning,
-    if (format.isNotEmpty) 'thinkingFormat': format,
-    if (levels.isNotEmpty) 'thinkingLevelMap': levels,
+    if (touched) 'reasoning': enabled,
+    if (enabled && format.isNotEmpty) 'thinkingFormat': format,
+    if (enabled && levels.isNotEmpty) 'thinkingLevelMap': levels,
   };
 }
 
@@ -126,7 +141,12 @@ List<ModelCardDraft> modelCardDrafts(Iterable<ModelSpec> models) {
       maxTokens: model.maxTokens > 0 ? '${model.maxTokens}' : '',
     );
     final thinking = ModelThinkingInput(
-      reasoning: model.reasoning,
+      // 已存配置里 reasoning 是明确的 true/false，视为“用户已设过”
+      reasoning: (model.reasoning ||
+              model.thinkingFormat.isNotEmpty ||
+              model.thinkingLevelMap.isNotEmpty)
+          ? model.reasoning
+          : null,
       format: model.thinkingFormat,
       levels: {
         for (final entry in model.thinkingLevelMap.entries)
@@ -207,8 +227,8 @@ ModelGroupModelsPayload buildModelCardModels(Iterable<ModelCardDraft> rows) {
         row.capacity,
         previousWindow: int.tryParse(row.retainedCapacity.contextWindow),
         previousOutput: int.tryParse(row.retainedCapacity.maxTokens),
-        // 用户没动思考设置时回传已存那份，避免把已有的思考能力清掉
-        thinking: row.thinking.isEmpty ? row.retainedThinking : row.thinking,
+        // 用户没动思考设置时回传已存那份；动过就提交用户的选择
+        thinking: row.thinking.touched ? row.thinking : row.retainedThinking,
       );
       model['name'] = row.name.trim().isEmpty ? id : row.name.trim();
       models.add(model);
@@ -241,7 +261,14 @@ ModelGroupModelsPayload buildModelGroupModels({
     final retainedThinking = old == null
         ? const ModelThinkingInput()
         : ModelThinkingInput(
-            reasoning: old.reasoning,
+            // ★ 只有模型真的声明过 thinking 字段才算“已设过”；
+            //   旧配置只有容量时不能当成“用户明确关掉了思考”，
+            //   否则保存容量会把 reasoning:false 塞回给服务端。
+            reasoning: (old.reasoning ||
+                    old.thinkingFormat.isNotEmpty ||
+                    old.thinkingLevelMap.isNotEmpty)
+                ? old.reasoning
+                : null,
             format: old.thinkingFormat,
             levels: {
               for (final entry in old.thinkingLevelMap.entries)
@@ -256,7 +283,7 @@ ModelGroupModelsPayload buildModelGroupModels({
           input,
           previousWindow: old?.contextWindow,
           previousOutput: old?.maxTokens,
-          thinking: explicit == null || explicit.isEmpty
+          thinking: explicit == null || !explicit.touched
               ? retainedThinking
               : explicit,
         ),

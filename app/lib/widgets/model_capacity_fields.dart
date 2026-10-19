@@ -16,6 +16,7 @@ class ModelCardsEditor extends StatelessWidget {
     this.enabled = true,
     this.thinkingFormats = const [],
     this.thinkingLevels = const [],
+    this.thinkingUpstreamValues = const [],
   });
 
   final List<ModelCardDraft> rows;
@@ -32,6 +33,9 @@ class ModelCardsEditor extends StatelessWidget {
 
   /// 七个思考档位（由服务端下发）
   final List<String> thinkingLevels;
+
+  /// 档位可映射到的上游值白名单（由服务端下发）
+  final List<String> thinkingUpstreamValues;
 
   @override
   Widget build(BuildContext context) => Column(
@@ -166,59 +170,108 @@ class ModelCardsEditor extends StatelessWidget {
   /// 这里是**唯一**能决定"这个模型到底思不思考"的地方 —— 填错格式不会报错，
   /// 只会静默不思考，所以每项都要给出"留空 = 用默认"以外的明确含义。
   Widget _thinking(BuildContext context, ModelCardDraft row) {
-    final current = row.thinking.isEmpty ? row.retainedThinking : row.thinking;
+    // ★ 必须用 touched 而不是"是否为空"：用户主动关掉思考时
+    //   reasoning=false、format/levels 都为空，旧逻辑会把它当成"没动过"
+    //   又回退到已存的开状态，于是开关点了没反应、关了又弹回来。
+    final current = row.thinking.touched ? row.thinking : row.retainedThinking;
+    final isOn = current.reasoning == true;
     final levels = thinkingLevels.isEmpty
         ? const ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
         : thinkingLevels;
+    // 上游值只能从白名单里选：手打一个上游不认识的词不会报错，
+    // 只会让这一档静默失效（比如给 off 填 on）。
+    final upstream = thinkingUpstreamValues.isEmpty
+        ? const ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'auto']
+        : thinkingUpstreamValues;
     void change(ModelThinkingInput Function(ModelThinkingInput) update) =>
         onChanged(
           row.rowId,
           (draft) => draft.copyWith(
-            thinking: update(draft.thinking.isEmpty ? draft.retainedThinking : draft.thinking),
+            thinking: update(
+              draft.thinking.touched ? draft.thinking : draft.retainedThinking,
+            ),
           ),
         );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            const Text(
-              '思考强度',
-              style: TextStyle(
-                fontSize: PB.fsXs,
-                fontWeight: FontWeight.w600,
-                color: PB.textSecondary,
-              ),
-            ),
-            const Spacer(),
-            Switch(
-              key: ValueKey('model-reasoning-${row.rowId}'),
-              value: current.reasoning,
-              onChanged: enabled
-                  ? (value) => change(
-                      (input) => input.copyWith(
-                        reasoning: value,
-                        // 关闭思考就把格式和映射一并清掉，避免残留配置继续生效
-                        format: value ? input.format : '',
-                        levels: value ? input.levels : const {},
+        // 开关：绿色 = 开，灰色 = 关。不靠文字猜状态。
+        InkWell(
+          key: ValueKey('model-reasoning-toggle-${row.rowId}'),
+          onTap: enabled
+              ? () => change(
+                  (input) => input.copyWith(
+                    reasoning: !isOn,
+                    format: isOn ? '' : input.format,
+                    levels: isOn ? const {} : input.levels,
+                  ),
+                )
+              : null,
+          borderRadius: BorderRadius.circular(PB.rLg),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              children: [
+                Container(
+                  width: 30,
+                  height: 18,
+                  decoration: BoxDecoration(
+                    color: isOn
+                        ? PB.success
+                        : PB.borderTertiary,
+                    borderRadius: BorderRadius.circular(9),
+                  ),
+                  child: AnimatedAlign(
+                    duration: const Duration(milliseconds: 140),
+                    alignment: isOn
+                        ? Alignment.centerRight
+                        : Alignment.centerLeft,
+                    child: Container(
+                      width: 14,
+                      height: 14,
+                      margin: const EdgeInsets.symmetric(horizontal: 2),
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
                       ),
-                    )
-                  : null,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  isOn ? '思考已开启' : '思考已关闭',
+                  style: TextStyle(
+                    fontSize: PB.fsXs,
+                    fontWeight: FontWeight.w600,
+                    color: isOn ? PB.success : PB.textQuaternary,
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  isOn ? 'on' : 'off',
+                  style: const TextStyle(
+                    fontSize: PB.fsXxs,
+                    color: PB.textQuaternary,
+                    fontFamily: PB.monoFamily,
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
+        const SizedBox(height: 2),
         Text(
-          current.reasoning
-              ? '这个模型会思考。下面选上游格式；档位留空表示这一档不额外传参数。'
-              : '这个模型不思考（或你不需要它的思考过程）。开启后才会下发思考参数。',
+          isOn
+              ? '前台会给这个模型的 bot 展示思考档位；关掉后前台不再展示。'
+              : '这个模型不思考，前台也不会展示思考档位。',
           style: const TextStyle(
             fontSize: PB.fsXxs,
             color: PB.textQuaternary,
             height: 1.5,
           ),
         ),
-        if (current.reasoning) ...[
+        if (isOn) ...[
           const SizedBox(height: 10),
           Row(
             children: [
@@ -270,21 +323,45 @@ class ModelCardsEditor extends StatelessWidget {
                     ),
                   ),
                   Expanded(
-                    child: _field(
-                      'model-thinking-${row.rowId}-$level',
-                      '',
-                      current.levels[level] ?? '',
-                      (value) => change(
-                        (input) => input.copyWith(
-                          levels: {...input.levels, level: value.trim()},
+                    child: DropdownButtonFormField<String>(
+                      key: ValueKey('model-thinking-${row.rowId}-$level'),
+                      initialValue: current.levels[level] ?? '',
+                      isDense: true,
+                      decoration: const InputDecoration(isDense: true),
+                      items: [
+                        const DropdownMenuItem(
+                          value: '',
+                          child: Text('不传（这一档不生效）'),
                         ),
-                      ),
-                      hint: '留空 = 这一档不传',
+                        for (final value in {
+                          ...upstream,
+                          // 已存的值即使不在白名单也要能显示，避免静默丢失
+                          if ((current.levels[level] ?? '').isNotEmpty)
+                            current.levels[level]!,
+                        })
+                          DropdownMenuItem(value: value, child: Text(value)),
+                      ],
+                      onChanged: enabled
+                          ? (value) => change(
+                              (input) => input.copyWith(
+                                levels: {...input.levels, level: value ?? ''},
+                              ),
+                            )
+                          : null,
                     ),
                   ),
                 ],
               ),
             ),
+          Text(
+            '前台只会展示映射过的档位。'
+            '所以想让 bot 能选 high，就得给 high 选一个上游值。',
+            style: const TextStyle(
+              fontSize: PB.fsXxs,
+              color: PB.textQuaternary,
+              height: 1.5,
+            ),
+          ),
         ],
       ],
     );
