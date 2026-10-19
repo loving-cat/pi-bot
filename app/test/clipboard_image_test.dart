@@ -147,8 +147,13 @@ C:\Users\user\AppData\Local\Temp\pi-bot-paste-abc.png
     });
 
     test('中文、空格与引号路径仅经 argv 传递', () async {
+      // Windows 不允许文件名里出现 `"`（CreateProcess 的 argv 也不会经过 shell），
+      // 所以引号只在 POSIX 上测；其余特殊字符两边都测。
+      final specialName = Platform.isWindows
+          ? "中文 space ' quote \$ dollar"
+          : '中文 space \' quote " \$ dollar';
       final special = await Directory(
-        '${root.path}${Platform.pathSeparator}中文 space \' quote " \$ dollar',
+        '${root.path}${Platform.pathSeparator}$specialName',
       ).create();
       final result = await readMacOSClipboardPng(
         temporaryRoot: special,
