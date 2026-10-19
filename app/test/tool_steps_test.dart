@@ -39,21 +39,30 @@ void main() {
     expect(size.height, 0, reason: '不该占任何垂直空间');
   });
 
-  testWidgets('★ 正在跑 → 显示一行进度（否则用户以为卡死）', (tester) async {
+  testWidgets('★ 正在跑 → 只显示一句人话，不露工具名和参数', (tester) async {
     await tester.pumpWidget(host(sample(status: 'running')));
 
-    expect(find.textContaining('正在调用工具'), findsOneWidget);
+    expect(find.text('正在干活…'), findsOneWidget);
+    // ★ 关键：跑的过程中也**不能**把命令名、shell_id、参数漏给用户。
+    //   用户截屏里那一整列 `run_background / read_shell {shell_id...}`
+    //   就是漏出来的样子 —— 既看不懂，又把回答顶到屏幕外。
+    expect(find.textContaining('bash'), findsNothing, reason: '不该露工具名');
+    expect(find.textContaining('npm test'), findsNothing, reason: '不该露命令');
+    expect(find.textContaining('lib/main.dart'), findsNothing, reason: '不该露参数');
+    expect(find.textContaining('点开看明细'), findsNothing, reason: '不该给展开入口');
   });
 
   testWidgets('★ 失败必须露出来 —— 即使跑完了也要显示', (tester) async {
     await tester.pumpWidget(
       host([
-        ToolStep(tool: 'bash', detail: 'npm run build', status: 'error'),
+        ToolStep(tool: 'bash', detail: 'npm run build 失败：exit 1', status: 'error'),
         ToolStep(tool: 'read', detail: 'ok.txt', status: 'done'),
       ]),
     );
 
-    expect(find.textContaining('npm run build'), findsOneWidget);
+    // 要点：说的是**失败原因**（人看得懂），不是工具名
+    expect(find.text('有一步没成功'), findsOneWidget);
+    expect(find.textContaining('exit 1'), findsOneWidget, reason: '要说清怎么失败的');
     final size = tester.getSize(find.byType(ToolSteps));
     expect(size.height, greaterThan(0), reason: '出错时必须有可见高度');
   });
@@ -62,12 +71,53 @@ void main() {
     await tester.pumpWidget(
       host([
         ToolStep(tool: 'bash', detail: 'ok-1', status: 'done'),
-        ToolStep(tool: 'bash', detail: 'bad-one', status: 'error'),
+        ToolStep(tool: 'bash', detail: 'bad-one 报错', status: 'error'),
         ToolStep(tool: 'bash', detail: 'ok-2', status: 'done'),
       ]),
     );
 
+    expect(find.text('有一步没成功'), findsOneWidget);
     expect(find.textContaining('bad-one'), findsOneWidget);
+  });
+
+  testWidgets('★ 回归：一长串工具调用跑完后，一个字都不显示', (tester) async {
+    // 复现用户截屏里的场景：一轮里跑了 20 多步 shell 调用
+    final many = List.generate(
+      24,
+      (i) => ToolStep(
+        tool: i.isEven ? 'run_background' : 'read_shell',
+        detail: '{"shell_id":"sh_abc$i"}',
+        status: 'done',
+      ),
+    );
+    await tester.pumpWidget(host(many));
+
+    final size = tester.getSize(find.byType(ToolSteps));
+    expect(size.height, 0, reason: '跑完就该完全不占空间');
+    expect(find.textContaining('run_background'), findsNothing);
+    expect(find.textContaining('read_shell'), findsNothing);
+    expect(find.textContaining('shell_id'), findsNothing);
+  });
+
+  testWidgets('★ 回归：一长串工具调用**正在跑**时，也只给一行', (tester) async {
+    // 这是用户实际报的那个：跑的时候整列铺出来
+    final many = List.generate(
+      24,
+      (i) => ToolStep(
+        tool: i.isEven ? 'run_background' : 'read_shell',
+        detail: '{"shell_id":"sh_abc$i"}',
+        status: 'done',
+      ),
+    )..add(ToolStep(tool: 'read_shell', detail: '{"shell_id":"sh_last"}', status: 'running'));
+
+    await tester.pumpWidget(host(many));
+
+    expect(find.text('正在干活…'), findsOneWidget);
+    expect(find.textContaining('run_background'), findsNothing);
+    expect(find.textContaining('shell_id'), findsNothing);
+    // 高度应该只有一行，不能是二十多行
+    final size = tester.getSize(find.byType(ToolSteps));
+    expect(size.height, lessThan(40), reason: '只能占一行的高度，实际 ${size.height}');
   });
 
   testWidgets('空步骤列表 → 不渲染', (tester) async {
