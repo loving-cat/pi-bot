@@ -60,6 +60,10 @@ class AppState extends ChangeNotifier {
   bool mcpLoaded = false;
   bool skillsLoaded = false;
 
+  /// 经验库（从执行里学到的“下次别这样”）。只有 active 的会进主控提示词。
+  List<LibraryLesson> lessons = const [];
+  bool lessonsLoaded = false;
+
   /// 本机 pi 上已经装好的能力（只读扫描结果）。
   /// 用户在终端里早就装了一堆，这里让他一键导进来，不用手抄。
   LocalCapabilities? localCapabilities;
@@ -752,6 +756,49 @@ class AppState extends ChangeNotifier {
         if (enabled != null) 'enabled': enabled,
       });
       await loadSkills();
+      return null;
+    } catch (err) {
+      return '$err';
+    }
+  }
+
+  // ---------------------------------------------------------------- 经验库
+
+  Future<void> loadLessons() async {
+    if (api == null) return;
+    try {
+      final json = await api!.get('/api/lessons');
+      lessons = ((json['lessons'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => LibraryLesson.fromJson(e.cast<String, dynamic>()))
+          .toList();
+      lessonsLoaded = true;
+      _notify();
+    } catch (err) {
+      lastError = '经验库加载失败：$err';
+      _notify();
+    }
+  }
+
+  /// 启用 / 停用一条经验（启用前服务端会校验它有没有证据）
+  Future<String?> setLessonStatus(String id, String status) async {
+    if (api == null) return '未连接服务端';
+    try {
+      await api!.patch('/api/lessons/${Uri.encodeComponent(id)}', {
+        'status': status,
+      });
+      await loadLessons();
+      return null;
+    } catch (err) {
+      return '$err';
+    }
+  }
+
+  Future<String?> removeLesson(String id) async {
+    if (api == null) return '未连接服务端';
+    try {
+      await api!.delete('/api/lessons/${Uri.encodeComponent(id)}');
+      await loadLessons();
       return null;
     } catch (err) {
       return '$err';

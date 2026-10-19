@@ -812,6 +812,11 @@ export class Store {
     return normalizeLessonList(this.state.lessons ?? []);
   }
 
+  /** 收尾复盘是否开启（关掉之后不会再产生新候选，已有经验照常注入） */
+  lessonsEnabled() {
+    return config.lessonReflect !== false;
+  }
+
   /** 加一条经验（同房间 + 同情境只能有一条，避免刷屏） */
   addLesson(raw = {}) {
     const list = this.lessonLibrary();
