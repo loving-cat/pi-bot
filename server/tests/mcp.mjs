@@ -292,16 +292,35 @@ await test('whichOnWindows：按 PATHEXT 找到 .cmd，并能区分带路径的�
       PATH: `${dir};${process.env.PATH ?? ''}`,
       PATHEXT: '.COM;.EXE;.BAT;.CMD',
     };
+    // 用例在任何主机上跑：比较时把分隔符统一，别绑死宿主机
+    const norm = (p) => String(p).replace(/\\/g, '/');
     const found = whichOnWindows('npx', env);
     assert.ok(found, '应该找到 npx.cmd');
     assert.equal(path.extname(found).toLowerCase(), '.cmd');
-    assert.equal(whichOnWindows('tool.exe', env), path.win32.join(dir, 'tool.exe'));
+    assert.equal(norm(whichOnWindows('tool.exe', env)), norm(path.join(dir, 'tool.exe')));
     assert.equal(
-      whichOnWindows(path.win32.join(dir, 'npx.cmd'), env),
-      path.win32.join(dir, 'npx.cmd'),
+      norm(whichOnWindows(path.join(dir, 'npx.cmd'), env)),
+      norm(path.join(dir, 'npx.cmd')),
     );
     assert.equal(whichOnWindows('definitely-not-here', env), null);
     assert.equal(whichOnWindows('', env), null);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+await test('whichOnWindows：PATH 里是正斜杠也能拼对（Git Bash / MSYS 风格）', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-which-slash-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'npx.cmd'), '@echo off\r\n');
+    const slashDir = dir.split(path.sep).join('/');
+    const env = {
+      PATH: `${slashDir};${process.env.PATH ?? ''}`,
+      PATHEXT: '.COM;.EXE;.BAT;.CMD',
+    };
+    const found = whichOnWindows('npx', env);
+    assert.ok(found, '正斜杠的 PATH 也要能找到');
+    assert.equal(path.extname(found).toLowerCase(), '.cmd');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

@@ -56,6 +56,15 @@ for (const name of TESTS) {
   if (!ok) failed++;
   const tail = (res.stdout || '').trim().split(/\r?\n/).filter(Boolean).pop() ?? '';
   rows.push(`${ok ? '✓' : '✗'} ${name.padEnd(16)} ${tail}`);
+  if (!ok) {
+    // 把子文件里带 ✗ 的行打出来：CI 日志只留最后一行的话，
+    // 根本看不出是哪一个用例红的（排查一次要重跑一轮）。
+    const detail = (res.stdout || '')
+      .split(/\r?\n/)
+      .filter((line) => line.includes('✗') && !line.includes('通过'))
+      .slice(0, 5);
+    if (detail.length) rows.push(detail.map((line) => `    ${line.trim()}`).join('\n'));
+  }
   if (!ok && res.stderr) rows.push(res.stderr.trim().split(/\r?\n/).slice(-3).join('\n'));
 }
 
