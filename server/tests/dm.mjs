@@ -108,6 +108,43 @@ await test('★ mirrorProgress：写进私聊并带上来源，自己房间不�
   assert.equal(again, false);
 });
 
+await test('★ 插话重排：moveMessageAfter 把正在写的回复挪到用户消息后面', () => {
+  const room2 = store.createGroup({ name: '重排测试组' });
+  const bot2 = store.createBot({ name: '重排员', persona: 'x' });
+  // 模拟真实时序：bot 先开始写（streaming），用户后插话
+  const botMsg = store.appendMessage({
+    roomId: room2.id, authorType: 'bot', authorId: bot2.id,
+    authorName: bot2.name, text: '正在回答旧问题…', status: 'streaming',
+  });
+  const userMsg = store.appendMessage({
+    roomId: room2.id, authorType: 'user', authorName: '我',
+    text: '等等，改成 Y', status: 'done',
+  });
+  const before = store.listMessages(room2.id).map((m) => m.id);
+  assert.deepEqual(before, [botMsg.id, userMsg.id], '初始顺序：bot 在上、用户在下');
+
+  const moved = store.moveMessageAfter(room2.id, botMsg.id, userMsg.id, { touch: true });
+  assert.ok(moved, '要返回挪完的消息');
+  const after = store.listMessages(room2.id).map((m) => m.id);
+  assert.deepEqual(after, [userMsg.id, botMsg.id], '挪完：用户在上、bot 的回复在下');
+  assert.ok(
+    moved.createdAt >= userMsg.createdAt,
+    `touch 后时间戳不能早于用户消息（bot=${moved.createdAt} user=${userMsg.createdAt}）`,
+  );
+});
+
+await test('moveMessageAfter：消息不存在 / 房间不存在都安全返回', () => {
+  assert.equal(store.moveMessageAfter('no-room', 'x', 'y'), null);
+  const room3 = store.createGroup({ name: '重排边界组' });
+  assert.equal(store.moveMessageAfter(room3.id, '不存在', null), null);
+  // afterId 找不到 → 放到最后（不炸）
+  const m1 = store.appendMessage({ roomId: room3.id, authorType: 'user', text: 'a' });
+  const m2 = store.appendMessage({ roomId: room3.id, authorType: 'user', text: 'b' });
+  const r = store.moveMessageAfter(room3.id, m1.id, '不存在的after');
+  assert.ok(r);
+  assert.deepEqual(store.listMessages(room3.id).map((m) => m.id), [m2.id, m1.id]);
+});
+
 const passed = results.filter((r) => r.ok).length;
 console.log('\n================ 私聊行为测试 ================');
 for (const r of results) {
