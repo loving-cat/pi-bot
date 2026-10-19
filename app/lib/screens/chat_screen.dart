@@ -353,6 +353,74 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
+  /// 把拖进来的东西展开成 (名字, 读字节) 列表。
+  ///
+  /// · 普通文件 → 原样
+  /// · 文件夹 → **递归展开**，名字带上相对路径（`项目/README.md`），
+  ///   这样 bot 能看出目录结构，而不是一堆平铺的文件名。
+  ///   跳过 node_modules / .git / __pycache__ 这类噪音目录 ——
+  ///   拖个代码仓库进来，要的是源码，不是几万个依赖文件。
+  ///   单个文件夹最多收 200 个文件：再多说明拖错东西了（比如整个主目录），
+  ///   全部上传只会把服务端和上下文都撑爆。
+  static const _skipDirs = {
+    'node_modules', '.git', '__pycache__', '.venv', 'venv',
+    'dist', 'build', '.dart_tool', '.idea', '.vscode', 'target',
+  };
+  static const _maxFolderFiles = 200;
+
+  List<(String, Future<List<int>> Function())> _expandDroppedPaths(
+    List<String> paths,
+  ) {
+    final out = <(String, Future<List<int>> Function())>[];
+    for (final p in paths) {
+      final dir = Directory(p);
+      if (dir.existsSync()) {
+        _collectDir(dir, p, '', out);
+        continue;
+      }
+      final f = File(p);
+      if (f.existsSync()) {
+        out.add((f.uri.pathSegments.last, () => f.readAsBytes()));
+      }
+    }
+    return out;
+  }
+
+  void _collectDir(
+    Directory dir,
+    String root,
+    String rel,
+    List<(String, Future<List<int>> Function())> out,
+  ) {
+    if (out.length >= _maxFolderFiles) return;
+    final List<FileSystemEntity> children;
+    try {
+      children = dir.listSync(followLinks: false);
+    } catch (_) {
+      return; // 没权限读的目录直接跳过
+    }
+    // 先文件后子目录，顺序稳定
+    final files = <File>[];
+    final dirs = <Directory>[];
+    for (final c in children) {
+      if (c is File) files.add(c);
+      else if (c is Directory) dirs.add(c);
+    }
+    for (final f in files) {
+      if (out.length >= _maxFolderFiles) return;
+      final name = rel.isEmpty
+          ? f.uri.pathSegments.last
+          : '$rel/${f.uri.pathSegments.last}';
+      out.add((name, () => f.readAsBytes()));
+    }
+    for (final d in dirs) {
+      if (out.length >= _maxFolderFiles) return;
+      final base = d.uri.pathSegments.where((s) => s.isNotEmpty).last;
+      if (_skipDirs.contains(base)) continue;
+      _collectDir(d, root, rel.isEmpty ? base : '$rel/$base', out);
+    }
+  }
+
   Future<void> _uploadAll(
     List<(String, Future<List<int>> Function())> items,
   ) async {
@@ -588,13 +656,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         onDragExited: (_) => setState(() => _draggingOver = false),
         onDragDone: (detail) async {
           setState(() => _draggingOver = false);
-          final files = detail.files
-              .where((f) => f.path.trim().isNotEmpty)
+          final paths = detail.files
+              .map((f) => f.path.trim())
+              .where((p) => p.isNotEmpty)
               .toList();
-          if (files.isEmpty) return;
-          await _uploadAll([
-            for (final f in files) (f.name, () => File(f.path).readAsBytes()),
-          ]);
+          if (paths.isEmpty) return;
+          // ★ 文件夹也能拖：展开成（带相对路径的）文件列表再上传。
+          //   名字里带 `文件夹/子目录/文件名`，bot 能看出目录结构。
+          final items = _expandDroppedPaths(paths);
+          if (items.isEmpty) {
+            _toast('拖进来的文件夹是空的（或全是跳过的目录）');
+            return;
+          }
+          if (items.length >= _maxFolderFiles) {
+            _toast('文件太多（$_maxFolderFiles 个封顶），只收了前 $_maxFolderFiles 个');
+          }
+          await _uploadAll(items);
         },
         child: Stack(
           children: [
@@ -1114,11 +1191,12 @@ class _ComposerState extends State<_Composer> {
                     const Icon(LucideIcons.zap, size: 12, color: PB.accent),
                     const SizedBox(width: 5),
                     Text(
-                      // 不说"插话引导"这种产品词 —— 就是"它看见了，会照做"。
-                      // 用户在跟人聊天，不是在用一台仪器。
+                      // ★ 语义变了：用户一说话，正在跑的会**立刻停下**，
+                      //   不是"排队等它忙完"。
+                      //   所以这里不能说"下一步会看到"——那会让用户以为要等。
                       queuedCount > 0
-                          ? '已经跟它说了 $queuedCount 句，它下一步会看到'
-                          : '正在干活 —— 有话说直接发，它会边干边看',
+                          ? '已发了 $queuedCount 句 —— 发出去它会立刻停下来看'
+                          : '正在干活 —— 你随时可以打断它，说新的要求',
                       style: const TextStyle(
                         fontSize: PB.fsXxs,
                         color: PB.textTertiary,
@@ -1728,10 +1806,11 @@ class _MessageRow extends StatelessWidget {
                       const Icon(LucideIcons.zap, size: 11, color: PB.accent),
                       const SizedBox(width: 3),
                       Text(
-                        // 也别用产品词 —— 说"它下一步会看到"就够了
+                        // ★ 用户的新要求会让它**立刻停下**，不是排队等。
+                        //   followUp 那种"排在后面"只发生在成员互相 @ 的场景。
                         msg.meta?['queued'] == 'followUp'
                             ? '排在它后面，做完会看'
-                            : '它下一步会看到',
+                            : '已打断它，按这条重新开始',
                         style: const TextStyle(
                           fontSize: PB.fsXxs,
                           color: PB.accent,

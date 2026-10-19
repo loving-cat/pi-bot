@@ -704,7 +704,7 @@ void main() {
     // 用户报："我发送第一条消息 想输入第二条 结果没有聚焦到输入框，
     //          就算我去点击也不行，直接没法输入。"
     // 这是**空房间 → 有消息**那一下的结构切换（空态换成消息栈），
-    // 而且 bot 正在流式回复（composer 上方会插一条"它下一步会看到"的提示）。
+    // 而且 bot 正在流式回复（消息上会挂一条"已打断它"的提示）。
     tester.view.physicalSize = const Size(900, 700);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -837,7 +837,7 @@ void main() {
     // 结果没有聚焦到输入框，就算我去点击也不行，直接没法输入。"
     //
     // 量出来的链条：
-    //   发出去的一瞬间 → composer 上方多出"它下一步会看到"那条提示（busy 变了）
+    //   发出去的一瞬间 → 消息上多出"已打断它"那条提示（busy 变了）
     //   → Column 凭空多一个孩子 → Flutter 按位置配对错位
     //   → 整个输入行被**重建** → 新的 EditableText 拿着一个**已经聚焦**的
     //     FocusNode 初始化 → 它永远不会打开文本输入连接
@@ -950,7 +950,7 @@ void main() {
     await tester.pump();
 
     expect(
-      find.text('它下一步会看到'),
+      find.text('已打断它，按这条重新开始'),
       findsOneWidget,
       reason: '★ 三句排队只该挂一个提示（挂在最后一条上）',
     );
