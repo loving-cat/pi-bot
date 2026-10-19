@@ -1,0 +1,19 @@
+app/lib/app_state.dart
+  s_c73b42c9544151::t_d7cb17b0d1944f 1076-1081,1087,1100,1134-1137
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7b878e990371805fd3fc2a5ee901cdba7e492b6b",
+  "prompts": {},
+  "sessions": {
+    "s_c73b42c9544151": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a09f0f-7603-7a80-8d1c-b48d6da3d8d4",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
