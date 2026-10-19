@@ -117,7 +117,7 @@ await test('state.json 里绝不出现明文口令（真实落盘验证）', asy
   const k = loadOrCreateKey(path.join(tmpRoot, 'keystore-'));
   store.useSecretsKey(k);
 
-  const PASSWORD = 'super-secret-pw-1234';
+  const PASSWORD = 'fixture-password';
   const r = store.addSite({
     name: '测试系统',
     baseUrl: 'https://example.com',
