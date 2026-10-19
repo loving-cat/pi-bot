@@ -144,12 +144,12 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
                       ),
                     if (doing.isNotEmpty) ...[
                       _section('进行中'),
-                      for (final t in doing) _row(t),
+                      ..._grouped(doing),
                       const SizedBox(height: 8),
                     ],
                     if (open.isNotEmpty) ...[
                       _section('待办'),
-                      for (final t in open) _row(t),
+                      ..._grouped(open),
                       const SizedBox(height: 8),
                     ],
                     if (done.isNotEmpty) ...[
@@ -179,8 +179,7 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
                           ),
                         ),
                       ),
-                      if (_showDone)
-                        for (final t in done) _row(t),
+                      if (_showDone) ..._grouped(done),
                     ],
                   ],
                 ),
@@ -204,6 +203,104 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
       ),
     ),
   );
+
+  /// 同一条指令派给多个人时，板上会出现 N 行一模一样的话。
+  /// 按标题合并成一行（副标题列出执行者），比刷 5 条重复的更像"一个任务"。
+  List<Widget> _grouped(List<TaskItem> list) {
+    final byTitle = <String, List<TaskItem>>{};
+    for (final t in list) {
+      byTitle.putIfAbsent(t.title, () => []).add(t);
+    }
+    return [
+      for (final group in byTitle.values)
+        group.length == 1 ? _row(group.first) : _multiRow(group),
+    ];
+  }
+
+  /// 一个任务、多个执行者
+  Widget _multiRow(List<TaskItem> group) {
+    final first = group.first;
+    final color = first.isDone
+        ? PB.textQuaternary
+        : first.isDoing
+        ? PB.accent
+        : PB.textSecondary;
+    final owners = group
+        .map((t) => t.ownerName)
+        .whereType<String>()
+        .where((n) => n.isNotEmpty)
+        .toList();
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        children: [
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+            onPressed: () {
+              for (final t in group) {
+                widget.onToggleDone(t);
+              }
+            },
+            tooltip: first.isDone ? '把这 ${group.length} 条都标为未完成' : '把这 ${group.length} 条都标为完成',
+            icon: Icon(
+              first.isDone
+                  ? LucideIcons.circleCheck
+                  : first.isDoing
+                  ? LucideIcons.loader
+                  : LucideIcons.circle,
+              size: 16,
+              color: color,
+            ),
+          ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  first.title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: PB.fsSm,
+                    color: color,
+                    decoration: first.isDone ? TextDecoration.lineThrough : null,
+                  ),
+                ),
+                Text(
+                  '${group.length} 人：${owners.join('、')}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: PB.fsXxs,
+                    color: PB.textQuaternary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+            onPressed: () {
+              for (final t in group) {
+                widget.onDelete(t);
+              }
+            },
+            tooltip: '删除这 ${group.length} 条',
+            icon: const Icon(
+              LucideIcons.trash2,
+              size: 14,
+              color: PB.textQuaternary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _row(TaskItem task) {
     final color = task.isDone
