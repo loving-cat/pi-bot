@@ -1,0 +1,33 @@
+app/lib/widgets/model_group_editor.dart
+  s_06973911ad2cd6::t_8f62de582b7819 147-150,202,205,211,214,226-228,241-245,267-268,279,364-367,370,376-378
+  s_06973911ad2cd6::t_8685ccc30b2bc5 371-375
+  s_06973911ad2cd6::t_6dd04e43ce84ad 368-369
+app/test/model_group_capacity_test.dart
+  s_06973911ad2cd6::t_918d08b64d4b7a 156-205
+  s_06973911ad2cd6::t_58f3d4d7e58e70 206-225
+app/lib/widgets/model_capacity_fields.dart
+  s_06973911ad2cd6::t_6dd04e43ce84ad 4,7-9,11,13-16,19-25,31-44,46,53-99,102-108,110,114-121,124-127,132-139,142-143,149-212,214,216-218
+  s_06973911ad2cd6::t_158ea2b4a114a5 213,215
+app/test/model_group_editor_test.dart
+  s_06973911ad2cd6::t_d27d711d765bb9 15-26,51,65-67,78-84,90-110,112-115,118-129,132-146,149-176,178-181,184-190,194-196,199-210,214-222,224,228-231
+  s_06973911ad2cd6::t_825595b028ff22 232-234
+app/lib/model_group_capacity.dart
+  s_06973911ad2cd6::t_44158e214d4312 44-141,145,152,156,158
+  s_06973911ad2cd6::t_677ce446f106b7 142-144,146-151,153-155,157,159-161,178-185
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ca7be44837254df169ed47c1f96c2aef6c700930",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
