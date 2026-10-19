@@ -1272,6 +1272,16 @@ export class PiRunner {
         text: clean,
         messageId: userMessage.id,
       });
+
+      // ★ 插话后模型重新想的回复，要排在用户这句话**后面**。
+      //   botMsg 是插话之前创建的（位置在用户消息上面）；模型被打断后
+      //   重新思考，新内容继续写进同一条 —— 不挪的话用户看到的是
+      //   "答案排在问题前面"（用户报的：插话后顺序乱）。
+      //   touch=true：内容在重新生成，时间戳也跟着挪到现在。
+      const liveMsgId = entry.liveMsgId;
+      if (liveMsgId && liveMsgId !== userMessage.id) {
+        store.moveMessageAfter(roomId, liveMsgId, userMessage.id, { touch: true });
+      }
       return { userMessage, bot, steered: effective };
     }
 
@@ -1361,6 +1371,12 @@ export class PiRunner {
           store.updateMessage(roomId, userMessage.id,
             { meta: { ...(userMessage.meta ?? {}), queued: effective, queuedState: queued ?? 'queued' } });
           bus.emit('event', { t: 'steer.accepted', roomId, mode: effective, text: clean, messageId: userMessage.id });
+          // 同 send() 的 busy 分支：插话后把正在写的那条挪到用户这句话后面
+          const racing = this.sessions.get(this.#key(roomId, botId));
+          const liveMsgId = racing?.liveMsgId;
+          if (liveMsgId && liveMsgId !== userMessage.id) {
+            store.moveMessageAfter(roomId, liveMsgId, userMessage.id, { touch: true });
+          }
         },
       }).catch((err) => {
         const error = modelFailure(err).error;
