@@ -917,14 +917,24 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         const body = await readBody(req);
         const r = modelGroups.upsert({ ...body, id: groupMatch[1] });
         if (r.error) return send(res, 400, { error: r.error });
-        await runner.applyModelGroupChange(r.group.id);
+        // 同 DELETE：刷新含真实网络请求（checkAuth），不等它 ——
+        // 否则 baseUrl 不通时保存也卡死。配置已落盘，后台同步菜单即可。
+        runner
+          .applyModelGroupChange(r.group.id)
+          .catch((err) => log(`保存后刷新失败（不影响保存本身）：${err?.message ?? err}`));
         return send(res, 200, { group: r.group.toPublic() });
       }
       if (groupMatch && req.method === 'DELETE') {
         const ok2 = modelGroups.remove(groupMatch[1]);
         if (!ok2) return send(res, 404, { error: '模型组不存在' });
-        await runner.applyModelGroupChange(groupMatch[1]);
-        log(`🔌 删除模型组：${groupMatch[1]}`);
+        // ★ 删除不等刷新完成就回 —— 刷新要对每个 provider 做真实网络请求
+        //   （checkAuth），baseUrl 挂了的话会卡到超时（几十秒），
+        //   用户看到的就是“删不掉”。
+        //   删除本身已经落盘了，刷新只是同步内存里的菜单，后台跑完自然生效。
+        runner
+          .applyModelGroupChange(groupMatch[1])
+          .then(() => log(`🔌 删除模型组：${groupMatch[1]}`))
+          .catch((err) => log(`删除后刷新失败（不影响删除本身）：${err?.message ?? err}`));
         return send(res, 200, { id: groupMatch[1] });
       }
 
