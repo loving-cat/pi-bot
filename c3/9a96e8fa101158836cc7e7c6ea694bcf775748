@@ -1,0 +1,21 @@
+scripts/tests/pack-macos-test.sh
+  s_06973911ad2cd6::t_21cbb8cf6c83c2 1-243
+scripts/pack-macos.sh
+  s_06973911ad2cd6::t_21cbb8cf6c83c2 2,10,12-64,67-75,77,80-82,84-86,89-93,95-136,138-143,146-151,153-173,177
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c39a96e8fa101158836cc7e7c6ea694bcf775748",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
