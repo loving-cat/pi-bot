@@ -17,6 +17,7 @@ const TESTS = [
   'transcript-budget',
   'skills',
   'site-draft',
+  'merge-messages',
   'local-capabilities',
   'mcp',
   'sites',

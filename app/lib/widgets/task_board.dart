@@ -3,6 +3,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../app_state.dart';
 import '../models.dart';
+import '../ime_guard.dart';
 import '../theme.dart';
 
 /// 任务板：一个房间里"要做什么 / 在做 / 做完"的清单。
@@ -95,7 +96,7 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
                   child: TextField(
                     controller: _input,
                     style: const TextStyle(fontSize: PB.fsSm),
-                    onSubmitted: (_) => _add(),
+                    onSubmitted: submitUnlessComposing(_input, _add),
                     decoration: InputDecoration(
                       hintText: '加一条任务（回车添加）',
                       hintStyle: const TextStyle(

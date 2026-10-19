@@ -4,6 +4,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../platform.dart';
 import '../scope.dart';
 import '../theme.dart';
+import 'toast.dart';
 
 /// 设置里的「本机服务端」：查看并修改启动配置。
 ///
@@ -110,9 +111,7 @@ Future<void> showServerConfigDialog(BuildContext context) async {
   );
   if (!context.mounted) return;
   final problem = state.serverProblem;
-  ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-    SnackBar(content: Text(problem ?? '已保存，本机服务端已启动')),
-  );
+  toast(context, problem ?? '已保存，本机服务端已启动');
 }
 
 class _Row extends StatelessWidget {
