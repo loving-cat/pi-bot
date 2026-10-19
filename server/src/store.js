@@ -33,6 +33,17 @@ const STATE_VERSION = 2;
  * 目的很实际：**防止 bot 解不了就互相聊个没完**。
  */
 import { normalizeSkillList, normalizeSkill, skillRejectReason } from './skills.js';
+import {
+  normalizeLessonList,
+  normalizeLesson,
+  lessonRejectReason,
+} from './lessons.js';
+import {
+  normalizeMcpList,
+  normalizeMcpServer,
+  mcpRejectReason,
+  mcpNameError,
+} from './mcp.js';
 import { normalizeSite } from './sites.js';
 import { encrypt, decrypt, isEncrypted } from './secrets.js';
 
@@ -210,6 +221,28 @@ function normalizeSkills(list) {
       createdAt: s?.createdAt || now(),
     }))
     .filter((s) => s.title.trim());
+}
+
+/**
+ * bot 选中的 MCP 服务名列表。
+ *
+ * 存**名字**而不是 id：用户删掉一条再建同名的，选上它的 bot 仍然能接上；
+ * 存 id 的话每重建一次就得把每个 bot 重新选一遍。
+ * 名字不合法（会被拼进工具名）的直接丢掉，不留除。
+ */
+function normalizeBotMcpNames(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const raw of list) {
+    const name = String(raw ?? '').trim().slice(0, 40);
+    if (!name || mcpNameError(name)) continue;
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(name);
+  }
+  return out.slice(0, 20);
 }
 
 export class Store {
@@ -450,6 +483,9 @@ export class Store {
       // 技能（SOP）。会拼进系统提示词，让 bot 真的"学会"。
       // 造开发类 bot 时，create_bot 会塞一条"工程基线"进来（coding-baseline.js）。
       skills: normalizeSkills(patch.skills),
+      // 这个 bot 要连哪几个 MCP 服务（存名字）。默认空 = 不连 ——
+      // MCP 会真起子进程，不清不楚地就给每个 bot 挂上一堆是最贵的不自信。
+      mcpServers: normalizeBotMcpNames(patch.mcpServers),
       // 群聊轮次预算（全局一份，用户可在设置里改）
       groupLimits: { ...GROUP_LIMITS_DEFAULT },
       // 用户自己是谁（bot 要知道在跟谁说话）
@@ -487,6 +523,9 @@ export class Store {
     if (patch.avatarColor !== undefined) next.avatarColor = normalizeHex(patch.avatarColor);
     if (patch.skills !== undefined) {
       next.skills = normalizeSkills(patch.skills);
+    }
+    if (patch.mcpServers !== undefined) {
+      next.mcpServers = normalizeBotMcpNames(patch.mcpServers);
     }
     if (patch.reserveTokens !== undefined)
       next.reserveTokens = positiveOrNull(patch.reserveTokens);
@@ -760,6 +799,181 @@ export class Store {
     return { imported, skipped };
   }
 
+  // ---------------------------------------------------------------- 经验库
+
+  /**
+   * 经验库（存在 state.lessons）。
+   *
+   * 和技能库的区别：技能是“人整理的、静态的做法”；经验是“做过之后记下的
+   * 成败”——带证据、可被推翻。只有 status=active 的会进提示词，
+   * 而且一次最多 3 条（上限写在 lessons.js 的 LESSON_LIMITS）。
+   */
+  lessonLibrary() {
+    return normalizeLessonList(this.state.lessons ?? []);
+  }
+
+  /** 收尾复盘是否开启（关掉之后不会再产生新候选，已有经验照常注入） */
+  lessonsEnabled() {
+    return config.lessonReflect !== false;
+  }
+
+  /** 加一条经验（同房间 + 同情境只能有一条，避免刷屏） */
+  addLesson(raw = {}) {
+    const list = this.lessonLibrary();
+    const reason = lessonRejectReason(raw);
+    if (reason) return { error: reason };
+    const lesson = normalizeLesson({ ...raw, updatedAt: Date.now() });
+    if (!lesson) return { error: '经验内容不合法' };
+    const clash = list.find(
+      (l) =>
+        (l.roomId || '') === (lesson.roomId || '') &&
+        l.cue.toLowerCase() === lesson.cue.toLowerCase(),
+    );
+    if (clash) return { error: `已经有一条同样情境的经验：「${clash.cue}」` };
+    list.push(lesson);
+    this.state.lessons = normalizeLessonList(list);
+    this.scheduleSave();
+    bus.emit('event', { t: 'lessons.updated', lessons: this.lessonLibrary() });
+    return { lesson };
+  }
+
+  /** 改一条经验（启用/归档/改文案）。启用必须有证据，否则退回候选。 */
+  updateLesson(id, patch = {}) {
+    const list = this.lessonLibrary();
+    const idx = list.findIndex((l) => l.id === id);
+    if (idx < 0) return { error: '经验不存在' };
+
+    const merged = { ...list[idx], ...patch, id, updatedAt: Date.now() };
+    const reason = lessonRejectReason(merged);
+    if (reason) return { error: reason };
+    const lesson = normalizeLesson(merged);
+    if (!lesson) return { error: '经验内容不合法' };
+
+    const clash = list.find(
+      (l, i) =>
+        i !== idx &&
+        (l.roomId || '') === (lesson.roomId || '') &&
+        l.cue.toLowerCase() === lesson.cue.toLowerCase(),
+    );
+    if (clash) return { error: `已经有一条同样情境的经验：「${clash.cue}」` };
+
+    list[idx] = lesson;
+    this.state.lessons = list;
+    this.scheduleSave();
+    bus.emit('event', { t: 'lessons.updated', lessons: list });
+    return { lesson };
+  }
+
+  /** 删一条经验 */
+  removeLesson(id) {
+    const list = this.lessonLibrary();
+    const next = list.filter((l) => l.id !== id);
+    if (next.length === list.length) return { error: '经验不存在' };
+    this.state.lessons = next;
+    this.scheduleSave();
+    bus.emit('event', { t: 'lessons.updated', lessons: next });
+    return { ok: true };
+  }
+
+  /**
+   * 记一次命中（lastUsedAt / hits）。
+   *
+   * 不 await、不阻塞这一轮：它只影响“以后还值不值得注入”，
+   * 写失败也不能影响 bot 干活。
+   */
+  touchLessons(ids = []) {
+    const wanted = new Set((Array.isArray(ids) ? ids : []).map(String));
+    if (!wanted.size) return;
+    const list = this.lessonLibrary();
+    let changed = false;
+    const now = Date.now();
+    for (const item of list) {
+      if (!wanted.has(item.id)) continue;
+      item.hits += 1;
+      item.lastUsedAt = now;
+      changed = true;
+    }
+    if (!changed) return;
+    this.state.lessons = list;
+    this.scheduleSave();
+  }
+
+  // ---------------------------------------------------------------- MCP 服务库
+
+  /**
+   * 全局 MCP 服务库（所有 bot 共享，存在 state.mcpServers）。
+   *
+   * 和 skill 的区别：skill 是往提示词里塞字，MCP 是**真去起进程/连服务**。
+   * 所以这里只存配置，真正连不连、连哪几个由建会话时决定。
+   */
+  mcpLibrary() {
+    return normalizeMcpList(this.state.mcpServers ?? []);
+  }
+
+  /** 加一个 MCP 服务 */
+  addMcpServer(raw = {}) {
+    const list = this.mcpLibrary();
+    const reason = mcpRejectReason(raw);
+    if (reason) return { error: reason };
+    const server = normalizeMcpServer({ ...raw, updatedAt: Date.now() });
+    if (!server) return { error: 'MCP 服务内容不合法' };
+    if (list.some((s) => s.name.toLowerCase() === server.name.toLowerCase())) {
+      return { error: `已经有同名服务「${server.name}」` };
+    }
+    list.push(server);
+    this.state.mcpServers = normalizeMcpList(list);
+    this.scheduleSave();
+    bus.emit('event', { t: 'mcp.updated', servers: this.mcpLibrary() });
+    return { server };
+  }
+
+  /** 改一个 MCP 服务 */
+  updateMcpServer(id, patch = {}) {
+    const list = this.mcpLibrary();
+    const idx = list.findIndex((s) => s.id === id);
+    if (idx < 0) return { error: 'MCP 服务不存在' };
+    const reason = mcpRejectReason({ ...list[idx], ...patch });
+    if (reason) return { error: reason };
+    const merged = normalizeMcpServer({ ...list[idx], ...patch, id, updatedAt: Date.now() });
+    if (!merged) return { error: 'MCP 服务内容不合法' };
+    if (list.some((s, i) => i !== idx && s.name.toLowerCase() === merged.name.toLowerCase())) {
+      return { error: `已经有同名服务「${merged.name}」` };
+    }
+    list[idx] = merged;
+    this.state.mcpServers = list;
+    this.scheduleSave();
+    bus.emit('event', { t: 'mcp.updated', servers: list });
+    return { server: merged };
+  }
+
+  /** 删一个 MCP 服务 */
+  removeMcpServer(id) {
+    const list = this.mcpLibrary();
+    const next = list.filter((s) => s.id !== id);
+    if (next.length === list.length) return { error: 'MCP 服务不存在' };
+    this.state.mcpServers = next;
+    this.scheduleSave();
+    bus.emit('event', { t: 'mcp.updated', servers: next });
+    return { ok: true };
+  }
+
+  /**
+   * 某个 bot 实际会连的 MCP 服务。
+   *
+   * bot.mcpServers 存的是**名字**（不存 id）：用户删了一条再建同名的，
+   * 原来选上它的 bot 仍然能接上 —— 用 id 的话每重建一次就得重新选一遍。
+   * 没设过（undefined）就返回空数组：默认不连，这是安全默认。
+   */
+  mcpServersFor(botId) {
+    const bot = this.getBot(botId);
+    const names = Array.isArray(bot?.mcpServers) ? bot.mcpServers : [];
+    if (!names.length) return [];
+    const byName = new Map(this.mcpLibrary().map((s) => [s.name.toLowerCase(), s]));
+    return names
+      .map((n) => byName.get(String(n ?? '').toLowerCase()))
+      .filter(Boolean);
+  }
+
   /** 当前的部门规矩 */
   policy() {
     return normalizePolicy(this.state.policy ?? {}, POLICY_DEFAULT);
@@ -969,6 +1183,8 @@ export class Store {
           model: m.model ?? null,
           thinking: m.thinking ?? undefined,
           skills: m.skills,
+          // 建部门时也可以直接给成员挂 MCP（比如负责某个系统的助手要连对应服务）
+          mcpServers: m.mcpServers,
           createdBy: createdBy ?? 'chief',
         }),
       );
@@ -1321,6 +1537,28 @@ export class Store {
     return task?.id ?? null;
   }
 
+  /**
+   * 重启后把上一进程遗留的 `doing` 任务放回待办。
+   *
+   * 进程被 kill / 崩溃时，正在跑的任务会永远停在"进行中" —— 服务端已经
+   * 没有那些会话了，界面却一直显示在干。启动时一律收回待办，并留一句说明，
+   * 让用户知道"这条不是还在跑，是上次被打断了"。
+   */
+  reconcileTasks({ note = '上次运行被中断，已放回待办' } = {}) {
+    const list = Array.isArray(this.state.tasks) ? this.state.tasks : [];
+    let n = 0;
+    for (const task of list) {
+      if (task?.status !== 'doing') continue;
+      task.status = 'open';
+      task.detail = [task.detail, note].filter(Boolean).join('\n').slice(0, 2000);
+      task.updatedAt = now();
+      n++;
+      bus.emit('event', { t: 'task.updated', task });
+    }
+    if (n) this.scheduleSave();
+    return n;
+  }
+
   /** 一轮跑完后收尾：成功/失败都记下来，完成的置为 done 并标记未读 */
   finishTask(id, { ok = true, text = '' } = {}) {
     const task = this.getTask(id);
@@ -1508,6 +1746,37 @@ export class Store {
     this.scheduleSave();
     if (!silent) bus.emit('event', { t: 'msg.updated', msg });
     return msg;
+  }
+
+  /**
+   * 把房间里最后一张还没答的“问你”卡片标成已答。
+   *
+   * 为什么要存在：那张卡片是 bot 停下来等用户回话的地方，一旦用户回了
+   * （点了某个选项，或者自己打了一句），这件事就已经往下走了 ——
+   * 卡片还挂着能被再点第二次，只会让人迷惑“我刚才点了吗”／误点拨乱进程。
+   *
+   * 只标**最新一张**：老的卡片在它被回答时就已经标过了；一次回答只对应一张卡。
+   *
+   * @returns {object|null} 被更新的消息
+   */
+  answerPendingAsk(roomId, answer, { silent = false } = {}) {
+    const list = this.messages.get(roomId);
+    if (!Array.isArray(list)) return null;
+    for (let i = list.length - 1; i >= 0; i--) {
+      const msg = list[i];
+      if (msg?.kind !== 'ask') continue;
+      // 已答过的跳过，继续往前找
+      if (msg.meta?.answer != null) continue;
+      const answered = String(answer ?? '').slice(0, 500);
+      const next = this.updateMessage(
+        roomId,
+        msg.id,
+        { meta: { ...(msg.meta ?? {}), answer: answered, answeredAt: now() } },
+        { silent },
+      );
+      return next;
+    }
+    return null;
   }
 
   reapStaleStreaming() {

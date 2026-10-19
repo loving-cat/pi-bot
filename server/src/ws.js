@@ -72,6 +72,7 @@ export function attachWs(server, { runner }) {
             const { userMessage } = await runner.send(cmd.roomId, cmd.text, {
               mode: cmd.mode,
               attachments: cmd.attachments,
+              flushMerge: cmd.flushMerge === true,
             });
             if (cmd.clientId) socket.send(JSON.stringify({ t: 'ack', clientId: cmd.clientId, messageId: userMessage.id }));
             break;

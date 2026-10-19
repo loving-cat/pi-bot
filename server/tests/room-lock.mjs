@@ -340,6 +340,33 @@ await test('★★ 竞态：两个人同时 @ 同一个人 → 只起一轮，�
   assert.equal(runner.dispatching.size, 0, '占位要还回去，不然这个人永远“忙”');
 });
 
+await test('★ 用户插话后：旧轮退出时把新消息接上（不丢、不并发）', async () => {
+  const bot = store.createBot({ name: '群主Z' });
+  const room = store.createGroup({ name: '测试群Z', botIds: [bot.id] });
+  const runner = new PiRunner();
+
+  let concurrent = 0;
+  let maxConcurrent = 0;
+  const rounds = [];
+  PiRunner.prototype.runRound = async (_roomId, opts) => {
+    concurrent++;
+    maxConcurrent = Math.max(maxConcurrent, concurrent);
+    rounds.push(opts.openerText);
+    await sleep(80);
+    concurrent--;
+  };
+
+  const first = runner.send(room.id, '第一轮需求');
+  await sleep(20);
+  // 用户插话：应该打断旧的、并把这条接在旧轮退出之后跑
+  await runner.send(room.id, '第二轮需求');
+  await first;
+  await sleep(300);
+
+  assert.equal(maxConcurrent, 1, `同一房间不能并发跑两轮，实际 ${maxConcurrent}`);
+  assert.ok(rounds.includes('第二轮需求'), '新需求必须被跑到，不能丢');
+});
+
 let failed = 0;
 for (const r of results) {
   if (r.ok) console.log(`  ✓ ${r.name}`);

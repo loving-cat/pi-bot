@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../models.dart';
+import '../ime_guard.dart';
 import '../theme.dart';
 
 /// 「要用户拿个主意」的卡片。
@@ -25,6 +26,14 @@ class AskCard extends StatefulWidget {
 }
 
 class _AskCardState extends State<AskCard> with SingleTickerProviderStateMixin {
+  /// 本地“已发出”：用户点下去的瞬间就把卡片锁住。
+  ///
+  /// 等服务端把 `meta.answer` 写回来要一个往返，这期间按钮还是可点的 ——
+  /// 点两下就会发两条同样的消息出去。所以本地先记一笔。
+  bool _submitted = false;
+
+  /// 用户选的/写的那个回答（本地记录，服务端回包后以服务端为准）
+  String? _localAnswer;
   /// 入场：卡片本体先"弹"出来，选项再一行一行跟上。
   ///
   /// 用户："这个询问卡片 要有动态动画，现在没有动画 触发的感觉都没有"。
@@ -92,8 +101,36 @@ class _AskCardState extends State<AskCard> with SingleTickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     final msg = widget.msg;
-    final onAnswer = widget.onAnswer;
     final options = msg.askOptions;
+
+    // ★ 已经答过 → 卡片收起，只留一行小字。
+    //
+    //   这张卡片的职责是“停下来等你回话”。用户回了（或者自己打了一句），
+    //   事情就已经往下走了 —— 卡片还摊在那里、按钮还能再点，
+    //   只会让人怀疑“我刚才到底点上了没有”。
+    final answered = _submitted || msg.askAnswered;
+    final answeredText = msg.askAnswer?.isNotEmpty == true
+        ? msg.askAnswer!
+        : _localAnswer;
+    if (answered) {
+      return _CollapsedAsk(
+        question: msg.text,
+        authorName: msg.authorName,
+        answer: answeredText ?? '',
+      );
+    }
+
+    /// 点了/写了之后：先本地上锁，再发回去。
+    /// 锁在本地是必须的 —— 服务端把 meta.answer 写回来要一个往返，
+    /// 这段空窗里连点两下就会发出两条一样的消息。
+    void submit(String text) {
+      if (_submitted) return;
+      setState(() {
+        _submitted = true;
+        _localAnswer = text;
+      });
+      widget.onAnswer(text);
+    }
 
     var slot = 1;
     return _RiseIn(
@@ -146,7 +183,7 @@ class _AskCardState extends State<AskCard> with SingleTickerProviderStateMixin {
                     child: _OptionButton(
                       label: o.label,
                       detail: o.detail,
-                      onTap: () => onAnswer(o.label),
+                      onTap: () => submit(o.label),
                     ),
                   ),
                 ),
@@ -154,12 +191,60 @@ class _AskCardState extends State<AskCard> with SingleTickerProviderStateMixin {
                 const SizedBox(height: 2),
                 _RiseIn(
                   animation: _slot(slot++),
-                  child: _CustomAnswer(onSubmit: onAnswer),
+                  child: _CustomAnswer(onSubmit: submit),
                 ),
               ],
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// 卡片的“已收起”形态。
+///
+/// 不把整张卡直接删掉：聊天记录里总得留下“当时问过什么、我回了什么”的痕迹，
+/// 否则往上一滚就是莫名其妙地从“问你做什么”跳到“好的我开工了”。
+/// 但也不再给它任何可点的东西 —— 这件事已经翻篇了。
+class _CollapsedAsk extends StatelessWidget {
+  const _CollapsedAsk({
+    required this.question,
+    required this.authorName,
+    required this.answer,
+  });
+
+  final String question;
+  final String authorName;
+  final String answer;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            LucideIcons.circleCheck,
+            size: 13,
+            color: PB.textQuaternary,
+          ),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              answer.isEmpty
+                  ? '已回答：$question'
+                  : '已回答：$answer',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: PB.fsXxs,
+                color: PB.textQuaternary,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -315,7 +400,8 @@ class _CustomAnswerState extends State<_CustomAnswer> {
         Expanded(
           child: TextField(
             controller: _c,
-            onSubmitted: (_) => _send(),
+            // 中文输入法打英文时按回车是「选候选词」，不是提交
+            onSubmitted: submitUnlessComposing(_c, _send),
             style: const TextStyle(fontSize: PB.fsSm),
             decoration: InputDecoration(
               hintText: '或者我自己说一句…',

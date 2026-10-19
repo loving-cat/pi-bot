@@ -24,6 +24,7 @@ import { applyCompactionBudget, withCapacity } from './context-budget.js';
 import { buildAppendSystemPrompt } from './system-prompt.js';
 import { buildChiefTools, buildCommonTools } from './tools.js';
 import { createPolicyExtension } from './policy-hook.js';
+import { createMcpExtension, mcpSectionForPrompt } from './mcp-hook.js';
 import { log } from './util.js';
 
 /**
@@ -70,17 +71,25 @@ export function createSessionBuilder({ runner, health, resolveModel, modelLabel 
         : SessionManager.create(config.workspace, sessionDir);
 
     const isChief = bot.role === 'main';
-    const commonTools = buildCommonTools({ runner, roomId, botId });
+    // isMain 决定要不要给 ask_user（主控不给 —— 它直接跟用户对话，不弹卡片）
+    const commonTools = buildCommonTools({ runner, roomId, botId, isMain: isChief });
     const customTools = [
       ...commonTools,
-      ...(isChief ? buildChiefTools({ runner, health, roomId }) : []),
+      ...(isChief ? buildChiefTools({ runner, health, roomId, botId }) : []),
     ];
 
     const resourceLoader = new DefaultResourceLoader({
       cwd: config.workspace,
       agentDir: getAgentDir(),
       // 命令级规矩的拦截点：bash/powershell 调用前按部门规则判定
-      extensionFactories: [createPolicyExtension({ roomId, bot })],
+      extensionFactories: [
+        createPolicyExtension({ roomId, bot }),
+        // ★ 用户在「设置 → MCP」里配的服务，按这个 bot 的选择逐个注册。
+        //   注意这跟 resourceOptions.noMcp 不冲突：那个开关关掉的是
+        //   pi 自己的 mcp.json（终端用户的外挂），这里挂的是 pi-bot 自己的服务库，
+        //   已经经过"库内启用 + bot 选中"两道门，默认一个都不连。
+        createMcpExtension({ botId, roomId }),
+      ],
       // ★ bot 会话不加载 pi 侧的任何"外挂"：扩展、MCP、skills、提示模板。
       //
       //   它们会起子进程（派子 agent / MCP 客户端 / 控制台窗口）、把工具塞进提示词，
@@ -106,6 +115,9 @@ export function createSessionBuilder({ runner, health, resolveModel, modelLabel 
         userName: store.userName(),
         // 部门规矩跟着会话走：工具集和提示都是建会话时定的，规矩变了会作废重建
         policy: store.policy(),
+        // MCP 清单只给主控：它要知道有哪些能力可以派给成员。
+        // 成员自己不拿这份清单 —— 它们要的是已经挂载的工具，不是能力目录。
+        mcpLines: isChief ? mcpSectionForPrompt() : '',
       }),
       ...resourceOptions,
     });

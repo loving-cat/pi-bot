@@ -4,6 +4,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../platform.dart';
 import '../scope.dart';
 import '../theme.dart';
+import 'toast.dart';
 
 /// 设置里的「本机服务端」：查看并修改启动配置。
 ///
@@ -38,7 +39,7 @@ class ServerConfigSection extends StatelessWidget {
             ),
             const Spacer(),
             TextButton.icon(
-              onPressed: () => _edit(context, state),
+              onPressed: () => showServerConfigDialog(context),
               icon: const Icon(LucideIcons.slidersHorizontal, size: 15),
               label: const Text('修改启动配置'),
             ),
@@ -87,28 +88,30 @@ class ServerConfigSection extends StatelessWidget {
     );
   }
 
-  Future<void> _edit(BuildContext context, state) async {
-    final result = await showDialog<_ServerConfig>(
-      context: context,
-      builder: (_) => _ServerConfigDialog(
-        port: state.serverPort,
-        dataDir: state.serverDataDir,
-        entryPath: state.serverEntryPath,
-        nodePath: state.serverNodePath,
-      ),
-    );
-    if (result == null || !context.mounted) return;
-    await state.applyServerSettings(
-      dataDir: result.dataDir,
-      port: result.port,
-      entryPath: result.entryPath,
-      nodePath: result.nodePath,
-    );
-    if (!context.mounted) return;
-    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-      const SnackBar(content: Text('已保存，正在重启本机服务端…')),
-    );
-  }
+}
+
+/// 打开本机服务端启动配置，保存后重启服务端并显示实际结果。
+Future<void> showServerConfigDialog(BuildContext context) async {
+  final state = AppScope.read(context);
+  final result = await showDialog<_ServerConfig>(
+    context: context,
+    builder: (_) => _ServerConfigDialog(
+      port: state.serverPort,
+      dataDir: state.serverDataDir,
+      entryPath: state.serverEntryPath,
+      nodePath: state.serverNodePath,
+    ),
+  );
+  if (result == null || !context.mounted) return;
+  await state.applyServerSettings(
+    dataDir: result.dataDir,
+    port: result.port,
+    entryPath: result.entryPath,
+    nodePath: result.nodePath,
+  );
+  if (!context.mounted) return;
+  final problem = state.serverProblem;
+  toast(context, problem ?? '已保存，本机服务端已启动');
 }
 
 class _Row extends StatelessWidget {
@@ -229,7 +232,7 @@ class _ServerConfigDialogState extends State<_ServerConfigDialog> {
               const SizedBox(height: 14),
               _field(_port, '端口', '8787'),
               _field(_entry, '服务端入口（server/src/index.js）', '留空自动查找'),
-              _field(_node, 'node 路径（node.exe）', '留空自动查找'),
+              _field(_node, 'node 路径', '留空自动查找'),
               _field(_dataDir, '数据目录', '留空 = 用户数据目录'),
               if (_error != null) ...[
                 const SizedBox(height: 8),

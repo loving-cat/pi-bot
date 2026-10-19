@@ -53,7 +53,20 @@ class AppState extends ChangeNotifier {
 
   /// 全局技能库（所有 bot 共享）
   List<LibrarySkill> skills = const [];
+
+  /// MCP 服务库（设置 → MCP）。跟技能库一起由服务端下发，
+  /// 但**机制完全不同**：技能只是提示词，MCP 会真起进程/连服务。
+  List<McpServer> mcpServers = const [];
+  bool mcpLoaded = false;
   bool skillsLoaded = false;
+
+  /// 经验库（从执行里学到的“下次别这样”）。只有 active 的会进主控提示词。
+  List<LibraryLesson> lessons = const [];
+  bool lessonsLoaded = false;
+
+  /// 本机 pi 上已经装好的能力（只读扫描结果）。
+  /// 用户在终端里早就装了一堆，这里让他一键导进来，不用手抄。
+  LocalCapabilities? localCapabilities;
 
   /// 已接入的外部 Web 系统
   List<SiteSystem> sites = const [];
@@ -236,6 +249,7 @@ class AppState extends ChangeNotifier {
         entryPath: serverEntryPath.isEmpty ? null : serverEntryPath,
         nodePath: serverNodePath.isEmpty ? null : serverNodePath,
         dataDir: serverDataDir.isEmpty ? null : serverDataDir,
+        port: serverPort,
       );
       final result = await serverLauncher.ensureRunning(
         baseUrl: localUrl,
@@ -300,23 +314,46 @@ class AppState extends ChangeNotifier {
     required String entryPath,
     required String nodePath,
   }) async {
-    serverDataDir = dataDir.trim();
-    serverPort = port;
-    serverEntryPath = entryPath.trim();
-    serverNodePath = nodePath.trim();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_kDataDir, serverDataDir);
-    await prefs.setInt(_kPort, serverPort);
-    await prefs.setString(_kEntry, serverEntryPath);
-    await prefs.setString(_kNode, serverNodePath);
+    if (serverStarting) {
+      serverProblem = '本机服务端正在启动或停止，请等待完成后再保存配置';
+      lastError = serverProblem;
+      _notify();
+      return;
+    }
+    serverStarting = true;
+    try {
+      serverDataDir = dataDir.trim();
+      serverPort = port;
+      serverEntryPath = entryPath.trim();
+      serverNodePath = nodePath.trim();
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_kDataDir, serverDataDir);
+      await prefs.setInt(_kPort, serverPort);
+      await prefs.setString(_kEntry, serverEntryPath);
+      await prefs.setString(_kNode, serverNodePath);
+    } finally {
+      serverStarting = false;
+    }
     await restartLocalServer();
   }
 
   /// 重启本机服务端（改完配置用它）
   Future<void> restartLocalServer() async {
     if (!isHostPlatform) return;
+    if (serverStarting) return;
+    serverStarting = true;
     disconnect();
-    await serverLauncher.stop();
+    try {
+      await serverLauncher.stop();
+    } catch (err) {
+      serverProblem = '停止本机服务端失败：$err';
+      lastError = serverProblem;
+      serverRetryPaused = true;
+      serverStarting = false;
+      _notify();
+      return;
+    }
+    serverStarting = false;
     _spawnFails = 0;
     serverRetryPaused = false;
     serverProblem = null;
@@ -550,6 +587,116 @@ class AppState extends ChangeNotifier {
 
   // ---------------------------------------------------------------- HTTP
 
+  // ---------------------------------------------------------------- 本机已装能力
+
+  /// 扫描本机 pi 上已装的 skill / MCP（只读，不会改用户配置）
+  Future<void> loadLocalCapabilities() async {
+    if (api == null) return;
+    try {
+      final json = await api!.get('/api/local-capabilities');
+      localCapabilities = LocalCapabilities.fromJson(json);
+      _notify();
+    } catch (err) {
+      lastError = '扫描本机能力失败：$err';
+      _notify();
+    }
+  }
+
+  /// 一键导入本机已装的能力。
+  /// [kind] 是 'skill' 或 'mcp'，[names] 是要导入的名字列表。
+  /// 返回 (成功导入的名字, 跳过明细)
+  Future<({List<String> imported, List<String> skipped})> importLocalCapabilities({
+    required String kind,
+    required List<String> names,
+  }) async {
+    if (api == null) {
+      return (imported: <String>[], skipped: <String>['未连接服务端']);
+    }
+    try {
+      final json = await api!.post('/api/local-capabilities/import', {
+        'kind': kind,
+        'names': names,
+      });
+      final imported = <String>[
+        ...((json['imported'] as List?) ?? const []).map((e) => '$e'),
+      ];
+      final skipped = <String>[
+        ...((json['skipped'] as List?) ?? const [])
+            .whereType<Map>()
+            .map((e) => '${e['title']}：${e['reason']}'),
+      ];
+      // 导入后两边的库都变了，刷新
+      if (kind == 'skill') {
+        await loadSkills();
+      } else {
+        await loadMcpServers();
+      }
+      await loadLocalCapabilities();
+      return (imported: imported, skipped: skipped);
+    } catch (err) {
+      return (imported: <String>[], skipped: <String>['$err']);
+    }
+  }
+
+  // ---------------------------------------------------------------- MCP 服务库
+
+  /// 拉 MCP 服务库
+  Future<void> loadMcpServers() async {
+    if (api == null) return;
+    try {
+      final json = await api!.get('/api/mcp');
+      mcpServers = ((json['servers'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => McpServer.fromJson(e.cast<String, dynamic>()))
+          .toList();
+      mcpLoaded = true;
+      _notify();
+    } catch (err) {
+      lastError = 'MCP 库加载失败：$err';
+      _notify();
+    }
+  }
+
+  /// 新增或更新一个 MCP 服务（[id] 为空 = 新增）。返回错误文案，成功为 null。
+  Future<String?> saveMcpServer(Map<String, dynamic> patch) async {
+    if (api == null) return '未连接服务端';
+    try {
+      final id = patch['id'] as String?;
+      if (id == null || id.isEmpty) {
+        await api!.post('/api/mcp', patch);
+      } else {
+        await api!.patch('/api/mcp/${Uri.encodeComponent(id)}', patch);
+      }
+      await loadMcpServers();
+      return null;
+    } catch (err) {
+      return '$err';
+    }
+  }
+
+  /// 删一个 MCP 服务
+  Future<String?> removeMcpServer(String id) async {
+    if (api == null) return '未连接服务端';
+    try {
+      await api!.delete('/api/mcp/${Uri.encodeComponent(id)}');
+      await loadMcpServers();
+      return null;
+    } catch (err) {
+      return '$err';
+    }
+  }
+
+  /// 测一下这个服务能不能连上。
+  /// 返回服务端给的结果：{ok, ms, via, detail, error}
+  Future<Map<String, dynamic>> testMcpServer(Map<String, dynamic> body) async {
+    if (api == null) return {'ok': false, 'error': '未连接服务端'};
+    try {
+      return await api!.post('/api/mcp/test', body);
+    } catch (err) {
+      return {'ok': false, 'error': '$err'};
+    }
+  }
+
   // ---------------------------------------------------------------- 技能库
 
   /// 拉技能库（设置页打开时调）
@@ -611,6 +758,58 @@ class AppState extends ChangeNotifier {
       await loadSkills();
       return null;
     } catch (err) {
+      return '$err';
+    }
+  }
+
+  // ---------------------------------------------------------------- 经验库
+
+  /// 用服务端推来的列表更新本地（WS 事件和主动拉取共用这一条路径）
+  void applyLessons(List raw) {
+    lessons = raw
+        .whereType<Map>()
+        .map((e) => LibraryLesson.fromJson(e.cast<String, dynamic>()))
+        .toList();
+    lessonsLoaded = true;
+    _notify();
+  }
+
+  Future<void> loadLessons() async {
+    if (api == null) return;
+    try {
+      final json = await api!.get('/api/lessons');
+      applyLessons((json['lessons'] as List?) ?? const []);
+    } catch (err) {
+      lastError = '经验库加载失败：$err';
+      _notify();
+    }
+  }
+
+  /// 启用 / 停用一条经验（启用前服务端会校验它有没有证据）
+  Future<String?> setLessonStatus(String id, String status) async {
+    if (api == null) return '未连接服务端';
+    try {
+      await api!.patch('/api/lessons/${Uri.encodeComponent(id)}', {
+        'status': status,
+      });
+      await loadLessons();
+      return null;
+    } catch (err) {
+      // 失败也刷一次：这条可能已经被删了（列表是旧的），不能让用户
+      // 对着一条不存在的经验反复点“停用/删除”。
+      await loadLessons();
+      return '$err';
+    }
+  }
+
+  Future<String?> removeLesson(String id) async {
+    if (api == null) return '未连接服务端';
+    try {
+      await api!.delete('/api/lessons/${Uri.encodeComponent(id)}');
+      await loadLessons();
+      return null;
+    } catch (err) {
+      await loadLessons();
       return '$err';
     }
   }
@@ -930,11 +1129,18 @@ class AppState extends ChangeNotifier {
   String? fileUrl(String id) => api?.fileUrl(id);
 
   /// 发消息。busy 时用 steer（插话引导）或 followUp（排队），不报错。
+  /// 发一条消息。
+  ///
+  /// [flushMerge] = true 表示"这一条是用户明确按发送发的"，
+  /// 服务端会立刻把之前攒着的连发消息连同这条一起投递，不等静默窗口。
+  /// 用户连打三条然后按回车时，体感就应该是"咔一下全部生效"，
+  /// 而不是再多等 700ms。
   Future<void> sendMessage(
     String roomId,
     String text, {
     String mode = 'steer',
     List<Attachment> attachments = const [],
+    bool flushMerge = true,
   }) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty && attachments.isEmpty) return;
@@ -947,6 +1153,7 @@ class AppState extends ChangeNotifier {
           'roomId': roomId,
           'text': trimmed,
           'mode': mode,
+          if (flushMerge) 'flushMerge': true,
           if (ids.isNotEmpty) 'attachments': ids,
           'clientId': DateTime.now().microsecondsSinceEpoch.toString(),
         }),
@@ -980,8 +1187,10 @@ class AppState extends ChangeNotifier {
     queued[roomId] = 0;
     for (final m in messages[roomId] ?? const <Msg>[]) {
       if (m.status == 'streaming') {
-        m.status = 'error';
-        m.error = '已按你的要求终止';
+        // 本地乐观终止：用 aborted 而不是 error —— 用户按 Esc 不是"出错"，
+        // 不要弹红色错误气泡（在 pi agent 里终止就是终止，界面不留痕）
+        m.status = 'aborted';
+        m.error = '';
         for (final s in m.steps) {
           if (s.status == 'running') s.status = 'error';
         }
@@ -1196,9 +1405,21 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// 思考强度的可选项（档位 / 上游格式）。服务端是唯一的真源，
+  /// Windows 与 Mac 两端都从这里取，不在客户端写死枚举。
+  Future<Map<String, dynamic>> loadThinkingOptions() async {
+    try {
+      return await api?.get('/api/model-thinking/options') ?? {};
+    } catch (err) {
+      return {};
+    }
+  }
+
   Future<void> deleteModelGroup(String id) async {
     try {
-      await api?.delete('/api/model-groups/\$id');
+      // ★ 以前这里写的是 '\$id'（转义了），实际发出去的是字面量 "$id"，
+      //   服务端当然找不到叫 "$id" 的组 —— 表现就是“删不掉”。
+      await api?.delete('/api/model-groups/$id');
       await refresh();
     } catch (err) {
       lastError = '$err';
@@ -1328,6 +1549,12 @@ class AppState extends ChangeNotifier {
             .toList();
         final open = _openRoomId;
         if (open != null) unawaited(loadMessages(open, force: true));
+        break;
+
+      case 'lessons.updated':
+        // 复盘是在服务端后台跑的：不接这个事件，界面就要等用户切标签页
+        // 才能看到新候选（更糟的是操作一条已经被删的经验 →“经验不存在”）。
+        applyLessons((ev['lessons'] as List?) ?? const []);
         break;
 
       case 'msg.new':

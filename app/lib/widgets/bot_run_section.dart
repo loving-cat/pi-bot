@@ -4,6 +4,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../models.dart';
 import '../scope.dart';
 import '../theme.dart';
+import 'toast.dart';
 import 'model_picker_field.dart';
 
 /// 「运行参数」—— 面板的「详情」页里那一段：这个会话到底用谁、用什么模型、
@@ -58,19 +59,15 @@ class _BotRunSectionState extends State<BotRunSection> {
     super.dispose();
   }
 
-  Future<void> _patch(Map<String, dynamic> patch, {String? toast}) async {
+  Future<void> _patch(Map<String, dynamic> patch, {String? msg}) async {
     final state = AppScope.read(context);
     setState(() => _saving = true);
     try {
       await state.updateBot(widget.bot.id, patch);
       if (!mounted) return;
-      if (toast != null) {
-        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-          SnackBar(
-            duration: const Duration(milliseconds: 1400),
-            content: Text(toast, style: const TextStyle(fontSize: PB.fsSm)),
-          ),
-        );
+      // ★ 参数别叫 toast —— 会把这个文件里的 toast() 函数遮蔽掉
+      if (msg != null) {
+        toast(context, msg);
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -79,7 +76,7 @@ class _BotRunSectionState extends State<BotRunSection> {
 
   Future<void> _saveModel() => _patch(
     {'model': _model.text.trim()},
-    toast: _model.text.trim().isEmpty
+    msg: _model.text.trim().isEmpty
         ? '已恢复默认模型（下一轮生效）'
         : '模型已保存，下一轮生效',
   );
@@ -103,18 +100,11 @@ class _BotRunSectionState extends State<BotRunSection> {
     }
     await _patch(
       {'reserveTokens': r, 'keepRecentTokens': k},
-      toast: '上下文预算已保存，下一轮生效',
+      msg: '上下文预算已保存，下一轮生效',
     );
   }
 
-  void _toast(String text) {
-    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-      SnackBar(
-        duration: const Duration(milliseconds: 1600),
-        content: Text(text, style: const TextStyle(fontSize: PB.fsSm)),
-      ),
-    );
-  }
+  void _toast(String text) => toast(context, text);
 
   @override
   Widget build(BuildContext context) {

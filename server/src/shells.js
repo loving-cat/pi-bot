@@ -13,6 +13,38 @@
 import { spawn } from 'node:child_process';
 import { newId, now, log } from './util.js';
 
+/**
+ * 把累计输出裁到 maxBytes 以内（只留尾部）。
+ *
+ * 两个坑：
+ *   · **只剩一块时也可能超**：一次 200KB 的写入、或者 maxBytes 很小，
+ *     原来的 `chunks.length > 1` 条件会直接放过它（Linux 上 200KB 一次
+ *     data 事件就复现，Windows 因为分块小反而看不出来）；
+ *   · 按字节截断会切断多字节字符，所以要跳过开头那些 UTF-8 续字节，
+ *     否则界面第一行会是个乱码方块。
+ *
+ * @param {{chunks:string[], bytes:number, truncated:boolean}} entry
+ * @param {number} maxBytes
+ */
+export function trimChunks(entry, maxBytes) {
+  while (entry.bytes > maxBytes) {
+    if (entry.chunks.length > 1) {
+      entry.bytes -= Buffer.byteLength(entry.chunks.shift());
+      entry.truncated = true;
+      continue;
+    }
+    const buf = Buffer.from(entry.chunks[0] ?? '', 'utf8');
+    const tail = buf.subarray(Math.max(0, buf.length - maxBytes));
+    let start = 0;
+    while (start < tail.length && (tail[start] & 0xc0) === 0x80) start++;
+    const kept = tail.subarray(start).toString('utf8');
+    entry.chunks[0] = kept;
+    entry.bytes = Buffer.byteLength(kept);
+    entry.truncated = true;
+    return;
+  }
+}
+
 export const MAX_SHELLS = 20;
 export const MAX_BUFFER_BYTES = 64 * 1024;
 export const IDLE_MS = 30 * 60 * 1000;
@@ -100,11 +132,7 @@ export class ShellRegistry {
       entry.chunks.push(text);
       entry.bytes += Buffer.byteLength(text);
       entry.lastOutputAt = now();
-      while (entry.bytes > this.maxBytes && entry.chunks.length > 1) {
-        const dropped = entry.chunks.shift();
-        entry.bytes -= Buffer.byteLength(dropped);
-        entry.truncated = true;
-      }
+      trimChunks(entry, this.maxBytes);
       this.#notify(entry);
     };
     child.stdout.on('data', append);

@@ -241,6 +241,13 @@ class Msg {
 
   bool get isUser => authorType == 'user';
   bool get isStreaming => status == 'streaming';
+
+  /// 用户主动终止的（按 Esc）。服务端写 status='aborted'。
+  ///
+  /// 为什么单独一个状态而不是复用 'error'：终止不是"出错"。
+  /// 在终端里按 Esc 停下就是停下，界面不该冒一个红字气泡问"要不要重试"，
+  /// 也不该在聊天记录里留一行"已按你的要求终止" —— 用户自己按的，他知道。
+  bool get isAborted => status == 'aborted';
   bool get isRef => kind == 'ref' && refs.isNotEmpty;
 
   /// 上下文压缩的提示条（服务端在压缩成功后写一条 kind='compact'）
@@ -278,6 +285,15 @@ class Msg {
 
   /// 要不要同时给一个"我自己说"的输入框
   bool get askAllowCustom => meta?['allowCustom'] != false;
+
+  /// 用户已经回答过这张卡片（点了选项或自己写了一句）
+  String? get askAnswer => meta?['answer'] as String?;
+
+  /// 这张卡片是否已经用过 —— 用过就不再接受第二次点击。
+  ///
+  /// 除了服务端写回的 answer，还兼容一种情况：用户刚点了、请求还在路上，
+  /// 由卡片自己先置上本地已答（见 AskCard）。
+  bool get askAnswered => (meta?['answer'] as String?)?.isNotEmpty == true;
   bool get wasSteer => meta?['queued'] != null;
 
   factory Msg.fromJson(Map<String, dynamic> json) => Msg(
@@ -390,10 +406,12 @@ class Bot {
     this.tagline = '',
     this.persona = '',
     List<BotSkill>? skills,
+    List<String>? mcpServers,
     this.enabled = true,
     this.reserveTokens,
     this.keepRecentTokens,
-  }) : skills = skills ?? [];
+  }) : skills = skills ?? [],
+       mcpServers = mcpServers ?? [];
 
   final String id;
   String name;
@@ -413,6 +431,10 @@ class Bot {
 
   /// 用户手把手教给它的做法（SOP）。服务端会拼进系统提示词，让 bot 真的"学会"。
   List<BotSkill> skills;
+
+  /// 这个 bot 要连哪几个 MCP 服务（存**名字**，不存 id）。
+  /// 空 = 不连 —— MCP 会真起子进程，默认一个都不挂。
+  List<String> mcpServers;
   bool enabled;
 
   bool get isMain => role == 'main';
@@ -431,7 +453,185 @@ class Bot {
         .whereType<Map>()
         .map((e) => BotSkill.fromJson(e.cast<String, dynamic>()))
         .toList(),
+    mcpServers: ((json['mcpServers'] as List?) ?? const [])
+        .map((e) => '$e')
+        .where((e) => e.isNotEmpty)
+        .toList(),
     enabled: json['enabled'] as bool? ?? true,
+  );
+}
+
+/// 本机 pi 上已经装好的能力（只读扫描的结果）。
+///
+/// 存在的意义：用户在终端里用 pi 时早就装了一堆 skill / MCP，
+/// 但 pi-bot 是独立进程、默认不加载。扫描出来让他一键导入，
+/// 比让他把已有的东西再手抄一遍合理。
+class LocalCapabilities {
+  LocalCapabilities({
+    List<LocalSkillEntry>? skills,
+    List<LocalMcpEntry>? mcpServers,
+    this.skillsRoot = '',
+    this.mcpFile = '',
+  })  : skills = skills ?? [],
+        mcpServers = mcpServers ?? [];
+
+  final List<LocalSkillEntry> skills;
+  final List<LocalMcpEntry> mcpServers;
+
+  /// 从哪儿扫的（界面上展示，让用户知道去哪个目录看）
+  final String skillsRoot;
+  final String mcpFile;
+
+  bool get isEmpty => skills.isEmpty && mcpServers.isEmpty;
+
+  factory LocalCapabilities.fromJson(Map<String, dynamic> json) {
+    final from = (json['scannedFrom'] as Map?) ?? const {};
+    return LocalCapabilities(
+      skills: ((json['skills'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => LocalSkillEntry.fromJson(e.cast<String, dynamic>()))
+          .toList(),
+      mcpServers: ((json['mcpServers'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => LocalMcpEntry.fromJson(e.cast<String, dynamic>()))
+          .toList(),
+      skillsRoot: '${from['skills'] ?? ''}',
+      mcpFile: '${from['mcp'] ?? ''}',
+    );
+  }
+}
+
+/// 本机扫到的一条 skill
+class LocalSkillEntry {
+  LocalSkillEntry({
+    required this.title,
+    this.summary = '',
+    this.howto = '',
+    this.imported = false,
+    this.truncated = false,
+  });
+
+  final String title;
+  final String summary;
+  final String howto;
+
+  /// 库里已经有了（同名）
+  final bool imported;
+
+  /// 正文太长被截断过
+  final bool truncated;
+
+  factory LocalSkillEntry.fromJson(Map<String, dynamic> json) => LocalSkillEntry(
+    title: json['title'] as String? ?? '',
+    summary: json['summary'] as String? ?? '',
+    howto: json['howto'] as String? ?? '',
+    imported: json['imported'] as bool? ?? false,
+    truncated: json['truncated'] as bool? ?? false,
+  );
+}
+
+/// 本机 mcp.json 里的一条服务
+class LocalMcpEntry {
+  LocalMcpEntry({
+    required this.name,
+    this.type = 'stdio',
+    this.description = '',
+    this.command = '',
+    this.url = '',
+    this.imported = false,
+  });
+
+  final String name;
+  final String type;
+  final String description;
+  final String command;
+  final String url;
+  final bool imported;
+
+  bool get isHttp => type == 'http';
+  String get target => isHttp ? url : command;
+
+  factory LocalMcpEntry.fromJson(Map<String, dynamic> json) => LocalMcpEntry(
+    name: json['name'] as String? ?? '',
+    type: json['type'] as String? ?? 'stdio',
+    description: json['description'] as String? ?? '',
+    command: json['command'] as String? ?? '',
+    url: json['url'] as String? ?? '',
+    imported: json['imported'] as bool? ?? false,
+  );
+}
+
+/// 一个 MCP 服务（设置 → MCP 里配的）。
+///
+/// 与技能的区别：技能是往提示词里塞做法，MCP 是**真去起进程 / 连服务**。
+/// 所以默认 `enabled == false` —— 加进来只是"待配"，要显式打开才开始连。
+class McpServer {
+  McpServer({
+    required this.id,
+    required this.name,
+    this.type = 'stdio',
+    this.description = '',
+    this.enabled = false,
+    this.exposure = 'direct',
+    this.timeout = 60,
+    this.command = '',
+    List<String>? args,
+    Map<String, String>? env,
+    this.cwd = '',
+    this.url = '',
+    Map<String, String>? headers,
+  })  : args = args ?? [],
+        env = env ?? const {},
+        headers = headers ?? const {};
+
+  final String id;
+
+  /// 名字会变成工具前缀（`mcp__<name>__<tool>`），只能是字母数字下划线短横线
+  String name;
+  String type; // stdio | http
+  String description;
+  bool enabled;
+
+  /// 工具怎么暴露给模型：direct / deferred / codemode / hidden
+  String exposure;
+  int timeout;
+
+  // stdio
+  String command;
+  List<String> args;
+  Map<String, String> env;
+  String cwd;
+
+  // http
+  String url;
+  Map<String, String> headers;
+
+  bool get isHttp => type == 'http';
+
+  /// 一句话目标（列表里显示用）
+  String get target =>
+      isHttp ? url : ([command, ...args].where((e) => e.isNotEmpty).join(' '));
+
+  factory McpServer.fromJson(Map<String, dynamic> json) => McpServer(
+    id: json['id'] as String? ?? '',
+    name: json['name'] as String? ?? '',
+    type: json['type'] as String? ?? 'stdio',
+    description: json['description'] as String? ?? '',
+    enabled: json['enabled'] as bool? ?? false,
+    exposure: json['exposure'] as String? ?? 'direct',
+    timeout: (json['timeout'] as num?)?.toInt() ?? 60,
+    command: json['command'] as String? ?? '',
+    args: ((json['args'] as List?) ?? const []).map((e) => '$e').toList(),
+    env: {
+      for (final e in ((json['env'] as Map?) ?? const {}).entries)
+        '${e.key}': '${e.value}',
+    },
+    cwd: json['cwd'] as String? ?? '',
+    url: json['url'] as String? ?? '',
+    headers: {
+      for (final e in ((json['headers'] as Map?) ?? const {}).entries)
+        '${e.key}': '${e.value}',
+    },
   );
 }
 
@@ -543,6 +743,10 @@ class ModelSpec {
     this.name = '',
     this.contextWindow = 0,
     this.maxTokens = 0,
+    this.reasoning = false,
+    this.thinkingFormat = '',
+    this.thinkingLevelMap = const {},
+    this.thinkingLevels = const [],
   });
 
   final String id;
@@ -550,11 +754,40 @@ class ModelSpec {
   int contextWindow;
   int maxTokens;
 
+  /// 这个模型会不会思考（上游支持 reasoning / thinking）
+  bool reasoning;
+
+  /// 思考走哪种上游格式（deepseek / openai / zai …）；空 = 用 pi 默认
+  String thinkingFormat;
+
+  /// pi 的档位 → 上游值；null 表示这一档不额外传参数
+  Map<String, String?> thinkingLevelMap;
+
+  /// 服务端算好的「这个模型实际可选的档位」。
+  ///
+  /// 后台关掉思考 → 空列表 → 前台不展示思考档位；
+  /// 只映射了部分档位 → 前台只给这几档。
+  /// 仅由 `/api/models` 回包填充，模型组里保存的那份不带这个字段。
+  List<String> thinkingLevels;
+
+  /// 这个模型是否可用某档位（模型组配置里没声明时不做限制，交给后端判断）
+  bool supportsThinkingLevel(String level) =>
+      thinkingLevels.isEmpty ? false : thinkingLevels.contains(level);
+
   factory ModelSpec.fromJson(Map<String, dynamic> json) => ModelSpec(
     id: json['id'] as String? ?? '',
     name: json['name'] as String? ?? '',
     contextWindow: _asInt(json['contextWindow']),
     maxTokens: _asInt(json['maxTokens']),
+    reasoning: json['reasoning'] as bool? ?? false,
+    thinkingFormat: json['thinkingFormat'] as String? ?? '',
+    thinkingLevelMap: {
+      for (final entry in ((json['thinkingLevelMap'] as Map?) ?? const {}).entries)
+        '${entry.key}': entry.value == null ? null : '${entry.value}',
+    },
+    thinkingLevels: ((json['thinkingLevels'] as List?) ?? const [])
+        .map((e) => '$e')
+        .toList(),
   );
 }
 
@@ -663,6 +896,91 @@ class LibrarySkill {
         howto.toLowerCase().contains(q) ||
         tags.any((t) => t.toLowerCase().contains(q));
   }
+}
+
+/// 一条经验（lessons）：从**实际执行**里长出来的"下次别这么做/就这么做"。
+///
+/// 和技能的区别：技能是人整理的做法（静态）；经验是做过之后的成败，带证据、
+/// 可以被推翻。只有 status == active 的会进主控提示词，而且一次最多 3 条。
+class LibraryLesson {
+  LibraryLesson({
+    required this.id,
+    this.roomId = '',
+    this.dept = '',
+    this.cue = '',
+    this.lesson = '',
+    List<LessonEvidence>? evidence,
+    this.verdict = 'confounded',
+    this.status = 'candidate',
+    this.hits = 0,
+    this.createdAt = 0,
+    this.lastUsedAt = 0,
+  }) : evidence = evidence ?? [];
+
+  final String id;
+  final String roomId;
+  final String dept;
+
+  /// 什么情况下用得上（情境的形状，不是这次的事实）
+  final String cue;
+
+  /// 下次具体怎么做
+  final String lesson;
+
+  /// 证据：哪条消息里说过什么（人审计用，不进提示词）
+  final List<LessonEvidence> evidence;
+
+  /// helped / hurt / no_effect / confounded
+  final String verdict;
+
+  /// candidate（候选，不注入）/ active（启用）/ archived（归档）
+  final String status;
+
+  final int hits;
+  final int createdAt;
+  final int lastUsedAt;
+
+  bool get isActive => status == 'active';
+  bool get isCandidate => status == 'candidate';
+
+  static const verdictLabels = {
+    'helped': '有效',
+    'hurt': '不好',
+    'no_effect': '没差别',
+    'confounded': '说不清',
+  };
+
+  String get verdictLabel => verdictLabels[verdict] ?? verdict;
+
+  factory LibraryLesson.fromJson(Map<String, dynamic> json) => LibraryLesson(
+    id: json['id'] as String? ?? '',
+    roomId: json['roomId'] as String? ?? '',
+    dept: json['dept'] as String? ?? '',
+    cue: json['cue'] as String? ?? '',
+    lesson: json['lesson'] as String? ?? '',
+    evidence: ((json['evidence'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => LessonEvidence.fromJson(e.cast<String, dynamic>()))
+        .toList(),
+    verdict: json['verdict'] as String? ?? 'confounded',
+    status: json['status'] as String? ?? 'candidate',
+    hits: (json['hits'] as num?)?.toInt() ?? 0,
+    createdAt: (json['createdAt'] as num?)?.toInt() ?? 0,
+    lastUsedAt: (json['lastUsedAt'] as num?)?.toInt() ?? 0,
+  );
+}
+
+/// 一条经验的证据：引用哪条消息里的哪句话
+class LessonEvidence {
+  LessonEvidence({this.msgId = '', this.quote = ''});
+
+  final String msgId;
+  final String quote;
+
+  factory LessonEvidence.fromJson(Map<String, dynamic> json) => LessonEvidence(
+    msgId: json['msgId'] as String? ?? '',
+    quote: json['quote'] as String? ?? '',
+  );
 }
 
 /// 跨会话引用：bot 给别的 bot 发了私信，在**来源房间**留下一个指针。

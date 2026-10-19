@@ -12,7 +12,9 @@ import '../app_state.dart';
 import '../clipboard_image.dart';
 import '../models.dart';
 import '../scope.dart';
+import '../desktop_shortcuts.dart';
 import '../theme.dart';
+import '../widgets/toast.dart';
 import '../widgets/attachment_view.dart';
 import '../widgets/avatar_life.dart';
 import '../widgets/ask_card.dart';
@@ -253,7 +255,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _focus.requestFocus();
   }
 
-  Future<void> _send() async {
+  Future<void> _send({bool flushMerge = true}) async {
     final text = _input.text;
     final files = List<Attachment>.from(_pending);
     if (text.trim().isEmpty && files.isEmpty) return;
@@ -262,11 +264,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _stick = true;
     final state = AppScope.read(context);
     try {
-      await state.sendMessage(widget.room.id, text, attachments: files);
+      await state.sendMessage(
+        widget.room.id,
+        text,
+        attachments: files,
+        // ★ 用户还在连续输入（打完一句立刻接着下一句）→ 让服务端攒一下，
+        //   把这几条合成一段给模型，它才能看懂完整意图。
+        //   明确按发送/回车 → 立刻投递，一秒都不多等。
+        flushMerge: flushMerge,
+      );
     } catch (err) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('$err')));
+        toast(context, '$err');
         _input.text = text;
         setState(() => _pending.addAll(files));
       }
@@ -344,6 +353,74 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
+  /// 把拖进来的东西展开成 (名字, 读字节) 列表。
+  ///
+  /// · 普通文件 → 原样
+  /// · 文件夹 → **递归展开**，名字带上相对路径（`项目/README.md`），
+  ///   这样 bot 能看出目录结构，而不是一堆平铺的文件名。
+  ///   跳过 node_modules / .git / __pycache__ 这类噪音目录 ——
+  ///   拖个代码仓库进来，要的是源码，不是几万个依赖文件。
+  ///   单个文件夹最多收 200 个文件：再多说明拖错东西了（比如整个主目录），
+  ///   全部上传只会把服务端和上下文都撑爆。
+  static const _skipDirs = {
+    'node_modules', '.git', '__pycache__', '.venv', 'venv',
+    'dist', 'build', '.dart_tool', '.idea', '.vscode', 'target',
+  };
+  static const _maxFolderFiles = 200;
+
+  List<(String, Future<List<int>> Function())> _expandDroppedPaths(
+    List<String> paths,
+  ) {
+    final out = <(String, Future<List<int>> Function())>[];
+    for (final p in paths) {
+      final dir = Directory(p);
+      if (dir.existsSync()) {
+        _collectDir(dir, p, '', out);
+        continue;
+      }
+      final f = File(p);
+      if (f.existsSync()) {
+        out.add((f.uri.pathSegments.last, () => f.readAsBytes()));
+      }
+    }
+    return out;
+  }
+
+  void _collectDir(
+    Directory dir,
+    String root,
+    String rel,
+    List<(String, Future<List<int>> Function())> out,
+  ) {
+    if (out.length >= _maxFolderFiles) return;
+    final List<FileSystemEntity> children;
+    try {
+      children = dir.listSync(followLinks: false);
+    } catch (_) {
+      return; // 没权限读的目录直接跳过
+    }
+    // 先文件后子目录，顺序稳定
+    final files = <File>[];
+    final dirs = <Directory>[];
+    for (final c in children) {
+      if (c is File) files.add(c);
+      else if (c is Directory) dirs.add(c);
+    }
+    for (final f in files) {
+      if (out.length >= _maxFolderFiles) return;
+      final name = rel.isEmpty
+          ? f.uri.pathSegments.last
+          : '$rel/${f.uri.pathSegments.last}';
+      out.add((name, () => f.readAsBytes()));
+    }
+    for (final d in dirs) {
+      if (out.length >= _maxFolderFiles) return;
+      final base = d.uri.pathSegments.where((s) => s.isNotEmpty).last;
+      if (_skipDirs.contains(base)) continue;
+      _collectDir(d, root, rel.isEmpty ? base : '$rel/$base', out);
+    }
+  }
+
   Future<void> _uploadAll(
     List<(String, Future<List<int>> Function())> items,
   ) async {
@@ -362,8 +439,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   void _toast(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    toast(context, message);
   }
 
   @override
@@ -384,8 +460,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       final message = _shownError!;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(message)));
+        toast(context, message);
         AppScope.read(context).clearError();
       });
     }
@@ -581,13 +656,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         onDragExited: (_) => setState(() => _draggingOver = false),
         onDragDone: (detail) async {
           setState(() => _draggingOver = false);
-          final files = detail.files
-              .where((f) => f.path.trim().isNotEmpty)
+          final paths = detail.files
+              .map((f) => f.path.trim())
+              .where((p) => p.isNotEmpty)
               .toList();
-          if (files.isEmpty) return;
-          await _uploadAll([
-            for (final f in files) (f.name, () => File(f.path).readAsBytes()),
-          ]);
+          if (paths.isEmpty) return;
+          // ★ 文件夹也能拖：展开成（带相对路径的）文件列表再上传。
+          //   名字里带 `文件夹/子目录/文件名`，bot 能看出目录结构。
+          final items = _expandDroppedPaths(paths);
+          if (items.isEmpty) {
+            _toast('拖进来的文件夹是空的（或全是跳过的目录）');
+            return;
+          }
+          if (items.length >= _maxFolderFiles) {
+            _toast('文件太多（$_maxFolderFiles 个封顶），只收了前 $_maxFolderFiles 个');
+          }
+          await _uploadAll(items);
         },
         child: Stack(
           children: [
@@ -646,13 +730,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                   //   比如负责人把某个成员的报告转进群里。
                                   //   挂一条「消息来自 X」，点开是**只读**的窥视：
                                   //   看那个 bot 的私聊里到底说了什么（用户要的"链路可见"）。
-                                  final relayed =
+                                  //   注意：主控不算「外面的人」—— 它在哪儿说话都是派活。
+                                  final authorBot =
                                       msg.authorType == 'bot' &&
-                                      msg.authorId != null &&
-                                      !room.botIds.contains(msg.authorId);
-                                  final relayedBot = relayed
+                                          msg.authorId != null
                                       ? state.botById(msg.authorId)
                                       : null;
+                                  final relayed = isRelayedAuthor(
+                                    author: authorBot,
+                                    room: room,
+                                  );
+                                  final relayedBot = relayed ? authorBot : null;
                                   final relayedRoom = relayedBot == null
                                       ? null
                                       : state.rooms
@@ -1045,6 +1133,19 @@ class _ComposerState extends State<_Composer> {
     if (hasText != _hasText) setState(() => _hasText = hasText);
   }
 
+  /// 输入法是不是**正在组词**（候选框还挂着没确认）。
+  ///
+  /// 为什么必须看这个：中文用户打英文单词时，候选框里的字母还没落进输入框，
+  /// 这时候按回车是「选这个候选词」而不是「发送」。若把回车当成发送，
+  /// 消息会带着半截内容飞出去，输入框还会被清空 —— 用户看起来就是
+  /// “输入法吃字了”。日文/韩文的候选框同理。
+  ///
+  /// `composing` 为空（`TextRange.empty`）才说明没在组词。
+  bool _isComposing() {
+    final composing = widget.controller.value.composing;
+    return composing.isValid && !composing.isCollapsed;
+  }
+
   @override
   void dispose() {
     widget.controller.removeListener(_onTextChanged);
@@ -1094,11 +1195,12 @@ class _ComposerState extends State<_Composer> {
                     const Icon(LucideIcons.zap, size: 12, color: PB.accent),
                     const SizedBox(width: 5),
                     Text(
-                      // 不说"插话引导"这种产品词 —— 就是"它看见了，会照做"。
-                      // 用户在跟人聊天，不是在用一台仪器。
+                      // ★ 语义变了：用户一说话，正在跑的会**立刻停下**，
+                      //   不是"排队等它忙完"。
+                      //   所以这里不能说"下一步会看到"——那会让用户以为要等。
                       queuedCount > 0
-                          ? '已经跟它说了 $queuedCount 句，它下一步会看到'
-                          : '正在干活 —— 有话说直接发，它会边干边看',
+                          ? '已发了 $queuedCount 句 —— 发出去它会立刻停下来看'
+                          : '正在干活 —— 你随时可以打断它，说新的要求',
                       style: const TextStyle(
                         fontSize: PB.fsXxs,
                         color: PB.textTertiary,
@@ -1241,12 +1343,29 @@ class _ComposerState extends State<_Composer> {
                         if (HardwareKeyboard.instance.isShiftPressed) {
                           return KeyEventResult.ignored;
                         }
+                        // ★ IME 正在组词 → 这个回车属于输入法，不是发送。
+                        //
+                        //   中文用户输入英文时，候选框还没确认，按回车是「选这个候选」；
+                        //   若在这里当成发送，就变成「消息发出去 + 输入框被清空」，
+                        //   用户以为输入法吃字了。日文/韩文同理。
+                        //
+                        //   composing 非空就说明还在组词；交给 TextField 处理后，
+                        //   它会自己把候选词提交进输入框。
+                        if (_isComposing()) return KeyEventResult.ignored;
                         onSend();
                         return KeyEventResult.handled;
                       },
-                      child: Actions(
+                      // ★ 桌面快捷键：按系统习惯绑定（Mac ⌘ / Windows Ctrl）。
+                      //   显式声明而不是全靠 Flutter 默认，是因为我们在
+                      //   PasteTextIntent 上加了"剪贴板有图就发图"的逻辑 ——
+                      //   接管了默认行为，就得把配套的编辑快捷键补全，
+                      //   否则那些键在某一端会变成死的。
+                      child: Shortcuts(
+                        shortcuts: desktopEditingShortcuts(),
+                        child: Actions(
                         actions: <Type, Action<Intent>>{
-                          // ★ Ctrl+V：先看剪贴板里有没有**图**（截图），有就当附件；
+                          ...desktopEditingActions(controller),
+                          // ★ ⌘V / Ctrl+V：先看剪贴板里有没有**图**（截图），有就当附件；
                           //   没有就走原来的文本粘贴。Flutter 自带的粘贴只认文本，
                           //   截图粘进来会静默什么都不发生。
                           PasteTextIntent: CallbackAction<PasteTextIntent>(
@@ -1268,7 +1387,13 @@ class _ComposerState extends State<_Composer> {
                           keyboardType: TextInputType.multiline,
                           // 手机软键盘上回车键直接变成「发送」
                           textInputAction: TextInputAction.send,
-                          onSubmitted: (_) => onSend(),
+                          // ★ onSubmitted 也必须挡同一件事。
+                          //   桌面端 Enter 走的是上面的 onKeyEvent，但手机/某些 IME
+                          //   会直接触发 onSubmitted —— 两条路都要看组词状态。
+                          onSubmitted: (_) {
+                            if (_isComposing()) return;
+                            onSend();
+                          },
                           style: const TextStyle(
                             fontSize: PB.fsBase,
                             height: 1.4,
@@ -1289,6 +1414,7 @@ class _ComposerState extends State<_Composer> {
                             ),
                           ),
                         ),
+                      ),
                       ),
                     ),
                   ),
@@ -1415,6 +1541,20 @@ class _AppearState extends State<_Appear> with SingleTickerProviderStateMixin {
       ),
     );
   }
+}
+
+/// 这条消息是不是「从别处转过来的」（需要在气泡上方挂「消息来自 X」）。
+///
+/// 判断依据是「作者不在这个会话的名单里」，但**主控永远不算**：
+/// 主控是全局派活的人，它出现在部门群/某个 bot 的私聊里，本身就是正常的下发任务
+/// 或者对任务的回复。把它标成「消息来自 主控」，用户会以为这些消息是从别处
+/// 搬进来的二手信息，反而看不清真正的链路。
+///
+/// 真正需要标记的是：某个成员 bot 被负责人转进群里的话（它确实不在这个会话）。
+bool isRelayedAuthor({Bot? author, required Room room}) {
+  if (author == null) return false;
+  if (author.isMain) return false;
+  return !room.botIds.contains(author.id);
 }
 
 /// 「消息来自 X」—— 这条不是这个会话的人说的，是从别处转过来的。
@@ -1574,6 +1714,13 @@ class _MessageRow extends StatelessWidget {
       );
     }
 
+    // ★ 用户按 Esc 终止的那一条：整条不渲染。
+    //
+    //   跟 pi agent 里的体验对齐：终止就是终止，聊天记录里不留痕。
+    //   以前这里会把消息画成"已按你的要求终止"的灰气泡，
+    //   看起来像程序出错了 —— 而那是用户自己的操作，不需要被告知。
+    if (msg.isAborted) return const SizedBox.shrink();
+
     final isUser = msg.isUser;
     final streaming = msg.isStreaming;
 
@@ -1677,10 +1824,11 @@ class _MessageRow extends StatelessWidget {
                       const Icon(LucideIcons.zap, size: 11, color: PB.accent),
                       const SizedBox(width: 3),
                       Text(
-                        // 也别用产品词 —— 说"它下一步会看到"就够了
+                        // ★ 用户的新要求会让它**立刻停下**，不是排队等。
+                        //   followUp 那种"排在后面"只发生在成员互相 @ 的场景。
                         msg.meta?['queued'] == 'followUp'
                             ? '排在它后面，做完会看'
-                            : '它下一步会看到',
+                            : '已打断它，按这条重新开始',
                         style: const TextStyle(
                           fontSize: PB.fsXxs,
                           color: PB.accent,
@@ -1757,7 +1905,22 @@ class _MessageRow extends StatelessWidget {
                         ],
                       ),
                     ),
-                  if (msg.steps.isNotEmpty) ToolSteps(steps: msg.steps),
+                  // ★ 工具调用卡片：**平时根本不显示**。
+                  //
+                  //   用户看的是结论，不是“它跑了什么命令”—— 截屏里一长串
+                  //   `read_shell / run_background / kill_shell` 对用户既没用也看不懂，
+                  //   还把真正的回答顶到屏幕外面去了。
+                  //
+                  //   只保留两个必要的瞬间：
+                  //     · 正在跑：一行“正在干活…”给人一个反馈（不然以为什么都没发生）
+                  //     · 出错了：把失败露出来（失败不能藏）
+                  //   跑完且没出错 → 整块消失。
+                  if (msg.steps.isNotEmpty)
+                    ToolSteps(
+                      steps: msg.steps,
+                      // 消息跑完且无错时不渲染（组件自己返回 SizedBox.shrink）
+                      quietWhenDone: true,
+                    ),
                   if (msg.changes != null)
                     ChangedFilesView(summary: msg.changes!),
                   GestureDetector(
