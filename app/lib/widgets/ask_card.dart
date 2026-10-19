@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../models.dart';
+import '../ime_guard.dart';
 import '../theme.dart';
 
 /// 「要用户拿个主意」的卡片。
@@ -399,7 +400,8 @@ class _CustomAnswerState extends State<_CustomAnswer> {
         Expanded(
           child: TextField(
             controller: _c,
-            onSubmitted: (_) => _send(),
+            // 中文输入法打英文时按回车是「选候选词」，不是提交
+            onSubmitted: submitUnlessComposing(_c, _send),
             style: const TextStyle(fontSize: PB.fsSm),
             decoration: InputDecoration(
               hintText: '或者我自己说一句…',

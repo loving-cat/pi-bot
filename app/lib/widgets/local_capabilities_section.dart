@@ -4,6 +4,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../models.dart';
 import '../scope.dart';
 import '../theme.dart';
+import 'toast.dart';
 
 /// 「本机已装」区块：把用户在终端 pi 里已经装好的东西一键导进来。
 ///
@@ -55,12 +56,7 @@ class _LocalCapabilitiesSectionState extends State<LocalCapabilitiesSection> {
       if (r.skipped.isNotEmpty) '跳过：${r.skipped.join('；')}',
     ].join('\n');
     if (msg.isNotEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(msg, style: const TextStyle(fontSize: PB.fsXs)),
-          duration: const Duration(seconds: 4),
-        ),
-      );
+      toast(context, msg, kind: ToastKind.success);
     }
   }
 

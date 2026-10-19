@@ -10,6 +10,7 @@
  * 不在这里做的：解析对方业务字段。这里是通用传输层，
  * "这个字段叫什么、怎么组合成回答"由 bot 自己看返回的 JSON 决定。
  */
+import { proxyFetch } from './http-client.js';
 import { loginSite, assertSafeUrl } from './site-probe.js';
 import { isTokenExpired } from './sites.js';
 
@@ -29,7 +30,7 @@ const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
  * @param {Function} [deps.fetchImpl]
  * @param {Function} [deps.log]
  */
-export function createSiteRuntime({ fetchImpl = globalThis.fetch, log = () => {} } = {}) {
+export function createSiteRuntime({ fetchImpl = proxyFetch, log = () => {} } = {}) {
   /** siteId -> { token, at, error } */
   const sessions = new Map();
 

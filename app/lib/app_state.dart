@@ -1073,11 +1073,18 @@ class AppState extends ChangeNotifier {
   String? fileUrl(String id) => api?.fileUrl(id);
 
   /// 发消息。busy 时用 steer（插话引导）或 followUp（排队），不报错。
+  /// 发一条消息。
+  ///
+  /// [flushMerge] = true 表示"这一条是用户明确按发送发的"，
+  /// 服务端会立刻把之前攒着的连发消息连同这条一起投递，不等静默窗口。
+  /// 用户连打三条然后按回车时，体感就应该是"咔一下全部生效"，
+  /// 而不是再多等 700ms。
   Future<void> sendMessage(
     String roomId,
     String text, {
     String mode = 'steer',
     List<Attachment> attachments = const [],
+    bool flushMerge = true,
   }) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty && attachments.isEmpty) return;
@@ -1090,6 +1097,7 @@ class AppState extends ChangeNotifier {
           'roomId': roomId,
           'text': trimmed,
           'mode': mode,
+          if (flushMerge) 'flushMerge': true,
           if (ids.isNotEmpty) 'attachments': ids,
           'clientId': DateTime.now().microsecondsSinceEpoch.toString(),
         }),
@@ -1123,8 +1131,10 @@ class AppState extends ChangeNotifier {
     queued[roomId] = 0;
     for (final m in messages[roomId] ?? const <Msg>[]) {
       if (m.status == 'streaming') {
-        m.status = 'error';
-        m.error = '已按你的要求终止';
+        // 本地乐观终止：用 aborted 而不是 error —— 用户按 Esc 不是"出错"，
+        // 不要弹红色错误气泡（在 pi agent 里终止就是终止，界面不留痕）
+        m.status = 'aborted';
+        m.error = '';
         for (final s in m.steps) {
           if (s.status == 'running') s.status = 'error';
         }
