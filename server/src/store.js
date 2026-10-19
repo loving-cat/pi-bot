@@ -34,6 +34,11 @@ const STATE_VERSION = 2;
  */
 import { normalizeSkillList, normalizeSkill, skillRejectReason } from './skills.js';
 import {
+  normalizeLessonList,
+  normalizeLesson,
+  lessonRejectReason,
+} from './lessons.js';
+import {
   normalizeMcpList,
   normalizeMcpServer,
   mcpRejectReason,
@@ -792,6 +797,100 @@ export class Store {
       bus.emit('event', { t: 'skills.updated', skills: this.skillLibrary() });
     }
     return { imported, skipped };
+  }
+
+  // ---------------------------------------------------------------- 经验库
+
+  /**
+   * 经验库（存在 state.lessons）。
+   *
+   * 和技能库的区别：技能是“人整理的、静态的做法”；经验是“做过之后记下的
+   * 成败”——带证据、可被推翻。只有 status=active 的会进提示词，
+   * 而且一次最多 3 条（上限写在 lessons.js 的 LESSON_LIMITS）。
+   */
+  lessonLibrary() {
+    return normalizeLessonList(this.state.lessons ?? []);
+  }
+
+  /** 加一条经验（同房间 + 同情境只能有一条，避免刷屏） */
+  addLesson(raw = {}) {
+    const list = this.lessonLibrary();
+    const reason = lessonRejectReason(raw);
+    if (reason) return { error: reason };
+    const lesson = normalizeLesson({ ...raw, updatedAt: Date.now() });
+    if (!lesson) return { error: '经验内容不合法' };
+    const clash = list.find(
+      (l) =>
+        (l.roomId || '') === (lesson.roomId || '') &&
+        l.cue.toLowerCase() === lesson.cue.toLowerCase(),
+    );
+    if (clash) return { error: `已经有一条同样情境的经验：「${clash.cue}」` };
+    list.push(lesson);
+    this.state.lessons = normalizeLessonList(list);
+    this.scheduleSave();
+    bus.emit('event', { t: 'lessons.updated', lessons: this.lessonLibrary() });
+    return { lesson };
+  }
+
+  /** 改一条经验（启用/归档/改文案）。启用必须有证据，否则退回候选。 */
+  updateLesson(id, patch = {}) {
+    const list = this.lessonLibrary();
+    const idx = list.findIndex((l) => l.id === id);
+    if (idx < 0) return { error: '经验不存在' };
+
+    const merged = { ...list[idx], ...patch, id, updatedAt: Date.now() };
+    const reason = lessonRejectReason(merged);
+    if (reason) return { error: reason };
+    const lesson = normalizeLesson(merged);
+    if (!lesson) return { error: '经验内容不合法' };
+
+    const clash = list.find(
+      (l, i) =>
+        i !== idx &&
+        (l.roomId || '') === (lesson.roomId || '') &&
+        l.cue.toLowerCase() === lesson.cue.toLowerCase(),
+    );
+    if (clash) return { error: `已经有一条同样情境的经验：「${clash.cue}」` };
+
+    list[idx] = lesson;
+    this.state.lessons = list;
+    this.scheduleSave();
+    bus.emit('event', { t: 'lessons.updated', lessons: list });
+    return { lesson };
+  }
+
+  /** 删一条经验 */
+  removeLesson(id) {
+    const list = this.lessonLibrary();
+    const next = list.filter((l) => l.id !== id);
+    if (next.length === list.length) return { error: '经验不存在' };
+    this.state.lessons = next;
+    this.scheduleSave();
+    bus.emit('event', { t: 'lessons.updated', lessons: next });
+    return { ok: true };
+  }
+
+  /**
+   * 记一次命中（lastUsedAt / hits）。
+   *
+   * 不 await、不阻塞这一轮：它只影响“以后还值不值得注入”，
+   * 写失败也不能影响 bot 干活。
+   */
+  touchLessons(ids = []) {
+    const wanted = new Set((Array.isArray(ids) ? ids : []).map(String));
+    if (!wanted.size) return;
+    const list = this.lessonLibrary();
+    let changed = false;
+    const now = Date.now();
+    for (const item of list) {
+      if (!wanted.has(item.id)) continue;
+      item.hits += 1;
+      item.lastUsedAt = now;
+      changed = true;
+    }
+    if (!changed) return;
+    this.state.lessons = list;
+    this.scheduleSave();
   }
 
   // ---------------------------------------------------------------- MCP 服务库
