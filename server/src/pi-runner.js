@@ -56,6 +56,7 @@ import { modelLabel, resolveModel, syncModelGroups } from './model-registry.js';
 import { buildAppendSystemPrompt } from './system-prompt.js';
 import { selectSkillsFor, skillsPromptLines } from './skills.js';
 import { selectLessonsFor, lessonsPromptLines } from './lessons.js';
+import { createLessonReflector } from './lesson-reflect.js';
 import { decideRetry, retryHint, failureNote } from './retry-policy.js';
 import { createSessionBuilder } from './session-factory.js';
 import { createBuildInput } from './prompt-input.js';
@@ -392,6 +393,8 @@ export class PiRunner {
 
   async init() {
     this.modelRuntime = await ModelRuntime.create();
+    // 收尾复盘器：每次新建一个"无工具"的一次性会话，不污染 bot 的聊天记录
+    this.reflect = createLessonReflector({ runner: this });
     // 心跳看门狗：发现的“卡死不动”由它负责收尾 + 上报
     this.startWatchdog();
     // 部门规矩变了 → 作废空闲会话（工具集和系统提示是建会话时定的，不重建不生效）
@@ -1192,6 +1195,14 @@ export class PiRunner {
     const lastId = lastMessageId(roomId);
     for (const m of members) {
       if (!used.has(m.id)) store.setCursor(roomId, m.id, lastId);
+    }
+
+    // 收尾复盘：从这一轮里提炼候选经验（只进库，不进提示词）。
+    // 放后台跑 —— 用户不该等复盘；失败只写日志，不影响这一轮已经交付的结果。
+    if (roundStartIndex >= 0 && store.lessonsEnabled()) {
+      void this.reflect?.({ roomId, sinceIndex: roundStartIndex }).catch((err) =>
+        log(`【${room.name}】复盘异常：`, err?.message || err),
+      );
     }
   }
 
