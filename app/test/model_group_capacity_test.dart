@@ -222,5 +222,81 @@ void main() {
     test('不能保存没有模型的组', () {
       expect(buildModelCardModels([]).error, contains('至少'));
     });
+
+    group('思考强度', () {
+      test('不思考且没填格式时不上报思考字段', () {
+        final result = buildModelCardModels([
+          const ModelCardDraft(rowId: 0, id: 'model-a'),
+        ]);
+        expect(result.models[0].containsKey('reasoning'), isFalse);
+        expect(result.models[0].containsKey('thinkingFormat'), isFalse);
+        expect(result.models[0].containsKey('thinkingLevelMap'), isFalse);
+      });
+
+      test('开启思考后上报开关、上游格式与档位映射', () {
+        final result = buildModelCardModels([
+          const ModelCardDraft(
+            rowId: 0,
+            id: 'wb-deepseek-v4.1-flash',
+            thinking: ModelThinkingInput(
+              reasoning: true,
+              format: 'deepseek',
+              levels: {'high': 'high', 'xhigh': 'max'},
+            ),
+          ),
+        ]);
+        final model = result.models[0];
+        expect(model['reasoning'], isTrue);
+        expect(model['thinkingFormat'], 'deepseek');
+        expect(model['thinkingLevelMap'], {'high': 'high', 'xhigh': 'max'});
+      });
+
+      test('没动思考设置时回传已存配置，不会把思考能力清掉', () {
+        final result = buildModelCardModels([
+          const ModelCardDraft(
+            rowId: 0,
+            id: 'model-a',
+            retainedThinking: ModelThinkingInput(
+              reasoning: true,
+              format: 'zai',
+              levels: {'high': 'high'},
+            ),
+          ),
+        ]);
+        expect(result.models[0]['reasoning'], isTrue);
+        expect(result.models[0]['thinkingFormat'], 'zai');
+      });
+
+      test('已存思考配置会原样回显到卡片草稿', () {
+        final rows = modelCardDrafts([
+          ModelSpec(
+            id: 'model-a',
+            reasoning: true,
+            thinkingFormat: 'deepseek',
+            thinkingLevelMap: const {'high': 'high', 'xhigh': 'max'},
+          ),
+        ]);
+        expect(rows.single.thinking.reasoning, isTrue);
+        expect(rows.single.thinking.format, 'deepseek');
+        expect(rows.single.thinking.levels['xhigh'], 'max');
+      });
+
+      test('旧格式 buildModelGroupModels 能用思考参数保留设置', () {
+        final result = buildModelGroupModels(
+          modelText: 'model-a',
+          inputs: {},
+          existingModels: [
+            ModelSpec(
+              id: 'model-a',
+              reasoning: true,
+              thinkingFormat: 'deepseek',
+              thinkingLevelMap: const {'high': 'high'},
+            ),
+          ],
+        );
+        expect(result.models[0]['reasoning'], isTrue);
+        expect(result.models[0]['thinkingFormat'], 'deepseek');
+      });
+    });
   });
 }

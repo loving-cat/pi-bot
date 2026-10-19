@@ -230,6 +230,10 @@ class _EditorState extends State<_Editor> {
   String? _error;
   bool _saving = false;
 
+  /// 思考强度可选项（服务端下发，Windows 与 Mac 共用同一份）
+  List<String> _thinkingFormats = const [];
+  List<String> _thinkingLevels = const [];
+
   /// 连通性测试的结果（null = 还没测过）
   Map<String, dynamic>? _test;
   bool _testing = false;
@@ -243,6 +247,22 @@ class _EditorState extends State<_Editor> {
     for (final row in _modelRows) {
       if (row.id == widget.modelId) _focusedRowId = row.rowId;
     }
+    _loadThinkingOptions();
+  }
+
+  /// 思考强度的可选项从服务端取（Windows 与 Mac 共用同一套枚举）。
+  /// 拿不到时界面会自动回退内置的七档，不会白屏。
+  Future<void> _loadThinkingOptions() async {
+    final options = await AppScope.read(context).loadThinkingOptions();
+    if (!mounted) return;
+    setState(() {
+      _thinkingFormats = ((options['formats'] as List?) ?? const [])
+          .map((e) => '$e')
+          .toList();
+      _thinkingLevels = ((options['levels'] as List?) ?? const [])
+          .map((e) => '$e')
+          .toList();
+    });
   }
 
   @override
@@ -365,6 +385,8 @@ class _EditorState extends State<_Editor> {
                 rows: _modelRows,
                 focusedRowId: _focusedRowId,
                 enabled: !_saving,
+                thinkingFormats: _thinkingFormats,
+                thinkingLevels: _thinkingLevels,
                 onChanged: (id, update) => setState(() {
                   _modelRows = [for (final old in _modelRows) old.rowId == id ? update(old) : old];
                 }),

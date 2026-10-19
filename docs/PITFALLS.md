@@ -284,3 +284,73 @@ debugPrint(DefaultTextStyle.of(tester.element(find.text('置顶'))).style.toStri
 这种坑肉眼描述起来都费劲，但一行断言能永久钉住。
 
 **同类**：`msg_ref_chip.dart` 的窥视弹层（也是 Overlay），一起修了。
+
+---
+
+## 23. 模型组填了「思考」却根本不思考 —— 格式错了不会报错
+
+**症状**：模型组里明明配了思考强度，界面也能选 high / max，但模型回答明显没在思考；
+探活还全是绿的，日志里一条错都没有。
+
+**根因**：`thinkingFormat` 决定 pi 用哪种协议把思考参数发给上游：
+
+| 上游 | 正确格式 | 写错的后果 |
+|---|---|---|
+| DeepSeek / WorkBuddy（独立 `reasoning_content` 通道） | `deepseek` | 写成 `openai` → 上游不认 `reasoning_effort`，**静默不思考** |
+| OpenAI / 兼容中转 | `openai` | 写成 `deepseek` → 把 `reasoning_content` 当协议发，同样无效 |
+| 智谱 GLM | `zai` | 走 `openai` 时只有 low/medium/high 生效，xhigh/max 丢失 |
+
+更隐蔽的是 `thinkingLevelMap`：`xhigh` 映射到哪个上游值各家不同（DeepSeek 是 `max`），
+映射漏一档就是「界面选了最高、实际用中档」。
+
+**修法**：模型组里每个模型单独存 `reasoning` / `thinkingFormat` / `thinkingLevelMap`，
+服务端 `model-thinking.js` 按格式套预设，`toProviderConfig()` 必须落在**模型级 compat** 上
+（provider 级写了不生效，见下一条）。关掉思考时要把格式和映射一起清空，
+否则残留配置会继续下发。
+
+**回归测试**：`server/tests/model-thinking.mjs` 断言预设映射、格式切换重套预设、
+关思考清空、以及 provider 输出的 `compat.thinkingFormat`。
+
+---
+
+## 24. `authHeader` / `thinkingFormat` 写在 provider 级不生效
+
+**症状**：provider 上明明写了 `authHeader: true`，一到真跑就 `No API key found for <组名>.`；
+或者 provider 级写了 `thinkingFormat`，思考参数就是不出现。
+
+**根因**：pi 的 `getApiKeyAndHeaders` 是**按模型**读 `authHeader` / `thinkingFormat` /
+`supportsReasoningEffort` 的。provider 级那份只是兜底，模型对象上没有就按默认走。
+
+**修法**：`ModelGroup.toProviderConfig()` 里每个 model 都带一份完整的
+`compat: { supportsDeveloperRole, supportsReasoningEffort, thinkingFormat }`。
+这也是「模型组加了能用、但跑起来说找不到 key」的经典成因。
+
+---
+
+## 25. 模型组 key 对、baseUrl 端口错 —— 401 长得像 key 失效
+
+**症状**：模型组填的 key 明明和别处一样，探活却一直 `401 unauthorized`。
+
+**根因**：同一台机器上常同时跑中转站和各类 relay，端口不同、**前门鉴权用的也是不同的 key**。
+例如 `:8898` 是 relay（认 relay 自己的 local key），`:3000` 才是 new-api（认 new-api token）。
+两者长得像，改配置时最容易只改一半。
+
+**修法**：改动 baseUrl 后先用 `curl <baseUrl>/models -H "Authorization: Bearer <key>"`
+确认 `200`，再回设置页点测试。注意部分中转站的 `/models` **不校验 key**，
+所以「通过了」只说明地址通，不等于 key 有效 —— 再发一次最小 chat 请求才算数。
+
+**另一个坑**：探活结果缓存 24 小时（`model-health.json`）。改了 baseUrl/key 之后
+旧的 401 还在缓存里，界面会继续显示失败。要么在设置页重新测一次，要么删掉该模型的缓存条目。
+
+---
+
+## 26. 一套模型组配置要同时在 Windows 和 Mac 生效
+
+**症状**：Windows 端加了思考强度，Mac 端打开设置看不到；或者两端默认值不一致。
+
+**根因**：枚举值（档位、上游格式）如果写死在各自的 UI 里，两端迟早漂移。
+
+**修法**：枚举只在服务端定义一次（`model-thinking.js` 的 `THINKING_LEVELS` /
+`THINKING_FORMATS` / `THINKING_PRESETS`），通过 `GET /api/model-thinking/options` 下发；
+客户端拿不到时回退内置七档，但不新增服务端没有的取值。
+新增一种上游格式 = 只改服务端一处，两端同时生效。
