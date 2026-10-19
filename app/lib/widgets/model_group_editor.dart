@@ -144,6 +144,10 @@ class ModelGroupsSection extends StatelessWidget {
                   color: PB.textTertiary,
                 ),
               ),
+              ModelGroupModelSummary(
+                group: g,
+                onEdit: (model) => _openEditor(context, group: g, modelId: model.id),
+              ),
             ],
           ),
         ),
@@ -195,18 +199,19 @@ class ModelGroupsSection extends StatelessWidget {
     );
   }
 
-  Future<void> _openEditor(BuildContext context, {ModelGroup? group}) async {
+  Future<void> _openEditor(BuildContext context, {ModelGroup? group, String? modelId}) async {
     await showDialog<void>(
       context: context,
-      builder: (ctx) => _Editor(group: group),
+      builder: (ctx) => _Editor(group: group, modelId: modelId),
     );
   }
 }
 
 class _Editor extends StatefulWidget {
-  const _Editor({this.group});
+  const _Editor({this.group, this.modelId});
 
   final ModelGroup? group;
+  final String? modelId;
 
   @override
   State<_Editor> createState() => _EditorState();
@@ -218,12 +223,9 @@ class _EditorState extends State<_Editor> {
     text: widget.group?.baseUrl ?? '',
   );
   final _key = TextEditingController();
-  late final _models = TextEditingController(
-    text: (widget.group?.models ?? []).map((m) => m.id).join('\n'),
-  );
-  late final _retainedCapacities = modelCapacityInputs(widget.group?.models ?? []);
-  late final _capacities = Map<String, ModelCapacityInput>.of(_retainedCapacities);
-  bool _showCapacities = false;
+  late List<ModelCardDraft> _modelRows = modelCardDrafts(widget.group?.models ?? []);
+  int _nextRowId = 0;
+  int? _focusedRowId;
   String _api = 'openai-completions';
   String? _error;
   bool _saving = false;
@@ -236,6 +238,11 @@ class _EditorState extends State<_Editor> {
   void initState() {
     super.initState();
     _api = widget.group?.api ?? 'openai-completions';
+    if (_modelRows.isEmpty) _modelRows = [const ModelCardDraft(rowId: 0)];
+    _nextRowId = _modelRows.length;
+    for (final row in _modelRows) {
+      if (row.id == widget.modelId) _focusedRowId = row.rowId;
+    }
   }
 
   @override
@@ -243,7 +250,6 @@ class _EditorState extends State<_Editor> {
     _name.dispose();
     _baseUrl.dispose();
     _key.dispose();
-    _models.dispose();
     super.dispose();
   }
 
@@ -258,9 +264,8 @@ class _EditorState extends State<_Editor> {
       'baseUrl': _baseUrl.text.trim(),
       if (_key.text.trim().isNotEmpty) 'apiKey': _key.text.trim(),
       'api': _api,
-      'model': _models.text
-          .split('\n')
-          .map((l) => l.trim())
+      'model': _modelRows
+          .map((row) => row.id.trim())
           .firstWhere((l) => l.isNotEmpty, orElse: () => ''),
     });
     if (!mounted) return;
@@ -271,11 +276,7 @@ class _EditorState extends State<_Editor> {
   }
 
   Future<void> _save() async {
-    final payload = buildModelGroupModels(
-      modelText: _models.text,
-      inputs: _capacities,
-      existingModels: widget.group?.models ?? [],
-    );
+    final payload = buildModelCardModels(_modelRows);
     if (payload.error != null) {
       setState(() => _error = payload.error);
       return;
@@ -360,31 +361,21 @@ class _EditorState extends State<_Editor> {
                 onChanged: (v) => setState(() => _api = v ?? _api),
               ),
               const SizedBox(height: 10),
-              _field('模型名（一行一个）', _models, 'gpt-5\ndeepseek-v3', lines: 4),
-              const SizedBox(height: 2),
-              const Text(
-                '模型名要跟接口那边完全一致。填完保存就能在给 bot 选模型时看到。',
-                style: TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
-              ),
-              const SizedBox(height: 6),
-              ValueListenableBuilder<TextEditingValue>(
-                valueListenable: _models,
-                builder: (context, value, _) => Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    TextButton(
-                      onPressed: () => setState(() => _showCapacities = !_showCapacities),
-                      child: Text(_showCapacities ? '收起模型容量' : '模型容量'),
-                    ),
-                    if (_showCapacities)
-                      ModelCapacityFields(
-                        modelIds: modelIdsFromText(value.text),
-                        inputs: _capacities,
-                        retainedInputs: _retainedCapacities,
-                        onChanged: (id, input) => setState(() => _capacities[id] = input),
-                      ),
-                  ],
-                ),
+              ModelCardsEditor(
+                rows: _modelRows,
+                focusedRowId: _focusedRowId,
+                enabled: !_saving,
+                onChanged: (id, update) => setState(() {
+                  _modelRows = [for (final old in _modelRows) old.rowId == id ? update(old) : old];
+                }),
+                onAdd: () => setState(() {
+                  final row = ModelCardDraft(rowId: _nextRowId++);
+                  _modelRows = [..._modelRows, row];
+                  _focusedRowId = row.rowId;
+                }),
+                onRemove: (id) => setState(() {
+                  _modelRows = _modelRows.where((row) => row.rowId != id).toList();
+                }),
               ),
               const SizedBox(height: 6),
               Row(
