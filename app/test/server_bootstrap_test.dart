@@ -30,11 +30,17 @@ void main() {
       outside.parent.createSync(recursive: true);
       outside.writeAsStringSync('// outside');
 
-      expect(findServerEntry(executable.path, environment: {}), bundled.path);
+      // 显式按 macOS 语义生成候选路径：这样在 Windows 主机上跑同一份用例，
+      // 分隔符也和真实 .app 包里的一致（否则断言比的是主机分隔符）。
+      expect(
+        findServerEntry(executable.path, environment: {}, operatingSystem: 'macos'),
+        bundled.path,
+      );
       expect(
         serverEntryCandidates(
           executable.path,
           environment: {'PI_BOT_SERVER': outside.path},
+          operatingSystem: 'macos',
         ).first,
         outside.path,
       );
@@ -117,11 +123,16 @@ void main() {
         operatingSystem: 'macos',
       );
       expect(candidates, contains('${tmp.path}/active/bin/node'));
-      final versions = candidates.where((path) => path.contains('/versions/'));
+      // listSync() 在 Windows 主机上返回的分隔符可能和写入时不同（`node\v24.1.0`），
+      // 两边统一成正斜杠，只校验"顺序对不对"。
+      String norm(String p) => p.replaceAll(r'\', '/');
+      final versions = candidates
+          .where((path) => path.contains('/versions/'))
+          .map(norm);
       expect(versions, [
-        '${nvm.path}/versions/node/v24.1.0/bin/node',
-        '${nvm.path}/versions/node/v22.10.0/bin/node',
-        '${nvm.path}/versions/node/v22.9.0/bin/node',
+        norm('${nvm.path}/versions/node/v24.1.0/bin/node'),
+        norm('${nvm.path}/versions/node/v22.10.0/bin/node'),
+        norm('${nvm.path}/versions/node/v22.9.0/bin/node'),
       ]);
       expect(
         nodeCandidates(
@@ -134,8 +145,10 @@ void main() {
     });
 
     test('环境指定 node 优先，PATH 支持含空格目录', () async {
-      final explicit = File('${tmp.path}/chosen-node')..writeAsStringSync('');
-      final pathNode = File('${tmp.path}/path with spaces/node');
+      final sep = Platform.pathSeparator;
+      final explicit = File('${tmp.path}${sep}chosen-node')
+        ..writeAsStringSync('');
+      final pathNode = File('${tmp.path}${sep}path with spaces${sep}node');
       pathNode.parent.createSync(recursive: true);
       pathNode.writeAsStringSync('');
       expect(
@@ -167,6 +180,117 @@ void main() {
       expect(npmCommand(node.path, environment: {'PATH': npm.parent.path}), [
         npm.path,
       ]);
+    });
+
+    test('Windows 版本管理器：nvm-windows / fnm / Volta / Scoop 都能找到，且版本降序', () {
+      final appData = Directory('${tmp.path}${Platform.pathSeparator}AppData')
+        ..createSync(recursive: true);
+      final localAppData =
+          Directory('${tmp.path}${Platform.pathSeparator}LocalAppData')
+            ..createSync(recursive: true);
+      final home = Directory('${tmp.path}${Platform.pathSeparator}home')
+        ..createSync(recursive: true);
+      final sep = Platform.pathSeparator;
+
+      // nvm-windows：`%APPDATA%\nvm\vX.Y.Z\node.exe`
+      for (final v in ['v18.20.0', 'v22.11.0', 'v24.1.0']) {
+        Directory('${appData.path}${sep}nvm$sep$v').createSync(recursive: true);
+      }
+      // fnm：`%APPDATA%\fnm\node-versions\vX.Y.Z\installation`
+      for (final v in ['v20.11.0', 'v22.12.0']) {
+        Directory(
+          '${appData.path}${sep}fnm${sep}node-versions$sep$v${sep}installation',
+        ).createSync(recursive: true);
+      }
+      // Volta / Scoop
+      Directory('${localAppData.path}${sep}Volta${sep}bin')
+          .createSync(recursive: true);
+      Directory('${home.path}${sep}scoop${sep}apps${sep}nodejs${sep}current')
+          .createSync(recursive: true);
+
+      final candidates = nodeCandidates(
+        tmp.path,
+        environment: {
+          'APPDATA': appData.path,
+          'LOCALAPPDATA': localAppData.path,
+          'USERPROFILE': home.path,
+          'ProgramFiles': r'C:\Programs',
+        },
+        operatingSystem: 'windows',
+      );
+
+      expect(
+        candidates,
+        contains('${localAppData.path}${sep}Volta${sep}bin${sep}node.exe'),
+      );
+      expect(
+        candidates,
+        contains('${home.path}${sep}scoop${sep}apps${sep}nodejs${sep}current${sep}node.exe'),
+      );
+
+      // 只比较可执行文件（同一目录还会生成无扩展名的 `node` 候选项）
+      final nvmOrder = candidates
+          .where(
+            (p) =>
+                p.contains('${sep}nvm$sep') &&
+                p.endsWith('.exe') &&
+                !p.contains('${sep}custom'),
+          )
+          .toList();
+      expect(nvmOrder, [
+        '${appData.path}${sep}nvm${sep}v24.1.0${sep}node.exe',
+        '${appData.path}${sep}nvm${sep}v22.11.0${sep}node.exe',
+        '${appData.path}${sep}nvm${sep}v18.20.0${sep}node.exe',
+      ]);
+      final fnmOrder = candidates
+          .where(
+            (p) =>
+                p.contains('${sep}fnm${sep}node-versions$sep') &&
+                p.endsWith('.exe'),
+          )
+          .toList();
+      expect(fnmOrder, [
+        '${appData.path}${sep}fnm${sep}node-versions${sep}v22.12.0${sep}installation${sep}node.exe',
+        '${appData.path}${sep}fnm${sep}node-versions${sep}v20.11.0${sep}installation${sep}node.exe',
+      ]);
+    });
+
+    test('Windows 显式环境变量：NVM_HOME / NVM_SYMLINK / FNM_DIR', () {
+      final sep = Platform.pathSeparator;
+      final nvmHome = Directory('${tmp.path}${sep}custom-nvm')
+        ..createSync(recursive: true);
+      Directory('${nvmHome.path}${sep}v22.5.0').createSync(recursive: true);
+      Directory('${nvmHome.path}${sep}v24.0.1').createSync(recursive: true);
+      final symlink = Directory('${tmp.path}${sep}current-node')
+        ..createSync(recursive: true);
+      final fnmDir = Directory('${tmp.path}${sep}custom-fnm')
+        ..createSync(recursive: true);
+
+      final candidates = nodeCandidates(
+        tmp.path,
+        environment: {
+          'NVM_HOME': nvmHome.path,
+          'NVM_SYMLINK': symlink.path,
+          'FNM_DIR': fnmDir.path,
+        },
+        operatingSystem: 'windows',
+      );
+
+      expect(
+        candidates,
+        contains('${nvmHome.path}${sep}v24.0.1${sep}node.exe'),
+      );
+      expect(
+        candidates.indexOf('${nvmHome.path}${sep}v24.0.1${sep}node.exe'),
+        lessThan(
+          candidates.indexOf('${nvmHome.path}${sep}v22.5.0${sep}node.exe'),
+        ),
+      );
+      expect(candidates, contains('${symlink.path}${sep}node.exe'));
+      expect(
+        candidates,
+        contains('${fnmDir.path}${sep}aliases${sep}default${sep}installation${sep}node.exe'),
+      );
     });
 
     test('node 版本门槛：22 起步，24 也算新', () {
