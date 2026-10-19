@@ -730,13 +730,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                   //   比如负责人把某个成员的报告转进群里。
                                   //   挂一条「消息来自 X」，点开是**只读**的窥视：
                                   //   看那个 bot 的私聊里到底说了什么（用户要的"链路可见"）。
-                                  final relayed =
+                                  //   注意：主控不算「外面的人」—— 它在哪儿说话都是派活。
+                                  final authorBot =
                                       msg.authorType == 'bot' &&
-                                      msg.authorId != null &&
-                                      !room.botIds.contains(msg.authorId);
-                                  final relayedBot = relayed
+                                          msg.authorId != null
                                       ? state.botById(msg.authorId)
                                       : null;
+                                  final relayed = isRelayedAuthor(
+                                    author: authorBot,
+                                    room: room,
+                                  );
+                                  final relayedBot = relayed ? authorBot : null;
                                   final relayedRoom = relayedBot == null
                                       ? null
                                       : state.rooms
@@ -1537,6 +1541,20 @@ class _AppearState extends State<_Appear> with SingleTickerProviderStateMixin {
       ),
     );
   }
+}
+
+/// 这条消息是不是「从别处转过来的」（需要在气泡上方挂「消息来自 X」）。
+///
+/// 判断依据是「作者不在这个会话的名单里」，但**主控永远不算**：
+/// 主控是全局派活的人，它出现在部门群/某个 bot 的私聊里，本身就是正常的下发任务
+/// 或者对任务的回复。把它标成「消息来自 主控」，用户会以为这些消息是从别处
+/// 搬进来的二手信息，反而看不清真正的链路。
+///
+/// 真正需要标记的是：某个成员 bot 被负责人转进群里的话（它确实不在这个会话）。
+bool isRelayedAuthor({Bot? author, required Room room}) {
+  if (author == null) return false;
+  if (author.isMain) return false;
+  return !room.botIds.contains(author.id);
 }
 
 /// 「消息来自 X」—— 这条不是这个会话的人说的，是从别处转过来的。
