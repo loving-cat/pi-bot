@@ -1,0 +1,27 @@
+server/src/mcp-hook.js
+  s_c73b42c9544151::t_4fa55fa1fdb66f 1-111
+server/src/mcp.js
+  s_c73b42c9544151::t_6de77a7e0c2f63 1-419
+server/src/pi-runner.js
+  s_c73b42c9544151::t_8b06008fed7bbc 431-445
+server/src/system-prompt.js
+  s_c73b42c9544151::t_b03101458f6edd 20,22-25,81-85
+server/tests/mcp.mjs
+  s_c73b42c9544151::t_a9738ec9407288 1-275
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "75e1995cc29a3fc7596e3fbfae66db9dab5b8851",
+  "prompts": {},
+  "sessions": {
+    "s_c73b42c9544151": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a09f0f-7603-7a80-8d1c-b48d6da3d8d4",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
