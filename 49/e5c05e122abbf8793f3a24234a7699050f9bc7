@@ -1,0 +1,16 @@
+app/lib/app_state.dart
+  h_53f14b6641484b 1364-1366
+server/src/http.js
+  h_53f14b6641484b 920-924,930-937
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "49e5c05e122abbf8793f3a24234a7699050f9bc7",
+  "prompts": {},
+  "humans": {
+    "h_53f14b6641484b": {
+      "author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
