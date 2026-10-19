@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 
 const TESTS = [
+  'model-config',
   'version',
   'pi-args',
   'console-inherit',
