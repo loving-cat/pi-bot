@@ -27,6 +27,15 @@ import { modelGroups } from './model-groups.js';
 import { assistantFailure, fallbackModels, modelFailure, recoverModelReply } from './model-reply.js';
 import { invalidateSessions, retireStaleSession, reserveSession } from './session-refresh.js';
 import { deliverDirectInput } from './direct-message-delivery.js';
+import { MergeQueue, MERGE_QUIET_MS } from './merge-messages.js';
+
+/**
+ * 多久之内又来一条，算"连发"（于是开始攒）。
+ *
+ * 比静默窗口略长：用户打完一条、想了两秒、再打一条，
+ * 那是两件事，不该合并；差几百毫秒紧挨着发的，才是一段话被拆开。
+ */
+const MERGE_BURST_MS = MERGE_QUIET_MS + 900;
 import { ModelHealth } from './model-health.js';
 import { buildChiefTools, buildCommonTools } from './tools.js';
 import { defaultMenuSlug, logMenu, menuSlugs, resolveMenu } from './model-menu.js';
@@ -167,6 +176,51 @@ export class PiRunner {
     /** roomId -> { text, files }：锁被占时进来的消息，合并到这里等下一轮 */
     this.roundQueue = new Map();
     this.directDeliveryEpochs = new Map();
+    /** roomId -> 上一条用户消息的时间（判断是不是在连发） */
+    this.lastUserSendAt = new Map();
+
+    /**
+     * 连发消息的合并队列（只在它空闲时用）。
+     *
+     * 到期后走的仍然是原来那条投递路径（deliverDirectInput），
+     * 只是把几条文本拼成一段 —— 不另起一套投递逻辑，
+     * 免得"合并投递"和"普通投递"出现两套行为差异。
+     */
+    this.mergeQueue = new MergeQueue({
+      flush: (roomId, merged) => this.#deliverMerged(roomId, merged),
+      log: (msg) => log(msg),
+    });
+  }
+
+  /**
+   * 合并后的投递（由 MergeQueue 在静默窗口到期时调用）。
+   *
+   * 复用原有路径：拿会话 → deliverDirectInput。
+   * 这里**不重新 appendMessage** —— 用户那几条消息早就各自入库了，
+   * 再写一条"合并后的"会让聊天记录出现重复。
+   */
+  async #deliverMerged(roomId, merged) {
+    const room = store.getRoom(roomId);
+    if (!room) return;
+    const botId = room.leadBotId ?? room.botIds?.[0];
+    if (!botId) return;
+    const deliveryEpoch = this.directDeliveryEpochs.get(roomId) ?? 0;
+    try {
+      await deliverDirectInput({
+        prepare: () => this.#buildInput(merged, []),
+        run: ({ promptText }) =>
+          this.run(roomId, botId, promptText, { skipUserMessage: true, attachments: [] }),
+        getEntry: () => this.sessions.get(this.#key(roomId, botId)),
+        isCancelled: () =>
+          this.aborting.has(roomId) ||
+          (this.directDeliveryEpochs.get(roomId) ?? 0) !== deliveryEpoch,
+        queue: (session, { promptText }) => session.followUp(promptText),
+        accepted: () => {},
+      });
+    } catch (err) {
+      if (err?.name === 'AbortError') return; // 正常终止，不报错
+      log(`合并消息投递失败：${err?.message ?? err}`);
+    }
   }
 
   /**
@@ -1074,7 +1128,7 @@ export class PiRunner {
    * - 群（部门）：交给部门老大先接，老大用 @ 往下派
    * - 正在跑：不报错，而是插话引导（steer）或排队（followUp）
    */
-  async send(roomId, text, { mode = 'steer', attachments = [] } = {}) {
+  async send(roomId, text, { mode = 'steer', attachments = [], flushMerge = true } = {}) {
     const room = store.getRoom(roomId);
     if (!room) throw Object.assign(new Error('会话不存在'), { code: 'NO_ROOM' });
     const clean = String(text ?? '').trim();
@@ -1168,6 +1222,43 @@ export class PiRunner {
         );
       }
     } else {
+      // ★ 私聊且**它当前空闲** → 先攒一下，把"连发的几条"合成一段再投递。
+      //
+      //   为什么不干脆每条都立刻投：用户说话像打字，「帮我看下这个系统」
+      //   「https://xxx.com」「账号 admin 密码 123」是三条消息，
+      //   逐条投递时 agent 第一条只看到半句就开始瞎猜，后面只能靠 steer 纠偏，
+      //   三份互相打架的理解叠在一起。合并成一段它一次就能看懂完整意图。
+      //
+      //   正在跑的时候**不能合并**：那是"中断/插队"，必须立刻送进去让它改计划，
+      //   等 700ms 反而让它多跑错一段。
+      const idle = !this.isBusy(roomId, botId);
+
+      // ★ 合并只在"真的在连发"时才启动，绝不给正常发送加延迟。
+      //
+      //   两条路径：
+      //     · flushMerge=true（默认，= 用户明确按了发送键）
+      //       → **立刻投递**。如果之前因为连发攒了几条，一起带上去，
+      //         体感是"咔一下全部生效"。
+      //     · flushMerge=false（前端判定"用户还在打字"，见 app_state 的
+      //       flushMerge 参数）
+      //       → 攒 700ms 静默窗口，把"想到一句发一句"合成一段再给模型。
+      //
+      //   为什么必须区分：逐条投递时 agent 第一条只看到半句话就开始瞎猜，
+      //   后面只能靠 steer 纠偏，三份打架的理解叠在一起。
+      //   但反过来，正常发一句也要等 700ms 就是卡顿 —— 两个都不能接受。
+      //
+      //   正在跑的时候**绝不合并**：那是中断/插队，必须立刻送进去。
+      if (idle && !files.length && !flushMerge) {
+        this.mergeQueue.push(roomId, clean);
+        return { userMessage, bot, group: false, merging: true };
+      }
+      if (flushMerge && this.mergeQueue.hasPending(roomId)) {
+        // 有攒着的：把这条也放进去，然后立刻全部发出
+        this.mergeQueue.push(roomId, clean);
+        await this.mergeQueue.flushAll();
+        return { userMessage, bot, group: false, merging: false };
+      }
+
       const effective = mode === 'followUp' ? 'followUp' : 'steer';
       const deliveryEpoch = this.directDeliveryEpochs.get(roomId) ?? 0;
       deliverDirectInput({
@@ -1727,6 +1818,9 @@ export class PiRunner {
     this.directDeliveryEpochs.set(roomId, (this.directDeliveryEpochs.get(roomId) ?? 0) + 1);
     // 用户按了停止：排队中的轮次一并清掉，不然它会在当前这轮结束后自己接着跑
     this.roundQueue.delete(roomId);
+    // ★ 同理，连发合并队列里攥着的也要丢 ——
+    //   用户按了停止，接着再冒出一条刚攒好的消息，看起来就像"停不住"。
+    this.mergeQueue.drop(roomId);
     // ★ 还要告诉**正在跑的那轮**别再往下派人了。
     //
     //   真事：用户点终止之后"还要等很久"。因为以前只 abort 了当前这个 session ——
@@ -1754,7 +1848,14 @@ export class PiRunner {
         roomId,
         msg.id,
         {
-          status: 'error',
+          // ★ 用 'aborted' 而不是 'error'：用户主动按 Esc 不是"出错"。
+          //   渲染成红色错误气泡会让人以为程序坏了 —— 而在 pi agent 里
+          //   按 Esc 终止就是终止，界面不留痕。
+          //   前端据这个 status 直接不画气泡（见 chat_screen 的 isAborted）。
+          //
+          //   error 文本保留：上层（run 的返回值、日志）还要用它区分原因；
+          //   只是前端拿到 status='aborted' 就不再渲染这一条。
+          status: 'aborted',
           error: '已按你的要求终止',
           steps: (msg.steps ?? []).map((s) =>
             s?.status === 'running' ? { ...s, status: 'error', error: '已终止' } : s,

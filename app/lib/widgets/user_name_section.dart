@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../scope.dart';
+import '../ime_guard.dart';
 import '../theme.dart';
+import 'toast.dart';
 
 /// 设置里的「我是谁」。
 ///
@@ -31,8 +33,7 @@ class _UserNameSectionState extends State<UserNameSection> {
     await AppScope.read(context).saveUserName(_c.text.trim());
     if (!mounted) return;
     setState(() => _dirty = false);
-    ScaffoldMessenger.maybeOf(context)
-        ?.showSnackBar(const SnackBar(content: Text('已保存，bot 下一轮起会这么称呼你')));
+    toast(context, '已保存，bot 下一轮起会这么称呼你');
   }
 
   @override
@@ -85,7 +86,7 @@ class _UserNameSectionState extends State<UserNameSection> {
                 onChanged: (_) {
                   if (!_dirty) setState(() => _dirty = true);
                 },
-                onSubmitted: (_) => _save(),
+                onSubmitted: submitUnlessComposing(_c, _save),
                 style: const TextStyle(fontSize: PB.fsSm),
                 decoration: InputDecoration(
                   hintText: '比如：小陈 / Boss / 老板',

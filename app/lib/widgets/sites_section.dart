@@ -6,6 +6,7 @@ import '../models.dart';
 import '../motion.dart';
 import '../scope.dart';
 import '../theme.dart';
+import 'toast.dart';
 
 /// 系统接入面板（设置里的「系统接入」标签页）。
 ///
@@ -88,9 +89,7 @@ class _SitesSectionState extends State<SitesSection> {
   }
 
   void _toast(BuildContext context, String text) {
-    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-      SnackBar(content: Text(text), duration: const Duration(seconds: 4)),
-    );
+    toast(context, text, kind: ToastKind.error);
   }
 
   Future<void> _deleteSite(BuildContext context, AppState state, SiteSystem site) async {
@@ -404,13 +403,6 @@ class _EmptySites extends StatelessWidget {
           const Text(
             '还没有接入系统',
             style: TextStyle(fontSize: PB.fsSm, color: PB.textSecondary),
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            '接进来之后，你在手机上直接说"帮我看看最近哪些基金表现好"，\n'
-            'bot 就会去这个系统里查，不用你自己打开网页找。',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary, height: 1.7),
           ),
           const SizedBox(height: 14),
           FilledButton.icon(

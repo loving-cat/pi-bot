@@ -16,6 +16,7 @@
  *   · 连续失败就停，不打爆对方接口；
  *   · 口令只在内存里用，不写日志。
  */
+import { proxyFetch } from './http-client.js';
 import {
   LOGIN_PATH_CANDIDATES,
   ACCOUNT_FIELDS,
@@ -56,7 +57,7 @@ export async function probeLogin({
   baseUrl,
   account,
   password,
-  fetchImpl = globalThis.fetch,
+  fetchImpl = proxyFetch,
   paths = LOGIN_PATH_CANDIDATES,
   accountField = '',
   passwordField = '',
@@ -213,7 +214,7 @@ async function tryLogin({ base, path, body, fetchImpl, timeoutMs }) {
  * @param {object} [opts]
  * @returns {Promise<{ok:boolean, token?:string, reason:string}>}
  */
-export async function loginSite(site, { fetchImpl = globalThis.fetch, timeoutMs = TIMEOUT_MS } = {}) {
+export async function loginSite(site, { fetchImpl = proxyFetch, timeoutMs = TIMEOUT_MS } = {}) {
   const auth = site?.auth ?? {};
   const result = await tryLogin({
     base: String(site?.baseUrl ?? '').replace(/\/+$/, ''),

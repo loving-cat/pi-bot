@@ -241,6 +241,13 @@ class Msg {
 
   bool get isUser => authorType == 'user';
   bool get isStreaming => status == 'streaming';
+
+  /// 用户主动终止的（按 Esc）。服务端写 status='aborted'。
+  ///
+  /// 为什么单独一个状态而不是复用 'error'：终止不是"出错"。
+  /// 在终端里按 Esc 停下就是停下，界面不该冒一个红字气泡问"要不要重试"，
+  /// 也不该在聊天记录里留一行"已按你的要求终止" —— 用户自己按的，他知道。
+  bool get isAborted => status == 'aborted';
   bool get isRef => kind == 'ref' && refs.isNotEmpty;
 
   /// 上下文压缩的提示条（服务端在压缩成功后写一条 kind='compact'）

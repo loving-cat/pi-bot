@@ -4,6 +4,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../models.dart';
 import '../scope.dart';
 import '../theme.dart';
+import 'toast.dart';
 import 'attachment_view.dart';
 import 'blob_avatar.dart';
 import 'bot_run_section.dart';
@@ -426,12 +427,7 @@ class _RoomPanelState extends State<RoomPanel> {
     if (ok != true || picked.isEmpty) return;
     await state.addBotsToRoom(room.id, picked.toList());
     if (!context.mounted) return;
-    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-      SnackBar(
-        duration: const Duration(seconds: 2),
-        content: Text('已加进「${room.name}」，下次说话它就接得上。'),
-      ),
-    );
+    toast(context, '已加进「${room.name}」，下次说话它就接得上。');
   }
 
   Future<void> _confirmRemove(BuildContext context, Room room, Bot? bot) async {
@@ -471,8 +467,7 @@ class _RoomPanelState extends State<RoomPanel> {
     if (ok != true || !context.mounted) return;
     await state.removeBotFromRoom(room.id, bot.id);
     if (!context.mounted) return;
-    ScaffoldMessenger.maybeOf(context)
-        ?.showSnackBar(SnackBar(content: Text('已把 ${bot.name} 移出这个群')));
+    toast(context, '已把 ${bot.name} 移出这个群');
   }
 }
 

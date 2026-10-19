@@ -3,6 +3,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../scope.dart';
 import '../theme.dart';
+import 'toast.dart';
 
 /// 设置里的「群聊轮次」区块。
 ///
@@ -52,11 +53,10 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
   Future<void> _savePolicy(Map<String, dynamic> patch) async {
     await AppScope.read(context).savePolicy(patch);
     if (!mounted) return;
-    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-      const SnackBar(
-        duration: Duration(milliseconds: 1600),
-        content: Text('已生效（正在跑的会话下次跑就用新规矩）'),
-      ),
+    toast(
+      context,
+      '已生效（正在跑的会话下次跑就用新规矩）',
+      kind: ToastKind.success,
     );
   }
 
@@ -75,8 +75,7 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
       _saving = false;
       _dirty = false;
     });
-    ScaffoldMessenger.maybeOf(context)
-        ?.showSnackBar(const SnackBar(content: Text('已生效（不用重启）')));
+    toast(context, '已生效（不用重启）');
   }
 
   @override
