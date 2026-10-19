@@ -1577,6 +1577,30 @@ class AppState extends ChangeNotifier {
         _touchRoom(msg.roomId, msg);
         break;
 
+      case 'msg.moved':
+        {
+          // 插话重排：服务端把"正在写的那条回复"挪到用户插话后面。
+          // 事件带消息本体（createdAt 可能也被 touch 过），本地整条替换。
+          final roomId = ev['roomId'] as String? ?? '';
+          final list = messages[roomId];
+          final msgId = ev['msgId'] as String?;
+          final raw = ev['msg'];
+          if (list == null || msgId == null || raw is! Map) break;
+          final idx = list.indexWhere((m) => m.id == msgId);
+          if (idx < 0) break;
+          list.removeAt(idx);
+          final afterId = ev['afterId'] as String?;
+          final after = afterId == null
+              ? -1
+              : list.indexWhere((m) => m.id == afterId);
+          list.insert(
+            after >= 0 ? after + 1 : list.length,
+            Msg.fromJson(raw.cast<String, dynamic>()),
+          );
+          _notify();
+        }
+        break;
+
       case 'msg.delta':
         final msg = _find(ev['roomId'] as String, ev['msgId'] as String);
         if (msg != null) {

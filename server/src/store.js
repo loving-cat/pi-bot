@@ -1738,6 +1738,39 @@ export class Store {
     return msg;
   }
 
+  /**
+   * 把一条消息挪到另一条后面（插话重排用）。
+   *
+   * 场景：用户在 bot 正在写回复时插话（steer）。
+   *   · bot 那条回复是插话**之前**创建的，位置在用户消息上面；
+   *   · 模型被打断后重新思考，新内容继续写进**同一条**消息。
+   * 不挪的话，用户看到的是"答案排在问题前面"。
+   *
+   * @param {string} roomId
+   * @param {string} msgId 要挪的消息
+   * @param {string|null} afterMsgId 挪到哪条后面；null = 放到最后
+   * @param {{touch?: boolean}} [opts] touch = 同时把 createdAt 挪到现在
+   *   （内容正在重新生成，时间戳跟着走，否则界面上"排在后面的消息时间反而更早"）
+   * @returns {object|null} 挪完的消息
+   */
+  moveMessageAfter(roomId, msgId, afterMsgId, { touch = false } = {}) {
+    const list = this.messages.get(roomId);
+    if (!list) return null;
+    const from = list.findIndex((m) => m.id === msgId);
+    if (from < 0) return null;
+    const [msg] = list.splice(from, 1);
+    let to = afterMsgId ? list.findIndex((m) => m.id === afterMsgId) : -1;
+    to = to >= 0 ? to + 1 : list.length;
+    list.splice(to, 0, msg);
+    if (touch) msg.createdAt = now();
+    msg.updatedAt = now();
+    this.dirtyRooms.add(roomId);
+    this.scheduleSave();
+    // 带上消息本体：客户端要按新的 createdAt 重建这条
+    bus.emit('event', { t: 'msg.moved', roomId, msgId, afterId: afterMsgId, msg });
+    return msg;
+  }
+
   updateMessage(roomId, messageId, patch, { silent = false } = {}) {
     const msg = this.getMessage(roomId, messageId);
     if (!msg) return null;

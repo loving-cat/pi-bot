@@ -1640,6 +1640,32 @@ class _RelayedFromState extends State<_RelayedFrom> {
   }
 }
 
+/// 消息时间戳：小到不抢戏，但每条都有 —— 插话重排之后，
+/// 位置顺序不再等于时间顺序，时间戳是用户核对"谁在什么时候说的"的唯一依据。
+class _TimeLabel extends StatelessWidget {
+  const _TimeLabel({required this.createdAt, this.alignEnd = false});
+
+  final int createdAt;
+  final bool alignEnd;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = formatTime(createdAt);
+    if (text.isEmpty) return const SizedBox.shrink();
+    return Align(
+      alignment: alignEnd ? Alignment.centerRight : Alignment.centerLeft,
+      child: Text(
+        text,
+        style: const TextStyle(
+          fontSize: 9,
+          color: PB.textQuaternary,
+          letterSpacing: 0.2,
+        ),
+      ),
+    );
+  }
+}
+
 class _MessageRow extends StatelessWidget {
   const _MessageRow({
     required this.msg,
@@ -1815,6 +1841,12 @@ class _MessageRow extends StatelessWidget {
                   ),
                 ),
               ),
+              // ★ 每条消息都带时间戳：插话/重排之后，顺序光靠位置看不出来，
+              //   时间是唯一可信的"这条是什么时候说的"。
+              Padding(
+                padding: const EdgeInsets.only(top: 3, right: 4),
+                child: _TimeLabel(createdAt: msg.createdAt, alignEnd: true),
+              ),
               if (msg.wasSteer && _isLastSteer(context, msg))
                 Padding(
                   padding: const EdgeInsets.only(top: 4, right: 4),
@@ -1984,7 +2016,11 @@ class _MessageRow extends StatelessWidget {
                         ),
                       ),
                     ),
-                  // 用量行（↑0 ↓0 ⚡0）不再显示，属于噪音
+                  // ★ 每条消息都带时间戳（同用户侧：重排后时间是唯一可信的顺序）
+                  Padding(
+                    padding: const EdgeInsets.only(top: 3, left: 2),
+                    child: _TimeLabel(createdAt: msg.createdAt),
+                  ),
                 ],
               ),
             ),
