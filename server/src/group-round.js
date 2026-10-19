@@ -58,19 +58,53 @@ export function shouldStopRound({
  * @param {boolean} p.superior                           叫它的是不是上级（或用户）
  * @returns {{kind:'skip'|'interrupt'|'queue'|'run', why:string}|{kind:'wait', why:string}}
  */
-export function planItem({ item, name = '', done = 0, budget = 0, busy = false, superior = false } = {}) {
+export function planItem({
+  item,
+  name = '',
+  done = 0,
+  budget = 0,
+  busy = false,
+  superior = false,
+  userRound = false,
+} = {}) {
   if (done >= budget) {
     return { kind: 'skip', why: `${name} 这轮已说过 ${done} 次` };
   }
   if (!busy) {
     return { kind: 'run', why: item?.reason ?? '' };
   }
-  // 忙的时候怎么处理，是两条完全不同的路：
-  //   上级要的是"立刻改主意"（实时），同级要的是"别打断但别丢"
+  // ★ 用户发起的新需求 → 不管叫它的是谁，**一律打断**。
+  //
+  //   用户说"没完成的再完成一次"，意思是"之前的作废，按新的来"。
+  //   如果还让它把旧活干完再听（排队），等来的结果是基于旧需求的，
+  //   用户看到的就是"我说了但它还在忙原来的事"。
+  //
+  //   成员之间互相 @ 不在此列（那是日常协作，打断会互相擂断）。
+  if (userRound) {
+    return { kind: 'interrupt', why: `${name} 正忙，但这一轮是用户新需求 → 打断` };
+  }
+  // 上级要的是"立刻改主意"（实时），同级要的是"别打断但别丢"
   if (superior) {
     return { kind: 'interrupt', why: `${name} 正忙，但叫它的是上级 → 打断` };
   }
   return { kind: 'queue', why: `${name} 正忙，且是同级 → 投递进 inbox` };
+}
+
+/**
+ * 这一轮是**由用户发起的新需求**吗？（区别于成员之间互相 @ 的日常调度）
+ *
+ * 为什么需要区分：
+ *   · 用户发起 → 这是“改需求”，所有人手上的活都作废，成员**必须停下来**
+ *     接新任务；排队等它忙完，等来的还是旧需求的产物。
+ *   · 成员互 @ → 这是日常协作，打断会让群里互相擂断，必须排队。
+ *
+ * @param {object} p
+ * @param {string|null} p.openerBotId 谁起的头（null = 用户）
+ * @param {string} [p.openerName]
+ * @returns {boolean}
+ */
+export function isUserInitiatedRound({ openerBotId = null } = {}) {
+  return !openerBotId;
 }
 
 /**
