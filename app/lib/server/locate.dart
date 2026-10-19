@@ -10,11 +10,16 @@ import 'dart:io';
 /// 顺序：`PI_BOT_SERVER` → App Resources → exe 同级 → 逐层向上（最多 8 层）→ 当前目录。
 /// 开发时 exe 位于 `app/build/windows/x64/runner/Release/`；
 /// 发行包则把 `server/` 与 exe 放在同一目录。
+///
+/// [operatingSystem] 只影响路径分隔符，默认取当前平台。测试里可以显式传
+/// `macos` / `windows`，这样同一份用例在任何主机上跑的语义都一致。
 List<String> serverEntryCandidates(
   String exeDir, {
   Map<String, String>? environment,
+  String? operatingSystem,
 }) {
-  final sep = Platform.pathSeparator;
+  final os = operatingSystem ?? Platform.operatingSystem;
+  final sep = os == 'windows' ? r'\' : '/';
   String at(String base, List<String> parts) => [base, ...parts].join(sep);
   const entry = ['server', 'src', 'index.js'];
   final out = <String>[];
@@ -22,8 +27,14 @@ List<String> serverEntryCandidates(
   final env = (environment ?? Platform.environment)['PI_BOT_SERVER']?.trim();
   if (env != null && env.isNotEmpty) out.add(env);
 
-  if (Directory(exeDir).parent.path.endsWith('${sep}Contents')) {
-    out.add(at(Directory(exeDir).parent.path, ['Resources', ...entry]));
+  // .app 包的布局是 `X.app/Contents/MacOS/`，server 在 `Contents/Resources/`。
+  // 判断时两种分隔符都认：用例里的临时目录在 Windows 主机上是反斜杠开头的绝对路径，
+  // 但拼接出来的 bundle 路径可能带正斜杠 —— 只看主机分隔符会漏掉。
+  final parentPath = Directory(exeDir).parent.path;
+  if (parentPath.endsWith('${sep}Contents') ||
+      parentPath.endsWith('/Contents') ||
+      parentPath.endsWith(r'\Contents')) {
+    out.add(at(parentPath, ['Resources', ...entry]));
   }
   out.add(at(exeDir, entry));
   out.add(at(at(exeDir, const ['..']), entry));
@@ -39,15 +50,73 @@ List<String> serverEntryCandidates(
   return out;
 }
 
-String? findServerEntry(String exeDir, {Map<String, String>? environment}) {
-  for (final path in serverEntryCandidates(exeDir, environment: environment)) {
+String? findServerEntry(
+  String exeDir, {
+  Map<String, String>? environment,
+  String? operatingSystem,
+}) {
+  for (final path in serverEntryCandidates(
+    exeDir,
+    environment: environment,
+    operatingSystem: operatingSystem,
+  )) {
     if (File(path).existsSync()) return File(path).absolute.path;
   }
   return null;
 }
 
-/// node 候选路径：环境覆盖、应用目录、PATH，再补 macOS 的常见安装目录。
-/// nvm 版本目录按主、次、补丁版本降序，不执行用户的 shell 配置。
+/// 从某个版本根目录里列出 `vX.Y.Z` 形态的子目录，按主、次、补丁**降序**。
+///
+/// 只解析目录名的最后一段，并同时认 `/` 与 `\`：
+/// 测试里会喂进来 `C:\...\home/.nvm/versions/node\v22.10.0` 这种混合分隔符的路径，
+/// 只按 `/` 切会把 `node\v22.10.0` 当成版本名，解析成 `[0,0,0]`，
+/// 排序结果就变成随机的（线上表现为"明明装了新 node，却挑到旧版本")。
+List<Directory> versionDirsDescending(String root) {
+  Directory dir;
+  try {
+    dir = Directory(root);
+    if (!dir.existsSync()) return const [];
+    final dirs = dir.listSync().whereType<Directory>().toList();
+    final versioned = <(List<int>, Directory)>[];
+    for (final item in dirs) {
+      final name = item.path.split(RegExp(r'[\\/]')).last;
+      final m = RegExp(r'^v?(\d+)\.(\d+)\.(\d+)').firstMatch(name);
+      if (m == null) continue;
+      versioned.add((
+        [
+          int.tryParse(m.group(1)!) ?? 0,
+          int.tryParse(m.group(2)!) ?? 0,
+          int.tryParse(m.group(3)!) ?? 0,
+        ],
+        item,
+      ));
+    }
+    versioned.sort((a, b) {
+      final av = a.$1;
+      final bv = b.$1;
+      for (var i = 0; i < 3; i++) {
+        final order = bv[i].compareTo(av[i]);
+        if (order != 0) return order;
+      }
+      return b.$2.path.compareTo(a.$2.path);
+    });
+    return [for (final v in versioned) v.$2];
+  } on FileSystemException {
+    return const [];
+  }
+}
+
+/// node 候选路径：环境覆盖、应用目录、PATH，再补各平台常见安装位置。
+///
+/// Windows 除了标准安装（`Program Files\nodejs`），还认这些发行方式 ——
+/// 它们在 Windows 上很常见，但装完**不会**把 node 放进系统 PATH 的固定位置：
+///   · nvm-windows（`NVM_HOME` / `%APPDATA%\nvm\vX.Y.Z\node.exe`、`NVM_SYMLINK`）
+///   · fnm（`FNM_DIR` / `%APPDATA%\fnm\node-versions\vX.Y.Z\installation`）
+///   · Volta（`%LOCALAPPDATA%\Volta\bin`）
+///   · Scoop（`%USERPROFILE%\scoop\apps\nodejs\current`、`scoop\shims`）
+///
+/// 版本目录一律按数值降序，保证"装了 24 就用 24"，而不是拿到磁盘顺序里
+/// 碰巧第一个的 18。
 List<String> nodeCandidates(
   String exeDir, {
   Map<String, String>? environment,
@@ -62,9 +131,13 @@ List<String> nodeCandidates(
   void addDirectory(String dir) {
     if (dir.trim().isEmpty) return;
     for (final name in names) {
-      out.add('$dir$sep$name');
+      out.add('${_trimSep(dir, windows)}$sep$name');
     }
   }
+
+  /// Windows 子目录拼接：`win(['C:\\a', 'Volta', 'bin'])`。
+  /// 不能直接写 `'$x\Volta'` —— Dart 里 `\V` 不是转义序列，反斜杠会丢。
+  String win(List<String> parts) => parts.join(r'\');
 
   final explicit = env['PI_BOT_NODE']?.trim();
   if (explicit != null && explicit.isNotEmpty) out.add(explicit);
@@ -76,7 +149,40 @@ List<String> nodeCandidates(
     addDirectory('$resources/node');
   }
   if (windows) {
-    addDirectory('${env['ProgramFiles'] ?? r'C:\Program Files'}\\nodejs');
+    addDirectory(win([env['ProgramFiles'] ?? r'C:\Program Files', 'nodejs']));
+
+    final localAppData = env['LOCALAPPDATA'];
+    final appData = env['APPDATA'];
+    final home = env['USERPROFILE'] ?? env['HOME'];
+
+    // Volta：node.exe 是个 shim，在 bin 下
+    if (localAppData != null) addDirectory(win([localAppData, 'Volta', 'bin']));
+
+    // nvm-windows：每个版本一个目录，当前版本通过 NVM_SYMLINK 暴露
+    final nvmHome = env['NVM_HOME'] ?? (appData == null ? null : win([appData, 'nvm']));
+    if (nvmHome != null) {
+      for (final dir in versionDirsDescending(nvmHome)) {
+        addDirectory(dir.path);
+      }
+    }
+    final nvmSymlink = env['NVM_SYMLINK'];
+    if (nvmSymlink != null) addDirectory(nvmSymlink);
+
+    // fnm：版本在 node-versions/<ver>/installation，别名是符号链接
+    final fnmDir = env['FNM_DIR'] ?? (appData == null ? null : win([appData, 'fnm']));
+    if (fnmDir != null) {
+      addDirectory(win([fnmDir, 'aliases', 'default', 'installation']));
+      for (final dir in versionDirsDescending(win([fnmDir, 'node-versions']))) {
+        addDirectory(win([dir.path, 'installation']));
+      }
+    }
+
+    // Scoop：current 是指向当前版本的链接，shims 里是转发脚本
+    if (home != null) {
+      addDirectory(win([home, 'scoop', 'apps', 'nodejs', 'current']));
+      addDirectory(win([home, 'scoop', 'apps', 'nodejs-lts', 'current']));
+      addDirectory(win([home, 'scoop', 'shims']));
+    }
   }
   for (final directory in (env['PATH'] ?? '').split(windows ? ';' : ':')) {
     addDirectory(directory.trim());
@@ -90,38 +196,25 @@ List<String> nodeCandidates(
     final nvmDir = env['NVM_DIR'] ?? (home == null ? null : '$home/.nvm');
     if (nvmDir != null && nvmDir.isNotEmpty) {
       addDirectory('$nvmDir/current/bin');
-      try {
-        final versions = Directory('$nvmDir/versions/node')
-            .listSync()
-            .whereType<Directory>()
-            .toList();
-        List<int> version(Directory dir) => dir.path
-            .split('/')
-            .last
-            .replaceFirst(RegExp(r'^v'), '')
-            .split('.')
-            .map((part) => int.tryParse(part) ?? 0)
-            .toList();
-        versions.sort((a, b) {
-          final av = version(a);
-          final bv = version(b);
-          for (var i = 0; i < 3; i++) {
-            final order = (i < bv.length ? bv[i] : 0).compareTo(
-              i < av.length ? av[i] : 0,
-            );
-            if (order != 0) return order;
-          }
-          return b.path.compareTo(a.path);
-        });
-        for (final dir in versions) {
-          addDirectory('${dir.path}/bin');
-        }
-      } on FileSystemException {
-        // 没有安装 nvm 时继续使用其它候选。
+      for (final dir in versionDirsDescending('$nvmDir/versions/node')) {
+        addDirectory('${dir.path}/bin');
       }
     }
   }
   return out.toSet().toList();
+}
+
+/// 去掉末尾多余的分隔符 —— PATH 里经常带 `C:\` 或 `C:\dir\`，
+/// 直接拼会出 `C:\\node.exe` 这种双分隔符。
+String _trimSep(String dir, bool windows) {
+  var out = dir.trim();
+  if (out.endsWith(r'\') || out.endsWith('/')) {
+    // 根目录（`C:\`、`/`）要保留一个
+    final isRoot = RegExp(r'^[A-Za-z]:[\\/]$').hasMatch(out) || out == '/';
+    if (isRoot) return windows ? '${out[0]}:\\' : '/';
+    out = out.substring(0, out.length - 1);
+  }
+  return out;
 }
 
 /// 定位 node；非 Windows 平台不会选择 Windows 可执行文件。
