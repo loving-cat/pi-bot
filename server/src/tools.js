@@ -23,6 +23,8 @@ import { shells } from './shells.js';
 import { decideCommand } from './shell-policy.js';
 import { log, now, isBusyError, planDispatchRetry } from './util.js';
 import { CODING_BASELINE_TITLE, CODING_BASELINE_HOWTO, isCodingRole } from './coding-baseline.js';
+import { scanLocalCapabilities } from './local-capabilities.js';
+import { siteDrafts, describeDraftForConfirm, draftConfirmOptions } from './site-draft.js';
 
 /** 同一个 bot 连着私信多个人时，多久以内的引用气泡合并成一个（ms） */
 export const REF_MERGE_MS = 180_000;
@@ -139,7 +141,7 @@ function deptLine(room) {
 // 所有 bot 都能用
 // ---------------------------------------------------------------------------
 
-export function buildCommonTools({ runner, roomId, botId }) {
+export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
   /**
    * 派活真没送出去 → **报给主控**，让主控重新派人。
    *
@@ -164,7 +166,14 @@ export function buildCommonTools({ runner, roomId, botId }) {
   }
 
   return [
-    defineTool({
+    // ★ 主控（mainbot）不给询问卡片。
+    //
+    //   卡片是给"被派活的人卡住了、要用户拍个板"设计的：
+    //   它在私聊里弹一张，用户点一下就能继续。
+    //   但主控本来就在跟用户直接对话 —— 有疑问直接说一句就行，
+    //   弹卡片等于把一句话拆成"卡片 + 一次点击"，反而更远。
+    //   而且主控一轮要推进整件事，停下来等点击会卡住整个流程。
+    ...(isMain ? [] : [defineTool({
       name: 'ask_user',
       label: '★ 问用户要个选择',
       description:
@@ -226,7 +235,7 @@ export function buildCommonTools({ runner, roomId, botId }) {
           { options: opts.map((o) => o.label) },
         );
       },
-    }),
+    })]),
 
     defineTool({
       name: 'web_search',
@@ -707,8 +716,275 @@ export function buildCommonTools({ runner, roomId, botId }) {
 // 只有总经理（主控）能用
 // ---------------------------------------------------------------------------
 
-export function buildChiefTools({ runner, health, roomId }) {
+export function buildChiefTools({ runner, health, roomId, botId }) {
   return [
+    // ★ 加技能 / 加 MCP：主控的权力仅次于用户。
+    //
+    //   为什么不只让用户在设置里点：用户说话是"我想让它能查数据库"，
+    //   不是"你去设置页第三栏点添加、填 baseUrl、再点保存"。
+    //   主控有权直接把这件事件掉 —— 但它加的东西**和用户加的完全一样**，
+    //   都落在同一个库里、走同一套校验，没有后门。
+    defineTool({
+      name: 'add_skill',
+      label: '教大家一门本事',
+      description:
+        '往全局技能库里加一条做法（所有 bot 共享，按任务自动挑相关的注入提示词）。' +
+        '用户说"让它学会 X"、或者你发现某类活反复摸索时用它。' +
+        '标题要具体（"如何调某某接口"而不是"开发技巧"），做法要写成能照着执行的步骤。',
+      parameters: Type.Object({
+        title: Type.String({ description: '标题，具体到能一眼看出这是干什么的' }),
+        summary: Type.Optional(Type.String({ description: '一句话说明' })),
+        howto: Type.String({ description: '具体做法/步骤。写清楚命令、路径、注意事项' }),
+        tags: Type.Optional(Type.Array(Type.String(), { description: '几个关键词，用于按任务匹配' })),
+      }),
+      execute: async (_toolCallId, params) => {
+        const r = store.addSkill({
+          title: params.title,
+          summary: params.summary ?? '',
+          howto: params.howto,
+          tags: params.tags ?? [],
+        });
+        if (r.error) return fail(r.error);
+        return ok(`已加进技能库：${r.skill.title}（所有 bot 都能用上）`);
+      },
+    }),
+
+    defineTool({
+      name: 'add_mcp_server',
+      label: '接一个 MCP 能力',
+      description:
+        '往 MCP 服务库里加一个服务（给模型加外部能力：读文件、查数据库、调接口…）。' +
+        '**加完默认是不启用的** —— 要不要真连、连给谁，得看用户的意思，' +
+        '因为每个 MCP 都会起子进程吃内存。' +
+        '本地服务用 type=stdio + command/args；远端用 type=http + url。',
+      parameters: Type.Object({
+        name: Type.String({ description: '名字，只能字母数字下划线短横线（会被拼进工具名）' }),
+        type: Type.Optional(Type.String({ description: 'stdio（本地命令）或 http（远端服务），默认 stdio' })),
+        description: Type.Optional(Type.String({ description: '一句话说明这个服务能干什么' })),
+        command: Type.Optional(Type.String({ description: 'stdio 的启动命令，如 npx' })),
+        args: Type.Optional(Type.Array(Type.String(), { description: 'stdio 的命令参数' })),
+        url: Type.Optional(Type.String({ description: 'http 的服务地址' })),
+        enabled: Type.Optional(
+          Type.Boolean({ description: '是否立即启用（默认 false —— 会起进程，通常等用户确认）' }),
+        ),
+      }),
+      execute: async (_toolCallId, params) => {
+        const r = store.addMcpServer({
+          name: params.name,
+          type: params.type ?? 'stdio',
+          description: params.description ?? '',
+          command: params.command,
+          args: params.args ?? [],
+          url: params.url,
+          // 默认不启用：主控加进来只是"登记"，真连不连让用户定
+          enabled: params.enabled === true,
+        });
+        if (r.error) return fail(r.error);
+        const state = r.server.enabled ? '已启用' : '已登记但未启用';
+        return ok(
+          `已加进 MCP 库：${r.server.name}（${state}）。` +
+            (r.server.enabled ? '' : '要真连上，需要在设置里打开它的开关，或者在 bot 上挂载时由用户确认。'),
+        );
+      },
+    }),
+
+    defineTool({
+      name: 'list_local_capabilities',
+      label: '看看本机装了什么',
+      description:
+        '扫描用户电脑上 pi 已经装好的 skill 和 MCP（只读，不会改用户配置）。' +
+        '用户说"用我装过的那个"、或者你觉得某个能力机器上可能已经有了时，先看一眼，' +
+        '避免重复造一遍。',
+      parameters: Type.Object({}),
+      execute: async () => {
+        const found = scanLocalCapabilities({
+          existingSkills: store.skillLibrary(),
+          existingMcp: store.mcpLibrary(),
+        });
+        const lines = [];
+        if (found.skills.length) {
+          lines.push('本机已装的技能：');
+          for (const s of found.skills) {
+            lines.push(`- ${s.title}${s.imported ? '（已在库里）' : ''}：${s.summary || '（无说明）'}`);
+          }
+        }
+        if (found.mcpServers.length) {
+          lines.push('', '本机已配的 MCP：');
+          for (const s of found.mcpServers) {
+            lines.push(
+              `- ${s.name}${s.imported ? '（已在库里）' : ''}（${s.type}）：${s.command ?? s.url}`,
+            );
+          }
+        }
+        if (!lines.length) {
+          return ok('本机没有装额外的 skill 或 MCP。');
+        }
+        lines.push('', '要让某个进来，让用户在「设置 → 技能 / MCP」点导入（一键复制，不动用户原配置）。');
+        return ok(lines.join('\n'));
+      },
+    }),
+
+    // ★ 接一个 Web 系统：抓 -> 存草稿 -> 让用户确认 -> 才真入库。
+    //
+    //   为什么分两步：自动探测会猜错（登录路径、字段名、哪些算"模块"）。
+    //   猜错了直接建出一个连不上的系统，用户还得去设置里删，比先确认更烦。
+    defineTool({
+      name: 'stage_site',
+      label: '记下摸到的系统结构',
+      description:
+        '把你在某个 Web 系统里摸到的结构记成一份**待确认的草稿**（不会真的建）。' +
+        '流程：先用 MCP（比如 rea）或 web_fetch 把系统的页面/接口抓一遍，' +
+        '把发现的模块路径逐个填进 modules；可以分多次提交，同名路径会自动合并。' +
+        '抓齐后调 confirm_site 让用户拍板。' +
+        '**注意：modules 必须是真实的接口路径**（如 /api/assets），不要编。',
+      parameters: Type.Object({
+        name: Type.String({ description: '系统名字，如「投研系统」' }),
+        baseUrl: Type.String({ description: '系统地址，如 https://demo.example.com' }),
+        account: Type.Optional(Type.String({ description: '登录账号' })),
+        password: Type.Optional(Type.String({ description: '登录口令（只在确认入库时用到）' })),
+        loginPath: Type.Optional(Type.String({ description: '登录接口路径，如 /api/auth/login' })),
+        modules: Type.Array(
+          Type.Object({
+            path: Type.String({ description: '接口路径，以 / 开头' }),
+            name: Type.Optional(Type.String({ description: '这个模块管什么' })),
+            note: Type.Optional(Type.String({ description: '补充说明，如参数/返回结构' })),
+            verified: Type.Optional(Type.Boolean({ description: '是否实际请求验证过' })),
+          }),
+          { description: '这次摸到的模块（可分批提交，按 path 合并）' },
+        ),
+        summary: Type.Optional(Type.String({ description: '整体说明：这个系统有哪几块' })),
+      }),
+      execute: async (_toolCallId, params) => {
+        const r = siteDrafts.upsert({ roomId, botId, data: params });
+        if (r.error) return fail(r.error);
+        const d = r.draft;
+        return ok(
+          `已记下「${d.name}」的结构：${d.modules.length} 个模块。\n` +
+            `还没入库 —— 抓齐后调 confirm_site 让用户确认。\n` +
+            `当前模块：${d.modules.map((m) => m.path).join('、')}`,
+        );
+      },
+    }),
+
+    defineTool({
+      name: 'confirm_site',
+      label: '请用户确认接入',
+      description:
+        '把 stage_site 记下的草稿摊给用户看，请他拍板。' +
+        '**必须等用户确认**：用户点「确认，接进来」才算同意；' +
+        '用户说要改就回到 stage_site 改，说算了就 discard_site。' +
+        '用户确认后，主控要接着调 commit_site 真正入库并建团队。',
+      parameters: Type.Object({}),
+      execute: async () => {
+        const draft = siteDrafts.get(roomId, botId);
+        if (!draft) {
+          return fail('还没有草稿。先用 stage_site 记下摸到的结构。');
+        }
+        const text = describeDraftForConfirm(draft);
+        const options = draftConfirmOptions(draft);
+        // 主控本身不带 ask_user（它直接跟用户说话），所以这里自己写一条卡片。
+        // 这是**唯一**允许主控发卡片的场景：接入一个外部系统是长期契约，
+        // 必须留一份用户明确点过头的记录。
+        const msg = store.appendMessage({
+          roomId,
+          authorType: 'bot',
+          authorId: botId,
+          authorName: store.getBot(botId)?.name ?? '',
+          authorEmoji: store.getBot(botId)?.emoji ?? null,
+          kind: 'ask',
+          text,
+          status: 'done',
+          meta: { options, allowCustom: true, siteDraftId: draft.id },
+        });
+        bus.emit('event', { t: 'msg.new', msg });
+        log(`🗂️ ${store.getBot(botId)?.name ?? botId} 请用户确认接入「${draft.name}」`);
+        return ok(
+          '确认卡片已经发出去了。**这一轮先停在这里**，等用户回。\n' +
+            '用户点「确认，接进来」→ 调 commit_site；说改 → 回 stage_site 补；说算了 → discard_site。',
+        );
+      },
+    }),
+
+    defineTool({
+      name: 'commit_site',
+      label: '入库并建团队',
+      description:
+        '**只有在用户明确确认之后**才调这个。把草稿变成真的系统接入，' +
+        '并按现有逻辑自动建一个专门管它的部门团队。',
+      parameters: Type.Object({
+        teamName: Type.Optional(Type.String({ description: '团队名，默认「<系统名> 团队」' })),
+      }),
+      execute: async (_toolCallId, params) => {
+        const draft = siteDrafts.get(roomId, botId);
+        if (!draft) return fail('没有待确认的草稿（可能已经提交过或已丢弃）');
+        if (!draft.account) return fail('还没拿到登录账号，没法接。先跟用户要。');
+
+        const added = store.addSite({
+          name: draft.name,
+          baseUrl: draft.baseUrl,
+          account: draft.account,
+          password: draft.password,
+          auth: {
+            kind: 'json',
+            ...(draft.loginPath ? { loginPath: draft.loginPath } : {}),
+          },
+        });
+        if (added.error) return fail(added.error);
+        const site = added.site;
+
+        // 建团队：沿用现成的"一个系统一个团队"逻辑（与设置页按钮完全一致）
+        const teamName = String(params.teamName ?? `${site.name} 团队`).slice(0, 40);
+        const persona =
+          `你负责「${site.name}」这个系统（${site.baseUrl}）。` +
+          `用户在手机上问你跟这个系统有关的事时，你用 query_site 去查真实数据再回答。` +
+          `查之前先用 list_sites 确认系统标识；结果有可能是大 JSON，挑用户关心的说出来，不要整段贴。` +
+          `查不到就直说查不到，不要猜。`;
+        const { room, bots } = store.createDepartment({
+          name: teamName,
+          topic: `接入的外部系统：${site.name}`,
+          members: [
+            {
+              name: `${site.name} 助手`,
+              persona,
+              emoji: '🔌',
+              tagline: `查 ${site.name} 的数据`,
+              skills: [
+                {
+                  title: `查询 ${site.name}`,
+                  howto:
+                    `用 query_site(site="${site.id}", path="/api/...") 查数据。\n` +
+                    `已摸清的模块：\n` +
+                    draft.modules.map((m) => `- ${m.path}${m.note ? `（${m.note}）` : ''}`).join('\n'),
+                },
+              ],
+              mcpServers: [],
+            },
+          ],
+          lead: `${site.name} 助手`,
+          createdBy: 'chief',
+        });
+        store.bindSiteTeam(site.id, room.id);
+        siteDrafts.consume(roomId, botId);
+
+        log(`🌐 主控接入系统「${site.name}」→ 团队 ${teamName}`);
+        return ok(
+          `已接入「${site.name}」：${draft.modules.length} 个模块，团队「${teamName}」已建好。` +
+            `之后用户在手机上问这个系统的事，那个团队会去查真实数据。`,
+        );
+      },
+    }),
+
+    defineTool({
+      name: 'discard_site',
+      label: '不接这个系统',
+      description: '用户说不接、或者发现抓错了时，丢掉草稿。',
+      parameters: Type.Object({}),
+      execute: async () => {
+        const dropped = siteDrafts.discard(roomId, botId);
+        return ok(dropped ? '已经把草稿丢了，没有入库。' : '本来就没有草稿。');
+      },
+    }),
+
     defineTool({
       name: 'create_bot',
       label: '招一个人',
@@ -783,7 +1059,9 @@ export function buildChiefTools({ runner, health, roomId }) {
     defineTool({
       name: 'update_bot',
       label: '调整某人',
-      description: '改某个 bot 的名字/人设/模型/思考等级/emoji。换了模型会自动重开会话。',
+      description:
+        '改某个 bot 的名字/人设/模型/思考等级/emoji，以及给它配 MCP 服务。' +
+        '换了模型或改了 MCP 会自动重开会话。',
       parameters: Type.Object({
         botId: Type.String(),
         name: Type.Optional(Type.String()),
@@ -792,6 +1070,13 @@ export function buildChiefTools({ runner, health, roomId }) {
         emoji: Type.Optional(Type.String()),
         model: Type.Optional(Type.String({ description: '模型；传空字符串表示回到默认' })),
         thinking: Type.Optional(Type.String({ description: THINKING_LEVELS.join(' / ') })),
+        mcpServers: Type.Optional(
+          Type.Array(Type.String(), {
+            description:
+              '给这个人挂哪几个 MCP 服务（传名字）。传空数组 = 全撤掉。' +
+              '只给它真正需要的 —— 每个 MCP 都会起进程吃内存，别一股脑全挂。',
+          }),
+        ),
       }),
       execute: async (_toolCallId, params) => {
         const { botId: target, ...patch } = params;
@@ -800,10 +1085,37 @@ export function buildChiefTools({ runner, health, roomId }) {
           if (!check.ok) return modelError(patch.model, check.suggestions);
           patch.model = check.resolved;
         }
+        // MCP 名字必须真在库里存在，否则配上去也连不上，模型会以为配好了
+        if (Array.isArray(patch.mcpServers) && patch.mcpServers.length) {
+          const known = new Map(store.mcpLibrary().map((s) => [s.name.toLowerCase(), s]));
+          const missing = patch.mcpServers.filter((n) => !known.has(String(n).toLowerCase()));
+          if (missing.length) {
+            return fail(
+              `没有这些 MCP 服务：${missing.join('、')}。` +
+                `先让用户在「设置 → MCP」里加，或者看提示词里列出的可用清单。`,
+            );
+          }
+          const disabled = patch.mcpServers.filter(
+            (n) => known.get(String(n).toLowerCase())?.enabled !== true,
+          );
+          if (disabled.length) {
+            return fail(
+              `${disabled.join('、')} 还没启用（在设置里打开开关才行）—— ` +
+                '没启用的服务不会真的去连，配上去也没用。',
+            );
+          }
+        }
         const bot = store.updateBot(target, patch);
         if (!bot) return fail(`找不到 bot ${target}`);
-        if (patch.model !== undefined || patch.thinking !== undefined) runner.resetSessionForBot(bot.id);
-        return ok(`已更新 ${bot.emoji ?? ''}${bot.name}。«内部：${bot.model ?? '默认'}/${bot.thinking}»`);
+        if (patch.model !== undefined || patch.thinking !== undefined || patch.mcpServers !== undefined) {
+          runner.resetSessionForBot(bot.id);
+        }
+        const mcpNote = Array.isArray(bot.mcpServers) && bot.mcpServers.length
+          ? `，MCP：${bot.mcpServers.join(', ')}`
+          : '';
+        return ok(
+          `已更新 ${bot.emoji ?? ''}${bot.name}。«内部：${bot.model ?? '默认'}/${bot.thinking}${mcpNote}»`,
+        );
       },
     }),
 

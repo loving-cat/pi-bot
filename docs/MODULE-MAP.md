@@ -35,6 +35,10 @@
 | `model-*.js` | 模型接线：注册（registry）/模型组（groups）/探活（health）/菜单（menu） |
 | `model-capacity.js` | 同 ID 模型元数据合并、容量优先级与正整数/最大输出校验（纯逻辑） |
 | `model-thinking.js` | 思考强度：`reasoning` / 七档 `thinkingLevelMap` / 上游 `thinkingFormat`，含预设与校验（纯逻辑） |
+| `mcp.js` | MCP 服务库：规范化、校验、转 pi 配置、测连接（纯逻辑 + 一个 probe） |
+| `mcp-hook.js` | 把用户配的 MCP 按 bot 选择注册进会话；给主控的能力清单 |
+| `local-capabilities.js` | 只读扫描本机 pi 已装的 skill / MCP，供一键导入 |
+| `site-draft.js` | 站点接入草稿：抓 → 存草稿 → 用户确认 → 才入库（草稿只在内存） |
 | `model-reply.js` | 模型错误分类与脱敏展示、认证失败终止重试、真正空回复的限定模型恢复 |
 | `providers.js` | 额外 provider 注册与默认模型解析 |
 | `context-budget.js` | 上下文预算：容量覆盖 + 压缩阈值 |
