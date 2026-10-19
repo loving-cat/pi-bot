@@ -467,3 +467,80 @@ commit_site  用户确认后才 addSite + createDepartment
 **唯一例外**是 `confirm_site`：接入一个外部系统是长期契约，
 需要用户明确点头并留下记录，所以它自己写一条 `kind: 'ask'` 卡片。
 这是刻意留的口子 —— 别在别处学它。
+
+---
+
+## 33. Windows 上 npx/npm 是 `.cmd` —— 直接 spawn 会说"找不到命令"
+
+**症状**：MCP 里填 `npx -y @modelcontextprotocol/server-filesystem .`，
+在 Mac 上好好的，Windows 上点"测试连接"报找不到命令，或者命令起来了但参数被截断。
+
+**根因**：Node 在 Windows 上解析 `npx` 要靠 `PATHEXT`，而 `npx.cmd` 是批处理 shim。
+Node 22 起对 `.bat/.cmd` 的 `shell:false` 行为各小版本不一致
+（CVE-2024-27980 之后有的版本直接抛 `EINVAL`）。反过来用 `shell:true` 更糟：
+参数会被拼进一条命令串，用户填的 `--root "C:\My Files"` 里只要有空格/引号/`&`，
+就会被 cmd 重新切分甚至执行别的命令。
+
+**修法**：`server/src/spawn-command.js` 显式按 `PATHEXT` 解析真实文件；
+`.cmd/.bat` 用 `cmd.exe /d /s /c` 传一条**逐参数转义**过的命令行
+（cross-spawn 同款规则；只有 `node_modules/.bin/*.cmd` 这种 npm shim 才双转义，
+它内部会再展开一次 `%*`）。参数里带空格的用例写在 `server/tests/mcp.mjs`。
+
+---
+
+## 34. taskkill 在实时防护下会卡 2.8 秒 —— 别放在服务端热路径
+
+**症状**：偶尔（约一半概率）整个服务端像抽风一样停 2~3 秒，HTTP/WS 全都不响应，
+之后自己恢复。日志里什么都没有。
+
+**根因**：`spawn('taskkill', ...)` 的耗时不在 taskkill 本身，而在
+`CreateProcessW` —— 装了实时防护的机器上，创建进程会被同步扫描，
+实测 **2.8 秒**，而且是同步调用，直接冻住 Node 主线程。
+
+**修法**：需要结束探测进程时，不要调 taskkill：
+
+```js
+child.stdin?.end();   // MCP 的 EOF 退出信号，服务会自己退
+child.kill();         // 再收掉直接子进程
+```
+
+"测试连接"的探测就这样做，实测 3.0s 返回、无残留进程。
+真正的会话结束仍交给 pi 自己的 `taskkill /T`（不在服务端热路径上）。
+
+**同一类坑还有第二个入口**：读系统代理要跑 `reg query`，同样是
+`CreateProcessW`，同样会被扫 3~6 秒。这次没法不用子进程，所以拆成两步：
+`http-client.js` 把读注册表放进 **worker 线程**（卡在 worker 里，主线程不冻），
+解析（`parseWindowsProxyValue`）留在主线程做纯函数；
+缓存过期时**先返回旧值、后台刷新**，别让搜网页/探站点替探测付等待。
+实测：到期那次调用 1ms 返回，后台刷新完成后的下一次调用 0ms。
+
+---
+
+## 35. Windows 上只用 `Program Files\nodejs` 找 node 会漏掉一大半用户
+
+**症状**：用户明明装了 node（`node -v` 能跑），App 说找不到；或者装了两个版本，
+挑到的是旧的那个。
+
+**根因**：Windows 的版本管理器不会把 node 放进固定系统目录：
+nvm-windows 在 `%APPDATA%\nvm\vX.Y.Z`、fnm 在 `node-versions\<ver>\installation`、
+Volta 在 `%LOCALAPPDATA%\Volta\bin`、Scoop 在 `scoop\apps\nodejs\current`。
+另外目录名解析不能只看 `/`：`C:\...\node\v22.10.0` 里同时有反斜杠，
+按 `/` 切会把 `node\v22.10.0` 当成版本名，解析成 `[0,0,0]`，排序就退化了。
+
+**修法**：`locate.dart` 把这几种目录都纳入候选，并用
+`versionDirsDescending()` 统一按主/次/补丁**降序**（正反斜杠都认）。
+和 macOS 的 nvm 支持是同一套规则，别在两边各写一份。
+
+---
+
+## 36. 打包脚本别先删成品 —— 那正是要发出去的东西
+
+**症状**：`pack-windows.ps1` 跑到一半 npm install 失败（断网/私有源/磁盘满），
+回头发现 `dist/pi-bot-windows` 已经被删了，上一个能发的包没了。
+
+**根因**：老脚本第一行就 `Remove-Item -Recurse dist/pi-bot-windows`，
+然后才开始复制 —— 失败路径没有任何东西可回滚。
+
+**修法**：先在 `dist/.pack-windows-<rand>/` 里把包铺完、依赖装完、布局校验完，
+最后才"旧包改名备份 → 新包换进去 → 删备份"。任何一步抛错都把旧包搬回原处。
+`pack-macos.sh` 用的是同一套"暂存 + 回滚"结构，改一边别忘了另一边。
