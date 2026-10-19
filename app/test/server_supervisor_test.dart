@@ -52,6 +52,21 @@ Future<Map<String, dynamic>> _health(String url) async {
   }
 }
 
+/// Windows 上子进程刚被杀时，日志/pid 文件的句柄可能还没释放，
+/// 立即递归删临时目录会报“另一个程序正在使用此文件”（errno 32）。
+/// 等一会儿重试，别让用例因为收尾而假失败。
+Future<void> _deleteWithRetry(Directory dir, {int attempts = 20}) async {
+  for (var i = 0; i < attempts; i++) {
+    try {
+      dir.deleteSync(recursive: true);
+      return;
+    } on FileSystemException {
+      if (i == attempts - 1) rethrow;
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+  }
+}
+
 void main() {
   late Directory temp;
   late String node;
@@ -72,7 +87,7 @@ void main() {
       Process.killPid(pid, ProcessSignal.sigkill);
       await supervisor.stop();
     }
-    temp.deleteSync(recursive: true);
+    await _deleteWithRetry(temp);
   });
 
   Future<String> start({Map<String, String> extra = const {}}) async {
