@@ -1,0 +1,12 @@
+// macOS 宿主应用的名称、标识与本机签名配置。
+PRODUCT_NAME = pi-bot
+
+// The application's bundle identifier
+PRODUCT_BUNDLE_IDENTIFIER = io.pibot.piBot
+
+// The copyright displayed in application information
+PRODUCT_COPYRIGHT = Copyright © 2026 io.pibot. All rights reserved.
+
+// 宿主启动外部 Node 并读写用户数据目录。
+ENABLE_APP_SANDBOX = NO
+CODE_SIGN_IDENTITY = -
