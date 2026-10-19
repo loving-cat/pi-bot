@@ -26,8 +26,8 @@
 
 | 平台 | 文件 |
 |---|---|
-| **Windows** | [pi-bot-windows-v1.0.5.zip](https://github.com/loving-cat/pi-bot/releases/latest) — 解压双击 `pi_bot.exe`，免安装；从源码打包见 [Windows 构建说明](docs/WINDOWS.md) |
-| **Android** | [pi-bot-android-v1.0.5.apk](https://github.com/loving-cat/pi-bot/releases/latest) — 手机浏览器直接下载安装 |
+| **Windows** | [pi-bot-windows-v1.2.0.zip](https://github.com/loving-cat/pi-bot/releases/latest) — 解压双击 `pi_bot.exe`，免安装；从源码打包见 [Windows 构建说明](docs/WINDOWS.md) |
+| **Android** | [pi-bot-android-v1.2.0.apk](https://github.com/loving-cat/pi-bot/releases/latest) — 手机浏览器直接下载安装 |
 | **macOS** | 从源码运行 `./scripts/pack-macos.sh` 生成 App 与 DMG，见 [macOS 构建说明](docs/MACOS.md) |
 
 **包里不含任何地址和密钥**——服务端地址、配对码、模型 baseUrl/API key 全部由你自己填（见下面「快速开始」）。
