@@ -359,9 +359,12 @@ Future<void> showDownloadDoneDialog(
               ),
             ),
             const SizedBox(height: 10),
-            const Text(
-              '关闭 pi-bot 后运行这个安装包完成更新。',
-              style: TextStyle(
+            Text(
+              Platform.isMacOS && path.toLowerCase().endsWith('.dmg')
+                  ? '关闭 pi-bot，打开 DMG 并将 App 拖入 Applications；\n'
+                        '重新打开后，在设置中重启本机服务端。'
+                  : '关闭 pi-bot 后运行这个安装包完成更新。',
+              style: const TextStyle(
                 fontSize: PB.fsXs,
                 color: PB.textTertiary,
                 height: 1.6,
