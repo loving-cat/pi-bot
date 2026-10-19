@@ -53,7 +53,16 @@ class AppState extends ChangeNotifier {
 
   /// 全局技能库（所有 bot 共享）
   List<LibrarySkill> skills = const [];
+
+  /// MCP 服务库（设置 → MCP）。跟技能库一起由服务端下发，
+  /// 但**机制完全不同**：技能只是提示词，MCP 会真起进程/连服务。
+  List<McpServer> mcpServers = const [];
+  bool mcpLoaded = false;
   bool skillsLoaded = false;
+
+  /// 本机 pi 上已经装好的能力（只读扫描结果）。
+  /// 用户在终端里早就装了一堆，这里让他一键导进来，不用手抄。
+  LocalCapabilities? localCapabilities;
 
   /// 已接入的外部 Web 系统
   List<SiteSystem> sites = const [];
@@ -573,6 +582,116 @@ class AppState extends ChangeNotifier {
   }
 
   // ---------------------------------------------------------------- HTTP
+
+  // ---------------------------------------------------------------- 本机已装能力
+
+  /// 扫描本机 pi 上已装的 skill / MCP（只读，不会改用户配置）
+  Future<void> loadLocalCapabilities() async {
+    if (api == null) return;
+    try {
+      final json = await api!.get('/api/local-capabilities');
+      localCapabilities = LocalCapabilities.fromJson(json);
+      _notify();
+    } catch (err) {
+      lastError = '扫描本机能力失败：$err';
+      _notify();
+    }
+  }
+
+  /// 一键导入本机已装的能力。
+  /// [kind] 是 'skill' 或 'mcp'，[names] 是要导入的名字列表。
+  /// 返回 (成功导入的名字, 跳过明细)
+  Future<({List<String> imported, List<String> skipped})> importLocalCapabilities({
+    required String kind,
+    required List<String> names,
+  }) async {
+    if (api == null) {
+      return (imported: <String>[], skipped: <String>['未连接服务端']);
+    }
+    try {
+      final json = await api!.post('/api/local-capabilities/import', {
+        'kind': kind,
+        'names': names,
+      });
+      final imported = <String>[
+        ...((json['imported'] as List?) ?? const []).map((e) => '$e'),
+      ];
+      final skipped = <String>[
+        ...((json['skipped'] as List?) ?? const [])
+            .whereType<Map>()
+            .map((e) => '${e['title']}：${e['reason']}'),
+      ];
+      // 导入后两边的库都变了，刷新
+      if (kind == 'skill') {
+        await loadSkills();
+      } else {
+        await loadMcpServers();
+      }
+      await loadLocalCapabilities();
+      return (imported: imported, skipped: skipped);
+    } catch (err) {
+      return (imported: <String>[], skipped: <String>['$err']);
+    }
+  }
+
+  // ---------------------------------------------------------------- MCP 服务库
+
+  /// 拉 MCP 服务库
+  Future<void> loadMcpServers() async {
+    if (api == null) return;
+    try {
+      final json = await api!.get('/api/mcp');
+      mcpServers = ((json['servers'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => McpServer.fromJson(e.cast<String, dynamic>()))
+          .toList();
+      mcpLoaded = true;
+      _notify();
+    } catch (err) {
+      lastError = 'MCP 库加载失败：$err';
+      _notify();
+    }
+  }
+
+  /// 新增或更新一个 MCP 服务（[id] 为空 = 新增）。返回错误文案，成功为 null。
+  Future<String?> saveMcpServer(Map<String, dynamic> patch) async {
+    if (api == null) return '未连接服务端';
+    try {
+      final id = patch['id'] as String?;
+      if (id == null || id.isEmpty) {
+        await api!.post('/api/mcp', patch);
+      } else {
+        await api!.patch('/api/mcp/${Uri.encodeComponent(id)}', patch);
+      }
+      await loadMcpServers();
+      return null;
+    } catch (err) {
+      return '$err';
+    }
+  }
+
+  /// 删一个 MCP 服务
+  Future<String?> removeMcpServer(String id) async {
+    if (api == null) return '未连接服务端';
+    try {
+      await api!.delete('/api/mcp/${Uri.encodeComponent(id)}');
+      await loadMcpServers();
+      return null;
+    } catch (err) {
+      return '$err';
+    }
+  }
+
+  /// 测一下这个服务能不能连上。
+  /// 返回服务端给的结果：{ok, ms, via, detail, error}
+  Future<Map<String, dynamic>> testMcpServer(Map<String, dynamic> body) async {
+    if (api == null) return {'ok': false, 'error': '未连接服务端'};
+    try {
+      return await api!.post('/api/mcp/test', body);
+    } catch (err) {
+      return {'ok': false, 'error': '$err'};
+    }
+  }
 
   // ---------------------------------------------------------------- 技能库
 

@@ -428,6 +428,21 @@ export class PiRunner {
     return this.availableModels?.length ?? 0;
   }
 
+  /**
+   * 模型组里的 MCP 服务变了。
+   *
+   * MCP 无法"热替换" —— 它是在建会话时注册进 pi 的（工具的 schema 那时就定了）。
+   * 所以要全部作废重建：只作废那些真的挂了 MCP 的 bot，没挂的不动，
+   * 否则改一个服务会把一堆无关的会话都重启，正在跑的活就断了。
+   */
+  async applyMcpChange() {
+    invalidateSessions(this.sessions, (_key, entry) => {
+      const names = Array.isArray(entry.bot?.mcpServers) ? entry.bot.mcpServers : [];
+      return names.length > 0;
+    });
+    bus.emit('event', { t: 'mcp.changed' });
+  }
+
   // ---------------------------------------------------------------- 会话
 
   #key(roomId, botId) {

@@ -9,6 +9,7 @@ import '../models.dart';
 import '../motion.dart';
 import '../scope.dart';
 import '../theme.dart';
+import 'local_capabilities_section.dart';
 
 /// 技能库面板（设置在「技能」标签页里）。
 ///
@@ -60,6 +61,8 @@ class _SkillsLibrarySectionState extends State<SkillsLibrarySection> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // 用户在终端里装过的 skill，一键导进来（只读扫描，不改他的配置）
+        const LocalCapabilitiesSection(kind: 'skill', title: '技能'),
         _Toolbar(
           total: all.length,
           shown: list.length,

@@ -68,6 +68,42 @@ await test('群聊提示里说清"写进正文"', async () => {
   assert.match(text, /正文/);
 });
 
+await test('★ 主控（main）根本拿不到 ask_user 工具', async () => {
+  // 主控本来就在跟用户直接对话，弹卡片等于把一句话拆成"卡片 + 一次点击"，
+  // 反而更远；而且它一轮要推进整件事，停下来等点击会卡住整个流程。
+  const main = store.createBot({ name: '主控', persona: 'x' });
+  store.updateBot(main.id, { role: 'main' });
+  const tools = buildCommonTools({ runner: {}, roomId: 'r-main', botId: main.id, isMain: true });
+  assert.equal(
+    tools.some((t) => t.name === 'ask_user'),
+    false,
+    '主控不该有 ask_user',
+  );
+});
+
+await test('成员仍然拿得到 ask_user', async () => {
+  const member = store.createBot({ name: '成员', persona: 'x' });
+  const tools = buildCommonTools({ runner: {}, roomId: 'r-member', botId: member.id, isMain: false });
+  assert.equal(
+    tools.some((t) => t.name === 'ask_user'),
+    true,
+    '成员应该保留 ask_user',
+  );
+});
+
+await test('主控少这一个工具，其余工具不受影响', async () => {
+  const main = store.createBot({ name: '主控2', persona: 'x' });
+  const withMain = buildCommonTools({ runner: {}, roomId: 'r1', botId: main.id, isMain: true })
+    .map((t) => t.name);
+  const noMain = buildCommonTools({ runner: {}, roomId: 'r1', botId: main.id, isMain: false })
+    .map((t) => t.name);
+  // 除了 ask_user，两边应当完全一致
+  assert.deepEqual(
+    withMain.slice().sort(),
+    noMain.filter((n) => n !== 'ask_user').sort(),
+  );
+});
+
 const passed = results.filter((r) => r.ok).length;
 console.log('\n================ 询问卡片范围测试 ================');
 for (const r of results) {

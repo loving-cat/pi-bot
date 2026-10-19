@@ -14,6 +14,7 @@ import '../widgets/user_name_section.dart';
 import '../widgets/model_group_editor.dart';
 import '../widgets/server_config_section.dart';
 import '../widgets/log_section.dart';
+import '../widgets/mcp_section.dart';
 import '../widgets/skills_library.dart';
 import '../widgets/sites_section.dart';
 import '../motion.dart';
@@ -110,7 +111,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       0 => _connectTab,
                       1 => _serverTab,
                       2 => const [SkillsLibrarySection()],
-                      3 => const [SitesSection()],
+                      3 => const [McpSection()],
+                      4 => const [SitesSection()],
                       _ => _advancedTab,
                     },
                   ),
@@ -602,7 +604,8 @@ class _SettingsTabs extends StatelessWidget {
     (icon: LucideIcons.smartphone, label: '连接'),
     (icon: LucideIcons.server, label: '服务端'),
     (icon: LucideIcons.sparkles, label: '技能'),
-    (icon: LucideIcons.plug, label: '系统'),
+    (icon: LucideIcons.plug, label: 'MCP'),
+    (icon: LucideIcons.network, label: '系统'),
     (icon: LucideIcons.slidersHorizontal, label: '高级'),
   ];
 
