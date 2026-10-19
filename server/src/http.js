@@ -421,12 +421,20 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         }
         const decorate = (m) => {
           const own = thinkingBySlug.get(`${m.provider}/${m.id}`);
-          if (!own) return m;
+          // 模型组里配过的：以组里的声明为准（用户可以自己填映射）
+          if (own) {
+            return {
+              ...m,
+              reasoning: Boolean(own.reasoning),
+              thinkingFormat: own.thinkingFormat || '',
+              thinkingLevels: availableThinkingLevels(own),
+            };
+          }
+          // pi 级模型（models.json）：runner 已经按模型自带的 thinkingLevelMap 算好了
           return {
             ...m,
-            reasoning: Boolean(own.reasoning),
-            thinkingFormat: own.thinkingFormat || '',
-            thinkingLevels: availableThinkingLevels(own),
+            reasoning: Boolean(m.reasoning),
+            thinkingLevels: m.thinkingLevels ?? [],
           };
         };
         return send(res, 200, { total: list.length, models: list.slice(0, 200).map(decorate) });

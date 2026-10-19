@@ -226,4 +226,32 @@ await test('availableThinkingLevels 与 deepseek 预设有七个档位', () => {
 });
 
 console.log(`\n${failed ? '✗' : '✓'} ${passed} 通过，${failed} 失败`);
+await test('availableThinkingLevels：没有 max 映射就不给 max（pi 会 clamp 成 high）', () => {
+  const levels = availableThinkingLevels({
+    reasoning: true,
+    thinkingLevelMap: { low: 'low', medium: 'medium', high: 'high' },
+  });
+  assert.ok(levels.includes('off'), 'off 永远可选');
+  assert.ok(!levels.includes('max'));
+  assert.ok(!levels.includes('xhigh'));
+});
+
+await test('availableThinkingLevels：显式映射 max 才给 max', () => {
+  const levels = availableThinkingLevels({
+    reasoning: true,
+    thinkingLevelMap: { minimal: 'minimal', low: 'low', medium: 'medium', high: 'high', max: 'max' },
+  });
+  assert.ok(levels.includes('max'));
+  assert.ok(levels.includes('off'), 'map 里没写 off 也算可选');
+  assert.ok(!levels.includes('xhigh'), 'xhigh 没映射就不给');
+});
+
+await test('availableThinkingLevels：off:null 不会把 off 删掉', () => {
+  const levels = availableThinkingLevels({
+    reasoning: true,
+    thinkingLevelMap: { off: null, low: 'low', high: 'high' },
+  });
+  assert.ok(levels.includes('off'));
+});
+
 if (failed) process.exit(1);
