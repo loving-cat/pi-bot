@@ -22,6 +22,14 @@ import {
   mcpPromptLines,
   describeMcpServer,
 } from '../src/mcp.js';
+import {
+  buildCmdLine,
+  escapeCmdArgument,
+  escapeCmdCommand,
+  killProcessTree,
+  spawnCommand,
+  whichOnWindows,
+} from '../src/spawn-command.js';
 
 let passed = 0;
 let failed = 0;
@@ -269,6 +277,90 @@ await test('store：非法名字在 bot 字段里被丢掉', () => {
     name: 'x', persona: 'x', mcpServers: ['good-name', '有中文', 'has space', 'good-name'],
   });
   assert.deepEqual(bot.mcpServers, ['good-name']);
+});
+
+// -- Windows 命令启动（.cmd / .bat shim）----------------------------
+// 这些用例在任何主机上都能跑：whichOnWindows 用 win32 语义，不依赖宿主平台。
+
+await test('whichOnWindows：按 PATHEXT 找到 .cmd，并能区分带路径的命令', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-which-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'npx.cmd'), '@echo off\r\n');
+    fs.writeFileSync(path.join(dir, 'tool.exe'), '');
+    const env = {
+      PATH: `${dir}${path.delimiter}${process.env.PATH ?? ''}`,
+      PATHEXT: '.COM;.EXE;.BAT;.CMD',
+    };
+    const found = whichOnWindows('npx', env);
+    assert.ok(found, '应该找到 npx.cmd');
+    assert.equal(path.extname(found).toLowerCase(), '.cmd');
+    assert.equal(whichOnWindows('tool.exe', env), path.win32.join(dir, 'tool.exe'));
+    assert.equal(
+      whichOnWindows(path.win32.join(dir, 'npx.cmd'), env),
+      path.win32.join(dir, 'npx.cmd'),
+    );
+    assert.equal(whichOnWindows('definitely-not-here', env), null);
+    assert.equal(whichOnWindows('', env), null);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+await test('cmd 转义：空格/引号/& 不会漏成 shell 语法', () => {
+  const toolDir = path.win32.join('C:', 'a&b');
+  const toolCmd = path.win32.join(toolDir, 'tool.cmd');
+  // 命令名里的 & 必须变成 ^&，否则 cmd 会把后半段当新命令执行
+  assert.equal(escapeCmdCommand(toolCmd), toolCmd.replace('&', '^&'));
+
+  const escaped = escapeCmdArgument('a b&c');
+  assert.ok(escaped.includes('^&'), `& 必须被转义：${escaped}`);
+  // 把 cmd 的 ^ 去掉之后，原始参数必须完整还在（没被空格切断）
+  assert.ok(escaped.replace(/\^/g, '').includes('a b&c'), escaped);
+  // 内嵌引号要按 CreateProcess 规则转成 \"
+  const bs = String.fromCharCode(92);
+  assert.ok(
+    escapeCmdArgument('he said "hi"').includes(bs + '^"'),
+    '引号要转义',
+  );
+});
+
+await test('buildCmdLine：普通 .cmd 单转义，node_modules/.bin 的 shim 双转义', () => {
+  const plain = path.win32.join('C:', 'nodejs', 'npx.cmd');
+  const line = buildCmdLine(plain, ['-y', 'pkg with space']);
+  assert.ok(line.startsWith(plain + ' '), line);
+  // 去掉 cmd 的 ^ 转义后，参数必须原样还在
+  const plainText = line.replace(/\^/g, '');
+  assert.ok(plainText.includes('pkg with space'), plainText);
+  assert.ok(plainText.includes('-y'), plainText);
+
+  const shim = path.win32.join('C:', 'p', 'node_modules', '.bin', 'npx.cmd');
+  const single = buildCmdLine(plain, ['a&b']);
+  const doubled = buildCmdLine(shim, ['a&b']);
+  assert.ok(doubled.length > single.length, `${doubled} vs ${single}`);
+});
+
+await test('spawnCommand：真的能跑起 .cmd 并拿到输出（仅 Windows）', async () => {
+  if (process.platform !== 'win32') return;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-spawn-'));
+  try {
+    const script = path.join(dir, 'echo-arg.cmd');
+    fs.writeFileSync(script, '@echo off\r\necho %~1\r\n');
+    const out = await new Promise((resolve, reject) => {
+      const child = spawnCommand(script, ['hello world'], { stdio: ['ignore', 'pipe', 'pipe'] });
+      let text = '';
+      child.stdout.on('data', (b) => { text += b; });
+      child.on('error', reject);
+      child.on('exit', () => resolve(text.trim()));
+    });
+    assert.equal(out, 'hello world');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+await test('killProcessTree：没 pid 也不炸', () => {
+  assert.doesNotThrow(() => killProcessTree(null));
+  assert.doesNotThrow(() => killProcessTree({}));
 });
 
 console.log(`\n${failed ? '✗' : '✓'} ${passed} 通过，${failed} 失败`);
