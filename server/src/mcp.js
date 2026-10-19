@@ -360,7 +360,7 @@ export async function testMcpServer(server = {}) {
 
   // stdio：真的把命令跑起来，给它 3 秒证明自己能起
   if (!server.command) return { ok: false, ms: 0, error: '没填启动命令' };
-  const { spawn } = await import('node:child_process');
+  const { spawnCommand, killProcessTree } = await import('./spawn-command.js');
   return await new Promise((resolve) => {
     let settled = false;
     const done = (r) => {
@@ -370,7 +370,7 @@ export async function testMcpServer(server = {}) {
     };
     let child;
     try {
-      child = spawn(server.command, server.args ?? [], {
+      child = spawnCommand(server.command, server.args ?? [], {
         cwd: server.cwd || undefined,
         env: { ...process.env, ...(server.env ?? {}) },
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -383,8 +383,9 @@ export async function testMcpServer(server = {}) {
     child.stderr?.on('data', (b) => { stderr += String(b).slice(0, 500); });
 
     const timer = setTimeout(() => {
-      // 3 秒还没退出 = 它活着，就是在等 MCP 握手 —— 这就算通
-      try { child.kill(); } catch {}
+      // 3 秒还没退出 = 它活着，就是在等 MCP 握手 —— 这就算通。
+      // 必须杀整棵树：Windows 上 cmd.exe 底下还挂着真正的服务进程。
+      killProcessTree(child);
       done({
         ok: true,
         ms: Date.now() - t0,
@@ -396,15 +397,18 @@ export async function testMcpServer(server = {}) {
     child.on('error', (err) => {
       clearTimeout(timer);
       const msg = String(err?.message ?? err);
+      // Node 各版本对"找不到命令"的文案不一样（ENOENT / "Executable not found
+      // in $PATH"），Windows 上 .cmd 还可能报 EINVAL —— 都归成同一句人话。
+      const missing =
+        /ENOENT|not found|EINVAL|no such file/i.test(msg);
       done({
         ok: false,
         ms: Date.now() - t0,
-        error: /ENOENT/.test(msg)
+        error: missing
           ? `找不到命令「${server.command}」—— 装了吗？在不在 PATH 里？`
           : `起不来：${msg}`,
       });
     });
-
     child.on('exit', (code) => {
       clearTimeout(timer);
       if (settled) return;
