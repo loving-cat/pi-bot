@@ -1361,7 +1361,9 @@ class AppState extends ChangeNotifier {
 
   Future<void> deleteModelGroup(String id) async {
     try {
-      await api?.delete('/api/model-groups/\$id');
+      // ★ 以前这里写的是 '\$id'（转义了），实际发出去的是字面量 "$id"，
+      //   服务端当然找不到叫 "$id" 的组 —— 表现就是“删不掉”。
+      await api?.delete('/api/model-groups/$id');
       await refresh();
     } catch (err) {
       lastError = '$err';
