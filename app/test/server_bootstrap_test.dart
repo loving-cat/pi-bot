@@ -162,7 +162,18 @@ void main() {
         explicit.path,
       );
       expect(
-        await findNode(tmp.path, environment: {'PATH': pathNode.parent.path}),
+        await findNode(
+          tmp.path,
+          environment: {
+            'PATH': pathNode.parent.path,
+            // CI 机器上标准安装目录（Program Files 里的 nodejs）是存在的，
+            // 不挡掉它会先命中标准安装，用例就变成了“测机器环境”。
+            'ProgramFiles': '${tmp.path}${sep}nope',
+            'APPDATA': '${tmp.path}${sep}no-appdata',
+            'LOCALAPPDATA': '${tmp.path}${sep}no-local',
+            'USERPROFILE': '${tmp.path}${sep}no-home',
+          },
+        ),
         pathNode.path,
       );
     });
@@ -182,6 +193,8 @@ void main() {
       ]);
     });
 
+    // 这两条要真的在 Windows 的版本目录上 listSync；非 Windows 主机上
+    // 建不出同样的语义（反斜杠在 POSIX 上是文件名的一部分）。CI 在 windows-latest 上跑。
     test('Windows 版本管理器：nvm-windows / fnm / Volta / Scoop 都能找到，且版本降序', () {
       final appData = Directory('${tmp.path}${Platform.pathSeparator}AppData')
         ..createSync(recursive: true);
@@ -253,7 +266,7 @@ void main() {
         '${appData.path}${sep}fnm${sep}node-versions${sep}v22.12.0${sep}installation${sep}node.exe',
         '${appData.path}${sep}fnm${sep}node-versions${sep}v20.11.0${sep}installation${sep}node.exe',
       ]);
-    });
+    }, skip: Platform.isWindows ? false : 'Windows 文件系统语义（CI 在 windows-latest 上跑）');
 
     test('Windows 显式环境变量：NVM_HOME / NVM_SYMLINK / FNM_DIR', () {
       final sep = Platform.pathSeparator;
@@ -291,7 +304,7 @@ void main() {
         candidates,
         contains('${fnmDir.path}${sep}aliases${sep}default${sep}installation${sep}node.exe'),
       );
-    });
+    }, skip: Platform.isWindows ? false : 'Windows 文件系统语义（CI 在 windows-latest 上跑）');
 
     test('node 版本门槛：22 起步，24 也算新', () {
       expect(versionAtLeast('22.0.0', 22), isTrue);

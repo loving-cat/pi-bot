@@ -39,8 +39,15 @@ jobs:
         with:
           # 用支持的最低版本，别拿新版掩盖兼容问题
           node-version: '22'
+          cache: npm
+          cache-dependency-path: server/package.json
+      - name: Install server deps
+        working-directory: server
+        # 仓库里没有 package-lock.json（有意不入库），所以用 install 而不是 ci
+        run: npm install --omit=dev --no-audit --no-fund
       - name: Run server unit tests
         working-directory: server
+        timeout-minutes: 15
         run: node tests/all.mjs
 
   app:

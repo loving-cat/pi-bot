@@ -195,7 +195,13 @@ void main() {
     final result = await launcher.ensureRunning(baseUrl: url);
     expect(result.ok, isTrue, reason: result.error);
     final health = await _health(url);
-    expect(health['entry'], second.resolveSymbolicLinksSync());
+    // 服务端报回来的是 Node 眼里的 __filename。GitHub 的 Windows runner
+    // 用户目录是 8.3 短名（RUNNER~1），和 resolveSymbolicLinks 得到的长名
+    // 指向同一个文件 —— 比规范化后的路径，别比字符串。
+    expect(
+      File('${health['entry']}').resolveSymbolicLinksSync(),
+      second.resolveSymbolicLinksSync(),
+    );
     expect(health['data'], '${temp.path}/new data');
     expect(
       File('${second.parent.parent.path}/package-lock.json').existsSync(),
