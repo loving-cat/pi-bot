@@ -32,7 +32,9 @@ Future<int> _freePort() async {
 }
 
 Future<void> _waitHealthy(String url) async {
-  final deadline = DateTime.now().add(const Duration(seconds: 5));
+  // CI 的 Windows runner 起进程比本机慢不少（wscript → vbs → node），
+  // 5 秒会偶发不够；这里给到 20 秒，失败时仍然是“服务端真没起来”。
+  final deadline = DateTime.now().add(const Duration(seconds: 20));
   while (DateTime.now().isBefore(deadline)) {
     if (await serverAlive(url)) return;
     await Future<void>.delayed(const Duration(milliseconds: 20));
@@ -55,7 +57,7 @@ Future<Map<String, dynamic>> _health(String url) async {
 /// Windows 上子进程刚被杀时，日志/pid 文件的句柄可能还没释放，
 /// 立即递归删临时目录会报“另一个程序正在使用此文件”（errno 32）。
 /// 等一会儿重试，别让用例因为收尾而假失败。
-Future<void> _deleteWithRetry(Directory dir, {int attempts = 20}) async {
+Future<void> _deleteWithRetry(Directory dir, {int attempts = 100}) async {
   for (var i = 0; i < attempts; i++) {
     try {
       dir.deleteSync(recursive: true);

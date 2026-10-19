@@ -288,7 +288,8 @@ await test('whichOnWindows：按 PATHEXT 找到 .cmd，并能区分带路径的�
     fs.writeFileSync(path.join(dir, 'npx.cmd'), '@echo off\r\n');
     fs.writeFileSync(path.join(dir, 'tool.exe'), '');
     const env = {
-      PATH: `${dir}${path.delimiter}${process.env.PATH ?? ''}`,
+      // whichOnWindows 是 Windows 语义：PATH 用分号分隔（不随宿主机变）
+      PATH: `${dir};${process.env.PATH ?? ''}`,
       PATHEXT: '.COM;.EXE;.BAT;.CMD',
     };
     const found = whichOnWindows('npx', env);
