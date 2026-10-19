@@ -764,16 +764,21 @@ class AppState extends ChangeNotifier {
 
   // ---------------------------------------------------------------- 经验库
 
+  /// 用服务端推来的列表更新本地（WS 事件和主动拉取共用这一条路径）
+  void applyLessons(List raw) {
+    lessons = raw
+        .whereType<Map>()
+        .map((e) => LibraryLesson.fromJson(e.cast<String, dynamic>()))
+        .toList();
+    lessonsLoaded = true;
+    _notify();
+  }
+
   Future<void> loadLessons() async {
     if (api == null) return;
     try {
       final json = await api!.get('/api/lessons');
-      lessons = ((json['lessons'] as List?) ?? const [])
-          .whereType<Map>()
-          .map((e) => LibraryLesson.fromJson(e.cast<String, dynamic>()))
-          .toList();
-      lessonsLoaded = true;
-      _notify();
+      applyLessons((json['lessons'] as List?) ?? const []);
     } catch (err) {
       lastError = '经验库加载失败：$err';
       _notify();
@@ -790,6 +795,9 @@ class AppState extends ChangeNotifier {
       await loadLessons();
       return null;
     } catch (err) {
+      // 失败也刷一次：这条可能已经被删了（列表是旧的），不能让用户
+      // 对着一条不存在的经验反复点“停用/删除”。
+      await loadLessons();
       return '$err';
     }
   }
@@ -801,6 +809,7 @@ class AppState extends ChangeNotifier {
       await loadLessons();
       return null;
     } catch (err) {
+      await loadLessons();
       return '$err';
     }
   }
@@ -1540,6 +1549,12 @@ class AppState extends ChangeNotifier {
             .toList();
         final open = _openRoomId;
         if (open != null) unawaited(loadMessages(open, force: true));
+        break;
+
+      case 'lessons.updated':
+        // 复盘是在服务端后台跑的：不接这个事件，界面就要等用户切标签页
+        // 才能看到新候选（更糟的是操作一条已经被删的经验 →“经验不存在”）。
+        applyLessons((ev['lessons'] as List?) ?? const []);
         break;
 
       case 'msg.new':

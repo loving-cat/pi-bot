@@ -41,6 +41,25 @@ void main() {
     ),
   );
 
+  test('applyLessons：服务端推来的列表能直接落到状态里（复盘是后台跑的）', () {
+    final state = AppState();
+    state.applyLessons([
+      {
+        'id': 'l9',
+        'cue': '给部门配班子',
+        'lesson': '按模块拆 owner',
+        'status': 'candidate',
+        'evidence': [
+          {'msgId': 'm1', 'quote': '每个模块都要有人'},
+        ],
+      },
+    ]);
+    expect(state.lessonsLoaded, isTrue);
+    expect(state.lessons, hasLength(1));
+    expect(state.lessons.first.cue, '给部门配班子');
+    expect(state.lessons.first.evidence.first.msgId, 'm1');
+  });
+
   testWidgets('默认先看待确认：候选显示，已启用的不混进来', (tester) async {
     final state = AppState()
       ..lessons = [
