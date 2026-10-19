@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../models.dart';
+import '../model_group_capacity.dart';
 import '../scope.dart';
 import '../theme.dart';
+import 'model_capacity_fields.dart';
 
 /// 设置里的「模型组」区块。
 ///
@@ -219,6 +221,9 @@ class _EditorState extends State<_Editor> {
   late final _models = TextEditingController(
     text: (widget.group?.models ?? []).map((m) => m.id).join('\n'),
   );
+  late final _retainedCapacities = modelCapacityInputs(widget.group?.models ?? []);
+  late final _capacities = Map<String, ModelCapacityInput>.of(_retainedCapacities);
+  bool _showCapacities = false;
   String _api = 'openai-completions';
   String? _error;
   bool _saving = false;
@@ -266,13 +271,13 @@ class _EditorState extends State<_Editor> {
   }
 
   Future<void> _save() async {
-    final models = _models.text
-        .split('\n')
-        .map((l) => l.trim())
-        .where((l) => l.isNotEmpty)
-        .toList();
-    if (models.isEmpty) {
-      setState(() => _error = '至少要填一个模型名（一行一个）');
+    final payload = buildModelGroupModels(
+      modelText: _models.text,
+      inputs: _capacities,
+      existingModels: widget.group?.models ?? [],
+    );
+    if (payload.error != null) {
+      setState(() => _error = payload.error);
       return;
     }
     setState(() {
@@ -286,7 +291,7 @@ class _EditorState extends State<_Editor> {
       'api': _api,
       // 留空 = 不改原来的 key（App 拿到的是打码后的，不能拿它覆盖真 key）
       if (_key.text.trim().isNotEmpty) 'apiKey': _key.text.trim(),
-      'models': models,
+      'models': payload.models,
     });
     if (!mounted) return;
     if (err != null) {
@@ -360,6 +365,26 @@ class _EditorState extends State<_Editor> {
               const Text(
                 '模型名要跟接口那边完全一致。填完保存就能在给 bot 选模型时看到。',
                 style: TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
+              ),
+              const SizedBox(height: 6),
+              ValueListenableBuilder<TextEditingValue>(
+                valueListenable: _models,
+                builder: (context, value, _) => Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextButton(
+                      onPressed: () => setState(() => _showCapacities = !_showCapacities),
+                      child: Text(_showCapacities ? '收起模型容量' : '模型容量'),
+                    ),
+                    if (_showCapacities)
+                      ModelCapacityFields(
+                        modelIds: modelIdsFromText(value.text),
+                        inputs: _capacities,
+                        retainedInputs: _retainedCapacities,
+                        onChanged: (id, input) => setState(() => _capacities[id] = input),
+                      ),
+                  ],
+                ),
               ),
               const SizedBox(height: 6),
               Row(
