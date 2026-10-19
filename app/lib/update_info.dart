@@ -63,22 +63,11 @@ class UpdateInfo {
 
   /// 从服务端 `/api/update` 的响应构造。
   factory UpdateInfo.fromJson(Map<String, dynamic> json) {
-    final assets = (json['assets'] as List?) ?? const [];
     final recommended = json['recommended'] as Map?;
-    // 服务端会直接给 recommended；没给就从 assets 里挑第一个有 url 的
-    String url = '${recommended?['url'] ?? ''}';
-    String name = '${recommended?['name'] ?? ''}';
-    int size = (recommended?['size'] as num?)?.toInt() ?? 0;
-    if (url.isEmpty) {
-      for (final a in assets) {
-        if (a is Map && '${a['url'] ?? ''}'.isNotEmpty) {
-          url = '${a['url']}';
-          name = '${a['name'] ?? ''}';
-          size = (a['size'] as num?)?.toInt() ?? 0;
-          break;
-        }
-      }
-    }
+    // 仅使用服务端按请求平台选出的安装包；没有匹配项时保留发布页入口。
+    final url = '${recommended?['url'] ?? ''}';
+    final name = '${recommended?['name'] ?? ''}';
+    final size = (recommended?['size'] as num?)?.toInt() ?? 0;
     return UpdateInfo(
       ok: json['ok'] == true,
       update: json['update'] == true,
