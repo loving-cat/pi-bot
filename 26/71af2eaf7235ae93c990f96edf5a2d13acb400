@@ -1,0 +1,44 @@
+app/lib/server/supervisor.dart
+  s_06973911ad2cd6::t_2b211debff5eb8 4-5,24,50-53,55-59,85-87,90,92-103,106-107,110-115,117-121,124
+  s_06973911ad2cd6::t_cc34feeb7ec5bb 122-123,125,127-135
+app/lib/widgets/server_config_section.dart
+  s_06973911ad2cd6::t_2b211debff5eb8 108,110,233
+app/lib/app_state.dart
+  s_06973911ad2cd6::t_2b211debff5eb8 239,304-323,330-331,333-343
+app/lib/server/spawn_posix.dart
+  s_06973911ad2cd6::t_2b211debff5eb8 1-23
+app/lib/server/health.dart
+  s_06973911ad2cd6::t_df590063c43f86 1-32
+app/lib/server/launcher.dart
+  s_06973911ad2cd6::t_5a7ccce42c5487 4,25-27,45-46,61-71,76,98-103,105,114,155-158,221-225,227-231,265,297,322-325,329-332,341,354-358,385-388,408,419-423
+app/lib/server/locate.dart
+  s_06973911ad2cd6::t_ba04be7b1f9601 10,13-16,22,25-27,42-43,49-66,69-76,78-79,81-120,123-139,149,153-154,166-170
+app/lib/server/options.dart
+  s_06973911ad2cd6::t_5d6026b7b7be1a 6-11,16,22-24,29-44
+app/test/server_bootstrap_test.dart
+  s_06973911ad2cd6::t_608ceaf5b83237 22-42,82-171,180-185,191-193
+app/test/server_health_test.dart
+  s_06973911ad2cd6::t_35289504819c8f 1-208
+app/test/server_options_test.dart
+  s_06973911ad2cd6::t_eeabf407a04d1d 1-24
+app/test/server_settings_test.dart
+  s_06973911ad2cd6::t_fb23684b63f394 1-197
+app/test/server_supervisor_test.dart
+  s_06973911ad2cd6::t_0c8591172253ed 1-191
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2671af2eaf7235ae93c990f96edf5a2d13acb400",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
