@@ -26,10 +26,17 @@ export function shouldStopRound({
   runs = 0,
   maxRuns = 0,
   aborting = false,
+  stale = false,
   closing = false,
 } = {}) {
   // 用户按了终止：立刻收手，不再往下派（正在跑的那些也已经被 abort 了）
   if (aborting) return { stop: true, why: '已终止' };
+  // ★ 用户插话 = 需求变了，旧轮整个作废。
+  //
+  //   与"终止"的区别：终止是停下来什么都不做；插话是停旧轮、马上按新
+  //   query 重开一轮。但**旧轮剩下的队列必须丢** —— 那是按旧需求算出来的
+  //   派单，继续派出去只会让用户看到一堆跟新需求无关的产出。
+  if (stale) return { stop: true, why: '用户插话' };
   // 队列空了但还有人在跑：**不能停** —— 他们的回复里 @ 的人会补进队列
   if (queueLen === 0 && pendingLen === 0) return { stop: true, why: '没有排队的人了' };
   // 收尾轮不受 maxRuns 约束：它是老大的汇总，抽掉它用户就看不到结论了

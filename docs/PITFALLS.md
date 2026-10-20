@@ -653,3 +653,58 @@ Volta 在 `%LOCALAPPDATA%\Volta\bin`、Scoop 在 `scoop\apps\nodejs\current`。
 - **产物没有回传**：以前只自动带图片。现在 `artifact-watch.js` 把这一轮新增/改过的
   交付物（pdf/docx/xlsx/csv/md/zip…，源码不算）也挂到消息上，单文件 ≤10MB、
   最多 5 个、合计 ≤25MB。只认快照差异，不把整个工作目录端进群。
+
+---
+
+## 33. `server.listen` 的 EADDRINUSE 被 ws 库吞掉 —— 端口被占变成僵尸进程
+
+**症状**：端口被占用时，pi-bot 进程**活着但不监听**。桌面端一直转圈，
+日志里只有一句「未捕获异常（进程继续跑）：listen EADDRINUSE」，
+没有 banner、没有配对码、也没有退出。
+
+**根因有两层**：
+
+1. 进程级有个 `uncaughtException` 兜底，本意是"长跑进程别因为一处异常整个挂掉"。
+   它把 `EADDRINUSE` 也接住了 —— 于是进程继续跑，但端口从没监听成功。
+
+2. 更隐蔽的一层：`new WebSocketServer({ server })` 会给 http server
+   **挂一个自己的 error 监听器**（native 实现，只做内部清理）。
+   用 `server.on('error')` 注册在后面时，那个 handler 先跑、把错误"消费"掉，
+   我们的分支**永远不执行**。
+
+**修法**：用 `server.prependListener('error', ...)`（排在 ws 的 handler 之前），
+里面判断 `EADDRINUSE` / `EACCES`，打印人话（含 `lsof` 自查命令）并 `process.exit(1)`。
+
+**回归测试**：`server/tests/boot-failure.mjs` —— 真起两个进程抢同一端口，
+断言退出码 1 + 输出里有「已被占用」和 `lsof`。
+
+---
+
+## 34. 中转空口令只告警 = 把接管权限直接送人
+
+**症状**：`node src/relay-server.js` 在公网服务器上跑，没设 `RELAY_SECRET`，
+只打印一行「⚠️ 任何人都能往这台中转挂 agent」然后**照常启动**（默认监听 `0.0.0.0`）。
+
+**为什么危险**：中转的作用就是把手机和电脑接起来。没有口令，任何知道端口的人
+都能挂一个假的 agent 上来，手机连过去就是对方的机器 —— 聊天记录、配对 token 全给出去。
+而中转通常丢在云服务器上、没人盯启动日志，这行警告等于没写。
+
+**修法**（`relay-server.js`）：
+- 空 secret + 非 loopback 监听 → **拒绝启动并退出**
+- 空 secret + 只听 `127.0.0.1` → 放行（本地调试的正常用法）
+- 确实要在内网裸跑 → 显式 `RELAY_ALLOW_OPEN=1`（把风险变成"想清楚了才做"的决定）
+
+---
+
+## 35. 同 code 重连会静默顶掉正在用的那台电脑
+
+**症状**：拿到泄露 code 的人先连上中转，原主人的连接被 `close(4409, 'replaced')`
+踢掉，主人侧只看到一条「被替换」日志 —— 不会意识到自己被顶了。
+
+**修法**（`relay/server.js` 的 `onAgent`）：
+- 新连接带了**正确 secret** → 视为同一台电脑重连（进程重启/网络抖动），
+  替换旧的（正常运维，不能让老连接占着位置）
+- 没 secret / secret 不对 → **拒绝新连接（4404）**，旧连接原封不动
+
+**回归测试**：`server/tests/relay-safety.mjs` —— 真起 relay + 两个 WebSocket，
+断言"没 secret 的第二台被拒、第一台仍 OPEN"和"带对 secret 可以替换"。

@@ -22,6 +22,8 @@ const TESTS = [
   'merge-messages',
   'local-capabilities',
   'mcp',
+  'relay-safety',
+  'boot-failure',
   'sites',
   'secrets',
   'retry-policy',
@@ -48,6 +50,7 @@ const TESTS = [
   'disk',
   'room-lock',
   'model-health',
+  'net-guard',
 ];
 
 let failed = 0;

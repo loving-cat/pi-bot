@@ -43,6 +43,8 @@
 | `local-capabilities.js` | 只读扫描本机 pi 已装的 skill / MCP，供一键导入 |
 | `spawn-command.js` | 跨平台启动用户填的命令：Windows 上按 PATHEXT 解析 `.cmd/.bat`、cmd.exe 参数转义、探测进程收尾 |
 | `site-draft.js` | 站点接入草稿：抓 → 存草稿 → 用户确认 → 才入库（草稿只在内存） |
+| `http-client.js` | 带系统代理探测的 fetch（Node 原生 fetch 不读系统代理）|
+| `merge-messages.js` | 连发消息合并：静默窗口 700ms，把"想到一句发一句"拼成一段 |
 | `model-reply.js` | 模型错误分类与脱敏展示、认证失败终止重试、真正空回复的限定模型恢复 |
 | `providers.js` | 额外 provider 注册与默认模型解析 |
 | `context-budget.js` | 上下文预算：容量覆盖 + 压缩阈值 |

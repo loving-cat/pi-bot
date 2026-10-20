@@ -97,11 +97,30 @@ export function createRelay({ secret = '', port = 8788, host = '0.0.0.0' } = {})
 
     const existing = rooms.get(code);
     if (existing) {
+      // ★ 不能静默顶号。
+      //
+      //   以前这里是：新连接一来就把旧连接 close(4409, 'replaced') 并接管。
+      //   于是拿到泄露 code 的人只要先连上来，就能把你踢下线，
+      //   手机端的配对 token 随之全部落到对方手里。而且主人侧只看到一条
+      //   “被替换”日志 —— 不会意识到自己被顶了。
+      //
+      //   现在的规则：
+      //     · 带了**正确 secret** → 视为同一台电脑重连（进程重启/网络抖动），
+      //       顶掉旧的（这是正常运维场景，不能让老连接占着位置不放）。
+      //     · 没 secret 或 secret 不对 → 拒绝新连接，旧连接**原封不动**。
+      //       攻方拿不到 secret 就抢不走会话。
+      //     · 完全没配 secret（本机调试）→ 只能靠 loopback 保护，仍然允许替换，
+      //       但这种模式启动时已经告警过了。
+      const trusted = Boolean(secret) && sameSecret(given, secret);
+      if (secret && !trusted) {
+        log(`中转：${code} 已在使用，新连接没有正确 secret → 拒绝（不顶掉现有电脑）`);
+        return ws.close(4404, 'code in use');
+      }
       try {
         existing.socket.close(4409, 'replaced');
       } catch {}
       rooms.delete(code);
-      log(`中转：${code} 被新连接替换`);
+      log(`中转：${code} 被同一台电脑的新连接替换（带正确 secret）`);
     }
     const room = { code, socket: ws, streams: new Map(), pending: new Map() };
     rooms.set(code, room);

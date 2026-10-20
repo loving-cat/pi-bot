@@ -174,6 +174,13 @@ export class PiRunner {
     this.roundLocks = new Set();
     /** 用户按了终止的房间 —— 轮次循环看到它就停，不再往下派人 */
     this.aborting = new Set();
+    /**
+     * roomId -> 轮次代数。用户插话时 +1，旧轮每次派发前比对，变了就收手。
+     *
+     * 为什么不用 aborting：终止是"停下来"，插话是"停旧的、马上按新需求重来"。
+     * 用同一个标记会让新一轮也被当成终止。代数只回答"你还是不是当前那一轮"。
+     */
+    this.roundEpochs = new Map();
     /** 已经派出去、但异步的 run() 还没把 busy 设上的会话（key = roomId:botId） */
     this.dispatching = new Set();
     /** roomId -> { text, files }：锁被占时进来的消息，合并到这里等下一轮 */
@@ -292,18 +299,34 @@ export class PiRunner {
     return this.#drainGroupRounds(roomId, { text, files });
   }
 
+  /** 当前房间的轮次代数（没跑过就是 0） */
+  #roundEpoch(roomId) {
+    return this.roundEpochs.get(roomId) ?? 0;
+  }
+
   /**
    * 用户插话：把这一轮里**正在跑的所有 bot** 立刻停下来。
    *
-   * 只 abort 会话、不碰消息状态：被中断的那几条消息会由 run() 自己的
-   * 失败分支处理（写成 aborted，前端不渲染）—— 跟用户按 Esc 终止是同一套语义。
-   * 区别只在于：这里不停房间锁，紧接着就要开新一轮。
+   * 三件事缺一不可：
+   *   ① 代数 +1 —— 旧轮的循环每次派发前比对，立刻收手，剩下的队列不再派；
+   *   ② abort 会话 —— 手上那件正在做的活停下来；
+   *   ③ **当场**把正在写的消息标成 aborted —— 跟用户按 Esc 同一套语义：
+   *      前端整条不渲染。以前这里只 abort 会话、不碰消息，run() 的失败分支
+   *      会把它们写成 status='error'，用户插一次话就留下 N 个红气泡
+   *      + N 条"XX 没能完成"的失败回执 —— 正是用户要求删掉的东西。
+   *
+   * 不停房间锁：旧轮的循环看到代数变了会自己退出，锁在它的 finally 里释放，
+   * 紧接着 #drainGroupRounds 就会按新 query 开下一轮。
    */
   #interruptRoundForUser(roomId) {
+    this.roundEpochs.set(roomId, this.#roundEpoch(roomId) + 1);
+
     let n = 0;
+    const botIds = [];
     for (const [key, entry] of this.sessions) {
       if (!key.startsWith(`${roomId}:`)) continue;
       if (!entry?.session || !entry.busy) continue;
+      botIds.push(key.slice(roomId.length + 1));
       try {
         entry.turnController?.abort();
         entry.session.abort?.().catch(() => {});
@@ -312,7 +335,30 @@ export class PiRunner {
         // 单个会话打断失败不能挡住其他人停下
       }
     }
-    if (n) log(`已打断 ${n} 个正在跑的会话（用户插话）`);
+
+    if (botIds.length) {
+      for (const msg of store.listMessages(roomId, { limit: 200 })) {
+        if (msg.status !== 'streaming') continue;
+        if (!botIds.includes(msg.authorId)) continue;
+        store.updateMessage(
+          roomId,
+          msg.id,
+          {
+            status: 'aborted',
+            error: '已按你的要求终止',
+            steps: (msg.steps ?? []).map((s) =>
+              s?.status === 'running' ? { ...s, status: 'error', error: '已终止' } : s,
+            ),
+          },
+          { silent: false },
+        );
+      }
+      for (const id of botIds) {
+        bus.emit('event', { t: 'typing', roomId, botId: id, active: false });
+      }
+    }
+
+    if (n) log(`已打断 ${n} 个正在跑的会话（用户插话，旧轮作废）`);
   }
 
   /** 把排队的一轮轮跑掉；跑完（或出错）都要释放房间锁 */
@@ -730,6 +776,11 @@ export class PiRunner {
     const { members, leadId } = departmentOf(room);
     if (!members.length) return;
 
+    // 记下这一轮开始时的代数。用户插话会把它 +1 —— 那之后本轮的
+    // 任何"继续派活 / 重试 / 失败回执 / 收尾 / 复盘"都不该再发生。
+    const epoch = this.#roundEpoch(roomId);
+    const stale = () => this.#roundEpoch(roomId) !== epoch;
+
     const opening = openingSpeakers(room, { text: openerText, openerBotId, kickoff });
     if (!opening.length) return;
 
@@ -780,19 +831,21 @@ export class PiRunner {
         runs,
         maxRuns: limits.maxRuns,
         aborting: this.aborting.has(roomId),
+        stale: stale(),
       });
       if (stop.stop) {
+        const voided = stop.why === '已终止' || stop.why === '用户插话';
         if (queue.length) {
-          // 不管是终止还是预算掐断，都要留痕 —— 用户报过"组长明明 @ 了，
+          // 不管是终止、插话还是预算掐断，都要留痕 —— 用户报过"组长明明 @ 了，
           // 怎么只有一个 bot 动起来"，而以前这类出口全是静默的。
           log(
-            stop.why === '已终止'
-              ? `【${room.name}】⏹ 已终止，剩下的 ${queue.length} 个人不再派`
+            voided
+              ? `【${room.name}】⏹ ${stop.why}，剩下的 ${queue.length} 个人不再派`
               : `【${room.name}】⚠️ ${stop.why}，还有 ${queue.length} 个人没轮到：` +
                   leftBehind(queue, (id) => store.getBot(id)?.name ?? id).join('、'),
           );
         }
-        if (stop.why === '已终止') queue.length = 0;
+        if (voided) queue.length = 0;
         break;
       }
       if (!queue.length) {
@@ -1002,6 +1055,8 @@ export class PiRunner {
             const retries = [];
 
             while (!res.ok) {
+              // 用户插话了：旧任务直接作废，既不重试也不上报
+              if (stale()) break;
               const decision = decideRetry({
                 error: lastError,
                 attempt,
@@ -1042,6 +1097,20 @@ export class PiRunner {
                 attachments,
               });
               if (!res.ok) lastError = String(res.error ?? '未知原因');
+            }
+
+            // ★ 用户插话 = 这一条属于旧需求，作废。
+            //   不重试、不留“失败回执”、不上报负责人、不推进游标 ——
+            //   否则用户会看到旧任务的红字和"XX 没能完成"，而他刚说过"按新的来"。
+            if (stale()) {
+              if (taskId) {
+                store.finishTask(taskId, {
+                  ok: res.ok,
+                  text: res.ok ? res.text : '用户插话，旧任务作废',
+                });
+              }
+              log(`【${room.name}】用户插话 → ${bot.name} 这一条作废（不重试、不上报）`);
+              return;
             }
 
             if (taskId) {
@@ -1132,6 +1201,14 @@ export class PiRunner {
     }
     // 收尾：还在跑的人别被丢下（它们的 @ 已经在上面补进队列了）
     await Promise.allSettled(pending);
+
+    // ★ 用户插话：本轮到此为止。
+    //   不叫老大收尾（收的是旧需求的尾）、不推进未参与者的游标
+    //   （否则他们回来后看不到新需求）、也不做经验复盘（复盘的是作废的一轮）。
+    if (stale()) {
+      log(`【${room.name}】用户插话 → 旧轮收手，改为按新要求重新开始`);
+      return;
+    }
 
     // 收尾轮：老大说完之后还有人交作业 → 把老大叫回来统一收口。
     //
@@ -1801,8 +1878,13 @@ export class PiRunner {
     } catch (err) {
       const failure = cancelled() ? modelFailure(turnController.signal.reason ?? { name: 'AbortError' })
         : responseFailure ?? modelFailure(err);
-      const previousError = store.getMessage(roomId, botMsg.id)?.error;
+      const current = store.getMessage(roomId, botMsg.id);
+      const previousError = current?.error;
       const message = failure.aborted && previousError === '已按你的要求终止' ? previousError : failure.error;
+      // ★ abort() / 用户插话已经把这条消息标成 aborted 了 —— 这里必须保持。
+      //   以前失败分支无条件写 status='error'，会把"终止"又变回红色错误气泡
+      //   （前端只认 status==='aborted' 才不渲染）。
+      const keepAborted = cancelled() && current?.status === 'aborted';
       const partial = render().trim();
       if (stepCapHit && !cancelled()) {
         const msg = store.updateMessage(
@@ -1825,7 +1907,7 @@ export class PiRunner {
         botMsg.id,
         {
           text: partial,
-          status: 'error',
+          status: keepAborted ? 'aborted' : 'error',
           error: message,
           steps,
           usage,
@@ -1833,7 +1915,15 @@ export class PiRunner {
         },
         { silent: true },
       );
-      bus.emit('event', { t: 'msg.error', roomId, msgId: botMsg.id, error: message, msg });
+      // 保持 aborted 时发 msg.updated（客户端认得，会把气泡收掉）；
+      // 只有真出错才发 msg.error（红色）。
+      bus.emit('event', {
+        t: keepAborted ? 'msg.updated' : 'msg.error',
+        roomId,
+        msgId: botMsg.id,
+        error: message,
+        msg,
+      });
       log(`模型本轮出错：${message}`);
       return { ok: false, text: partial, ms: Date.now() - started, error: message, messageId: botMsg.id };
     } finally {
