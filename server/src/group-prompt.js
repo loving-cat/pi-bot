@@ -14,6 +14,7 @@
 import { store } from './store.js';
 import { parseMentions, rosterLine } from './mentions.js';
 import { clipMessage, trimTranscript } from './transcript-budget.js';
+import { isLeadOfRoom, isDelegatingLead } from './role-tools.js';
 
 /** 部门成员（含老大）+ 老大 id。老大的 id 不在名单里时退回第一个 */
 export function departmentOf(room) {
@@ -130,6 +131,13 @@ export function composeGroupPrompt(
 ) {
   const lead = members.find((m) => m.id === leadId) ?? null;
   const peers = members.filter((m) => m.id !== bot.id);
+  const roleRoom = {
+    ...room,
+    kind: room.kind ?? 'group',
+    botIds: room.botIds ?? members.map((member) => member.id),
+    leadBotId: room.leadBotId ?? leadId,
+  };
+  const soloLead = isLead && bot.role !== 'main' && !isLeadOfRoom(roleRoom, bot.id);
 
   const head = [
     `【部门】${room.name}${room.topic ? ` —— ${room.topic}` : ''}`,
@@ -145,7 +153,9 @@ export function composeGroupPrompt(
     '你可以 @ 别人接着做 —— 那就是下一波。',
     '',
     // 群里是"派活-执行"的现场：卡片会让人停下来等，任务就卡住了。
-    '★ 群里收到活就**先执行**：需要确认的事写在回复正文里，然后继续把能做的部分做完。',
+    isDelegatingLead(roleRoom, bot)
+      ? '★ 群里收到活先拆解并派给成员，收到结果后核对交付。'
+      : '★ 群里收到活就**先执行**：需要确认的事写在回复正文里，然后继续把能做的部分做完。',
     '  不要用询问卡片（ask_user）停下来等用户点 —— 那张卡是私聊里才用的。',
     '',
     '规则：写「@同事名字」就是把发言权交给它（它会接着说话、去干你派的活）；',
@@ -170,7 +180,13 @@ export function composeGroupPrompt(
     );
   }
 
-  const rules = isLead
+  const rules = soloLead && !closing
+    ? [
+        `你是「${room.name}」当前唯一的执行成员，直接完成用户交办的任务。`,
+        '没有其他成员可派活时，按现有工具和审批规则自行查询、执行并提交结果。',
+        '不要向不存在的同事派活；无法完成时说明已尝试的步骤和具体阻塞。',
+      ]
+    : isLead
     ? closing
       ? [
           `你是「${room.name}」的**部门老大**，现在做**收尾**。`,
@@ -184,6 +200,10 @@ export function composeGroupPrompt(
       : [
         `你是「${room.name}」的**部门老大**。这个部门收到的活，由你先接。`,
         '',
+        '★ 你只做三件事：**拆解需求 → @同事派活 → 汇总成员结论**。你不亲自干活。',
+        '  不跑命令、不查数据、不写文件、不建目录、不改代码 —— 这些全是成员的活。',
+        '  你的输出应该是「把什么交给谁、要交回什么、怎么验收」，而不是你自己算出来的结果。',
+        '',
         '你的做法：',
         '1. 先把要求拆成几件具体的活，判断每一件该交给谁。',
         '2. **就在这个群里用 @同事名字 把活派出去**——被 @ 的人会接着在群里发言去干。',
@@ -191,13 +211,13 @@ export function composeGroupPrompt(
         '   少一样，对方就容易交回一个不好验收的东西，你还得多跑一个来回。',
         '   ★ 必须用 @ 在群里派，**不要用 message_bot 私信派活**：用户要看得见谁领了什么活。',
         '   message_bot 只用于「跨部门找人」或「确实不该让用户看到的内部确认」。',
-        "3. 自己别闷头把活全干完；只有「确实只有你能干」的那部分才自己做。",
-        "",
-        "★ 有同事没交作业时（没动静 / 失败了），**不要默默自己接手**。按这个顺序：",
-        "   ① 先 @ 它再派一次，把「做什么 / 交什么 / 怎么算完成」说得更具体；",
-        "   ② 还不行就 @ 另一个同事接手，并在群里说清是谁没完成；",
-        "   ③ 实在没人能接再自己上，但**必须说明你接手了、因为谁没完成**。",
-        "   悄悄把活干完，用户会以为全员都交付了 —— 掉链子的事故就被掩盖了。",
+        '   ★ 你缺信息（数据、代码、文件内容、口径）时 —— **@一个同事去查**，不要自己查。',
+        '',
+        '★ 有同事没交作业时（没动静 / 失败了），**不要默默自己接手，也不要自己补做**。按这个顺序：',
+        '   ① 先 @ 它再派一次，把「做什么 / 交什么 / 怎么算完成」说得更具体；',
+        '   ② 还不行就 @ 另一个同事接手，并在群里说清是谁没完成；',
+        '   ③ 还是没人能接，就在群里如实告诉用户「卡在哪、谁没完成、需要什么」，等用户决定 —— 绝不自己上。',
+        '   悄悄把活干完，用户会以为全员都交付了 —— 掉链子的事故就被掩盖了。',
         '4. 大家交完结果后，用几句话给用户一个结论（别再复述他们的原文）。',
         '5. 如果这条消息只是闲聊、确认、或者根本不用动手，就直接回答，不要派活。',
         '6. 不需要你接就只输出 [PASS]。',

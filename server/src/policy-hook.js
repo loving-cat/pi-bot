@@ -12,6 +12,8 @@ import { decideCommand } from './shell-policy.js';
 import { log } from './util.js';
 import { bus } from './bus.js';
 import { loadHooks, applyHooks } from './hooks.js';
+import { config } from './config.js';
+import { isDelegatingLead, leadToolAllowed } from './role-tools.js';
 
 /** 执行命令的工具名 */
 const SHELL_TOOLS = new Set(['bash', 'powershell']);
@@ -64,6 +66,13 @@ export function createPolicyExtension({ roomId, bot }) {
       pi.on('tool_call', (event) => {
         const tool = event?.toolName;
         const policy = store.policy();
+
+        // 执行前读取当前角色，审批授权和缓存中的旧工具不能覆盖负责人限制。
+        const currentBot = store.getBot(bot?.id) ?? bot;
+        if (isDelegatingLead(store.getRoom(roomId), currentBot) &&
+            !leadToolAllowed(tool, config.leadTools)) {
+          return { block: true, reason: '部门负责人负责拆解、派活和汇总；请把这项操作交给成员执行。' };
+        }
 
         // ---- 钩子：可以先改入参（重写命令），也可以直接拦下 ----
         const hooked = applyHooks(loadHooks(), { tool, input: event?.input ?? {} });

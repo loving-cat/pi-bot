@@ -144,6 +144,8 @@ export const config = {
   groupMaxRuns: Number(process.env.PI_BOT_GROUP_MAX_RUNS || 10),
   /** 主控只有只读文件工具 —— 它是调度者，不是干活的人 */
   chiefTools: (process.env.PI_BOT_CHIEF_TOOLS || 'read,ls,grep,find').split(',').map((s) => s.trim()).filter(Boolean),
+  /** 多人部门负责人的只读内置工具；执行工具不参与此配置。 */
+  leadTools: (process.env.PI_BOT_LEAD_TOOLS || 'read,ls,grep,find').split(',').map((s) => s.trim()).filter(Boolean),
   /**
    * 联网搜索用什么接口。
    * 不配也能用 —— 默认走搜索引擎的 HTML 端点（不需要 key）。

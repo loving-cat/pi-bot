@@ -23,6 +23,7 @@
 import { store } from './store.js';
 import { toMcpServersConfig } from './mcp.js';
 import { log } from './util.js';
+import { isDelegatingLead } from './role-tools.js';
 
 /**
  * 造一个只注册 MCP 服务的扩展。
@@ -34,6 +35,8 @@ import { log } from './util.js';
  */
 export function createMcpExtension({ botId, roomId = null }) {
   return function mcpExtension(pi) {
+    // 负责人的外部能力由成员执行，不在此会话连接或注册 MCP。
+    if (isDelegatingLead(store.getRoom(roomId), store.getBot(botId))) return;
     // 建会话时就把名字定下来：会话中途用户改了配置也不会突然多连/少连，
     // 避免跑到一半 MCP 的工具有的有一一没有（那种 bug 极难查）。
     const servers = store.mcpServersFor(botId);

@@ -1,4 +1,5 @@
 import { pickEscalationHost as pickHost } from './util.js';
+import { isDelegatingLead } from './role-tools.js';
 /**
  * 出事了往上抬：把"这单断了"告诉该知道的人，并请它重新安排。
  *
@@ -42,7 +43,10 @@ export function createEscalator({ store, run, onError = () => {} }) {
     const inRoom = target.role === 'lead' ? roomId : (store.ensureDm(host.id)?.id ?? null);
     if (!inRoom) return null;
 
-    const note = buildEscalationNote({ store, fromBotId, reason, task, attempts, why });
+    const note = buildEscalationNote({
+      store, fromBotId, reason, task, attempts, why,
+      delegateOnly: isDelegatingLead(store.getRoom(inRoom), host),
+    });
     store.appendMessage({
       roomId: inRoom,
       authorType: 'system',
@@ -63,15 +67,8 @@ export function createEscalator({ store, run, onError = () => {} }) {
   };
 }
 
-/**
- * 回执正文（纯函数，好单测：该带的信息一样不能少）。
- *
- * ★ 文案里不能留"自己上"的口子。
- *   老版本写的是"请你重新安排：换个人，或者再派一次" ——
- *   读起来等于允许它自己接手，于是负责人遇到成员失败就悄悄把活干了，
- *   用户以为全员交付完成，实际有人掉链子被掩盖。
- */
-export function buildEscalationNote({ store, fromBotId, reason, task = '', attempts = 0, why = '' }) {
+/** 失败回执；delegateOnly 时只能重新派活或向用户报告阻塞。 */
+export function buildEscalationNote({ store, fromBotId, reason, task = '', attempts = 0, why = '', delegateOnly = false }) {
   const from = store?.getBot?.(fromBotId);
   const name = from?.name ?? fromBotId;
   const lines = [`[这单断了] ${name}：${reason}`];
@@ -82,7 +79,9 @@ export function buildEscalationNote({ store, fromBotId, reason, task = '', attem
     '请按这个顺序处理：',
     `1. 先 @ ${name} 再派一次，把要求说得更具体（做什么 / 交什么 / 怎么算完成）。`,
     '2. 还不行就 @ 另一个同事接手，并说明是谁没完成。',
-    '3. 实在没人能接，你自己上 —— 但**必须在群里说明你接手了、因为谁没完成**。',
+    delegateOnly
+      ? '3. 没有成员能接时，向用户说明谁未完成、卡在哪里、需要什么；等待用户决定，不自行执行。'
+      : '3. 实在没人能接，你自己上 —— 但**必须在群里说明你接手了、因为谁没完成**。',
     '★ 不要悄悄把活接下：用户会以为全员都交付了，掉链子的事故就被掩盖了。',
   );
   return lines.join('\n');
