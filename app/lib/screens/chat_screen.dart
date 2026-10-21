@@ -9,6 +9,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../app_state.dart';
+import '../chat_scroll_follow.dart';
 import '../clipboard_image.dart';
 import '../models.dart';
 import '../scope.dart';
@@ -57,7 +58,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final _input = TextEditingController();
   final _focus = FocusNode();
   AppState? _state;
-  bool _stick = true;
+  late final ChatScrollFollow _scrollFollow;
+  bool get _stick => _scrollFollow.following;
 
   /// 往上翻的时候又来了几条新消息 —— 显示在"回到底部"那个按钮上。
   /// 这样用户知道"下面有多少没看"，而不是只看到一个箭头。
@@ -77,6 +79,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _scrollFollow = ChatScrollFollow(
+      _scroll,
+      onFollowingChanged: (following) {
+        if (!mounted) return;
+        setState(() {
+          if (following) _unreadWhileUp = 0;
+        });
+      },
+    );
     if (widget.initialText != null) {
       _input.text = widget.initialText!;
       _input.selection = TextSelection.collapsed(offset: _input.text.length);
@@ -97,16 +108,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _state = AppScope.read(context);
       _state!.openRoom(widget.room.id);
       unawaited(_state!.loadMessages(widget.room.id));
-      _scroll.addListener(() {
-        if (!_scroll.hasClients) return;
-        final stick = (_scroll.position.maxScrollExtent - _scroll.offset) < 140;
-        if (stick == _stick) return;
-        setState(() {
-          _stick = stick;
-          // 回到底部就把计数清掉
-          if (stick) _unreadWhileUp = 0;
-        });
-      });
       // 新消息计数：只在"往上翻着"的时候累加。
       // 用 state 的 notify（每来一条消息一次），不用 streamTick（那是 80ms 一次的
       // 流式增量，会把计数冲成天文数字）。
@@ -129,35 +130,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _state?.removeListener(_countIfScrolledUp);
     FocusManager.instance.removeListener(_onFocusChanged);
     _state?.openRoom(null);
+    _scrollFollow.dispose();
     _scroll.dispose();
     _input.removeListener(_absorbPastedPaths);
     _input.dispose();
     _focus.dispose();
     super.dispose();
-  }
-
-  Future<void> _toBottom({bool animate = false}) async {
-    if (!_scroll.hasClients) return;
-    if (!animate) {
-      _scroll.jumpTo(_scroll.position.maxScrollExtent);
-      return;
-    }
-    // ★ 动画期间消息可能还在变长（流式输出），一开始算的那个目标点会落空 ——
-    //   表现是"点了回到底部，其实还差一截"。所以滚完之后对一次账，不够再补。
-    for (var i = 0; i < 3; i++) {
-      final target = _scroll.position.maxScrollExtent;
-      if ((target - _scroll.offset).abs() < 1) break;
-      await _scroll.animateTo(
-        target,
-        duration: const Duration(milliseconds: 200),
-        curve: Curves.easeOut,
-      );
-      if (!mounted) return;
-      await Future<void>.delayed(const Duration(milliseconds: 16));
-    }
-    if (mounted && _scroll.hasClients) {
-      _scroll.jumpTo(_scroll.position.maxScrollExtent);
-    }
   }
 
   /// 焦点一变就排一次"兜底检查"。
@@ -261,7 +239,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (text.trim().isEmpty && files.isEmpty) return;
     _input.clear();
     setState(() => _pending.clear());
-    _stick = true;
+    _scrollFollow.resume();
     final state = AppScope.read(context);
     try {
       await state.sendMessage(
@@ -466,9 +444,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
 
     if (_stick && msgs.isNotEmpty) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _toBottom();
-      });
+      _scrollFollow.request();
     }
 
     // 焦点兜底（见 _keepComposerFocused）—— 放在帧后，别在 build 里抢焦点
@@ -633,7 +609,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   if (ok == true) await state.resetSession(room.id);
                 case 'reload':
                   await state.loadMessages(room.id, force: true);
-                  _stick = true;
+                  _scrollFollow.resume();
               }
             },
             itemBuilder: (ctx) => [
@@ -692,119 +668,129 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             //   ExcludeFocus 从根上关掉这条路。代价是消息里不能再用键盘
                             //   Ctrl+C —— 但每条消息长按有「复制」菜单，功能没丢。
                             RepaintBoundary(
-                              child: ListView.builder(
-                                controller: _scroll,
-                                // ★ 居中限宽：窗口拉宽时左右留白跟着长（内容列最多 1180），
-                                //   气泡就不会被吸附到窗口两边。
-                                //   左边用 leftPad：群里减掉头像列那 42px，
-                                //   这样气泡的左右边缘在私聊/群聊里落在同一位置。
-                                padding: EdgeInsets.fromLTRB(
-                                  leftPad,
-                                  20,
-                                  sidePad,
-                                  20,
-                                ),
-                                itemCount: msgs.length,
-                                itemBuilder: (ctx, i) {
-                                  final msg = msgs[i];
-                                  final prev = i > 0 ? msgs[i - 1] : null;
-                                  final newAuthor =
-                                      prev == null ||
-                                      prev.authorId != msg.authorId ||
-                                      prev.authorType != msg.authorType ||
-                                      (msg.createdAt - prev.createdAt) >
-                                          5 * 60 * 1000;
-                                  // 同一个人连着发好几条时，头像挂在**最后一条**上 ——
-                                  // 这样整串气泡都在头像的右上方，头像在底部托着。
-                                  // （挂在第一条的话，头像会卡在整串中间，很怪。）
-                                  final next = i + 1 < msgs.length
-                                      ? msgs[i + 1]
-                                      : null;
-                                  final endOfRun =
-                                      next == null ||
-                                      next.authorId != msg.authorId ||
-                                      next.authorType != msg.authorType ||
-                                      (next.createdAt - msg.createdAt) >
-                                          5 * 60 * 1000;
-                                  // ★ 这条是**外面的人说的**（不在这个会话的名单里）——
-                                  //   比如负责人把某个成员的报告转进群里。
-                                  //   挂一条「消息来自 X」，点开是**只读**的窥视：
-                                  //   看那个 bot 的私聊里到底说了什么（用户要的"链路可见"）。
-                                  //   注意：主控不算「外面的人」—— 它在哪儿说话都是派活。
-                                  final authorBot =
-                                      msg.authorType == 'bot' &&
-                                          msg.authorId != null
-                                      ? state.botById(msg.authorId)
-                                      : null;
-                                  final relayed = isRelayedAuthor(
-                                    author: authorBot,
-                                    room: room,
-                                  );
-                                  final relayedBot = relayed ? authorBot : null;
-                                  final relayedRoom = relayedBot == null
-                                      ? null
-                                      : state.rooms
-                                            .where(
-                                              (r) =>
-                                                  !r.isGroup &&
-                                                  r.botIds.contains(
-                                                    relayedBot.id,
-                                                  ),
-                                            )
-                                            .firstOrNull;
-                                  // 不居中：整行铺满，bot 贴左、我贴右
-                                  return _Appear(
-                                    key: ValueKey(msg.id),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.stretch,
-                                      children: [
-                                        if (relayedBot != null)
-                                          _RelayedFrom(
-                                            bot: relayedBot,
-                                            // 点开那个 bot 的私聊（只读）——
-                                            // 找不到私聊房间就不给点（只显示是谁说的）
-                                            onTap: relayedRoom == null
-                                                ? null
-                                                : () => showChatPeek(
-                                                    context,
-                                                    refs: [
-                                                      MsgRef(
-                                                        botId: relayedBot.id,
-                                                        roomId: relayedRoom.id,
-                                                      ),
-                                                    ],
-                                                  ),
+                              child: NotificationListener<Notification>(
+                                onNotification:
+                                    _scrollFollow.handleNotification,
+                                child: ListView.builder(
+                                  controller: _scroll,
+                                  // ★ 居中限宽：窗口拉宽时左右留白跟着长（内容列最多 1180），
+                                  //   气泡就不会被吸附到窗口两边。
+                                  //   左边用 leftPad：群里减掉头像列那 42px，
+                                  //   这样气泡的左右边缘在私聊/群聊里落在同一位置。
+                                  padding: EdgeInsets.fromLTRB(
+                                    leftPad,
+                                    20,
+                                    sidePad,
+                                    20,
+                                  ),
+                                  itemCount: msgs.length,
+                                  itemBuilder: (ctx, i) {
+                                    final msg = msgs[i];
+                                    final prev = i > 0 ? msgs[i - 1] : null;
+                                    final newAuthor =
+                                        prev == null ||
+                                        prev.authorId != msg.authorId ||
+                                        prev.authorType != msg.authorType ||
+                                        (msg.createdAt - prev.createdAt) >
+                                            5 * 60 * 1000;
+                                    // 同一个人连着发好几条时，头像挂在**最后一条**上 ——
+                                    // 这样整串气泡都在头像的右上方，头像在底部托着。
+                                    // （挂在第一条的话，头像会卡在整串中间，很怪。）
+                                    final next = i + 1 < msgs.length
+                                        ? msgs[i + 1]
+                                        : null;
+                                    final endOfRun =
+                                        next == null ||
+                                        next.authorId != msg.authorId ||
+                                        next.authorType != msg.authorType ||
+                                        (next.createdAt - msg.createdAt) >
+                                            5 * 60 * 1000;
+                                    // ★ 这条是**外面的人说的**（不在这个会话的名单里）——
+                                    //   比如负责人把某个成员的报告转进群里。
+                                    //   挂一条「消息来自 X」，点开是**只读**的窥视：
+                                    //   看那个 bot 的私聊里到底说了什么（用户要的"链路可见"）。
+                                    //   注意：主控不算「外面的人」—— 它在哪儿说话都是派活。
+                                    final authorBot =
+                                        msg.authorType == 'bot' &&
+                                            msg.authorId != null
+                                        ? state.botById(msg.authorId)
+                                        : null;
+                                    final relayed = isRelayedAuthor(
+                                      author: authorBot,
+                                      room: room,
+                                    );
+                                    final relayedBot = relayed
+                                        ? authorBot
+                                        : null;
+                                    final relayedRoom = relayedBot == null
+                                        ? null
+                                        : state.rooms
+                                              .where(
+                                                (r) =>
+                                                    !r.isGroup &&
+                                                    r.botIds.contains(
+                                                      relayedBot.id,
+                                                    ),
+                                              )
+                                              .firstOrNull;
+                                    // 不居中：整行铺满，bot 贴左、我贴右
+                                    return _Appear(
+                                      key: ValueKey(msg.id),
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.stretch,
+                                        children: [
+                                          if (relayedBot != null)
+                                            _RelayedFrom(
+                                              bot: relayedBot,
+                                              // 点开那个 bot 的私聊（只读）——
+                                              // 找不到私聊房间就不给点（只显示是谁说的）
+                                              onTap: relayedRoom == null
+                                                  ? null
+                                                  : () => showChatPeek(
+                                                      context,
+                                                      refs: [
+                                                        MsgRef(
+                                                          botId: relayedBot.id,
+                                                          roomId:
+                                                              relayedRoom.id,
+                                                        ),
+                                                      ],
+                                                    ),
+                                            ),
+                                          _MessageRow(
+                                            msg: msg,
+                                            showAuthor: newAuthor,
+                                            showAvatar: endOfRun,
+                                            bot: state.botById(msg.authorId),
+                                            isGroup: room.isGroup,
+                                            mentions: room.botNames,
+                                            // @ 的名字 → 那个 bot（chip 的颜色、悬停卡的内容都靠它）
+                                            mentionOf: (name) {
+                                              final b = state.botByName(name);
+                                              return b == null
+                                                  ? null
+                                                  : MentionInfo(
+                                                      seed: b.id,
+                                                      subtitle: b.tagline,
+                                                      emoji: b.emoji,
+                                                    );
+                                            },
+                                            isLead:
+                                                room.isGroup &&
+                                                msg.authorId != null &&
+                                                msg.authorId == room.leadBotId,
+                                            onLongPress: () =>
+                                                showMessageActions(
+                                                  context,
+                                                  msg,
+                                                ),
                                           ),
-                                        _MessageRow(
-                                          msg: msg,
-                                          showAuthor: newAuthor,
-                                          showAvatar: endOfRun,
-                                          bot: state.botById(msg.authorId),
-                                          isGroup: room.isGroup,
-                                          mentions: room.botNames,
-                                          // @ 的名字 → 那个 bot（chip 的颜色、悬停卡的内容都靠它）
-                                          mentionOf: (name) {
-                                            final b = state.botByName(name);
-                                            return b == null
-                                                ? null
-                                                : MentionInfo(
-                                                    seed: b.id,
-                                                    subtitle: b.tagline,
-                                                    emoji: b.emoji,
-                                                  );
-                                          },
-                                          isLead:
-                                              room.isGroup &&
-                                              msg.authorId != null &&
-                                              msg.authorId == room.leadBotId,
-                                          onLongPress: () =>
-                                              showMessageActions(context, msg),
-                                        ),
-                                      ],
-                                    ),
-                                  );
-                                },
+                                        ],
+                                      ),
+                                    );
+                                  },
+                                ),
                               ),
                             ),
                             // 顶部渐变：消息滚上去时柔和淡出，而不是被标题栏硬切
@@ -854,13 +840,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     onStop: () => state.abort(room.id),
                     showJump: !_stick,
                     unread: _unreadWhileUp,
-                    onJump: () {
-                      setState(() {
-                        _stick = true;
-                        _unreadWhileUp = 0;
-                      });
-                      unawaited(_toBottom(animate: true));
-                    },
+                    onJump: () => _scrollFollow.resume(animate: true),
                   ),
                 ),
               ],

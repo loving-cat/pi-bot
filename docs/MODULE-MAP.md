@@ -87,6 +87,7 @@
 | `server/spawn_posix.dart` | POSIX 独立进程组启动脚本，日志直写文件并释放辅助进程 |
 | `server/supervisor.dart` / `server/launcher.dart` / `server/server_log.dart` | 进程与 PID 管理、启动编排及日志；Windows/POSIX 平台分流 |
 | `model_group_capacity.dart` | 模型卡片草稿、稳定行标识、容量解析与保存协议（纯逻辑） |
+| `chat_scroll_follow.dart` | 聊天追底调度：帧后挂载、有限补跳、用户滚动取消和内容尺寸变化跟随 |
 | `widgets/model_group_editor.dart` | 模型组编辑装配：接口配置、独立模型卡片、思考强度选项拉取、连接测试与保存 |
 | `widgets/model_capacity_fields.dart` | 模型卡片与列表摘要展示；单独编辑 ID、显示名、上下文窗口、最大输出与思考强度，向上回传操作 |
 | `widgets/server_config_section.dart` | 共用本机启动配置对话框，保存后调用状态层重启并报告结果 |
