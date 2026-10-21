@@ -43,6 +43,8 @@ const TESTS = [
   'change-watch',
   'artifacts',
   'dm',
+  'progress-senders',
+  'progress-flow',
   'ask-guard',
   'ask-card',
   'auth',

@@ -1,5 +1,6 @@
 import { config, describeConfig } from './config.js';
 import { store } from './store.js';
+import { backfillProgressSenders } from './progress-migration.js';
 import { PiRunner } from './pi-runner.js';
 import { Pairing, lanAddresses } from './pairing.js';
 import { createHttpServer } from './http.js';
@@ -69,6 +70,14 @@ async function main() {
   // 进程被 kill 时正在跑的任务会永远停在“进行中” —— 启动时收回待办
   const stuck = store.reconcileTasks();
   if (stuck) log(`收回了 ${stuck} 条上次遗留的“进行中”任务（已放回待办）`);
+
+  // 根据明确的消息或调度关联补全缺失来源，证据不足的回执保持未知。
+  try {
+    const backfilled = backfillProgressSenders(store);
+    if (backfilled) log(`回填了 ${backfilled} 条私聊进度回执的派活人`);
+  } catch (err) {
+    log('回填进度回执派活人失败（不影响启动）：', err?.message || err);
+  }
 
   const runner = await new PiRunner().init();
   // 探活结果 24 小时过期 —— 服务连跑几天也不会让「全员不可用」这种假结论冻在那儿

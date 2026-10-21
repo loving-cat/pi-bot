@@ -42,7 +42,7 @@ import { defaultMenuSlug, logMenu, menuSlugs, resolveMenu } from './model-menu.j
 import { attachmentBlock } from './extract.js';
 import { inboxPath, metaFor, readForModel, saveFromPath } from './attachments.js';
 import { parseMentions } from './mentions.js';
-import { log, pickEscalationHost, isSuperiorCall } from './util.js';
+import { log, newId, pickEscalationHost, isSuperiorCall } from './util.js';
 import { planItem, shouldStopRound, leftBehind, planClosing, isUserInitiatedRound } from './group-round.js';
 import {
   applyCompactionBudget,
@@ -760,9 +760,9 @@ export class PiRunner {
   /**
    * 往 bot 与用户的私聊里回一条进度（写库的实现在 dm.js，便于单测）。
    */
-  #mirrorProgress({ room, bot, phase, text, ok = true }) {
+  #mirrorProgress(progress) {
     try {
-      mirrorProgress({ store, room, bot, phase, text, ok });
+      mirrorProgress({ store, ...progress });
     } catch (err) {
       log('私聊进度回执失败：', err?.message || err);
     }
@@ -773,6 +773,7 @@ export class PiRunner {
     {
       openerText = '',
       openerBotId = null,
+      openerMessageId = null,
       openerName = '用户',
       kickoff = false,
       attachments = [],
@@ -803,6 +804,7 @@ export class PiRunner {
       fromId: openerBotId ?? null,
       fromName: openerName,
       fromText: openerText,
+      sourceMessageId: openerMessageId,
     }));
 
     log(
@@ -1030,12 +1032,19 @@ export class PiRunner {
               fromId: item.fromId,
               botId: bot.id,
             });
+            const progressSource = {
+              dispatchId: newId('dispatch_'),
+              sourceMessageId: item.sourceMessageId ?? null,
+              fromId: item.fromId ?? null,
+              fromName: item.fromName || (item.fromId ? (store.getBot(item.fromId)?.name ?? '') : ''),
+            };
             if (mirror) {
               this.#mirrorProgress({
                 room,
                 bot,
                 phase: 'start',
                 text: item.fromText || item.reason,
+                ...progressSource,
               });
             }
             // 部门里"别人派给它"的活 → 任务板上登记一条（跑完再收尾）
@@ -1044,7 +1053,7 @@ export class PiRunner {
                   roomId,
                   ownerBotId: bot.id,
                   title: item.fromText || item.reason,
-                  sourceMessageId: lastMessageId(roomId),
+                  sourceMessageId: item.sourceMessageId ?? null,
                 })
               : null;
             // ★ 失败要重试，而不是只打一行日志就消失。
@@ -1134,6 +1143,7 @@ export class PiRunner {
                 phase: 'done',
                 text: res.text,
                 ok: res.ok,
+                ...progressSource,
               });
             }
           store.setCursor(roomId, bot.id, lastMessageId(roomId));
@@ -1195,6 +1205,7 @@ export class PiRunner {
               fromId: bot.id,
               fromName: bot.name,
               fromText: text,
+              sourceMessageId: res.messageId || null,
             });
             queued.add(id);
           }
@@ -2048,6 +2059,7 @@ export class PiRunner {
     this.runRound(roomId, {
       openerText: text,
       openerBotId: chief?.id ?? null,
+      openerMessageId: msg.id,
       openerName: chief?.name ?? '主控',
     }).catch((err) => log('dispatchToGroup 异常：', err?.stack || err));
     return { ok: true, messageId: msg.id };
