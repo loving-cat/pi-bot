@@ -1,0 +1,21 @@
+app/lib/widgets/tool_steps.dart
+  s_06973911ad2cd6::t_5843ff2ef97b05 8,18,52,57,59,62,65-71,73-78,80
+app/test/tool_steps_test.dart
+  s_06973911ad2cd6::t_5843ff2ef97b05 8,48,56-59,61,64,73-75
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8f0bf5f3bd72dc23e8f051b5463296b979f12f49",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
