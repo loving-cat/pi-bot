@@ -1,0 +1,23 @@
+server/tests/boot-failure.mjs
+  s_06973911ad2cd6::t_3d09d91b2cc047 18
+  s_06973911ad2cd6::t_d2b758463d4511 34
+server/tests/relay-safety.mjs
+  s_06973911ad2cd6::t_3d09d91b2cc047 14
+  s_06973911ad2cd6::t_141fefd0884cd2 30,87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e99fbb34cca6089904a22aef7b67a7bf57606bc4",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
