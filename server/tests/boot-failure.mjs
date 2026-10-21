@@ -15,6 +15,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 let passed = 0;
 let failed = 0;
@@ -30,10 +31,7 @@ async function test(name, fn) {
 }
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-bot-boot-'));
-const serverDir = path.resolve(
-  path.dirname(new URL(import.meta.url).pathname),
-  '..',
-);
+const serverDir = fileURLToPath(new URL('..', import.meta.url));
 
 /** 起一个占位服务，拿到端口 */
 async function occupyPort() {
