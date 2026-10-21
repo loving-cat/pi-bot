@@ -1,0 +1,72 @@
+server/tests/relay-safety.mjs
+  s_06973911ad2cd6::t_3d09d91b2cc047 1-165
+server/tests/boot-failure.mjs
+  s_06973911ad2cd6::t_3d09d91b2cc047 1-110
+  s_06973911ad2cd6::t_4e7729d3240b1b 111-113
+README.md
+  s_06973911ad2cd6::t_5588c72d7ed1c1 259,290
+app/lib/chat_scroll_follow.dart
+  s_06973911ad2cd6::t_de53fd7cc07312 1-181
+app/lib/screens/chat_screen.dart
+  s_06973911ad2cd6::t_a78a14e8b73c20 12,61-62,82-90,133,242,447,612,671-787,789-793,843,1766-1783,1785-1804,1806-1809,1812,1825-1827,1943-1950,1952-1986
+app/lib/widgets/attachment_view.dart
+  s_06973911ad2cd6::t_48c796dbdee07c 18-21,27-29,34-42,50-51,54,58,62,69-88,90-100,103-119,195,200-202,221-264,267,269,274,276-279,283-284,291-295,362-364
+app/lib/widgets/tool_steps.dart
+  s_06973911ad2cd6::t_7cbd639b5f2a5a 8,18,52,57,59,62,65-71,73-78,80
+app/test/attachment_view_test.dart
+  s_06973911ad2cd6::t_e5360e5552c7eb 9-10,17-37,46-89,110-225,261
+app/test/chat_attachment_actions_test.dart
+  s_06973911ad2cd6::t_1751c6c1b4ed39 1-62
+app/test/chat_scroll_follow_test.dart
+  s_06973911ad2cd6::t_e046cf54a109ed 1-330
+app/test/tool_steps_test.dart
+  s_06973911ad2cd6::t_f6b8d90a14e3e0 8,48,56-59,61,64,73-75
+docs/AGENT-MODEL.md
+  s_06973911ad2cd6::t_627cfe4d92663d 1,3,5,7,9-11,13-14,16,18-19,21-26,28-31,33-34,36,38-40,42-43,45-46,48,50,52-55,57-58,60,62,64-65,67,69-70,72,74-76,78
+docs/AGENT-PATTERNS.md
+  s_06973911ad2cd6::t_72c1efac00d1fa 1,3,13-14,45,47,50,56-57,59,63-65
+docs/ARCHITECTURE.md
+  s_06973911ad2cd6::t_c6b2b8e5ac3f1f 3,5-6,8-16,23,31,33-37,40-41,43-45
+docs/MODULE-MAP.md
+  s_06973911ad2cd6::t_4f33d2235950e1 46-47,90
+docs/PITFALLS.md
+  s_06973911ad2cd6::t_3c56e376e01a9c 710-764
+docs/RELAY.md
+  s_06973911ad2cd6::t_27764bbbee4c9f 7,32,37
+docs/REVIEW-v1.1.0.md
+  s_06973911ad2cd6::t_fc4272ac917227 71
+server/src/group-round.js
+  s_06973911ad2cd6::t_901fe7b9732736 29,34-39
+server/src/pi-runner.js
+  s_06973911ad2cd6::t_3af51d8f499cb0 178-184,303-307,311-320,323-324,326,330,339-362,787-791,842,845,847,850-851,856,1066-1067,1110-1123,1213-1220,1905-1906,1908-1911,1934,1942-1950
+server/src/relay-server.js
+  s_06973911ad2cd6::t_bd732925075656 13-31,33-43,49
+server/src/relay/server.js
+  s_06973911ad2cd6::t_9f63120ce29677 100-118,123
+server/src/server-main.js
+  s_06973911ad2cd6::t_2420bd46b46a44 107-135
+server/src/web.js
+  s_06973911ad2cd6::t_83ed71f2f2abd9 19-20,48-49,57-170,400,402-404,406-409,417,421,425,439,451
+server/tests/all.mjs
+  s_06973911ad2cd6::t_b9b486192cb79a 25-26,53
+server/tests/net-guard.mjs
+  s_06973911ad2cd6::t_fabc64fcb7de24 1-109
+server/tests/room-lock.mjs
+  s_06973911ad2cd6::t_166e5330b48c09 22,244-245,247,249,373-478
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6dddbd3892009b46a9a8fec7d0c8c56d71f86267",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
