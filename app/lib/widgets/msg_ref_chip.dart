@@ -1,141 +1,69 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
-import '../app_state.dart';
 import '../models.dart';
 import '../motion.dart';
 import '../scope.dart';
 import '../theme.dart';
 import 'blob_avatar.dart';
+import 'conversation_people.dart';
 import 'md_text.dart';
 
-/// 「已发送消息给 @A 和 @B」的小浮动条。
-///
-/// bot 之间用 `message_bot` 私信时，服务端会在**来源房间**留一条 `kind == 'ref'`
-/// 的记录。用户因此能看到"它把活派给了谁"，而不是只看到"我发了"。
-///
-/// 点一下 → 弹出 [showChatPeek]，直接看他们俩聊了什么。
-///
-/// 抽成独立组件的原因：群聊、私聊、以及窥视弹层内部都会用到，
-/// 三处的样式和行为必须完全一致。
+/// 展示私信接收方与往来数量，点击打开只读会话查看器。
 class MsgRefChip extends StatelessWidget {
-  const MsgRefChip({super.key, required this.refs, this.alignEnd = true});
+  const MsgRefChip({super.key, required this.refs, this.senderBotId});
 
   final List<MsgRef> refs;
 
-  /// 贴右（bot 自己发的）/ 贴左
-  final bool alignEnd;
+  /// 发信方的 bot id（查看器标题里画"谁 ⇄ 谁"用）
+  final String? senderBotId;
 
   @override
   Widget build(BuildContext context) {
     if (refs.isEmpty) return const SizedBox.shrink();
     final state = AppScope.of(context);
-    // 所有往来的消息条数总和；一个都拿不到就返回 null（退回老文案）
+    // 仅汇总带计数的引用；全部缺失时省略数量。
     final counts = refs.map((r) => r.count).whereType<int>().toList();
     final totals = counts.isEmpty ? null : counts.reduce((a, b) => a + b);
 
-    return Align(
-      alignment: alignEnd ? Alignment.centerRight : Alignment.centerLeft,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 3),
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Center(
         child: HoverTap(
-          baseColor: PB.bgElevated,
+          baseColor: Colors.transparent,
           hoverColor: PB.bgHover,
           pressColor: PB.bgActive,
           borderRadius: BorderRadius.circular(PB.rFull),
-          onTap: () => showChatPeek(context, refs: refs),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(PB.rFull),
-              border: Border.all(color: PB.borderSecondary),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(LucideIcons.send, size: 13, color: PB.textTertiary),
-                const SizedBox(width: 7),
-                Flexible(child: _label(state, totals)),
+          onTap: () =>
+              showChatPeek(context, refs: refs, senderBotId: senderBotId),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            child: ConversationPeople(
+              prefix: '已发消息给',
+              people: [
+                for (final ref in refs)
+                  (
+                    id: ref.botId,
+                    name: state.botById(ref.botId)?.name ?? 'bot',
+                  ),
               ],
+              suffix: totals == null ? '' : '$totals 条往来',
             ),
           ),
         ),
       ),
     );
   }
-
-  /// 文案两种：
-  ///   · 有往来条数 → 「5 条消息往来 [头像堆] 2 个 Bot」
-  ///     用户要的是"进展到哪一步了"，只写"已发送给 X"看不出已经来回几轮。
-  ///   · 拿不到条数（老数据）→ 退回「已发送消息给 @X 和 @Y」
-  Widget _label(AppState state, int? totals) {
-    if (totals == null) {
-      return Text.rich(
-        TextSpan(
-          children: [
-            const TextSpan(text: '已发送消息给 '),
-            for (var i = 0; i < refs.length; i++) ...[
-              if (i > 0) TextSpan(text: i == refs.length - 1 ? ' 和 ' : '、'),
-              TextSpan(
-                text: '@${state.botById(refs[i].botId)?.name ?? 'bot'}',
-                style: const TextStyle(
-                  color: PB.accentBright,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ],
-        ),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
-      );
-    }
-
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          '$totals 条消息往来',
-          style: const TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
-        ),
-        const SizedBox(width: 8),
-        // 头像堆：一眼看出跟哪几个同事过的招（最多摆 4 个，再多就折成 +N）
-        for (final r in refs.take(4))
-          Padding(
-            padding: const EdgeInsets.only(right: 2),
-            child: BlobAvatar(
-              seed: r.botId,
-              color: PB.colorFor(r.botId),
-              size: 16,
-              animate: false,
-            ),
-          ),
-        if (refs.length > 4)
-          Text(
-            '+${refs.length - 4}',
-            style: const TextStyle(
-              fontSize: PB.fsXxs,
-              color: PB.textQuaternary,
-            ),
-          ),
-        const SizedBox(width: 6),
-        Text(
-          '${refs.length} 个 Bot',
-          style: const TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
-        ),
-      ],
-    );
-  }
 }
 
-/// 窥视弹层：在当前位置浮出一张卡片，显示某个私聊里的往来。
+/// 双人对话查看器：浮出一张"聊天窗"，像正常聊天一样读 bot 之间的私聊。
 ///
 /// 不跳转、不切会话 —— 用户看完关掉还在原地：
 /// 群里的对话流不该被一次"去看看他们聊了啥"打断。
 Future<void> showChatPeek(
   BuildContext context, {
   required List<MsgRef> refs,
+  String? senderBotId,
 }) async {
   if (refs.isEmpty) return;
   final overlay = Overlay.maybeOf(context);
@@ -152,9 +80,14 @@ Future<void> showChatPeek(
   entry = OverlayEntry(
     builder: (ctx) => _PeekLayer(
       refs: refs,
+      senderBotId: senderBotId,
       messagesOf: (roomId) => state.messages[roomId] ?? const [],
-      nameOf: (botId) => state.botById(botId)?.name ?? 'bot',
+      botNameOf: (botId) => state.botById(botId)?.name ?? 'bot',
       onClose: () => entry.remove(),
+      onOpenRoom: (roomId) {
+        entry.remove();
+        requestRoom(context, roomId);
+      },
     ),
   );
   overlay.insert(entry);
@@ -163,15 +96,19 @@ Future<void> showChatPeek(
 class _PeekLayer extends StatefulWidget {
   const _PeekLayer({
     required this.refs,
+    required this.senderBotId,
     required this.messagesOf,
-    required this.nameOf,
+    required this.botNameOf,
     required this.onClose,
+    required this.onOpenRoom,
   });
 
   final List<MsgRef> refs;
+  final String? senderBotId;
   final List<Msg> Function(String roomId) messagesOf;
-  final String Function(String botId) nameOf;
+  final String Function(String botId) botNameOf;
   final VoidCallback onClose;
+  final void Function(String roomId) onOpenRoom;
 
   @override
   State<_PeekLayer> createState() => _PeekLayerState();
@@ -193,8 +130,8 @@ class _PeekLayerState extends State<_PeekLayer>
   @override
   Widget build(BuildContext context) {
     final screen = MediaQuery.sizeOf(context);
-    final w = (screen.width * 0.62).clamp(320.0, 620.0);
-    final h = (screen.height * 0.72).clamp(280.0, 620.0);
+    final w = (screen.width * 0.68).clamp(360.0, 760.0);
+    final h = (screen.height * 0.78).clamp(320.0, 720.0);
 
     return Stack(
       children: [
@@ -205,7 +142,7 @@ class _PeekLayerState extends State<_PeekLayer>
             child: AnimatedBuilder(
               animation: _c,
               builder: (context, _) => Container(
-                color: Colors.black.withValues(alpha: 0.5 * _c.value),
+                color: Colors.black.withValues(alpha: 0.55 * _c.value),
               ),
             ),
           ),
@@ -218,7 +155,7 @@ class _PeekLayerState extends State<_PeekLayer>
               final t = Motion.inC.transform(_c.value);
               return Opacity(
                 opacity: t,
-                child: Transform.scale(scale: 0.95 + 0.05 * t, child: child),
+                child: Transform.scale(scale: 0.96 + 0.04 * t, child: child),
               );
             },
           ),
@@ -228,9 +165,7 @@ class _PeekLayerState extends State<_PeekLayer>
   }
 
   Widget _card(double w, double h) {
-    // ★ 同 floating_menu 的坑：这一层是插进 Overlay 的，不在 app 的 Material 之下。
-    //   没有 Material 祖先，Flutter 会给里面所有 Text 画"黄色双下划线"提示。
-    //   借一层 transparency 的 Material 拿回正确的 DefaultTextStyle。
+    // 为覆盖层内的文本提供 Material 默认样式。
     return Material(
       type: MaterialType.transparency,
       child: SizedBox(
@@ -251,88 +186,42 @@ class _PeekLayerState extends State<_PeekLayer>
           ),
           child: Column(
             children: [
-              // 标题：已发送消息给 @A 和 @B
-              Padding(
-                padding: const EdgeInsets.fromLTRB(18, 14, 10, 10),
-                child: Row(
-                  children: [
-                    const Icon(
-                      LucideIcons.send,
-                      size: 15,
-                      color: PB.textTertiary,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text.rich(
-                        TextSpan(
-                          children: [
-                            const TextSpan(text: '已发送消息给 '),
-                            for (var i = 0; i < widget.refs.length; i++) ...[
-                              if (i > 0)
-                                TextSpan(
-                                  text: i == widget.refs.length - 1
-                                      ? ' 和 '
-                                      : '、',
-                                ),
-                              TextSpan(
-                                text: '@${widget.nameOf(widget.refs[i].botId)}',
-                                style: const TextStyle(
-                                  color: PB.accentBright,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: PB.fsSm,
-                          color: PB.textSecondary,
-                        ),
-                      ),
-                    ),
-                    HoverIconButton(
-                      icon: LucideIcons.x,
-                      tooltip: '关闭',
-                      onTap: widget.onClose,
-                    ),
-                  ],
-                ),
-              ),
+              _header(),
               Container(height: 1, color: PB.borderTertiary),
               Expanded(
                 child: ListView(
-                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-                  children: [
-                    for (final r in widget.refs) ...[_thread(r)],
-                  ],
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
+                  children: [for (final r in widget.refs) ..._thread(r)],
                 ),
               ),
               Container(height: 1, color: PB.borderTertiary),
+              // 底部提供关闭查看器的操作。
               Padding(
-                padding: const EdgeInsets.all(10),
-                child: HoverTap(
-                  baseColor: PB.bgElevated,
-                  hoverColor: PB.bgHover,
-                  borderRadius: BorderRadius.circular(PB.rXl),
-                  onTap: () {
-                    widget.onClose();
-                    // 跳进那个 bot 的私聊，用户想接着聊就接着聊
-                    requestRoom(context, widget.refs.first.roomId);
-                  },
-                  child: const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 9),
-                    child: Center(
-                      child: Text(
-                        '打开这个对话',
-                        style: TextStyle(
-                          fontSize: PB.fsSm,
-                          color: PB.textSecondary,
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    HoverTap(
+                      baseColor: PB.bgElevated,
+                      hoverColor: PB.bgHover,
+                      pressColor: PB.bgActive,
+                      borderRadius: BorderRadius.circular(PB.rFull),
+                      onTap: widget.onClose,
+                      child: const Padding(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: 8,
+                        ),
+                        child: Text(
+                          '关闭聊天',
+                          style: TextStyle(
+                            fontSize: PB.fsSm,
+                            color: PB.textSecondary,
+                          ),
                         ),
                       ),
                     ),
-                  ),
+                  ],
                 ),
               ),
             ],
@@ -342,88 +231,203 @@ class _PeekLayerState extends State<_PeekLayer>
     );
   }
 
-  /// 一段私聊往来（一次 ref = 一个 bot 的私聊）
-  Widget _thread(MsgRef ref) {
-    final msgs = widget.messagesOf(ref.roomId);
-    final name = widget.nameOf(ref.botId);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+  /// 顶部：谁 ⇄ 谁（单个私聊）；多个则显示"已发消息给 N 个 Bot"
+  Widget _header() {
+    final refs = widget.refs;
+    final single = refs.length == 1;
+
+    Widget botTag(String botId, {double size = 22}) => Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        if (widget.refs.length > 1)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8, top: 4),
-            child: Row(
-              children: [
-                BlobAvatar(
-                  seed: ref.botId,
-                  color: PB.colorFor(ref.botId),
-                  size: 22,
-                  animate: false,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  name,
-                  style: const TextStyle(
-                    fontSize: PB.fsXs,
-                    fontWeight: FontWeight.w600,
-                    color: PB.textSecondary,
-                  ),
-                ),
-              ],
+        BlobAvatar(
+          seed: botId,
+          color: PB.colorFor(botId),
+          size: size,
+          animate: false,
+        ),
+        const SizedBox(width: 7),
+        Flexible(
+          child: Tooltip(
+            message: widget.botNameOf(botId),
+            child: Text(
+              widget.botNameOf(botId),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: PB.fsSm,
+                fontWeight: FontWeight.w600,
+                color: PB.textPrimary,
+              ),
             ),
           ),
-        if (msgs.isEmpty)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 16),
-            child: Text(
-              '（还没有内容）',
-              style: TextStyle(fontSize: PB.fsXs, color: PB.textQuaternary),
-            ),
-          )
-        else
-          for (final m in msgs)
-            if (m.text.trim().isNotEmpty && !m.isRef)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      m.isUser
-                          ? '我'
-                          : (m.authorName.isEmpty ? name : m.authorName),
+        ),
+      ],
+    );
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+      child: Row(
+        children: [
+          Expanded(
+            child: single
+                ? Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (widget.senderBotId != null) ...[
+                        Expanded(child: botTag(widget.senderBotId!)),
+                        const Padding(
+                          padding: EdgeInsets.symmetric(horizontal: 10),
+                          child: Icon(
+                            LucideIcons.arrowLeftRight,
+                            size: 13,
+                            color: PB.textQuaternary,
+                          ),
+                        ),
+                      ],
+                      Expanded(child: botTag(refs.first.botId)),
+                    ],
+                  )
+                : Text(
+                    '已发消息给 ${refs.length} 个 Bot',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: PB.fsSm,
+                      fontWeight: FontWeight.w600,
+                      color: PB.textPrimary,
+                    ),
+                  ),
+          ),
+          // 保留"直接打开这个会话"的出口（查看器是只读的）
+          HoverIconButton(
+            icon: LucideIcons.squareArrowOutUpRight,
+            tooltip: '打开这个对话',
+            onTap: () => widget.onOpenRoom(refs.first.roomId),
+          ),
+          HoverIconButton(
+            icon: LucideIcons.x,
+            tooltip: '关闭',
+            onTap: widget.onClose,
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 一段私聊往来（一次 ref = 一个收信 bot 的私聊）
+  List<Widget> _thread(MsgRef ref) {
+    final msgs = widget.messagesOf(ref.roomId);
+    final others = widget.refs.length > 1;
+
+    return [
+      if (others)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 10, top: 2),
+          child: Row(
+            children: [
+              BlobAvatar(
+                seed: ref.botId,
+                color: PB.colorFor(ref.botId),
+                size: 20,
+                animate: false,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Tooltip(
+                  message: widget.botNameOf(ref.botId),
+                  child: Text(
+                    widget.botNameOf(ref.botId),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: PB.fsXs,
+                      fontWeight: FontWeight.w600,
+                      color: PB.textSecondary,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      if (msgs.isEmpty)
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 16),
+          child: Text(
+            '（还没有内容）',
+            style: TextStyle(fontSize: PB.fsXs, color: PB.textQuaternary),
+          ),
+        )
+      else
+        for (final m in msgs)
+          if (m.text.trim().isNotEmpty && !m.isRef) _message(m),
+    ];
+  }
+
+  /// 一条消息：头像 + 作者名 + 气泡（像正常聊天那样左对齐）
+  Widget _message(Msg m) {
+    final authorId = m.isUser ? 'me' : (m.authorId ?? m.authorName);
+    final name = m.isUser
+        ? '我'
+        : (m.authorName.isEmpty ? widget.botNameOf(authorId) : m.authorName);
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          BlobAvatar(
+            seed: authorId,
+            color: PB.colorFor(authorId),
+            size: 22,
+            animate: false,
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 560),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4, left: 2),
+                    child: Text(
+                      name,
                       style: const TextStyle(
                         fontSize: PB.fsXxs,
                         color: PB.textQuaternary,
                       ),
                     ),
-                    const SizedBox(height: 3),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 9,
-                      ),
-                      decoration: BoxDecoration(
-                        color: PB.bgBubble,
-                        borderRadius: BorderRadius.circular(PB.rXl),
-                      ),
-                      child: MdText(
-                        m.text,
-                        selectable: true,
-                        compact: true,
-                        mentions: const [],
-                        style: const TextStyle(
-                          fontSize: PB.fsXs,
-                          height: 1.5,
-                          color: PB.textPrimary,
-                        ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 9,
+                    ),
+                    decoration: BoxDecoration(
+                      color: PB.bgBubble,
+                      borderRadius: BorderRadius.circular(PB.rXl),
+                      border: Border.all(color: PB.borderTertiary),
+                    ),
+                    child: MdText(
+                      m.text,
+                      selectable: true,
+                      compact: true,
+                      mentions: const [],
+                      style: const TextStyle(
+                        fontSize: PB.fsXs,
+                        height: 1.5,
+                        color: PB.textPrimary,
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-      ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
