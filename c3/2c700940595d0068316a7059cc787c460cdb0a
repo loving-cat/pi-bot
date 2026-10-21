@@ -1,0 +1,46 @@
+server/tests/all.mjs
+  s_06973911ad2cd6::t_d1dc1b3852780f 42
+server/src/session-refresh.js
+  s_06973911ad2cd6::t_9df9b8b4affaa9 27-29
+server/tests/role-tools.mjs
+  s_06973911ad2cd6::t_0a0931be061d12 1-215
+server/src/role-tools.js
+  s_06973911ad2cd6::t_485d318b8d93eb 1-52,54-58
+  s_06973911ad2cd6::t_ea8e485a994f95 53
+server/src/escalation.js
+  s_06973911ad2cd6::t_0a0931be061d12 2,46-49,70-71,82-84
+server/src/mcp-hook.js
+  s_06973911ad2cd6::t_9df9b8b4affaa9 26,38-39
+server/src/policy-hook.js
+  s_06973911ad2cd6::t_9df9b8b4affaa9 15-16,70-75
+  s_06973911ad2cd6::t_9ec0bcf20b2ab1 76
+server/src/group-prompt.js
+  s_06973911ad2cd6::t_22f7880ee0bd78 134-140,156
+  s_06973911ad2cd6::t_485d318b8d93eb 17,157-158,183-189,203-206,214-220
+server/src/session-factory.js
+  s_06973911ad2cd6::t_9df9b8b4affaa9 22-23,80-82,85,88,132,136-144,189-194
+  s_06973911ad2cd6::t_ea8e485a994f95 60,62-63
+  s_06973911ad2cd6::t_bddd50605dd84e 64-66
+server/tests/unit.mjs
+  s_06973911ad2cd6::t_ea8e485a994f95 1074-1117,1229-1233
+server/src/config.js
+  s_06973911ad2cd6::t_8929fb5fad9d19 147-148
+server/src/store.js
+  s_06973911ad2cd6::t_a321b4c1df061e 119
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c32c700940595d0068316a7059cc787c460cdb0a",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
