@@ -1,0 +1,63 @@
+.gitignore
+  s_06973911ad2cd6::t_d386d2f6e6fc15 22,54-57
+app/.metadata
+  s_06973911ad2cd6::t_d10474235d1606 21-23
+app/analysis_options.yaml
+  s_06973911ad2cd6::t_96e2d8f9154e50 17
+app/macos/.gitignore
+  s_06973911ad2cd6::t_7bea7553e5d9fe 1-7
+app/macos/Flutter/Flutter-Debug.xcconfig
+  s_06973911ad2cd6::t_1212e4a2fd64bd 1-2
+app/macos/Flutter/Flutter-Release.xcconfig
+  s_06973911ad2cd6::t_269c64a1ab1432 1-2
+app/macos/Flutter/GeneratedPluginRegistrant.swift
+  s_06973911ad2cd6::t_e4c8a37621dea7 1-28
+app/macos/Podfile
+  s_06973911ad2cd6::t_cae4cb5c3464e5 1-42
+app/macos/Runner.xcodeproj/project.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
+  s_06973911ad2cd6::t_118f0ab5565911 1-8
+app/macos/Runner.xcodeproj/xcshareddata/xcschemes/Runner.xcscheme
+  s_06973911ad2cd6::t_9e06e62c6861f3 1-117
+app/macos/Runner.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
+  s_06973911ad2cd6::t_71c43020a796ad 1-8
+app/macos/Runner/AppDelegate.swift
+  s_06973911ad2cd6::t_1d69414c27448b 1-13
+app/macos/Runner/Assets.xcassets/AppIcon.appiconset/Contents.json
+  s_06973911ad2cd6::t_41d79aa13921b5 1-68
+app/macos/Runner/Base.lproj/MainMenu.xib
+  s_06973911ad2cd6::t_50b24f0c0e8393 1-343
+app/macos/Runner/Configs/AppInfo.xcconfig
+  s_06973911ad2cd6::t_081f7e640cb668 1-12
+app/macos/Runner/Configs/Debug.xcconfig
+  s_06973911ad2cd6::t_67e630db4c41a2 1-2
+app/macos/Runner/Configs/Release.xcconfig
+  s_06973911ad2cd6::t_a89425b6189afc 1-2
+app/macos/Runner/Configs/Warnings.xcconfig
+  s_06973911ad2cd6::t_1a347bfacfe5d5 1-13
+app/macos/Runner/DebugProfile.entitlements
+  s_06973911ad2cd6::t_fe8e3e407187b9 1-14
+app/macos/Runner/Info.plist
+  s_06973911ad2cd6::t_76c76ea330eba2 1-36
+app/macos/Runner/MainFlutterWindow.swift
+  s_06973911ad2cd6::t_89dbef5238e14d 1-15
+app/macos/Runner/Release.entitlements
+  s_06973911ad2cd6::t_1cbb2677cde48f 1-12
+app/macos/RunnerTests/RunnerTests.swift
+  s_06973911ad2cd6::t_833547866eb44b 1-12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7ebc3214dbeb3d4ed87af128ace7831f4eee3586",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}

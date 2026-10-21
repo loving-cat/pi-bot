@@ -1,0 +1,21 @@
+server/src/relay-server.js
+  s_c73b42c9544151::t_de44bd81e23fdd 13-31,33-43,49
+server/src/relay/server.js
+  s_c73b42c9544151::t_8620d630df2b54 100-118,123
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "50d8817da5e47a4db84cbaa63c62973764f8655f",
+  "prompts": {},
+  "sessions": {
+    "s_c73b42c9544151": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a09f0f-7603-7a80-8d1c-b48d6da3d8d4",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}

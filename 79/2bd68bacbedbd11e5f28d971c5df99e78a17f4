@@ -1,0 +1,29 @@
+app/test/chat_scroll_follow_test.dart
+  s_06973911ad2cd6::t_87caed731dbe90 1-2,4-58,60-65,67-80,83-165,167-183,185,187-189,213-214,268-330
+  s_06973911ad2cd6::t_53a8a2fc6db03f 59,66,215-267
+  s_06973911ad2cd6::t_e5bc28ffdc663f 3,81-82,166,184,186,190-212
+app/lib/screens/chat_screen.dart
+  s_06973911ad2cd6::t_9f9979b00f1fe3 12,61-62,82-90,133,242,447,612,671-786
+  s_06973911ad2cd6::t_c31a81c98eb695 787,789-793,843
+app/lib/chat_scroll_follow.dart
+  s_06973911ad2cd6::t_c2feabc9e06fc4 1-26,28-48,50-54,56-60,67,69-71,82-99,102-181
+  s_06973911ad2cd6::t_f1302df9f1d5ee 27,49,55,61-66,68,72-81,100-101
+docs/MODULE-MAP.md
+  s_06973911ad2cd6::t_b090c7f06794fd 90
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "792bd68bacbedbd11e5f28d971c5df99e78a17f4",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}

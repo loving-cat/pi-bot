@@ -1,0 +1,16 @@
+app/lib/widgets/tool_steps.dart
+  h_53f14b6641484b 77-144
+app/test/tool_steps_test.dart
+  h_53f14b6641484b 42,45-52,58,63-65,74,79,83-122
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "52f6e6c6e6c2d6da6f5a3dbf77fdae40a8535a41",
+  "prompts": {},
+  "humans": {
+    "h_53f14b6641484b": {
+      "author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}

@@ -1,0 +1,44 @@
+README.md
+  h_53f14b6641484b 182
+app/lib/app_state.dart
+  h_53f14b6641484b 1223-1232
+app/lib/model_group_capacity.dart
+  h_53f14b6641484b 44-81,90-91,99-102,108,115-116,128-135,143-144,166,182-183,210-211,229,240-251,259-261
+app/lib/models.dart
+  h_53f14b6641484b 546-548,556-564,570-575
+app/lib/widgets/model_capacity_fields.dart
+  h_53f14b6641484b 17-18,29-35,157-159,164-292,329-336,359-360
+app/lib/widgets/model_group_editor.dart
+  h_53f14b6641484b 233-236,250-265,388-389
+app/test/model_group_capacity_test.dart
+  h_53f14b6641484b 225-300
+app/test/model_group_editor_test.dart
+  h_53f14b6641484b 92-99
+docs/MODULE-MAP.md
+  h_53f14b6641484b 37,79-80
+docs/PITFALLS.md
+  h_53f14b6641484b 287-356
+server/src/http.js
+  h_53f14b6641484b 10-14,717-726
+server/src/model-capacity.js
+  h_53f14b6641484b 2-3,36-41,49-50,52-53
+server/src/model-groups.js
+  h_53f14b6641484b 31-35,82-86,156-177
+server/src/model-thinking.js
+  h_53f14b6641484b 1-181
+server/tests/all.mjs
+  h_53f14b6641484b 12
+server/tests/model-thinking.mjs
+  h_53f14b6641484b 1-198
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6f7c5fa7d8ba29143abc66ee8c50f040522967fd",
+  "prompts": {},
+  "humans": {
+    "h_53f14b6641484b": {
+      "author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}

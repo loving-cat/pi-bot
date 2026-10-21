@@ -1,0 +1,25 @@
+app/lib/widgets/server_config_section.dart
+  s_06973911ad2cd6::t_c90736eb579b54 41,90-115
+app/lib/screens/host_connect_screen.dart
+  s_06973911ad2cd6::t_12bd2120c8efc8 144-148
+  s_06973911ad2cd6::t_c90736eb579b54 11
+app/test/server_settings_test.dart
+  s_06973911ad2cd6::t_c90736eb579b54 6,198-237
+  s_06973911ad2cd6::t_abadefef9a0f54 238-239
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5a34b0c2b3b24e600bfc4563411f96cf73b48377",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
