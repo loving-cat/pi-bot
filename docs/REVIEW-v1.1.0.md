@@ -68,7 +68,7 @@
 
 **P1-3 群里仍然能走私信（旧 #8）**
 `session-factory.js:73` 建工具时没传房间类型，`tools.js:339` 的 `message_bot` 在群里照样可见，而提示词 `group-prompt.js:123` 又写着"必须用 @，不要用 message_bot"。同一份提示一边禁止一边给工具。
-→ 可复用 `ask_user` 的群聊调用限制（`tools.js:193-201`），为对应工具增加相同的场景校验。
+→ 改法：为 `message_bot` 增加与 `ask_user` 相同的群聊可见性限制（`tools.js:193-201`）。
 
 **P1-4 空回复兜底第二层在别人机器上静默失效（旧 #6）**
 `pi-runner.js:1283-1287` 仍是 `[this.model, selfhost/…, selfhost/…]`；换 provider 后后两个解析为 null 被 `filter(Boolean)` 滤掉，链里只剩刚吐空的那个模型。
