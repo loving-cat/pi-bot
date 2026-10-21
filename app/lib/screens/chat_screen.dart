@@ -1737,48 +1737,53 @@ class _MessageRow extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              GestureDetector(
-                onLongPress: onLongPress,
-                child: Container(
-                  constraints: BoxConstraints(
-                    maxWidth: math.min(
-                      MediaQuery.sizeOf(context).width * 0.74,
-                      560,
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  if (msg.attachments.isNotEmpty)
+                    Padding(
+                      padding: EdgeInsets.only(
+                        bottom: msg.text.trim().isEmpty ? 0 : 6,
+                      ),
+                      child: AttachmentList(
+                        items: msg.attachments,
+                        urlFor: (id) => AppScope.read(context).fileUrl(id),
+                        onLongPress: onLongPress,
+                        alignEnd: true,
+                        maxWidth: math.min(
+                          MediaQuery.sizeOf(context).width * 0.74,
+                          560,
+                        ),
+                      ),
                     ),
-                  ),
-                  padding: const EdgeInsets.fromLTRB(15, 13, 15, 13),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [PB.userBubbleTop, PB.userBubbleBottom],
-                    ),
-                    borderRadius: BorderRadius.circular(PB.rBubble),
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.10),
-                    ),
-                    boxShadow: PB.glow(
-                      PB.userBubbleBottom,
-                      blur: 16,
-                      alpha: 0.28,
-                    ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      if (msg.attachments.isNotEmpty)
-                        Padding(
-                          padding: EdgeInsets.only(
-                            bottom: msg.text.trim().isEmpty ? 0 : 6,
-                          ),
-                          child: AttachmentList(
-                            items: msg.attachments,
-                            urlFor: (id) => AppScope.read(context).fileUrl(id),
-                            isUser: true,
+                  if (msg.text.trim().isNotEmpty)
+                    GestureDetector(
+                      onLongPress: onLongPress,
+                      child: Container(
+                        constraints: BoxConstraints(
+                          maxWidth: math.min(
+                            MediaQuery.sizeOf(context).width * 0.74,
+                            560,
                           ),
                         ),
-                      if (msg.text.trim().isNotEmpty)
-                        ExcludeFocus(
+                        padding: const EdgeInsets.fromLTRB(15, 13, 15, 13),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [PB.userBubbleTop, PB.userBubbleBottom],
+                          ),
+                          borderRadius: BorderRadius.circular(PB.rBubble),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.10),
+                          ),
+                          boxShadow: PB.glow(
+                            PB.userBubbleBottom,
+                            blur: 16,
+                            alpha: 0.28,
+                          ),
+                        ),
+                        child: ExcludeFocus(
                           child: MdText(
                             msg.text,
                             selectable: true,
@@ -1791,9 +1796,9 @@ class _MessageRow extends StatelessWidget {
                             ),
                           ),
                         ),
-                    ],
-                  ),
-                ),
+                      ),
+                    ),
+                ],
               ),
               if (msg.wasSteer && _isLastSteer(context, msg))
                 Padding(
@@ -1903,56 +1908,54 @@ class _MessageRow extends StatelessWidget {
                     ),
                   if (msg.changes != null)
                     ChangedFilesView(summary: msg.changes!),
-                  GestureDetector(
-                    onLongPress: onLongPress,
-                    child: Container(
-                      constraints: BoxConstraints(maxWidth: maxBubble),
-                      padding: const EdgeInsets.fromLTRB(15, 13, 15, 13),
-                      decoration: BoxDecoration(
-                        color: PB.bgBubble,
-                        borderRadius: BorderRadius.circular(PB.rBubble),
-                        border: Border.all(
-                          color: msg.status == 'error'
-                              ? PB.danger.withValues(alpha: 0.45)
-                              : (streaming
-                                    ? PB.accent.withValues(alpha: 0.22)
-                                    : PB.borderHighlight),
-                        ),
-                        boxShadow: PB.shadow(y: 1, blur: 4, alpha: 0.22),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (msg.attachments.isNotEmpty)
-                            AttachmentList(
-                              items: msg.attachments,
-                              urlFor: (id) =>
-                                  AppScope.read(context).fileUrl(id),
-                            ),
-                          if (streaming &&
-                              msg.text.isEmpty &&
-                              msg.attachments.isEmpty)
-                            const _TypingDots()
-                          else if (msg.text.trim().isNotEmpty)
-                            ExcludeFocus(
-                              child: MdText(
-                                streaming ? '${msg.text}▍' : msg.text,
-                                selectable: !streaming,
-                                onMentionTap: (name) =>
-                                    openBotDm(context, name),
-                                mentionOf: mentionOf,
-                                mentions: mentions,
-                                style: const TextStyle(
-                                  fontSize: PB.fsBase,
-                                  height: 1.5,
-                                  color: PB.textPrimary,
-                                ),
-                              ),
-                            ),
-                        ],
+                  if (msg.attachments.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: AttachmentList(
+                        items: msg.attachments,
+                        urlFor: (id) => AppScope.read(context).fileUrl(id),
+                        onLongPress: onLongPress,
+                        maxWidth: maxBubble,
                       ),
                     ),
-                  ),
+                  if (msg.text.trim().isNotEmpty ||
+                      (streaming && msg.text.isEmpty))
+                    GestureDetector(
+                      onLongPress: onLongPress,
+                      child: Container(
+                        constraints: BoxConstraints(maxWidth: maxBubble),
+                        padding: const EdgeInsets.fromLTRB(15, 13, 15, 13),
+                        decoration: BoxDecoration(
+                          color: PB.bgBubble,
+                          borderRadius: BorderRadius.circular(PB.rBubble),
+                          border: Border.all(
+                            color: msg.status == 'error'
+                                ? PB.danger.withValues(alpha: 0.45)
+                                : (streaming
+                                      ? PB.accent.withValues(alpha: 0.22)
+                                      : PB.borderHighlight),
+                          ),
+                          boxShadow: PB.shadow(y: 1, blur: 4, alpha: 0.22),
+                        ),
+                        child: streaming && msg.text.isEmpty
+                            ? const _TypingDots()
+                            : ExcludeFocus(
+                                child: MdText(
+                                  streaming ? '${msg.text}▍' : msg.text,
+                                  selectable: !streaming,
+                                  onMentionTap: (name) =>
+                                      openBotDm(context, name),
+                                  mentionOf: mentionOf,
+                                  mentions: mentions,
+                                  style: const TextStyle(
+                                    fontSize: PB.fsBase,
+                                    height: 1.5,
+                                    color: PB.textPrimary,
+                                  ),
+                                ),
+                              ),
+                      ),
+                    ),
                   if (msg.error != null && msg.error!.isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.only(top: 5, left: 2),
