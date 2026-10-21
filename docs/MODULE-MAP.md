@@ -21,6 +21,7 @@
 | `session-factory.js` | 造会话：模型/工具/预算/提示词装配；扩展过滤（不加载 context-mode 类） |
 | `session-pool.js` | 会话缓存、pending 去重、LRU 驱逐 |
 | `session-refresh.js` | 配置变更后标记会话待重载；忙碌会话延后释放，取用时同步预留避免竞态 |
+| `role-tools.js` | 有效负责人判定、内置与自定义工具白名单、角色配置签名（纯逻辑） |
 | `direct-message-delivery.js` | 私聊异步输入投递；会话忙时按原模式排队、保留输入并响应取消 |
 | `tools.js` | 工具定义（通用 + 主控）：派活/私信/建部门/后台进程/询问卡片… |
 | `group-prompt.js` | 群聊会话层：谁先开口、每人看到什么、提示词拼装（纯逻辑） |
@@ -52,7 +53,8 @@
 | `shells.js` | 后台进程注册表（启动/读/写/杀、容量与回收） |
 | `shell-policy.js` | 命令级规则：归一化、解析、通配匹配、判不了就拒绝（纯函数） |
 | `policy-hook.js` | 命令规则的执行点（pi 内联扩展，拦 `tool_call`） |
-| `dm.js` | 私聊行为：开场文案、进度回执、是否该回执（纯函数） |
+| `dm.js` | 私聊开场文案、回执条件与结果、来源和调度关联的保存 |
+| `progress-senders.js` / `progress-migration.js` | 根据明确消息或调度关联规划来源补齐，再应用迁移；不通过正文猜测派活人 |
 | `hooks.js` | 工具钩子：改写入参 / 拦下（规则存 `data/hooks.json`，判定纯函数） |
 | `change-watch.js` | 工作目录快照与改动对比（本轮改了哪些文件） |
 | `artifact-watch.js` | 产物回传：只挑交付物扩展名、只挑这一轮新增/改过的、单文件/总量有上限 |
@@ -88,13 +90,15 @@
 | `server/supervisor.dart` / `server/launcher.dart` / `server/server_log.dart` | 进程与 PID 管理、启动编排及日志；Windows/POSIX 平台分流 |
 | `model_group_capacity.dart` | 模型卡片草稿、稳定行标识、容量解析与保存协议（纯逻辑） |
 | `chat_scroll_follow.dart` | 聊天追底调度：帧后挂载、有限补跳、用户滚动取消和内容尺寸变化跟随 |
+| `progress_messages.dart` | 回执结果判定、发送人去重和连续回执分组（纯逻辑） |
+| `widgets/progress_notice.dart` / `widgets/conversation_people.dart` | 回执入口与明细、限宽的人员摘要；状态及分组规则来自逻辑层 |
 | `widgets/model_group_editor.dart` | 模型组编辑装配：接口配置、独立模型卡片、思考强度选项拉取、连接测试与保存 |
 | `widgets/model_capacity_fields.dart` | 模型卡片与列表摘要展示；单独编辑 ID、显示名、上下文窗口、最大输出与思考强度，向上回传操作 |
 | `widgets/server_config_section.dart` | 共用本机启动配置对话框，保存后调用状态层重启并报告结果 |
 | `screens/host_connect_screen.dart` | 宿主启动与失败页；重试、查看日志和打开启动配置 |
 | `screens/` | 页面：home_shell / chat_screen / rooms_screen / bots_screen / settings / pair / scan |
 | `widgets/` | 可复用组件：`tool_steps`、`changed_files`、`task_board`、`automation_sheet`、`ask_card`、**`approval_card`**、`md_text`、`attachment_view`、`avatar*`、`window_title_bar`… |
-| `theme.dart` | 颜色/字号/圆角；**图标约束写在这里**（基础字体仅 68 个字形） |
+| `theme.dart` | 颜色/字号/圆角；新增图标需核对当前依赖字体的实际字形 |
 | `clipboard_image.dart` / `clipboard_image_macos.dart` | 剪贴板图片平台分流；Windows PowerShell、macOS PNG/TIFF 读取与临时文件清理 |
 | `window_state.dart` | 窗口位置/大小记忆：编码、解析、夹回可见区（纯函数） |
 | `app_log.dart` | 界面层错误落盘（app.log）、打开日志目录 |
