@@ -1,0 +1,37 @@
+server/tests/progress-senders.mjs
+  s_06973911ad2cd6::t_5a05623af22c7f 1-148
+server/tests/dm.mjs
+  s_06973911ad2cd6::t_b2af81dcc37d81 20,97-100,109-114,116-122,166-214
+  s_06973911ad2cd6::t_f92ff474e714d1 215-216
+server/src/progress-migration.js
+  s_06973911ad2cd6::t_b2af81dcc37d81 6-22
+  s_06973911ad2cd6::t_1f6c31101c4fea 1-5,23-31
+server/tests/progress-flow.mjs
+  s_06973911ad2cd6::t_1676a3c00df5cf 1-120
+server/src/progress-senders.js
+  s_06973911ad2cd6::t_1f6c31101c4fea 1-93
+server/tests/all.mjs
+  s_06973911ad2cd6::t_e1cb38f71c2776 46-47
+server/src/dm.js
+  s_06973911ad2cd6::t_9321ba93bb4c67 1-3,64-75,90-99
+server/src/pi-runner.js
+  s_06973911ad2cd6::t_a8697d6846f337 45,763,765,776,807,1035-1040,1047,1056,1146,1208,2062
+server/src/server-main.js
+  s_06973911ad2cd6::t_a67446e2b664b4 3,74-81
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "158dd4ed9f7ae2122a0714047f05317b5e9c55c4",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
