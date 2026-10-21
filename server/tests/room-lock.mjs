@@ -19,6 +19,7 @@ fs.rmSync(process.env.PI_BOT_HOME, { recursive: true, force: true });
 
 const { store } = await import('../src/store.js');
 const { PiRunner } = await import('../src/pi-runner.js');
+const { shouldStopRound } = await import('../src/group-round.js');
 
 const results = [];
 async function test(name, fn) {
@@ -240,8 +241,12 @@ await test('★ 终止：当场停住，不再往下派下一个人（用户："
   assert.ok(runner.aborting.has(room.id), '终止标记要留在 set 里（新消息来了才清）');
 
   // 新消息 = 新一轮 → 标记清掉，否则这个房间再也起不来
+  // 这里只验标记，不需要真跑一轮（否则还原桩之后会打真实模型，日志里多一条 403）
+  PiRunner.prototype.runRound = async () => {};
   await runner.send(room.id, '再来一次');
+  await sleep(80);
   assert.ok(!runner.aborting.has(room.id), '★ 新消息必须把终止标记清掉，否则房间永久卡死');
+  PiRunner.prototype.runRound = ORIGINAL_RUN_ROUND;
 });
 
 await test('★★ 并发：组长 @ 三个人 → 三个人**同时**开干（不是排队）', async () => {
@@ -365,6 +370,112 @@ await test('★ 用户插话后：旧轮退出时把新消息接上（不丢、�
 
   assert.equal(maxConcurrent, 1, `同一房间不能并发跑两轮，实际 ${maxConcurrent}`);
   assert.ok(rounds.includes('第二轮需求'), '新需求必须被跑到，不能丢');
+  // ★ 桩必须还原：漏一次，后面的用例全都跑在这个假 runRound 上（真实踩过）
+  PiRunner.prototype.runRound = ORIGINAL_RUN_ROUND;
+});
+
+await test('★ 轮次代数变了 → shouldStopRound 立即收手（旧队列不再派）', async () => {
+  assert.deepEqual(
+    shouldStopRound({ queueLen: 3, pendingLen: 1, stale: true }),
+    { stop: true, why: '用户插话' },
+  );
+  // 没有插话时行为不变
+  assert.equal(shouldStopRound({ queueLen: 3, pendingLen: 1, maxRuns: 20 }).stop, false);
+});
+
+await test('★ 用户插话：正在写的消息当场标 aborted（前端不画气泡）', async () => {
+  const { room, member } = makeDept('I');
+  const runner = new PiRunner();
+
+  const streaming = store.appendMessage({
+    roomId: room.id,
+    authorType: 'bot',
+    authorId: member.id,
+    authorName: member.name,
+    text: '正在写…',
+    status: 'streaming',
+  });
+  runner.sessions.set(`${room.id}:${member.id}`, {
+    busy: true,
+    bot: member,
+    session: { abort: async () => {} },
+    turnController: new AbortController(),
+  });
+  // 假装这一轮还占着锁（#dispatchGroupRound 靠它判断“用户插话”）
+  runner.roundLocks.add(room.id);
+
+  await runner.send(room.id, '改个需求');
+
+  const after = store.getMessage(room.id, streaming.id);
+  assert.equal(after.status, 'aborted', `必须标成 aborted，实际 ${after.status}`);
+  assert.equal(after.error, '已按你的要求终止');
+
+  // 清理：这轮没人来 drain，别把锁和队列留给后面的用例
+  runner.roundLocks.delete(room.id);
+  runner.roundQueue.delete(room.id);
+});
+
+await test('★★ 用户插话：旧轮不重试、不留失败回执、不再派下一波', async () => {
+  const { room, lead, member } = makeDept('J');
+  const member2 = store.createBot({ name: '成员J2', persona: '干活' });
+  const mate = store.createBot({ name: '同事J', persona: '干活' });
+  store.updateRoom(room.id, { botIds: [lead.id, member.id, member2.id, mate.id] });
+  const runner = new PiRunner();
+
+  const ran = [];
+  const leadPrompts = [];
+  let leadRuns = 0;
+  let memberRuns = 0;
+  let member2Runs = 0;
+  let mateRuns = 0;
+
+  PiRunner.prototype.run = async (_roomId, botId, prompt = '') => {
+    ran.push(botId);
+    if (botId === lead.id) {
+      leadRuns++;
+      leadPrompts.push(String(prompt));
+      return {
+        ok: true,
+        text: leadRuns === 1 ? `@${member.name} @${member2.name} 你们上` : '好',
+        messageId: `stub-${botId}-${leadRuns}`,
+        ms: 1,
+      };
+    }
+    if (botId === member.id) {
+      memberRuns++;
+      await sleep(120);
+      // 失败：正常情况下会被重试 + 留失败回执；插话后两者都不该发生
+      return { ok: false, text: '', error: '偶发失败', messageId: `stub-${botId}`, ms: 120 };
+    }
+    if (botId === member2.id) {
+      member2Runs++;
+      await sleep(120);
+      // 它会 @ 下一个人：插话后这条 @ 不该再被解析成新派单
+      return { ok: true, text: `@${mate.name} 接着来`, messageId: `stub-${botId}`, ms: 120 };
+    }
+    if (botId === mate.id) mateRuns++;
+    return { ok: true, text: '好', messageId: `stub-${botId}`, ms: 1 };
+  };
+
+  const first = runner.send(room.id, '第一轮需求');
+  await sleep(40);
+  await runner.send(room.id, '第二轮需求');
+  await first;
+  await sleep(700);
+
+  PiRunner.prototype.run = ORIGINAL_RUN;
+
+  assert.equal(memberRuns, 1, `插话后不该重试，失败成员实际跑了 ${memberRuns} 次`);
+  assert.equal(member2Runs, 1, `插话后不该重跑，成员实际跑了 ${member2Runs} 次`);
+  assert.equal(mateRuns, 0, '★ 旧轮里被 @ 的同事不该再被派出去');
+  assert.ok(leadRuns >= 2, `新需求要重新开一轮，组长实际跑了 ${leadRuns} 次`);
+  assert.ok(
+    leadPrompts.some((p) => p.includes('第二轮需求')),
+    '新需求必须真的带到新一轮里',
+  );
+  const receipts = store.listMessages(room.id).filter((m) => m.authorName === '失败回执');
+  assert.equal(receipts.length, 0, `插话后不该有失败回执，实际 ${receipts.length} 条`);
+  assert.equal(runner.roundLocks.size, 0, '房间锁要释放');
 });
 
 let failed = 0;

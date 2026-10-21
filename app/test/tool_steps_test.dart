@@ -5,14 +5,7 @@ import 'package:pi_bot/widgets/tool_steps.dart';
 
 /// 工具调用的显示规则：**跑完就不显示**。
 ///
-/// 这不是终端。用户要看的是"它干成了没有、结果是什么"，不是
-/// `bash` / `read_shell` 这些内部命令名 —— 既看不懂，又把真正的回答顶到屏幕外。
-///
-/// 只保留两个有信息量的瞬间：
-///   · 正在跑 —— 显示一行，否则用户以为卡死了
-///   · 出错了 —— 把失败露出来，失败不能藏
-///
-/// 跑完且没出错 → 一个像素都不占。
+/// 默认模式仅在运行时显示提示，完成或失败均隐藏；调试模式可展开明细。
 void main() {
   Widget host(List<ToolStep> steps, {bool quietWhenDone = true}) => MaterialApp(
     home: Scaffold(
@@ -52,7 +45,7 @@ void main() {
     expect(find.textContaining('点开看明细'), findsNothing, reason: '不该给展开入口');
   });
 
-  testWidgets('★ 失败必须露出来 —— 即使跑完了也要显示', (tester) async {
+  testWidgets('★ 失败步骤也不显示 —— 工具链完全不出现在聊天里', (tester) async {
     await tester.pumpWidget(
       host([
         ToolStep(tool: 'bash', detail: 'npm run build 失败：exit 1', status: 'error'),
@@ -60,14 +53,15 @@ void main() {
       ]),
     );
 
-    // 要点：说的是**失败原因**（人看得懂），不是工具名
-    expect(find.text('有一步没成功'), findsOneWidget);
-    expect(find.textContaining('exit 1'), findsOneWidget, reason: '要说清怎么失败的');
+    // 默认模式不显示命令、参数及失败明细。
+    expect(find.text('有一步没成功'), findsNothing);
+    expect(find.textContaining('exit 1'), findsNothing);
+    expect(find.textContaining('bash'), findsNothing);
     final size = tester.getSize(find.byType(ToolSteps));
-    expect(size.height, greaterThan(0), reason: '出错时必须有可见高度');
+    expect(size.height, 0, reason: '失败也一个像素都不占');
   });
 
-  testWidgets('跑完且成功 + 有一条失败 → 仍然显示（失败优先）', (tester) async {
+  testWidgets('跑完且成功 + 有一条失败 → 同样不显示', (tester) async {
     await tester.pumpWidget(
       host([
         ToolStep(tool: 'bash', detail: 'ok-1', status: 'done'),
@@ -76,8 +70,9 @@ void main() {
       ]),
     );
 
-    expect(find.text('有一步没成功'), findsOneWidget);
-    expect(find.textContaining('bad-one'), findsOneWidget);
+    expect(find.text('有一步没成功'), findsNothing);
+    expect(find.textContaining('bad-one'), findsNothing);
+    expect(tester.getSize(find.byType(ToolSteps)).height, 0);
   });
 
   testWidgets('★ 回归：一长串工具调用跑完后，一个字都不显示', (tester) async {

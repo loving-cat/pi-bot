@@ -104,6 +104,35 @@ async function main() {
   });
   scheduler.start();
 
+  // ★ 端口被占必须当场说清楚并退出。
+  //
+  //   以前这里没挂 error handler：EADDRINUSE 会冒到外面的 uncaughtException，
+  //   而那个兜底是"记日志继续跑" —— 于是进程活着、端口没监听、pid 照写，
+  //   桌面端只会看到一直转圈（没有 banner、没有报错、也没法重试）。
+  //   这种"活着但没干活"的僵尸进程比直接崩掉难查得多。
+  //
+  //   ★ 必须用 prependListener 而不是 on：
+  //     `new WebSocketServer({ server })` 会给 http server 挂一个自己的
+  //     error 监听器（native 实现，只做内部清理、不处理启动失败）。
+  //     用 on() 注册在后面时，那个 handler 先跑 —— 错误被"消费"掉了，
+  //     我们的分支永远不执行，进程照样活着不监听。实测就是这个现象。
+  server.prependListener('error', (err) => {
+    const code = err?.code ?? '';
+    if (code === 'EADDRINUSE') {
+      log(
+        `❌ 端口 ${config.port} 已被占用 —— 可能上一次的 pi-bot 还在跑。\n` +
+          `   查一下：lsof -nP -iTCP:${config.port} -sTCP:LISTEN\n` +
+          `   或在设置里换一个端口。`,
+      );
+    } else if (code === 'EACCES') {
+      log(`❌ 没有权限监听端口 ${config.port}（1024 以下需要管理员）`);
+    } else {
+      log(`❌ 服务端启动失败：${err?.message ?? err}`);
+    }
+    // 退非 0：让拉起它的桌面端知道"没起来"，而不是挂着等健康检查超时
+    process.exit(1);
+  });
+
   server.listen(config.port, config.host, async () => {
     await banner(pairing, runner);
     log(`listening on http://${config.host}:${config.port}  (ws://…/ws)`);

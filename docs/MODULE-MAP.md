@@ -43,6 +43,8 @@
 | `local-capabilities.js` | 只读扫描本机 pi 已装的 skill / MCP，供一键导入 |
 | `spawn-command.js` | 跨平台启动用户填的命令：Windows 上按 PATHEXT 解析 `.cmd/.bat`、cmd.exe 参数转义、探测进程收尾 |
 | `site-draft.js` | 站点接入草稿：抓 → 存草稿 → 用户确认 → 才入库（草稿只在内存） |
+| `http-client.js` | 带系统代理探测的 fetch（Node 原生 fetch 不读系统代理）|
+| `merge-messages.js` | 连发消息合并：静默窗口 700ms，把"想到一句发一句"拼成一段 |
 | `model-reply.js` | 模型错误分类与脱敏展示、认证失败终止重试、真正空回复的限定模型恢复 |
 | `providers.js` | 额外 provider 注册与默认模型解析 |
 | `context-budget.js` | 上下文预算：容量覆盖 + 压缩阈值 |
@@ -85,6 +87,7 @@
 | `server/spawn_posix.dart` | POSIX 独立进程组启动脚本，日志直写文件并释放辅助进程 |
 | `server/supervisor.dart` / `server/launcher.dart` / `server/server_log.dart` | 进程与 PID 管理、启动编排及日志；Windows/POSIX 平台分流 |
 | `model_group_capacity.dart` | 模型卡片草稿、稳定行标识、容量解析与保存协议（纯逻辑） |
+| `chat_scroll_follow.dart` | 聊天追底调度：帧后挂载、有限补跳、用户滚动取消和内容尺寸变化跟随 |
 | `widgets/model_group_editor.dart` | 模型组编辑装配：接口配置、独立模型卡片、思考强度选项拉取、连接测试与保存 |
 | `widgets/model_capacity_fields.dart` | 模型卡片与列表摘要展示；单独编辑 ID、显示名、上下文窗口、最大输出与思考强度，向上回传操作 |
 | `widgets/server_config_section.dart` | 共用本机启动配置对话框，保存后调用状态层重启并报告结果 |

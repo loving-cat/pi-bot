@@ -15,18 +15,31 @@ import 'md_text.dart';
 
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
-/// 消息里的附件：图片直接画出来，其它显示成文件卡片。
+/// 消息里的附件：**独立成块**（不再塞进聊天气泡里）。
+///
+/// 设计对齐「改动 N 个文件」那一块：浅底 + 细边 + 圆角，文件一行一行排，
+/// 每行等宽对齐（不随文件名长短参差）。图片仍然直接铺缩略图，不套块。
 class AttachmentList extends StatelessWidget {
   const AttachmentList({
     super.key,
     required this.items,
     required this.urlFor,
-    this.isUser = false,
+    this.alignEnd = false,
+    this.maxWidth = 620,
+    this.onLongPress,
   });
 
   final List<Attachment> items;
   final String? Function(String id) urlFor;
-  final bool isUser;
+
+  /// 用户发的消息靠右（缩略图跟着右对齐）
+  final bool alignEnd;
+
+  /// 块的最大宽度（跟聊天气泡同宽）
+  final double maxWidth;
+
+  /// 附件所属消息的操作入口；普通点击仍由附件预览和按钮处理。
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -34,29 +47,75 @@ class AttachmentList extends StatelessWidget {
     final images = items.where((a) => a.isImage).toList();
     final files = items.where((a) => !a.isImage).toList();
 
-    return Column(
-      crossAxisAlignment: isUser
+    final body = Column(
+      crossAxisAlignment: alignEnd
           ? CrossAxisAlignment.end
           : CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
       children: [
         if (images.isNotEmpty)
           Padding(
-            padding: const EdgeInsets.only(bottom: 6),
+            padding: EdgeInsets.only(bottom: files.isEmpty ? 0 : 8),
             child: Wrap(
               spacing: 6,
               runSpacing: 6,
+              alignment: alignEnd ? WrapAlignment.end : WrapAlignment.start,
               children: [
                 for (final img in images)
                   _Thumb(url: urlFor(img.id), name: img.name),
               ],
             ),
           ),
-        for (final file in files)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 4),
-            child: _FileChip(file: file, url: urlFor(file.id), isUser: isUser),
+        if (files.isNotEmpty) ...[
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                LucideIcons.paperclip,
+                size: 11,
+                color: PB.textQuaternary,
+              ),
+              const SizedBox(width: 5),
+              Text(
+                '附件 ${files.length} 个文件',
+                style: const TextStyle(
+                  fontSize: PB.fsXxs,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.3,
+                  color: PB.textTertiary,
+                ),
+              ),
+            ],
           ),
+          const SizedBox(height: 6),
+          for (var i = 0; i < files.length; i++)
+            Padding(
+              padding: EdgeInsets.only(bottom: i == files.length - 1 ? 0 : 4),
+              child: _FileChip(
+                file: files[i],
+                url: urlFor(files[i].id),
+                fullWidth: true,
+              ),
+            ),
+        ],
       ],
+    );
+
+    final content = files.isEmpty
+        ? body
+        : Container(
+            padding: const EdgeInsets.fromLTRB(10, 9, 10, 10),
+            decoration: BoxDecoration(
+              color: PB.bgBubble.withValues(alpha: 0.55),
+              borderRadius: BorderRadius.circular(PB.rXl),
+              border: Border.all(color: PB.borderTertiary),
+            ),
+            child: body,
+          );
+
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: maxWidth),
+      child: GestureDetector(onLongPress: onLongPress, child: content),
     );
   }
 }
@@ -133,12 +192,14 @@ class _FileChip extends StatelessWidget {
   const _FileChip({
     required this.file,
     required this.url,
-    required this.isUser,
+    this.fullWidth = false,
   });
 
   final Attachment file;
   final String? url;
-  final bool isUser;
+
+  /// true = 在附件块里占满一行（等宽对齐，不随文件名长短参差）
+  final bool fullWidth;
 
   static IconData _iconFor(String name) {
     final lower = name.toLowerCase();
@@ -157,69 +218,81 @@ class _FileChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final fg = isUser ? Colors.white : PB.textPrimary;
-    final dim = isUser ? Colors.white70 : PB.textQuaternary;
+    const fg = PB.textPrimary;
+    const dim = PB.textQuaternary;
+
+    final nameCol = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          file.name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(fontSize: PB.fsXs, color: fg),
+        ),
+        if (file.sizeText.isNotEmpty)
+          Text(
+            file.sizeText,
+            style: TextStyle(fontSize: PB.fsXxs, color: dim),
+          ),
+      ],
+    );
+
+    final openArea = InkWell(
+      onTap: url == null
+          ? null
+          : () => showFilePreview(context, file: file, url: url),
+      borderRadius: BorderRadius.circular(PB.rXl),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
+        child: Row(
+          mainAxisSize: fullWidth ? MainAxisSize.max : MainAxisSize.min,
+          children: [
+            Icon(_iconFor(file.name), size: 18, color: PB.textSecondary),
+            const SizedBox(width: 8),
+            if (fullWidth)
+              Expanded(child: nameCol)
+            else
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 200),
+                child: nameCol,
+              ),
+          ],
+        ),
+      ),
+    );
 
     return Container(
+      width: fullWidth ? double.infinity : null,
       decoration: BoxDecoration(
-        color: isUser ? Colors.black.withValues(alpha: 0.18) : PB.bgActive,
+        color: PB.bgActive,
         borderRadius: BorderRadius.circular(PB.rXl),
         border: Border.all(color: PB.borderTertiary),
       ),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
+        mainAxisSize: fullWidth ? MainAxisSize.max : MainAxisSize.min,
         children: [
-          InkWell(
-            onTap: url == null
-                ? null
-                : () => showFilePreview(context, file: file, url: url),
-            borderRadius: BorderRadius.circular(PB.rXl),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    _iconFor(file.name),
-                    size: 18,
-                    color: isUser ? Colors.white : PB.textSecondary,
-                  ),
-                  const SizedBox(width: 8),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 200),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          file.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(fontSize: PB.fsXs, color: fg),
-                        ),
-                        if (file.sizeText.isNotEmpty)
-                          Text(
-                            file.sizeText,
-                            style: TextStyle(fontSize: PB.fsXxs, color: dim),
-                          ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
+          if (fullWidth)
+            Expanded(child: openArea)
+          else
+            Flexible(child: openArea),
           // 「用系统程序打开」：只在桌面端出现 —— 手机上交给系统的分享/打开
           // 机制是另一件事，先不给（给了也点不了）。价值在于：**看原样**，
           // 而不是我们抽出来的文字（PDF 的版式、xlsx 的公式都在原文件里）。
-          if (!kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux))
+          if (!kIsWeb &&
+              (Platform.isWindows || Platform.isMacOS || Platform.isLinux))
             _IconAction(
               icon: LucideIcons.squareArrowOutUpRight,
               tip: '用系统程序打开',
               color: dim,
               onTap: url == null
                   ? null
-                  : () => openAttachmentExternally(context, file: file, url: url!),
+                  : () => openAttachmentExternally(
+                      context,
+                      file: file,
+                      url: url!,
+                    ),
             ),
           // 下载按钮就放在卡片上 —— 不用点进去再找
           _IconAction(
@@ -286,7 +359,9 @@ Future<void> openAttachmentExternally(
 
   say('正在打开 ${file.name}…');
   try {
-    final res = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 120));
+    final res = await http
+        .get(Uri.parse(url))
+        .timeout(const Duration(seconds: 120));
     if (res.statusCode >= 400) throw Exception('HTTP ${res.statusCode}');
     final err = await openWithSystemApp(
       name: file.name,

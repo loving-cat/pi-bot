@@ -256,7 +256,7 @@ flutter analyze
 端到端冒烟 `npm run test:integration` 需要先起隔离服务端并配置可用模型，会发送真实模型请求。
 
 **跨网访问**：默认就是局域网直连（手机连电脑的 IP）。想在外网用，可以套现成隧道
-（frp / Cloudflare Tunnel / Tailscale），或使用我们附带的参考中转 —— 接口与用法见
+（frp / Cloudflare Tunnel / Tailscale），或使用仓库附带的中转模块 —— 接口与用法见
 [`docs/RELAY.md`](docs/RELAY.md)。中转是可选的，默认不启动。
 
 **关于 token 的位置**：手机/桌面端把 token 放在 `Authorization` 头里；附件 URL
@@ -285,13 +285,9 @@ flutter analyze
 - 所有工具的文件操作都被限制在 `data/workspace` 内
 - 仓库本身**不含任何密钥、本机路径、内网地址**——全部走用户级配置或环境变量
 
-## 调度机制
-
-`@名字` 触发成员调度；群内执行支持并发，顺序由负责人指定，忙碌成员接收待办投递而不阻塞当前轮次。
-
 ## 参考与许可
 
-- **[DeepSeek-Bot](https://github.com/Fei2411/DeepSeek-Bot)**（Apache-2.0）。
+- [DeepSeek-Bot](https://github.com/Fei2411/DeepSeek-Bot)（Apache-2.0）。
 
 ## License
 
