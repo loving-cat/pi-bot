@@ -1071,6 +1071,50 @@ await test('部门规矩：不认识的值不当成 deny（宁可宽松也不误
   assert.deepEqual(toolsForPolicy(all, { dangerous: 'whatever' }), all);
 });
 
+// ---------------------------------------------------------------------------
+// 角色工具集：主控 / 部门老大只读，成员全量
+// ---------------------------------------------------------------------------
+const { toolsForRole, isLeadOfRoom } = await import('../src/store.js');
+const ALL = ['read', 'write', 'edit', 'ls', 'find', 'grep', 'bash'];
+const RO = ['read', 'ls', 'grep', 'find'];
+
+const roleArgs = {
+  chiefTools: RO,
+  leadTools: RO,
+  memberTools: ALL,
+  policy: POLICY_DEFAULT,
+};
+
+await test('★ 主控是调度者：只拿只读工具，没有 bash/write/edit', () => {
+  const got = toolsForRole({ ...roleArgs, isChief: true });
+  assert.deepEqual(got, RO);
+  assert.ok(!got.includes('bash'), '主控不能自己跑命令干活');
+});
+
+await test('★ 部门老大只负责拆解/派活/汇总：同样只拿只读工具', () => {
+  const got = toolsForRole({ ...roleArgs, isDeptLead: true });
+  assert.deepEqual(got, RO);
+  assert.ok(!got.includes('bash'), '老大不能自己查数据/跑命令');
+  assert.ok(!got.includes('write'), '老大不能自己写文件');
+});
+
+await test('普通成员：全量工具（干活的人）', () => {
+  assert.deepEqual(toolsForRole(roleArgs), ALL);
+});
+
+await test('★ 单人部门的老大不算 lead（否则部门没人干活）', () => {
+  const room = { kind: 'group', leadBotId: 'b1', botIds: ['b1'] };
+  assert.equal(isLeadOfRoom(room, 'b1'), false);
+});
+
+await test('★ 群里有成员时，leadBotId 本人算 lead；没设 lead 时第一个成员算', () => {
+  assert.equal(isLeadOfRoom({ kind: 'group', leadBotId: 'b1', botIds: ['b1', 'b2'] }, 'b1'), true);
+  assert.equal(isLeadOfRoom({ kind: 'group', leadBotId: null, botIds: ['b1', 'b2'] }, 'b1'), true);
+  assert.equal(isLeadOfRoom({ kind: 'group', leadBotId: 'b1', botIds: ['b1', 'b2'] }, 'b2'), false);
+  // 私聊永远不算部门老大
+  assert.equal(isLeadOfRoom({ kind: 'dm', leadBotId: 'b1', botIds: ['b1'] }, 'b1'), false);
+});
+
 
 // ---------------------------------------------------------------------------
 // 群调度决策（group-round.js）：只回答"该做什么"，不执行任何副作用
@@ -1182,6 +1226,11 @@ await test('★ 会话层：老大的提示词里有"验收标准"，成员的�
   assert.match(leadPrompt, /验收标准/, '★ 派活三样必须写进老大提示词');
   assert.match(leadPrompt, /第 1 个/, '要说清发言顺序');
   assert.match(leadPrompt, /同时开干/, '要说清是并行的，不然它以为要排队');
+  // 多人负责人的提示仅要求拆解、派活和汇总。
+  assert.match(leadPrompt, /不亲自干活/, '★ 老大只做三件事，不自己干活');
+  assert.match(leadPrompt, /@一个同事去查/, '缺信息要让成员去查，不能自己查');
+  assert.match(leadPrompt, /绝不自己上/, '没人能接时如实上报，不许自己接手');
+  assert.ok(!/确实只有你能干/.test(leadPrompt), '不能留"只有你能干就自己做"的口子');
 
   const matePrompt = composeGroupPrompt(room, mate, [], {
     isLead: false,

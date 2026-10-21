@@ -116,22 +116,7 @@ function normalizePolicy(patch = {}, base = POLICY_DEFAULT) {
   };
 }
 
-/**
- * 只读部门要拿掉哪些工具。
- * read/ls/find/grep 留着（看还是能看的），改东西和跑命令的一律收走。
- */
-export const MUTATING_TOOLS = ['write', 'edit', 'bash', 'powershell'];
-
-/**
- * 按部门规矩算出这个会话真正拿得到的工具集。
- *
- * 抽成纯函数是为了能单测：这条判断决定"bot 能不能拆家"，
- * 写错了（比如只读部门还留着 bash）从界面上根本看不出来。
- */
-export function toolsForPolicy(baseTools = [], policy = POLICY_DEFAULT) {
-  if (policy?.dangerous !== 'deny') return [...baseTools];
-  return baseTools.filter((t) => !MUTATING_TOOLS.includes(t));
-}
+export { MUTATING_TOOLS, toolsForPolicy, isLeadOfRoom, toolsForRole } from './role-tools.js';
 
 function positiveIntOrDefault(v, fallback) {
   const n = Number(v);

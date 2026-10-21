@@ -24,6 +24,9 @@ export function invalidateSessions(sessions, predicate) {
 
 export function retireStaleSession(sessions, key) {
   const entry = sessions.get(key);
+  if (entry?.configurationCurrent && !entry.configurationCurrent()) {
+    entry.reloadPending = true;
+  }
   if (!entry?.reloadPending || entry.busy || entry.pending) return false;
   releaseEntry(entry);
   sessions.delete(key);

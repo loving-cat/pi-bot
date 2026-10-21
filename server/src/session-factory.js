@@ -19,7 +19,8 @@ import {
 } from '@earendil-works/pi-coding-agent';
 
 import { config, resourceOptions } from './config.js';
-import { store, toolsForPolicy } from './store.js';
+import { store } from './store.js';
+import { isDelegatingLead, toolsForRole, customToolsForRole, roleConfigurationKey } from './role-tools.js';
 import { applyCompactionBudget, withCapacity } from './context-budget.js';
 import { buildAppendSystemPrompt } from './system-prompt.js';
 import { buildChiefTools, buildCommonTools } from './tools.js';
@@ -56,8 +57,13 @@ export function pickModelAndThinking({
  * @param {object} deps.health      模型探活（档位安全值）
  * @param {(slug:string)=>any} deps.resolveModel
  * @param {()=>string} deps.modelLabel
+ * @param {object} [deps.sessionApi] 会话SDK适配器，默认使用生产实现。
  */
-export function createSessionBuilder({ runner, health, resolveModel, modelLabel }) {
+export function createSessionBuilder({
+  runner, health, resolveModel, modelLabel,
+  sessionApi = { DefaultResourceLoader, SessionManager, createAgentSession, getAgentDir },
+}) {
+  const { DefaultResourceLoader, SessionManager, createAgentSession, getAgentDir } = sessionApi;
   return async function buildSession(roomId, botId) {
     const bot = store.getBot(botId);
     if (!bot) throw new Error(`找不到 bot ${botId}`);
@@ -71,12 +77,15 @@ export function createSessionBuilder({ runner, health, resolveModel, modelLabel 
         : SessionManager.create(config.workspace, sessionDir);
 
     const isChief = bot.role === 'main';
+    const room = store.getRoom(roomId);
+    const isDeptLead = isDelegatingLead(room, bot);
+    const roleKey = roleConfigurationKey(room, bot);
     // isMain 决定要不要给 ask_user（主控不给 —— 它直接跟用户对话，不弹卡片）
     const commonTools = buildCommonTools({ runner, roomId, botId, isMain: isChief });
-    const customTools = [
+    const customTools = customToolsForRole([
       ...commonTools,
       ...(isChief ? buildChiefTools({ runner, health, roomId, botId }) : []),
-    ];
+    ], { room, bot, leadTools: config.leadTools });
 
     const resourceLoader = new DefaultResourceLoader({
       cwd: config.workspace,
@@ -120,14 +129,19 @@ export function createSessionBuilder({ runner, health, resolveModel, modelLabel 
         mcpLines: isChief ? mcpSectionForPrompt() : '',
       }),
       ...resourceOptions,
+      ...(isDeptLead ? { noExtensions: true, noMcp: true } : {}),
     });
     await resourceLoader.reload();
 
-    // ★ 部门规矩：只读部门不给"能拆家"的工具。
-    //   这是**能真拦住**的那种约束 —— 不给工具，它就干不了；
-    //   靠系统提示里写"请先征求同意"是拦不住的（模型忙起来就忘了）。
-    const rawTools = isChief ? config.chiefTools : config.tools;
-    const baseTools = toolsForPolicy(rawTools, store.policy());
+    // 角色能力与行为策略共同决定内置工具；单人部门保留执行能力。
+    const baseTools = toolsForRole({
+      isChief,
+      isDeptLead,
+      chiefTools: config.chiefTools,
+      leadTools: config.leadTools,
+      memberTools: config.tools,
+      policy: store.policy(),
+    });
 
     const botModel = bot.model ? resolveModel(bot.model) : null;
     const picked = pickModelAndThinking({
@@ -172,6 +186,11 @@ export function createSessionBuilder({ runner, health, resolveModel, modelLabel 
       `会话就绪 ${roomId} · ${bot.emoji ?? ''}${bot.name} → ` +
         `${path.basename(session.sessionFile ?? '(内存)')}`,
     );
-    return { session, bot };
+    return {
+      session,
+      bot,
+      configurationCurrent: () => roleKey ===
+        roleConfigurationKey(store.getRoom(roomId), store.getBot(botId)),
+    };
   };
 }
