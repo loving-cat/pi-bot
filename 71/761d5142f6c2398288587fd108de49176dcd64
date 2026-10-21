@@ -1,0 +1,25 @@
+docs/MODULE-MAP.md
+  s_06973911ad2cd6::t_cca985cc451ce4 24,56-57,93-94,101
+app/lib/theme.dart
+  s_06973911ad2cd6::t_cca985cc451ce4 86-87
+docs/AGENT-MODEL.md
+  s_06973911ad2cd6::t_cca985cc451ce4 17-19,52-55
+  s_06973911ad2cd6::t_d1dc1b3852780f 16
+  s_06973911ad2cd6::t_f7f399a7d52277 56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "71761d5142f6c2398288587fd108de49176dcd64",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
