@@ -83,9 +83,8 @@ class PB {
   /// 只改"中英混排的那几行"，不动标签类的小字。
   static const fsTinyCjk = 12.0;
 
-  /// 图标包默认字体只有 **68 个字形**；不在这个集合里的图标会画成空白，
-  /// 而组件测试只看 IconData、发现不了。加新图标前先确认它在基础字体里
-  /// （可用图标：list / checkCircle2 / fileText / target / boxes / pin …）。
+  /// 图标的可用字形以当前依赖字体为准；组件测试只检查 IconData，无法验证字形。
+  /// 新增图标须核对字体中的对应字形。
   /// 优先用装了的现代等宽，退回系统自带 —— 常见等宽字体的度量差异在噪声范围内，
   /// 挑顺眼的就行，不值得为它打包字体。
   static const monoFamily = 'JetBrains Mono';
