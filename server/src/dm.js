@@ -1,14 +1,6 @@
-/**
- * 私聊行为：开场自我介绍与任务进度回执。
- *
- * 两件事：
- *   1. 用户第一次打开某个 bot 的私聊时，由 bot 主动说一句自己是谁、负责什么，
- *      并用询问卡片问"现在要做什么"（否则私聊里是一片空白，用户不知道从哪下手）。
- *   2. bot 在部门里接到活之后，往它和用户的私聊里回一条进度（接了 / 做完了），
- *      用户不用盯着部门群才知道进展。
- *
- * 这里只放文案与判断，不碰 store / session —— 便于单测。
- */
+/** 私聊开场与进度回执：生成文案并保存结果、来源和调度关联。 */
+
+export { backfillProgressSenders } from './progress-migration.js';
 
 /** 摘要：压成一行，去掉 markdown 记号，限长 */
 export function excerpt(text, limit = 80) {
@@ -69,7 +61,18 @@ export function shouldMirrorProgress({ roomKind, fromId, botId } = {}) {
  * 只在私聊已存在时写（不替用户没打开过的 bot 造会话，否则侧边栏会被塞满）。
  * @returns {boolean} 是否写入了
  */
-export function mirrorProgress({ store, room, bot, phase, text, ok = true }) {
+export function mirrorProgress({
+  store,
+  room,
+  bot,
+  phase,
+  text,
+  ok = true,
+  fromId = null,
+  fromName = '',
+  dispatchId = null,
+  sourceMessageId = null,
+}) {
   const dm = store.findDm(bot.id);
   if (!dm || dm.id === room.id) return false;
   const content =
@@ -84,7 +87,16 @@ export function mirrorProgress({ store, room, bot, phase, text, ok = true }) {
     authorEmoji: bot.emoji,
     text: content,
     status: 'done',
-    meta: { progress: true, fromRoomId: room.id, phase },
+    meta: {
+      progress: true,
+      fromRoomId: room.id,
+      phase,
+      fromId,
+      fromName,
+      dispatchId,
+      sourceMessageId,
+      ...(phase === 'done' ? { outcome: ok ? 'success' : 'failure' } : {}),
+    },
   });
   return true;
 }

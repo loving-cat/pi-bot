@@ -17,6 +17,7 @@ const {
   progressDoneText,
   shouldMirrorProgress,
   mirrorProgress,
+  backfillProgressSenders,
 } = await import('../src/dm.js');
 const { store } = await import('../src/store.js');
 
@@ -93,6 +94,10 @@ await test('★ mirrorProgress：写进私聊并带上来源，自己房间不�
     bot,
     phase: 'start',
     text: '把日线拉全',
+    fromId: 'b_assigner',
+    fromName: '派活的人',
+    dispatchId: 'dispatch-fixture',
+    sourceMessageId: 'source-fixture',
   });
   assert.equal(wrote, true);
   const list = store.listMessages(dm.id, { limit: 100 });
@@ -101,7 +106,20 @@ await test('★ mirrorProgress：写进私聊并带上来源，自己房间不�
   assert.equal(last.authorId, bot.id);
   assert.equal(last.meta?.progress, true);
   assert.equal(last.meta?.fromRoomId, room.id);
+  // 回执保存派活人及同次调度的稳定关联。
+  assert.equal(last.meta?.fromId, 'b_assigner');
+  assert.equal(last.meta?.fromName, '派活的人');
+  assert.equal(last.meta?.dispatchId, 'dispatch-fixture');
+  assert.equal(last.meta?.sourceMessageId, 'source-fixture');
+  assert.equal(last.meta?.outcome, undefined);
   assert.match(last.text, /回执测试组/);
+  for (const ok of [true, false]) {
+    mirrorProgress({ store, room, bot, phase: 'done', text: '结果', ok, dispatchId: 'dispatch-fixture', sourceMessageId: 'source-fixture' });
+    const done = store.listMessages(dm.id, { limit: 1 })[0];
+    assert.equal(done.meta.outcome, ok ? 'success' : 'failure');
+    assert.equal(done.meta.dispatchId, last.meta.dispatchId);
+    assert.equal(done.meta.sourceMessageId, last.meta.sourceMessageId);
+  }
 
   // 同一个房间自己给自己发 → 不写（避免在私聊里自说自话）
   const again = mirrorProgress({ store, room: dm, bot, phase: 'done', text: 'x', ok: true });
@@ -143,6 +161,57 @@ await test('moveMessageAfter：消息不存在 / 房间不存在都安全返回'
   const r = store.moveMessageAfter(room3.id, m1.id, '不存在的after');
   assert.ok(r);
   assert.deepEqual(store.listMessages(room3.id).map((m) => m.id), [m2.id, m1.id]);
+});
+
+await test('backfillProgressSenders：按明确来源与调度关联补齐，重复执行幂等', () => {
+  const lead = store.createBot({ name: '派活老大' });
+  const worker = store.createBot({ name: '干活小工' });
+  const group = store.createGroup({
+    name: '回填测试组',
+    botIds: [lead.id, worker.id],
+    leadBotId: lead.id,
+  });
+  const dm = store.findDm(worker.id);
+
+  const source = store.appendMessage({
+    roomId: group.id,
+    authorType: 'bot',
+    authorId: lead.id,
+    authorName: lead.name,
+    text: '请把日线行情拉全并核对，交一份 CSV，标明口径',
+    status: 'done',
+  });
+  store.appendMessage({
+    roomId: dm.id,
+    authorType: 'bot',
+    authorId: worker.id,
+    authorName: worker.name,
+    text: progressStartText({
+      roomName: group.name,
+      task: '请把日线行情拉全并核对，交一份 CSV，标明口径',
+    }),
+    status: 'done',
+    meta: { progress: true, fromRoomId: group.id, phase: 'start', sourceMessageId: source.id, dispatchId: 'run-fixture' },
+  });
+  store.appendMessage({
+    roomId: dm.id,
+    authorType: 'bot',
+    authorId: worker.id,
+    authorName: worker.name,
+    text: '「回填测试组」那件事做完了：好了',
+    status: 'done',
+    meta: { progress: true, fromRoomId: group.id, phase: 'done', dispatchId: 'run-fixture' },
+  });
+
+  const n = backfillProgressSenders(store);
+  assert.ok(n >= 2, `应回填 start + done 两条，实际 ${n}`);
+  const list = store.listMessages(dm.id, { limit: 100 });
+  const last = list[list.length - 1];
+  assert.equal(last.meta?.fromId, lead.id, '派活人必须是具体 bot id');
+  assert.equal(last.meta?.fromName, lead.name, '派活人名字用于「收到 X 消息」');
+  assert.equal(last.meta?.sourceMessageId, source.id);
+  assert.equal(last.meta?.outcome, undefined);
+  assert.equal(backfillProgressSenders(store), 0);
 });
 
 const passed = results.filter((r) => r.ok).length;
