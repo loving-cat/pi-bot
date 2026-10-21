@@ -12,6 +12,7 @@ import '../app_state.dart';
 import '../chat_scroll_follow.dart';
 import '../clipboard_image.dart';
 import '../models.dart';
+import '../progress_messages.dart';
 import '../scope.dart';
 import '../desktop_shortcuts.dart';
 import '../theme.dart';
@@ -24,6 +25,7 @@ import '../widgets/blob_avatar.dart';
 import '../widgets/context_chip.dart';
 import '../widgets/floating_menu.dart';
 import '../widgets/md_text.dart';
+import '../widgets/progress_notice.dart';
 import '../widgets/msg_ref_chip.dart';
 import '../widgets/changed_files.dart';
 import '../widgets/task_board.dart';
@@ -428,6 +430,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       orElse: () => widget.room,
     );
     final msgs = state.messages[room.id] ?? const <Msg>[];
+    final progressGroups = groupProgressMessages(msgs);
     final busy = state.typing[room.id] == true;
     final lead =
         state.botById(room.leadBotId) ??
@@ -686,6 +689,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                   itemCount: msgs.length,
                                   itemBuilder: (ctx, i) {
                                     final msg = msgs[i];
+
+                                    if (msg.isProgress) {
+                                      final run = progressGroups[i];
+                                      if (run == null) {
+                                        return const SizedBox.shrink();
+                                      }
+                                      return _Appear(
+                                        key: ValueKey('progress-${msg.id}'),
+                                        child: ProgressNotice(messages: run),
+                                      );
+                                    }
+
                                     final prev = i > 0 ? msgs[i - 1] : null;
                                     final newAuthor =
                                         prev == null ||
@@ -1701,7 +1716,8 @@ class _MessageRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // 引用行（bot 私信了别的 bot）不画气泡，只渲染一个可点的小浮动条。
-    if (msg.isRef) return MsgRefChip(refs: msg.refs);
+    if (msg.isRef)
+      return MsgRefChip(refs: msg.refs, senderBotId: msg.authorId);
     // 上下文压缩：在对话中间留一条小横条 ——
     // 不然用户看到的是"bot 刚才那几轮说的话不见了"，不知道发生了什么。
     if (msg.isCompact) return CompactNotice(msg: msg);

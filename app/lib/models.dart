@@ -256,6 +256,9 @@ class Msg {
   /// "要用户拿个主意"的卡片（服务端 ask_user 工具写的 kind='ask'）
   bool get isAsk => kind == 'ask';
 
+  /// 部门进度回执，用于聚合展示与明细查看。
+  bool get isProgress => meta?['progress'] == true;
+
   /// 卡片上的选项
   List<AskOption> get askOptions {
     final raw = meta?['options'];
