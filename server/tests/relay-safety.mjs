@@ -11,6 +11,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 let passed = 0;
 let failed = 0;
@@ -26,7 +27,7 @@ async function test(name, fn) {
 }
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-bot-relay-'));
-const serverDir = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+const serverDir = fileURLToPath(new URL('..', import.meta.url));
 
 /** 跑一次 relay-server，拿到退出码与输出 */
 function bootRelay({ env = {}, timeoutMs = 8000 } = {}) {
@@ -83,7 +84,7 @@ await test('本机监听 + 空 secret → 放行（本地调试的正常用法�
 
 await test('设了 secret 就能对外监听', async () => {
   const r = await bootRelay({
-    env: { RELAY_HOST: '0.0.0.0', RELAY_SECRET: 'a-test-secret' },
+    env: { RELAY_HOST: '0.0.0.0', RELAY_SECRET: 'fixture-secret-relay' },
     timeoutMs: 3000,
   });
   assert.ok(!/拒绝启动/.test(r.output));
