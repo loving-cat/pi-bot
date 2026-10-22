@@ -1,0 +1,37 @@
+README.md
+  s_c73b42c9544151::t_141666b5876252 51
+app/lib/app_state.dart
+  s_c73b42c9544151::t_70851e7bace42c 82-84,1088-1121
+app/lib/widgets/md_text.dart
+  s_c73b42c9544151::t_34d0f2c7bbc1a5 69-82,103-127,225-227,241,254,257,259-262,314-322,638
+app/lib/widgets/room_panel.dart
+  s_c73b42c9544151::t_03cef05750196b 91,164,730-999
+app/test/chat_display_order_test.dart
+  s_c73b42c9544151::t_4f8f250e4aeedc 1-26
+app/test/md_text_selection_test.dart
+  s_c73b42c9544151::t_cf7e560d6f2a7c 1-21
+app/test/url_copy_test.dart
+  s_c73b42c9544151::t_e4ea21b1a650b3 1-54
+server/src/context-budget.js
+  s_c73b42c9544151::t_15bcacff22c1ff 54-64
+server/src/http.js
+  s_c73b42c9544151::t_0bbe371446246e 1082-1117
+server/src/pi-runner.js
+  s_c73b42c9544151::t_5721d2be630d59 771-803,895,931-944,1157-1158,1271-1272,1528-1658,1664,1709-1711
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9108b2b9c732de245cf5502d5919d5ecf0a5ca99",
+  "prompts": {},
+  "sessions": {
+    "s_c73b42c9544151": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a09f0f-7603-7a80-8d1c-b48d6da3d8d4",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
