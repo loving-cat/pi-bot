@@ -1,0 +1,41 @@
+app/lib/app_state.dart
+  s_c73b42c9544151::t_c94ea5d5479cb1 82-84,1088-1121
+app/lib/models.dart
+  s_c73b42c9544151::t_3b1ca2abbf9b1e 259-262,1012-1040
+app/lib/widgets/msg_ref_chip.dart
+  s_06973911ad2cd6::t_2b702aae8fe5ae 11,16,18,22-23,29,33-38,40,44-47,51-80,90,97,114,116,118-121,130,132,134,138,140,142,164-165,176,189,222,226,228,233,235-253,257,267-322,324-364,366-367,369-413,419-438,441-442,444-447
+app/lib/widgets/room_panel.dart
+  s_c73b42c9544151::t_935af435925e58 91,164,730-999
+server/src/http.js
+  s_c73b42c9544151::t_615e1dded8076c 1074-1109
+server/src/pi-runner.js
+  s_c73b42c9544151::t_b842333a833b0d 755,757,763-795,885,921-934,1078-1079,1142-1143,1180-1181,1256-1257,1497-1627,1633,1678-1680
+server/src/store.js
+  s_c73b42c9544151::t_18590df5671e5a 52,54,56,136-169,650-664,1727-1741
+server/tests/unit.mjs
+  s_c73b42c9544151::t_6ec64c88b8ccd8 332-356,503-505,1099-1142,1254-1258
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "174b616ee5fd291fed8cb526af7b0297694e7d5d",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    },
+    "s_c73b42c9544151": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a09f0f-7603-7a80-8d1c-b48d6da3d8d4",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
