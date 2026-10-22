@@ -1,0 +1,20 @@
+server/src/memory-digest.js
+  h_53f14b6641484b 1-38
+server/src/pi-runner.js
+  h_53f14b6641484b 31,1536-1549,1555-1556,1558,1563,1577-1581,1583-1590,1598,1603-1604,2355-2356,2380-2381
+server/src/store.js
+  h_53f14b6641484b 1685-1711
+server/tests/unit.mjs
+  h_53f14b6641484b 332-355,364-367
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "494c93cfb6502fb42b4877ee44d963a878b92800",
+  "prompts": {},
+  "humans": {
+    "h_53f14b6641484b": {
+      "author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
