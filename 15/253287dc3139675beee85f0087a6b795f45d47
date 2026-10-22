@@ -1,0 +1,19 @@
+server/src/http.js
+  s_c73b42c9544151::t_7b3e8ec76ea34d 1088-1090,1092-1094,1110-1112,1114-1116
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "15253287dc3139675beee85f0087a6b795f45d47",
+  "prompts": {},
+  "sessions": {
+    "s_c73b42c9544151": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a09f0f-7603-7a80-8d1c-b48d6da3d8d4",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
