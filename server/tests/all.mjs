@@ -57,6 +57,7 @@ const TESTS = [
   'group-cursor',
   'abort-placeholder',
   'data-migration',
+  'server-mode',
   'model-health',
   'net-guard',
   'security-regress',

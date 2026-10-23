@@ -273,7 +273,9 @@ flutter analyze
 |---|---|---|
 | `PI_BOT_PORT` | 8787 | 端口 |
 | `PI_BOT_MODEL` | 自动 | 默认模型（来自你的模型组） |
-| `PI_BOT_TOKEN` | — | 固定 token（设了就跳过配对码） |
+| `PI_BOT_TOKEN` | — | 固定 token（设了就跳过配对码）。**设了就是服务器模式**：本机请求也要带 token |
+| `PI_BOT_TRUST_LOCAL` | 没设 token 时 `1`，设了时 `0` | 本机（127.0.0.1）请求免不免 token。一般不用改 |
+| `PI_BOT_ALLOWED_HOSTS` | — | 额外允许的域名（逗号分隔）。反向代理保留原始 Host 时填你的域名 |
 | `PI_BOT_HOME` / `PI_BOT_WORKSPACE` | 用户数据目录（见上表） | 数据目录 / agent 的工作目录 |
 | `PI_BOT_GROUP_BUSY_WAIT_MS` | 120000 | 要派的活碰上成员正忙，最多等它多久 |
 | `PI_BOT_HEARTBEAT_MS` / `PI_BOT_STALL_MS` | 15000 / 360000 | 心跳间隔 / 多久没动静算断了 |
@@ -282,8 +284,16 @@ flutter analyze
 
 ## 安全
 
-- 远程设备必须配对拿 token；**回环地址（127.0.0.1）免 token**——电脑端就是宿主
-- bot 有 `bash`/`write`，**不要裸奔到公网**。公网部署请套 nginx + HTTPS，并只给固定 token
+- 远程设备必须配对拿 token；**本机部署时回环地址（127.0.0.1）免 token**——电脑端就是宿主
+- bot 有 `bash`/`write`，**不要裸奔到公网**。公网部署请套 nginx + HTTPS，并设 `PI_BOT_TOKEN`：
+  - 设了 `PI_BOT_TOKEN` 就是**服务器模式**，本机请求也要带 token。反向代理和服务端在同一台机器上时，
+    公网请求经代理转发后在服务端看来就是 127.0.0.1，免 token 等于谁都能进
+  - 代理保留了原始 Host（`proxy_set_header Host $host;`）时，把域名加进 `PI_BOT_ALLOWED_HOSTS`，
+    否则会被 DNS rebinding 防护拒掉（`403 bad host`）
+  - 服务器模式下 `/health` 仍然公开（探活要用），但只给服务名、版本和鉴权方式，不给房间数、模型名
+  - 桌面端连服务器模式的本机服务端时，连接页会让你填这个 token
+- 只读 / 需要批准 / 命令黑白名单管的是 bot 的**工具调用**，不是沙箱。本机部署时 bot 能执行命令，就能用 `curl`
+  调本机接口改掉这些设置。要真的限制 bot，就把危险动作设成「只读」，它就拿不到 shell
 - 所有工具的文件操作都被限制在 `data/workspace` 内
 - 命令黑名单 / 白名单默认都是空的。**一条都没配时，行为和改动前完全一致**，`npm` / `git` / `node` 以及 `sh -c 'git status'` 不会被拦
 - **配了任一规则之后**，`sh -c` / `bash -c`、`xargs <命令>`、解释器调用会拒绝，只放行 `--version` / `-V` / `--help`。白名单只有 `git status` 时，`sh -c 'git status'` 也会被拒，直接写 `git status` 可以。`rm -rf` 这类规则会拆开短选项，并把 `rm` 的 `--recursive` / `--force` 当成 `-r` / `-f`
