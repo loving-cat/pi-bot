@@ -79,6 +79,9 @@ class AppState extends ChangeNotifier {
   /// 用户自己配的模型组（key 是打码的 —— 真 key 不出服务端）
   List<ModelGroup> modelGroups = const [];
   final Map<String, List<Msg>> messages = {};
+
+  /// 记忆摘要缓存（roomId → 摘要）
+  final Map<String, MemorySummary> memorySummaries = {};
   final Map<String, bool> typing = {};
 
   /// 每个会话里排队/插话中的用户消息条数
@@ -1079,6 +1082,49 @@ class AppState extends ChangeNotifier {
     } catch (err) {
       lastError = '$err';
       _notify();
+    }
+  }
+
+  String _memoryKey(String roomId, String? botId) =>
+      botId == null ? roomId : '$roomId:$botId';
+
+  /// 读某个会话的记忆摘要（群聊可指定 botId）
+  Future<MemorySummary?> loadMemory(String roomId, {String? botId}) async {
+    final client = api;
+    if (client == null) return null;
+    try {
+      final query = botId == null
+          ? ''
+          : '?botId=${Uri.encodeQueryComponent(botId)}';
+      final res = await client.get('/api/rooms/$roomId/memory$query');
+      final m = MemorySummary.fromJson(res);
+      memorySummaries[_memoryKey(roomId, botId)] = m;
+      _notify();
+      return m;
+    } catch (err) {
+      lastError = '$err';
+      _notify();
+      return null;
+    }
+  }
+
+  /// 重新整理记忆摘要（会调模型，可能几秒；群聊可指定 botId）
+  Future<MemorySummary?> refreshMemory(String roomId, {String? botId}) async {
+    final client = api;
+    if (client == null) return null;
+    try {
+      final res = await client.post(
+        '/api/rooms/$roomId/memory/refresh',
+        {if (botId != null) 'botId': botId},
+      );
+      final m = MemorySummary.fromJson(res);
+      memorySummaries[_memoryKey(roomId, botId)] = m;
+      _notify();
+      return m;
+    } catch (err) {
+      lastError = '$err';
+      _notify();
+      return null;
     }
   }
 

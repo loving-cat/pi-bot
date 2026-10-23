@@ -329,6 +329,59 @@ await test('压缩预算：没有 settingsManager 的会话不能把整轮搞崩
   assert.equal(applyCompactionBudget(null, { reserveTokens: 1000 }), null);
 });
 
+const { buildMemoryDigest, memoryConversation } = await import('../src/memory-digest.js');
+
+await test('记忆材料：跳过进度回执/系统消息/空消息，只留真对话', () => {
+  const msgs = [
+    { id: '1', authorType: 'user', text: '查一下净值', createdAt: 1 },
+    { id: '2', authorType: 'system', text: '调度提示：预算用完', createdAt: 2 },
+    { id: '3', authorType: 'bot', authorName: '研究员', text: '在「组」接到活，开始处理：查净值', meta: { progress: true }, createdAt: 3 },
+    { id: '4', authorType: 'bot', authorName: '研究员', text: '', createdAt: 4 },
+    { id: '5', authorType: 'bot', authorName: '研究员', text: '净值是 1.23', createdAt: 5 },
+  ];
+  const got = memoryConversation(msgs).map((m) => m.id).sort();
+  assert.deepEqual(got, ['1', '5']);
+});
+
+await test('记忆材料：摘要按条数/总字数截断，保留最新的', () => {
+  const msgs = Array.from({ length: 80 }, (_, i) => ({
+    id: String(i), authorType: 'user', text: `第${i}条`, createdAt: i,
+  }));
+  const digest = buildMemoryDigest(msgs, { maxMessages: 60, maxChars: 40 });
+  assert.ok(digest.length <= 40, `应截到 40 字以内，实际 ${digest.length}`);
+  assert.ok(digest.includes('第79条'), '最新的必须保留');
+  assert.ok(!digest.includes('第0条'), '太老的应被截掉');
+});
+
+await test('记忆摘要：存取按 room:bot 隔离', () => {
+  store.setMemorySummary('mem_room_a', 'mem_bot_a', { text: '记住甲', count: 3, lastId: 'm1' });
+  const got = store.memorySummaryFor('mem_room_a', 'mem_bot_a');
+  assert.equal(got.text, '记住甲');
+  assert.equal(got.count, 3);
+  assert.ok(got.at > 0);
+  assert.equal(store.memorySummaryFor('mem_room_a', 'mem_bot_b'), null);
+  assert.equal(store.memorySummaryFor('mem_room_b', 'mem_bot_a'), null);
+
+  // 重置会话时摘要必须一起作废
+  store.clearMemorySummariesForRoom('mem_room_a');
+  assert.equal(store.memorySummaryFor('mem_room_a', 'mem_bot_a'), null);
+});
+
+await test('★ 压缩预算：reserve/keep ≥ 上下文窗口（1M/1M）会被丢弃，回退 pi 默认', () => {
+  const calls = [];
+  const session = {
+    model: { contextWindow: 1_000_000 },
+    settingsManager: { applyOverrides: (o) => calls.push(o) },
+  };
+  const r = applyCompactionBudget(session, {
+    reserveTokens: 1_000_000,
+    keepRecentTokens: 1_000_000,
+  });
+  // 这两个值等于"永不触发 / 什么都保留"，必须当没设
+  assert.equal(r, null);
+  assert.equal(calls.length, 0, '不能把非法值写进会话设置');
+});
+
 // ---------------------------------------------------------------------------
 // store：每个 bot 的四个预算数字（用户和总经理都能改）
 // ---------------------------------------------------------------------------
@@ -475,9 +528,9 @@ await test('prompt: 没传用户名也不能拼出"跟 说话"这种残句', asy
 
 await test('store: 轮次预算有默认值（老状态文件没有这一项也能用）', () => {
   const l = store.groupLimits();
-  assert.equal(l.leadTurns, 4);
-  assert.equal(l.memberTurns, 2);
-  assert.equal(l.maxRuns, 10);
+  assert.equal(l.leadTurns, 15);
+  assert.equal(l.memberTurns, 15);
+  assert.equal(l.maxRuns, 100);
   assert.equal(l.maxSteps, 30);
   // 5 分钟对写代码这类慢活偏紧 → 默认放到 10 分钟（App 的「部门预算」里也能改）
   assert.equal(l.turnMaxMs, 600_000);

@@ -1092,6 +1092,52 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         return send(res, 200, { messages: store.listMessages(roomId, { limit }) });
       }
 
+      // 记忆摘要（私聊右侧「记忆」页）：GET 返回缓存 + 是否过期；POST 重新生成
+      const memoryMatch = pathname.match(/^\/api\/rooms\/([^/]+)\/memory$/);
+      if (memoryMatch && req.method === 'GET') {
+        const roomId = memoryMatch[1];
+        const room = store.getRoom(roomId);
+        if (!room) return send(res, 404, { error: '会话不存在' });
+        // 群聊可以指定看哪个 bot 的记忆；不传就默认第一个
+        const requested = url.searchParams.get('botId');
+        const botId = requested || room.botIds?.[0] || null;
+        if (!botId) return send(res, 400, { error: '会话里没有 bot' });
+        if (requested && !(room.botIds ?? []).includes(requested)) {
+          return send(res, 400, { error: '这个 bot 不在会话里' });
+        }
+        const rec = store.memorySummaryFor(roomId, botId);
+        const lastId = store.listMessages(roomId, { limit: 1 })[0]?.id ?? null;
+        return send(res, 200, {
+          summary: rec?.text ?? '',
+          at: rec?.at ?? null,
+          count: rec?.count ?? null,
+          stale: !rec || rec.lastId !== lastId,
+          botId,
+        });
+      }
+      const memoryRefreshMatch = pathname.match(/^\/api\/rooms\/([^/]+)\/memory\/refresh$/);
+      if (memoryRefreshMatch && req.method === 'POST') {
+        const roomId = memoryRefreshMatch[1];
+        const room = store.getRoom(roomId);
+        if (!room) return send(res, 404, { error: '会话不存在' });
+        const body = await readBody(req);
+        const requested = typeof body.botId === 'string' ? body.botId : '';
+        const botId = requested || room.botIds?.[0] || null;
+        if (!botId) return send(res, 400, { error: '会话里没有 bot' });
+        if (requested && !(room.botIds ?? []).includes(requested)) {
+          return send(res, 400, { error: '这个 bot 不在会话里' });
+        }
+        const rec = await runner.summarizeMemory(roomId, botId, { force: true });
+        return send(res, 200, {
+          summary: rec?.text ?? '',
+          at: rec?.at ?? null,
+          count: rec?.count ?? null,
+          stale: false,
+          error: rec?.error ?? null,
+          botId,
+        });
+      }
+
       const sendMatch = pathname.match(/^\/api\/rooms\/([^/]+)\/send$/);
       if (sendMatch && req.method === 'POST') {
         const body = await readBody(req);

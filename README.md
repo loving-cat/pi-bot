@@ -26,8 +26,8 @@
 
 | 平台 | 文件 |
 |---|---|
-| **Windows** | [pi-bot-windows-v1.2.0.zip](https://github.com/loving-cat/pi-bot/releases/latest) — 解压双击 `pi_bot.exe`，免安装；从源码打包见 [Windows 构建说明](docs/WINDOWS.md) |
-| **Android** | [pi-bot-android-v1.2.0.apk](https://github.com/loving-cat/pi-bot/releases/latest) — 手机浏览器直接下载安装 |
+| **Windows** | [Windows 免安装包](https://github.com/loving-cat/pi-bot/releases/latest)（`pi-bot-windows-*.zip`）— 解压双击 `pi_bot.exe`，免安装；从源码打包见 [Windows 构建说明](docs/WINDOWS.md) |
+| **Android** | [Android APK](https://github.com/loving-cat/pi-bot/releases/latest)（`pi-bot-android-*.apk`）— 手机浏览器直接下载安装 |
 | **macOS** | 从源码运行 `./scripts/pack-macos.sh` 生成 App 与 DMG，见 [macOS 构建说明](docs/MACOS.md) |
 
 **包里不含任何地址和密钥**——服务端地址、配对码、模型 baseUrl/API key 全部由你自己填（见下面「快速开始」）。
@@ -48,7 +48,7 @@
 - **上级可以打断**：老大 / 主控 / 用户 `@` 一个正在忙的成员时，它会**先停下来汇报进度**、再按新要求继续；同级同事 `@` 它则进它的待办（不打断，也不丢）。
 - **不静默丢弃**：派不出去、被跳过、被时间上限打断，都会在日志和群里留痕。
 - **心跳看门狗**：谁卡死超过一段时间没动静 → 收尾这一轮，并把「这单断了」报给组长/主控。
-- **预算**：老大每轮最多 4 次发言、成员 2 次；一条用户消息最多触发 10 次 bot 运行；单轮最多 30 个来回、默认最长 5 分钟。全部可在 App 的「部门预算」里改。
+- **预算**：老大和成员每轮各最多 15 次发言；一条用户消息最多触发 100 次 bot 运行；单轮最多 30 个来回、默认最长 10 分钟。全部可在 App 的「部门预算」里改。
 
 ## 功能
 
@@ -271,8 +271,6 @@ flutter analyze
 | `PI_BOT_MODEL` | 自动 | 默认模型（来自你的模型组） |
 | `PI_BOT_TOKEN` | — | 固定 token（设了就跳过配对码） |
 | `PI_BOT_HOME` / `PI_BOT_WORKSPACE` | 用户数据目录（见上表） | 数据目录 / agent 的工作目录 |
-| `PI_BOT_GROUP_MAX_STEPS` | 30 | 部门里单轮最多几个来回（**对话轮次**，不是工具调用次数） |
-| `PI_BOT_GROUP_TURN_MAX_MS` | 300000 | 部门里单轮最长跑多久 |
 | `PI_BOT_GROUP_BUSY_WAIT_MS` | 120000 | 要派的活碰上成员正忙，最多等它多久 |
 | `PI_BOT_HEARTBEAT_MS` / `PI_BOT_STALL_MS` | 15000 / 360000 | 心跳间隔 / 多久没动静算断了 |
 | `PI_BOT_MAX_SESSIONS` | 40 | 驻留会话上限（LRU） |

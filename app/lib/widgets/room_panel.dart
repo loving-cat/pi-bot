@@ -88,7 +88,8 @@ class _RoomPanelState extends State<RoomPanel> {
                 child: switch (_tab) {
                   0 => _detail(room, ctxInfo),
                   1 => _Library(room: room),
-                  _ => _members(context, room),
+                  2 when isGroup => _members(context, room),
+                  _ => _MemoryTab(room: room),
                 },
               ),
             ],
@@ -161,7 +162,7 @@ class _RoomPanelState extends State<RoomPanel> {
   }
 
   Widget _tabs(bool isGroup) {
-    final tabs = <String>['详情', '资料库', if (isGroup) '成员'];
+    final tabs = <String>['详情', '资料库', if (isGroup) '成员', '记忆'];
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 18),
       child: Row(
@@ -723,6 +724,351 @@ class _Library extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// 私聊右侧「记忆」页：显示这个 bot 记住的东西（记忆摘要）。
+/// 点摘要卡片进二级页面看全文；有新消息时提示摘要可能过期，可手动重新整理。
+class _MemoryTab extends StatefulWidget {
+  const _MemoryTab({required this.room});
+
+  final Room room;
+
+  @override
+  State<_MemoryTab> createState() => _MemoryTabState();
+}
+
+class _MemoryTabState extends State<_MemoryTab> {
+  MemorySummary? _data;
+  bool _loading = true;
+  bool _generating = false;
+
+  /// 群聊：当前看的是哪个 bot 的记忆
+  String? _botId;
+
+  @override
+  void initState() {
+    super.initState();
+    _botId = widget.room.isGroup
+        ? (widget.room.leadBotId ?? widget.room.botIds.firstOrNull)
+        : widget.room.botIds.firstOrNull;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _bootstrap());
+  }
+
+  Future<void> _bootstrap() async {
+    final st = AppScope.read(context);
+    final m = await st.loadMemory(widget.room.id, botId: _botId);
+    if (!mounted) return;
+    setState(() {
+      _data = m;
+      _loading = false;
+    });
+    // 第一次进来还没有摘要 → 自动整理一份（会调模型，几秒）
+    if (m == null || m.isEmpty) {
+      await _refresh();
+    } else if (m.stale) {
+      // 有新消息：后台悄悄补一份新的，界面先显示旧的（不用用户手动点）
+      await _refresh(silent: true);
+    }
+  }
+
+  Future<void> _refresh({bool silent = false}) async {
+    if (_generating) return;
+    if (!silent) setState(() => _generating = true);
+    final st = AppScope.read(context);
+    final m = await st.refreshMemory(widget.room.id, botId: _botId);
+    if (!mounted) return;
+    setState(() {
+      _data = m;
+      _generating = false;
+    });
+  }
+
+  void _selectBot(String botId) {
+    if (botId == _botId) return;
+    setState(() {
+      _botId = botId;
+      _data = null;
+      _loading = true;
+    });
+    _bootstrap();
+  }
+
+  String _ago(int? ms) {
+    if (ms == null || ms <= 0) return '';
+    final d = DateTime.fromMillisecondsSinceEpoch(ms);
+    final diff = DateTime.now().difference(d);
+    if (diff.inMinutes < 1) return '刚刚';
+    if (diff.inHours < 1) return '${diff.inMinutes} 分钟前';
+    if (diff.inDays < 1) return '${diff.inHours} 小时前';
+    return '${diff.inDays} 天前';
+  }
+
+  Future<void> _showFull(MemorySummary m) async {
+    final botName =
+        AppScope.read(context).botById(_botId)?.name ?? widget.room.name;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: PB.bgPane,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(PB.r3xl),
+          side: const BorderSide(color: PB.borderSecondary),
+        ),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 640, maxHeight: 560),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 14, 10, 10),
+                child: Row(
+                  children: [
+                    const Icon(LucideIcons.fileText,
+                        size: 15, color: PB.textTertiary),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '记忆摘要 · $botName',
+                        style: const TextStyle(
+                          fontSize: PB.fsSm,
+                          fontWeight: FontWeight.w600,
+                          color: PB.textPrimary,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: '关闭',
+                      onPressed: () => Navigator.of(ctx).pop(),
+                      icon: const Icon(LucideIcons.x, size: 18),
+                    ),
+                  ],
+                ),
+              ),
+              Container(height: 1, color: PB.borderTertiary),
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
+                  child: SelectableText(
+                    m.summary,
+                    style: const TextStyle(
+                      fontSize: PB.fsSm,
+                      height: 1.7,
+                      color: PB.textPrimary,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final m = _data;
+    final state = AppScope.of(context);
+    final bots = widget.room.botIds
+        .map((id) => state.botById(id))
+        .whereType<Bot>()
+        .toList();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // 群聊：选择看哪个成员的记忆
+          if (widget.room.isGroup && bots.length > 1) ...[
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (final b in bots)
+                  InkWell(
+                    borderRadius: BorderRadius.circular(PB.rFull),
+                    onTap: () => _selectBot(b.id),
+                    child: Container(
+                      padding: const EdgeInsets.fromLTRB(6, 4, 10, 4),
+                      decoration: BoxDecoration(
+                        color: b.id == _botId ? PB.bgActive : Colors.transparent,
+                        borderRadius: BorderRadius.circular(PB.rFull),
+                        border: Border.all(
+                          color: b.id == _botId
+                              ? PB.borderHighlight
+                              : PB.borderTertiary,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          BlobAvatar(
+                            seed: b.id,
+                            color: PB.colorFor(b.id),
+                            size: 16,
+                            animate: false,
+                          ),
+                          const SizedBox(width: 5),
+                          Text(
+                            b.name,
+                            style: TextStyle(
+                              fontSize: PB.fsXxs,
+                              color: b.id == _botId
+                                  ? PB.textPrimary
+                                  : PB.textTertiary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 10),
+          ],
+          Row(
+            children: [
+              const Icon(LucideIcons.fileText,
+                  size: 15, color: PB.textTertiary),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  '记忆摘要',
+                  style: TextStyle(
+                    fontSize: PB.fsSm,
+                    fontWeight: FontWeight.w600,
+                    color: PB.textPrimary,
+                  ),
+                ),
+              ),
+              if (_generating)
+                const SizedBox(
+                  width: 15,
+                  height: 15,
+                  child: CircularProgressIndicator(strokeWidth: 1.6),
+                )
+              else
+                IconButton(
+                  tooltip: '重新整理',
+                  onPressed: _refresh,
+                  icon: const Icon(LucideIcons.refreshCw, size: 16),
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          if (_loading && m == null)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 16),
+              child: Text(
+                '正在读取记忆…',
+                style: TextStyle(fontSize: PB.fsXs, color: PB.textQuaternary),
+              ),
+            )
+          else if (m == null || m.isEmpty)
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: PB.bgActive,
+                borderRadius: BorderRadius.circular(PB.rXl),
+                border: Border.all(color: PB.borderTertiary),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '还没有记忆摘要',
+                    style: TextStyle(
+                        fontSize: PB.fsSm, color: PB.textSecondary),
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    '整理之后，这里会显示它记住的关键结论、偏好和待办。',
+                    style: TextStyle(
+                        fontSize: PB.fsXs, color: PB.textQuaternary),
+                  ),
+                  const SizedBox(height: 12),
+                  InkWell(
+                    onTap: _generating ? null : _refresh,
+                    borderRadius: BorderRadius.circular(PB.rXl),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: PB.bgElevated,
+                        borderRadius: BorderRadius.circular(PB.rFull),
+                        border: Border.all(color: PB.borderSecondary),
+                      ),
+                      child: Text(
+                        _generating ? '正在整理…' : '生成记忆摘要',
+                        style: const TextStyle(
+                            fontSize: PB.fsXs, color: PB.textSecondary),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            GestureDetector(
+              onTap: () => _showFull(m),
+              child: Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: PB.bgActive,
+                  borderRadius: BorderRadius.circular(PB.rXl),
+                  border: Border.all(color: PB.borderTertiary),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      m.summary,
+                      maxLines: 10,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: PB.fsXs,
+                        height: 1.7,
+                        color: PB.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            m.stale
+                                ? '有新消息，摘要可能已过期'
+                                : '更新于 ${_ago(m.at)}',
+                            style: TextStyle(
+                              fontSize: PB.fsXxs,
+                              color: m.stale
+                                  ? PB.accentBright
+                                  : PB.textQuaternary,
+                            ),
+                          ),
+                        ),
+                        const Text(
+                          '查看完整摘要 →',
+                          style: TextStyle(
+                              fontSize: PB.fsXxs, color: PB.accentBright),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          if (m?.error != null && m!.error!.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              m.error!,
+              style: const TextStyle(fontSize: PB.fsXxs, color: PB.danger),
+            ),
+          ],
+        ],
       ),
     );
   }

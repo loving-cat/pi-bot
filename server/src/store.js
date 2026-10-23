@@ -49,11 +49,11 @@ import { encrypt, decrypt, isEncrypted } from './secrets.js';
 
 export const GROUP_LIMITS_DEFAULT = {
   /** 部门老大每次发言最多跑几轮 */
-  leadTurns: 4,
+  leadTurns: 15,
   /** 普通成员每次发言最多跑几轮 */
-  memberTurns: 2,
+  memberTurns: 15,
   /** 一条用户消息最多触发几次 bot 运行（防无限互吹） */
-  maxRuns: 10,
+  maxRuns: 100,
   /** 部门里单次最多**来回几轮**（对话轮次，不是工具调用次数） */
   maxSteps: 30,
   /**
@@ -597,6 +597,21 @@ export class Store {
     const out = {};
     for (const [k, def] of Object.entries(GROUP_LIMITS_DEFAULT)) {
       out[k] = positiveIntOrDefault(saved[k], def);
+    }
+    // ★ 老默认值（4 / 2 / 10）自动升级：用户反馈"成员经常跑不完就被预算跳过"。
+    //   只迁移一次（groupLimitsMigrated）—— 之后用户就算自己改回 4/2 也不再动它。
+    if (
+      this.state.groupLimitsMigrated !== true &&
+      saved.leadTurns === 4 &&
+      saved.memberTurns === 2
+    ) {
+      out.leadTurns = GROUP_LIMITS_DEFAULT.leadTurns;
+      out.memberTurns = GROUP_LIMITS_DEFAULT.memberTurns;
+      if (saved.maxRuns === 10) out.maxRuns = GROUP_LIMITS_DEFAULT.maxRuns;
+      this.state.groupLimits = { ...out };
+      this.state.groupLimitsMigrated = true;
+      this.scheduleSave();
+      bus.emit('event', { t: 'groupLimits.updated', limits: { ...out } });
     }
     return out;
   }
@@ -1664,6 +1679,48 @@ export class Store {
   clearSessionFile(roomId, botId) {
     delete this.state.sessions[`${roomId}:${botId}`];
     this.scheduleSave();
+  }
+
+  // ---------- 记忆摘要 ----------
+
+  memorySummaryFor(roomId, botId) {
+    const all = this.state.memorySummaries ?? {};
+    return all[`${roomId}:${botId}`] ?? null;
+  }
+
+  clearMemorySummary(roomId, botId) {
+    const all = this.state.memorySummaries;
+    if (!all) return;
+    delete all[`${roomId}:${botId}`];
+    this.scheduleSave();
+  }
+
+  /** 会话重置（开新会话）时，这个房间所有 bot 的摘要一起作废 */
+  clearMemorySummariesForRoom(roomId) {
+    const all = this.state.memorySummaries;
+    if (!all) return;
+    for (const key of Object.keys(all)) {
+      if (key.startsWith(`${roomId}:`)) delete all[key];
+    }
+    this.scheduleSave();
+  }
+
+  /** 某个 bot 被重置记忆时，它在所有房间的摘要都作废 */
+  clearMemorySummariesForBot(botId) {
+    const all = this.state.memorySummaries;
+    if (!all) return;
+    for (const key of Object.keys(all)) {
+      if (key.endsWith(`:${botId}`)) delete all[key];
+    }
+    this.scheduleSave();
+  }
+
+  setMemorySummary(roomId, botId, record) {
+    if (!this.state.memorySummaries) this.state.memorySummaries = {};
+    const next = { ...record, at: record.at ?? now() };
+    this.state.memorySummaries[`${roomId}:${botId}`] = next;
+    this.scheduleSave();
+    return next;
   }
 
   // ---------- 消息 ----------

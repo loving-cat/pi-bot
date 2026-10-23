@@ -1010,6 +1010,35 @@ class MsgRef {
   );
 }
 
+/// 私聊「记忆」页：服务端整理出来的记忆摘要。
+class MemorySummary {
+  MemorySummary({
+    this.summary = '',
+    this.at,
+    this.count,
+    this.stale = false,
+    this.error,
+  });
+
+  final String summary;
+  final int? at;
+  final int? count;
+
+  /// 生成之后会话里又有新消息 → 摘要可能过期
+  final bool stale;
+  final String? error;
+
+  bool get isEmpty => summary.trim().isEmpty;
+
+  factory MemorySummary.fromJson(Map<String, dynamic> json) => MemorySummary(
+    summary: (json['summary'] as String?) ?? '',
+    at: (json['at'] as num?)?.toInt(),
+    count: (json['count'] as num?)?.toInt(),
+    stale: json['stale'] == true,
+    error: json['error'] as String?,
+  );
+}
+
 class ServerInfo {
   ServerInfo({
     this.version = '',

@@ -66,6 +66,20 @@ class _MdTextState extends State<MdText> {
     return _links.putIfAbsent(url, () => TapGestureRecognizerHandle(url));
   }
 
+  /// 网址的"点一下复制"识别器。
+  ///
+  /// 行内代码里的 localhost 地址（http://127.0.0.1:8765/ 这种）点开也没用，
+  /// 用户要的是把地址拿走 —— 点一下直接复制，比让用户先拖选再 ⌘C 快得多。
+  TapGestureRecognizerHandle _copyUrlRecognizer(String url) {
+    return _links.putIfAbsent(
+      'copy:$url',
+      () => TapGestureRecognizerHandle.custom(() {
+        Clipboard.setData(ClipboardData(text: url));
+        toast(context, '链接已复制');
+      }),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -86,23 +100,31 @@ class _MdTextState extends State<MdText> {
       children.add(_renderBlock(context, block, base, code));
     }
 
-    if (children.length == 1) return children.first;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        for (var i = 0; i < children.length; i++)
-          Padding(
-            // ★ 块之间的呼吸：8 → 14。
-            //   消息里通常是"一句话 + 列表 + 一句话"这种结构，块挤在一起
-            //   读起来像一堵墙；拉开之后每一块才是独立的一段。
-            //   compact 的那档也跟着放宽（4 → 8），但保持明显更紧。
-            padding: EdgeInsets.only(
-              top: i == 0 ? 0 : (widget.compact ? 8 : 14),
-            ),
-            child: children[i],
-          ),
-      ],
-    );
+    final body = children.length == 1
+        ? children.first
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (var i = 0; i < children.length; i++)
+                Padding(
+                  // ★ 块之间的呼吸：8 → 14。
+                  //   消息里通常是"一句话 + 列表 + 一句话"这种结构，块挤在一起
+                  //   读起来像一堵墙；拉开之后每一块才是独立的一段。
+                  //   compact 的那档也跟着放宽（4 → 8），但保持明显更紧。
+                  padding: EdgeInsets.only(
+                    top: i == 0 ? 0 : (widget.compact ? 8 : 14),
+                  ),
+                  child: children[i],
+                ),
+            ],
+          );
+    if (!widget.selectable) return body;
+    // ★ 整个消息**只有一个** SelectionArea。
+    //
+    //   以前是每个段落/列表项/表格单元格各自一个 SelectionArea —— 拖动选择
+    //   跨行时每一块各选各的，复制出来断成一截一截（用户："每一句分行后，
+    //   就各论各的了"）。收成一个之后，整条消息可以一次拖选、⌘C/Ctrl+C 复制。
+    return SelectionArea(child: body);
   }
 
   Widget _renderBlock(
@@ -200,12 +222,9 @@ class _MdTextState extends State<MdText> {
 
   Widget _rich(String source, TextStyle base, TextStyle code) {
     final spans = _inline(source, base, code);
-    final text = Text.rich(TextSpan(children: spans, style: base));
-    if (!widget.selectable) return text;
-    // ★ 为什么不用 SelectableText.rich：它**不支持 WidgetSpan**，
-    //   而 @提及 要画一个小头像 chip。SelectionArea + Text.rich 一样能选中，
-    //   而且支持内联 widget。（焦点问题在外面用 ExcludeFocus 统一挡掉了。）
-    return SelectionArea(child: text);
+    // 选中交给最外层那一个 SelectionArea（见 build），这里只画文本。
+    // 不用 SelectableText.rich：它不支持 WidgetSpan，而 @提及 要画头像 chip。
+    return Text.rich(TextSpan(children: spans, style: base));
   }
 
   List<InlineSpan> _inline(String source, TextStyle base, TextStyle code) {
@@ -219,6 +238,7 @@ class _MdTextState extends State<MdText> {
       r'|(\*\*[^*\n]+\*\*)' // 粗体
       r'|(~~[^~\n]+~~)' // 删除线
       r'|(\[[^\]\n]+\]\([^)\s]+\))' // 链接
+      r'|(https?://[^\s<>`\u3002\uff0c\uff1b\uff1a\uff09)]+)' // 裸网址
       r'|((?<![\w*])\*[^*\n]+\*(?![\w*]))' // 斜体 *
       r'|((?<![\w_])_[^_\n]+_(?![\w_]))' // 斜体 _
       r'|(@(?:all|全体|所有人|大家|全员))' // @全体
@@ -231,10 +251,15 @@ class _MdTextState extends State<MdText> {
         spans.add(TextSpan(text: source.substring(i, match.start)));
       final token = match.group(0)!;
       if (token.startsWith('`')) {
+        final inner = token.substring(1, token.length - 1);
         spans.add(
           TextSpan(
-            text: token.substring(1, token.length - 1),
+            text: inner,
             style: code.copyWith(backgroundColor: PB.bgActive),
+            // 行内代码里的网址：点一下复制（打开 localhost 没有意义）
+            recognizer: RegExp(r'^https?://').hasMatch(inner)
+                ? _copyUrlRecognizer(inner).value
+                : null,
           ),
         );
       } else if (token.startsWith('**')) {
@@ -284,6 +309,15 @@ class _MdTextState extends State<MdText> {
               info: info,
               onTap: onTap == null ? null : () => onTap(name),
             ),
+          ),
+        );
+      } else if (RegExp(r'^https?://').hasMatch(token)) {
+        // 裸网址：点一下复制（不自动打开，避免把用户踢出 App）
+        spans.add(
+          TextSpan(
+            text: token,
+            style: base.copyWith(color: PB.accentBright),
+            recognizer: _copyUrlRecognizer(token).value,
           ),
         );
       } else {
@@ -601,7 +635,7 @@ class _CodeBlock extends StatelessWidget {
               scrollDirection: Axis.horizontal,
               // 自己写的小分词器上色（见 lib/highlight.dart）：
               // 认不出的语言一律当纯文本，绝不猜；纯文本时行为和以前一样。
-              child: SelectableText.rich(
+              child: Text.rich(
                 TextSpan(
                   children: [
                     for (final t in highlightCode(code.trimRight(), language))
