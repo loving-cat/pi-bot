@@ -54,6 +54,7 @@ const TESTS = [
   'room-lock',
   'model-health',
   'net-guard',
+  'security-regress',
 ];
 
 let failed = 0;

@@ -9,15 +9,16 @@ import { config } from './config.js';
 import { store } from './store.js';
 import { VERSION } from './version.js';
 import { bus } from './bus.js';
-import { serverInfo, isLoopback, LOCAL_DEVICE } from './http.js';
+import { serverInfo, isLoopback, LOCAL_DEVICE, hostAllowed } from './http.js';
 import { log, timingSafeEqual } from './util.js';
 
 export function attachWs(server, { runner }) {
-  const wss = new WebSocketServer({ server, path: '/ws' });
+  const wss = new WebSocketServer({ server, path: '/ws', verifyClient: verifyWsClient });
 
   const resolveDevice = (req) => {
     const url = new URL(req.url, 'http://localhost');
-    const token = url.searchParams.get('token');
+    const auth = String(req.headers.authorization || '');
+    const token = url.searchParams.get('token') || (auth.startsWith('Bearer ') ? auth.slice(7) : '');
     if (token && token.length) {
       if (config.staticToken && timingSafeEqual(token, config.staticToken)) {
         return { id: 'static', name: 'static-token' };
@@ -26,8 +27,8 @@ export function attachWs(server, { runner }) {
       if (device) store.touchDevice(token);
       return device;
     }
-    // 没带 token：本机（PC 端 App）直接放行
-    if (isLoopback(req)) return LOCAL_DEVICE;
+    // 没带 token：仅限本机原生客户端（不带 Origin），浏览器页面一律要 token
+    if (isLoopback(req) && !req.headers.origin) return LOCAL_DEVICE;
     return null;
   };
 
@@ -135,4 +136,23 @@ export function attachWs(server, { runner }) {
   });
 
   return wss;
+}
+
+/**
+ * WS 握手校验：Upgrade 不经过 HTTP 处理器，要单独防 DNS rebinding / 跨站劫持。
+ * - Host 必须是本机名/本机 IP
+ * - 带 Origin（浏览器）时，Origin 必须指向本服务自身（同 host 同端口）
+ */
+export function verifyWsClient({ origin, req }) {
+  if (!hostAllowed(req.headers.host)) return false;
+  if (!origin) return true; // 原生 App 不发 Origin
+  let o;
+  try {
+    o = new URL(origin);
+  } catch {
+    return false;
+  }
+  if (o.protocol !== 'http:' && o.protocol !== 'https:') return false;
+  const port = o.port || (o.protocol === 'https:' ? '443' : '80');
+  return hostAllowed(o.host) && port === String(config.port);
 }
