@@ -179,6 +179,8 @@ export function startRelayAgent({
     // 本地服务端会校验 Host（防 DNS rebinding），这里改写成回环
     headers.host = `${localUrl.hostname}:${localUrl.port}`;
     delete headers.origin;
+    // 标记中转来源：本地服务端据此不再按回环当主人（客户端伪造只会降权，无需密钥）
+    headers['x-pi-relay'] = '1';
     if (headers['x-relay-token']) {
       headers.authorization = `Bearer ${headers['x-relay-token']}`;
       delete headers['x-relay-token'];
@@ -257,7 +259,12 @@ export function startRelayAgent({
   function openStream(frame) {
     const path = frame.path || '/ws';
     const url = new URL(path, localUrl);
-    const headers = {};
+    // 只许桥接到本地服务端：绝对 URL / 协议相对路径会让 URL 指向外部
+    if (url.host !== localUrl.host) {
+      log(`拒绝外连的 WS 桥接：${path}`);
+      return shutdownStream(frame.id, 1008, 'bad path');
+    }
+    const headers = { 'x-pi-relay': '1' };
     if (frame.headers?.authorization) headers.authorization = frame.headers.authorization;
     // 本地服务端把回环当主人；这里照实带上 token（若有）
     const stream = new WebSocket(url, { headers, maxPayload: MAX_FRAME_TEXT_BYTES });
