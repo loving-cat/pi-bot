@@ -92,6 +92,8 @@ function extractToken(req, url) {
  * 远程设备（手机）仍然必须带 token。
  */
 export function isLoopback(req) {
+  // 中转进来的请求物理上也是回环，但代表远程设备，不能当主人
+  if (req.headers?.['x-pi-relay']) return false;
   const raw = req.socket?.remoteAddress ?? '';
   return raw === '127.0.0.1' || raw === '::1' || raw === '::ffff:127.0.0.1';
 }
@@ -126,6 +128,23 @@ function authenticate(req, url) {
  * 否则恶意网页把自己的域名解析到 127.0.0.1，浏览器就会以"同源"身份打进来
  * （DNS rebinding），连 CORS 都挡不住。
  */
+// 只有这些类型允许内联展示（图片预览），其余一律下载，杜绝 html/svg/js 内联执行
+const INLINE_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+export function fileResponseHeaders(meta) {
+  const mime = String(meta.mime || '').toLowerCase().split(';')[0].trim();
+  const inline = INLINE_MIMES.has(mime);
+  const name = encodeURIComponent(meta.name || 'file');
+  return {
+    'content-type': inline ? mime : 'application/octet-stream',
+    'content-length': meta.size,
+    'content-disposition': `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${name}`,
+    'cache-control': 'private, max-age=86400',
+    'x-content-type-options': 'nosniff',
+    'content-security-policy': "default-src 'none'; sandbox",
+  };
+}
+
 export function hostAllowed(hostHeader) {
   const host = String(hostHeader ?? '').trim();
   if (!host) return false;
@@ -849,13 +868,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         const meta = metaFor(fileMatch[1]);
         const file = pathFor(fileMatch[1]);
         if (!meta || !file) return send(res, 404, { error: '文件不存在' });
-        res.writeHead(200, {
-          'content-type': meta.mime,
-          'content-length': meta.size,
-          'cache-control': 'private, max-age=86400',
-          // 附件同样是本机内容，不对外开放跨域读取
-          'x-content-type-options': 'nosniff',
-        });
+        res.writeHead(200, fileResponseHeaders(meta));
         fs.createReadStream(file).pipe(res);
         return undefined;
       }
