@@ -66,7 +66,8 @@ async function readBody(req, limit = 1024 * 1024) {
   let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > limit) throw new Error('body too large');
+    // 带上 code：下面的错误处理靠它回 413。以前不带，超长请求一律变成 500。
+    if (size > limit) throw Object.assign(new Error('body too large'), { code: 'BODY_TOO_LARGE' });
     chunks.push(chunk);
   }
   if (!chunks.length) return {};

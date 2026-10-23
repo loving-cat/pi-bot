@@ -90,6 +90,11 @@ export const config = {
   tools,
   /** 每个房间内存里保留的消息条数（落盘也按此裁剪） */
   maxMessagesPerRoom: Number(process.env.PI_BOT_MAX_MESSAGES || 500),
+  /**
+   * 启动时后台把所有有凭证的模型探一遍（结果缓存 24h，过期每小时补探）。
+   * 默认开；PI_BOT_PROBE=0 关掉 —— 模型多、按量计费、或者不想一启动就发一堆请求时用。
+   */
+  autoProbe: process.env.PI_BOT_PROBE !== '0',
   pairTtlMs: Number(process.env.PI_BOT_PAIR_TTL_MS || 10 * 60 * 1000),
   /**
    * 收尾复盘：一轮群聊结束后提炼候选经验（只进库，等用户启用才注入）。

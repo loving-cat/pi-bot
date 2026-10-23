@@ -82,7 +82,7 @@ async function main() {
 
   const runner = await new PiRunner().init();
   // 探活结果 24 小时过期 —— 服务连跑几天也不会让「全员不可用」这种假结论冻在那儿
-  runner.health?.startAutoRefresh();
+  if (config.autoProbe) runner.health?.startAutoRefresh();
   const pairing = new Pairing();
   pairing.onRotate = async (code) => {
     log(`🔑 配对码已轮换：${code}`);

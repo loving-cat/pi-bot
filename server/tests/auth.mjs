@@ -163,8 +163,12 @@ if (lan) {
     const r = await call(lan, '/api/pair', { method: 'POST', body: { code: spentCode, deviceName: 'x' } });
     assert.equal(r.status, 401);
   });
+} else if (process.env.CI) {
+  // CI 上没有局域网地址，上面 6 条最关键的远程鉴权用例就一条都没跑 —— 以前汇总照样全绿。
+  // 记一条失败，让「没测到」看得见。本地没有网卡只提示、不算失败。
+  results.push({ name: '远程鉴权用例（本机没有局域网地址，一条没跑）', ok: false, err: '没有局域网地址可用来模拟远程请求' });
 } else {
-  console.log('（本机没有局域网地址，跳过远程用例）');
+  console.log('（本机没有局域网地址，跳过 6 条远程用例 —— 它们验的是最关键的那部分鉴权）');
 }
 
 await test('错码不放行', async () => {
@@ -200,6 +204,31 @@ await test('★ 状态变更请求必须 application/json（跨域 text/plain �
     headers: { 'content-type': 'text/plain' },
   });
   assert.equal(r.status, 415);
+});
+
+await test('请求体超过 1MB：回 413，不是 500', async () => {
+  const big = { note: 'x'.repeat(1024 * 1024 + 16) };
+  const r = await call('127.0.0.1', '/api/user', { method: 'PATCH', body: big });
+  assert.equal(r.status, 413, `超长请求应该是 413（实际 ${r.status}）`);
+  assert.equal(r.body?.code, 'BODY_TOO_LARGE');
+});
+
+await test('★ 带 token 的请求不再每次重写 state.json（最近在线时间只在内存里更新）', async () => {
+  const { token } = store.addDevice('频繁请求的手机');
+  await call('127.0.0.1', '/api/state', { token });
+  await new Promise((r) => setTimeout(r, 400)); // 等第一次（允许的）落盘跑完
+  let saves = 0;
+  const orig = store.saveNow.bind(store);
+  store.saveNow = () => { saves++; return orig(); };
+  try {
+    for (let i = 0; i < 5; i++) await call('127.0.0.1', '/api/state', { token });
+    await new Promise((r) => setTimeout(r, 400));
+  } finally {
+    store.saveNow = orig;
+  }
+  assert.equal(saves, 0, `一分钟内重复请求不该触发落盘，实际 ${saves} 次`);
+  const dev = store.listDevicesPublic().find((d) => d.name === '频繁请求的手机');
+  assert.ok(Date.now() - dev.lastSeenAt < 5000, '内存里的最近在线时间要是新的');
 });
 
 server.close();
