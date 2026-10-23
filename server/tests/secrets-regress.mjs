@@ -399,13 +399,16 @@ await test('POSIX 上 env 输出没有 token 和 key，PATH 还在', () => {
 await test('白名单环境里 node、npm、git 仍能启动', () => {
   delete process.env.HTTP_PROXY;
   delete process.env.http_proxy;
-  for (const [cmd, args] of [
-    [process.execPath, ['-v']],
-    ['node', ['-v']],
-    ['npm', ['-v']],
-    ['git', ['--version']],
-  ]) {
-    const res = cp.spawnSync(cmd, args, { encoding: 'utf8' });
+  // Windows 上可执行文件是 npm.cmd。直接 spawnSync('npm') 会 ENOENT，
+  // 要带扩展名并交给 shell，cmd 才能按 PATHEXT 把它拉起来。
+  const commands = [
+    [process.execPath, ['-v'], false],
+    ['node', ['-v'], false],
+    [process.platform === 'win32' ? 'npm.cmd' : 'npm', ['-v'], process.platform === 'win32'],
+    ['git', ['--version'], false],
+  ];
+  for (const [cmd, args, useShell] of commands) {
+    const res = cp.spawnSync(cmd, args, { encoding: 'utf8', shell: useShell });
     assert.equal(res.status, 0, `${cmd} ${res.stderr || res.error?.message || ''}`);
     assert.ok(String(res.stdout || '').trim().length > 0, cmd);
   }
