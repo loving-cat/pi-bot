@@ -163,8 +163,12 @@ if (lan) {
     const r = await call(lan, '/api/pair', { method: 'POST', body: { code: spentCode, deviceName: 'x' } });
     assert.equal(r.status, 401);
   });
+} else if (process.env.CI) {
+  // CI 上没有局域网地址，上面 6 条最关键的远程鉴权用例就一条都没跑 —— 以前汇总照样全绿。
+  // 记一条失败，让「没测到」看得见。本地没有网卡只提示、不算失败。
+  results.push({ name: '远程鉴权用例（本机没有局域网地址，一条没跑）', ok: false, err: '没有局域网地址可用来模拟远程请求' });
 } else {
-  console.log('（本机没有局域网地址，跳过远程用例）');
+  console.log('（本机没有局域网地址，跳过 6 条远程用例 —— 它们验的是最关键的那部分鉴权）');
 }
 
 await test('错码不放行', async () => {
