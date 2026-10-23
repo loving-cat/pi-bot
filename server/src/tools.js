@@ -20,7 +20,7 @@ import { menuText, resolveMenu, menuEntries } from './model-menu.js';
 import { extractText } from './extract.js';
 import { webSearch, webFetch } from './web.js';
 import { shells } from './shells.js';
-import { decideCommand } from './shell-policy.js';
+import { verdictForTool, commitStdin, resetStdin } from './shell-policy.js';
 import { readonlyBlockReason } from './role-tools.js';
 import { log, now, isBusyError, planDispatchRetry } from './util.js';
 import { CODING_BASELINE_TITLE, CODING_BASELINE_HOWTO, isCodingRole } from './coding-baseline.js';
@@ -533,11 +533,8 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
         const policy = store.policy();
         const blocked = readonlyBlockReason(policy, 'run_background');
         if (blocked) return fail(blocked);
-        const verdict = decideCommand(command, {
-          denyCommands: policy.denyCommands ?? [],
-          allowCommands: policy.allowCommands ?? [],
-        });
-        if (!verdict.allowed) {
+        const verdict = verdictForTool('run_background', { command }, policy);
+        if (verdict && !verdict.allowed) {
           const bot = store.getBot(botId);
           store.addDenial({
             roomId,
@@ -606,15 +603,33 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
     defineTool({
       name: 'write_stdin',
       label: '给后台进程送输入',
-      description: '往后台进程的 stdin 写内容（交互式命令、确认提示都能用）。需要换行就自己带上 \n。',
+      description:
+        '往后台进程的 stdin 写内容（交互式命令、确认提示都能用）。需要换行就自己带上 \\n。' +
+        '写入内容受部门规矩约束，被禁命令即使拆成多次写入也会被拒绝。',
       parameters: Type.Object({
         shell_id: Type.String({ description: 'run_background 返回的 id' }),
         chars: Type.String({ description: '要写入的内容' }),
       }),
       execute: async (_toolCallId, { shell_id, chars }) => {
-        const blocked = readonlyBlockReason(store.policy(), 'write_stdin');
+        const policy = store.policy();
+        const blocked = readonlyBlockReason(policy, 'write_stdin');
         if (blocked) return fail(blocked);
+        // 与 bash 同一套判定；半截输入要和上次没换行的内容拼起来看
+        const verdict = verdictForTool('write_stdin', { shell_id, chars }, policy);
+        if (verdict && !verdict.allowed) {
+          const bot = store.getBot(botId);
+          store.addDenial({
+            roomId,
+            botId,
+            botName: bot?.name ?? '',
+            command: chars,
+            rule: verdict.rule ?? verdict.deniedBy,
+            reason: verdict.reason,
+          });
+          return fail(verdict.message);
+        }
         const r = shells.write(shell_id, chars);
+        if (r.ok) commitStdin(shell_id, chars);
         return r.ok ? ok(`已写入 ${String(chars).length} 个字符`) : fail(r.error);
       },
     }),
@@ -630,6 +645,7 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
       execute: async (_toolCallId, { shell_id, keep }) => {
         const blocked = readonlyBlockReason(store.policy(), 'kill_shell');
         if (blocked) return fail(blocked);
+        resetStdin(shell_id);
         const r = keep ? shells.kill(shell_id) : shells.remove(shell_id);
         if (!r.ok) return fail(r.error);
         return ok(keep ? '已结束（记录保留）' : '已结束并移除');

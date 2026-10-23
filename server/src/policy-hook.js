@@ -2,13 +2,13 @@
  * 命令策略的执行点：拦截 shell 类工具调用，命中规则就阻止执行。
  *
  * 以 pi 扩展的形式注入会话（inline extension），只注册 `tool_call` 一个处理器：
- *   · 只处理会执行命令的工具（bash / powershell）；
+ *   · 会执行命令的工具（bash / powershell / run_background / write_stdin）走同一套判定；
  *   · 规则从 store 实时读取 —— 改规矩后新建的会话立即生效；
  *   · 拒绝时写一条审计记录，并把原因回给模型（模型据此换做法，不会卡死）。
  */
 import crypto from 'node:crypto';
 import { store } from './store.js';
-import { decideCommand } from './shell-policy.js';
+import { verdictForTool } from './shell-policy.js';
 import { log } from './util.js';
 import { bus } from './bus.js';
 import { loadHooks, applyHooks } from './hooks.js';
@@ -80,6 +80,27 @@ export function createPolicyExtension({ roomId, bot }) {
           }
         }
 
+        // 命令规矩在审批之前：批准、临时放行都不能绕过黑名单/白名单。
+        const commandVerdict = verdictForTool(tool, event?.input, policy);
+        if (commandVerdict && !commandVerdict.allowed) {
+          const command = tool === 'write_stdin'
+            ? (event?.input?.chars ?? '')
+            : (event?.input?.command ?? event?.input?.cmd ?? '');
+          store.addDenial({
+            roomId,
+            botId: bot?.id ?? null,
+            botName: bot?.name ?? '',
+            command,
+            rule: commandVerdict.rule ?? commandVerdict.deniedBy,
+            reason: commandVerdict.reason,
+          });
+          log(
+            `⛔ ${bot?.name ?? bot?.id ?? 'bot'} 的命令被拦（${commandVerdict.reason}）：` +
+              String(command).replace(/\s+/g, ' ').slice(0, 120),
+          );
+          return { block: true, reason: commandVerdict.message };
+        }
+
         // ---- 第三档：每一次"会动手"的调用都要用户点批准 ----
         if (policy.dangerous === 'ask' && MUTATING.has(tool)) {
           // 用户批准过"本次任务" → 这个 bot 在这个会话里有一段时间不用逐条点
@@ -134,30 +155,6 @@ export function createPolicyExtension({ roomId, bot }) {
               '先不要重复调用；等用户点了批准会再来找你继续。',
           };
         }
-
-        if (!SHELL_TOOLS.has(tool)) return undefined;
-
-        const denyCommands = policy.denyCommands ?? [];
-        const allowCommands = policy.allowCommands ?? [];
-        if (!denyCommands.length && !allowCommands.length) return undefined;
-
-        const command = event?.input?.command ?? event?.input?.cmd ?? '';
-        const verdict = decideCommand(command, { denyCommands, allowCommands });
-        if (verdict.allowed) return undefined;
-
-        store.addDenial({
-          roomId,
-          botId: bot?.id ?? null,
-          botName: bot?.name ?? '',
-          command,
-          rule: verdict.rule ?? verdict.deniedBy,
-          reason: verdict.reason,
-        });
-        log(
-          `⛔ ${bot?.name ?? bot?.id ?? 'bot'} 的命令被拦（${verdict.reason}）：` +
-            String(command).replace(/\s+/g, ' ').slice(0, 120),
-        );
-        return { block: true, reason: verdict.message };
       });
     },
   };
