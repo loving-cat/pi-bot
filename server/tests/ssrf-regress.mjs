@@ -4,7 +4,8 @@
  *
  * 每个会发出用户/模型可控请求的入口至少一条，
  * 十进制 / 八进制 / IPv6 映射 / 重定向到内网 / DNS rebinding 各至少一条。
- * 不依赖外网：字面量直接判，rebinding 只连本机回环上的探针对手。
+ * user-config 放行本机和局域网，仍拦元数据；重定向改按 untrusted。
+ * 不依赖外网：字面量直接判，rebinding 和 DNS 失败只连本机回环上的探针对手。
  */
 import path from 'node:path';
 import fs from 'node:fs';
@@ -15,6 +16,7 @@ process.env.PI_BOT_HOME = path.join(process.cwd(), 'data', '_unit_test_ssrf');
 fs.rmSync(process.env.PI_BOT_HOME, { recursive: true, force: true });
 
 const { assertPublicTarget, webFetch } = await import('../src/web.js');
+const { publicFetch } = await import('../src/net-guard.js');
 const { probeLogin } = await import('../src/site-probe.js');
 const { createSiteRuntime } = await import('../src/site-runtime.js');
 const { normalizeSite } = await import('../src/sites.js');
@@ -70,7 +72,13 @@ function countFetch() {
   return impl;
 }
 
-await test('十进制 IP：站点探测在发出请求前拒绝', async () => {
+await test('十进制回环：untrusted 拒绝，user-config 探测允许', async () => {
+  await assert.rejects(
+    () => assertPublicTarget('http://2130706433/', { scope: 'untrusted' }),
+    /拒绝访问/,
+  );
+  const allowed = await assertPublicTarget('http://2130706433/', { scope: 'user-config' });
+  assert.equal(allowed.addresses[0].address, '127.0.0.1');
   let called = false;
   const r = await probeLogin({
     baseUrl: 'http://2130706433',
@@ -81,22 +89,33 @@ await test('十进制 IP：站点探测在发出请求前拒绝', async () => {
     passwordField: 'password',
     fetchImpl: async () => {
       called = true;
-      throw new Error('不应该发出请求');
+      const text = JSON.stringify({ accessToken: 't' });
+      return {
+        status: 200,
+        ok: true,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        text: async () => text,
+        json: async () => JSON.parse(text),
+        arrayBuffer: async () => Buffer.from(text),
+      };
     },
   });
-  assert.equal(called, false);
-  assert.equal(r.ok, false);
-  assert.match(r.reason, /拒绝访问/);
+  assert.equal(called, true);
+  assert.equal(r.ok, true, r.reason);
 });
 
-await test('八进制 IP：MCP 测试连接拒绝（https 绕得过明文回环白名单）', async () => {
+await test('八进制回环：untrusted 拒绝，MCP 测试按 user-config 放行', async () => {
+  await assert.rejects(
+    () => assertPublicTarget('https://0177.0.0.1:9/mcp', { scope: 'untrusted' }),
+    /拒绝访问/,
+  );
   const r = await testMcpServer({
     type: 'http',
     url: 'https://0177.0.0.1:9/mcp',
     timeout: 2,
   });
   assert.equal(r.ok, false);
-  assert.match(r.error || '', /拒绝访问/);
+  assert.doesNotMatch(r.error || '', /拒绝访问/);
 });
 
 await test('IPv6 映射：站点查询拒绝，且不发请求', async () => {
@@ -171,17 +190,162 @@ await test('云元数据：更新检查拒绝，且不发请求', async () => {
   assert.match(info.reason, /拒绝访问/);
 });
 
-await test('0.0.0.0：模型组测试连接拒绝，且不发请求', async () => {
+await test('0.0.0.0：untrusted 拒绝，user-config 模型组测试会发出请求', async () => {
+  await assert.rejects(
+    () => assertPublicTarget('http://0.0.0.0:9/', { scope: 'untrusted' }),
+    /拒绝访问/,
+  );
   let called = false;
   const r = await testModelGroup({
     baseUrl: 'http://0.0.0.0:9',
+    fetchImpl: async () => {
+      called = true;
+      const text = JSON.stringify({ data: [{ id: 'm' }] });
+      return {
+        status: 200,
+        ok: true,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        text: async () => text,
+        json: async () => JSON.parse(text),
+        arrayBuffer: async () => Buffer.from(text),
+      };
+    },
+  });
+  assert.equal(called, true);
+  assert.equal(r.ok, true, r.error || '');
+});
+
+function listen(server, host, port = 0) {
+  return new Promise((resolve, reject) => {
+    const onError = (err) => {
+      server.removeListener('listening', onListening);
+      reject(err);
+    };
+    const onListening = () => {
+      server.removeListener('error', onError);
+      resolve(server.address());
+    };
+    server.once('error', onError);
+    server.listen(port, host, onListening);
+  });
+}
+
+await test('模型组配本机假服务（Ollama 风格）测试可以通过', async () => {
+  const server = http.createServer((req, res) => {
+    if (String(req.url || '').startsWith('/v1/models')) {
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ data: [{ id: 'llama' }] }));
+      return;
+    }
+    res.statusCode = 404;
+    res.end('no');
+  });
+  await listen(server, '127.0.0.1');
+  const port = server.address().port;
+  try {
+    const r = await testModelGroup({ baseUrl: `http://127.0.0.1:${port}/v1` });
+    assert.equal(r.ok, true, r.error || '');
+    assert.equal(r.via, '/models');
+    assert.ok((r.models || []).includes('llama'));
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+await test('模型组配云元数据地址被拒绝', async () => {
+  let called = false;
+  const r = await testModelGroup({
+    baseUrl: 'http://169.254.169.254/',
     fetchImpl: async () => {
       called = true;
       throw new Error('不应该发出请求');
     },
   });
   assert.equal(called, false);
+  assert.equal(r.ok, false);
   assert.match(r.error || '', /拒绝访问/);
+  await assert.rejects(
+    () => assertPublicTarget('http://metadata.google.internal/', { scope: 'user-config' }),
+    /拒绝访问元数据主机/,
+  );
+  await assert.rejects(
+    () => assertPublicTarget('http://[fe80::1]/', { scope: 'user-config' }),
+    /拒绝访问/,
+  );
+  await assert.rejects(
+    () => assertPublicTarget('http://[::ffff:169.254.169.254]/', { scope: 'user-config' }),
+    /拒绝访问/,
+  );
+});
+
+await test('DNS 解析为空或超时：报错且探针收不到连接', async () => {
+  const hits = { n: 0 };
+  const onReq = (_req, res) => {
+    hits.n += 1;
+    res.end('hit');
+  };
+  const v4 = http.createServer(onReq);
+  await listen(v4, '127.0.0.1');
+  const port = v4.address().port;
+  const v6 = http.createServer(onReq);
+  try {
+    await listen(v6, '::1', port);
+  } catch {
+    // 没有 IPv6 时只靠 127.0.0.1 探针
+  }
+  const url = `http://localhost:${port}/probe`;
+  try {
+    await assert.rejects(
+      () => publicFetch(url, {}, { lookup: async () => [], scope: 'untrusted' }),
+      /域名解析失败/,
+    );
+    await assert.rejects(
+      () => publicFetch(url, {}, {
+        lookup: () => new Promise(() => {}),
+        scope: 'user-config',
+      }),
+      /域名解析失败/,
+    );
+  } finally {
+    await new Promise((resolve) => v4.close(resolve));
+    if (v6.listening) await new Promise((resolve) => v6.close(resolve));
+  }
+  assert.equal(hits.n, 0);
+});
+
+await test('user-config 跨主机重定向到内网被拒绝', async () => {
+  const calls = [];
+  const stolen = JSON.stringify({ data: [{ id: 'stolen' }] });
+  const fetchImpl = async (url, init) => {
+    calls.push(String(url));
+    const target = String(url);
+    if (init?.redirect !== 'manual' || target.includes('10.1.2.3')) {
+      return {
+        status: 200,
+        ok: true,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        text: async () => stolen,
+        json: async () => JSON.parse(stolen),
+        arrayBuffer: async () => Buffer.from(stolen),
+      };
+    }
+    return {
+      status: 302,
+      ok: false,
+      headers: new Headers({ location: 'http://10.1.2.3/secret' }),
+      text: async () => '',
+      json: async () => ({}),
+      arrayBuffer: async () => new ArrayBuffer(0),
+    };
+  };
+  const r = await testModelGroup({
+    baseUrl: 'http://127.0.0.1:9/v1',
+    fetchImpl,
+  });
+  assert.equal(r.ok, false, r.error || '');
+  assert.match(r.error || '', /拒绝访问/);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0], /^http:\/\/127\.0\.0\.1:9\/v1\/models/);
 });
 
 await test('DNS rebinding：第二次解析出的回环地址不能连上', async () => {

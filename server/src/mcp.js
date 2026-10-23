@@ -323,7 +323,7 @@ export async function testMcpServer(server = {}) {
           },
         }),
         signal: ac.signal,
-      });
+      }, { scope: 'user-config' });
       const ms = Date.now() - t0;
       // 401/403 说明地址是对的，只是凭据没配好 —— 这跟"连不上"是两件事
       if (res.status === 401 || res.status === 403) {
@@ -349,7 +349,7 @@ export async function testMcpServer(server = {}) {
     } catch (err) {
       const ms = Date.now() - t0;
       const msg = String(err?.message ?? err);
-      if (/^(拒绝访问|重定向)/.test(msg)) return { ok: false, ms, error: msg };
+      if (/^(拒绝访问|重定向|域名解析失败)/.test(msg)) return { ok: false, ms, error: msg };
       return {
         ok: false, ms,
         error: /超时/.test(msg)

@@ -48,6 +48,7 @@ async function fetchWithTimeout(url, options = {}) {
       fetchImpl: options.fetchImpl,
       lookup: options.lookup,
       timeoutMs: options.timeoutMs ?? FETCH_TIMEOUT_MS,
+      scope: 'untrusted', // 搜索抓取：查询词和结果链接都可能被模型影响
     },
   );
   return res;
@@ -287,7 +288,7 @@ export async function webFetch(url, { maxChars = MAX_TEXT_CHARS, fetchImpl, look
     const out = await publicFetch(
       target,
       { headers: { 'user-agent': UA, accept: 'text/html,*/*' } },
-      { fetchImpl, lookup, timeoutMs: timeoutMs ?? FETCH_TIMEOUT_MS },
+      { fetchImpl, lookup, timeoutMs: timeoutMs ?? FETCH_TIMEOUT_MS, scope: 'untrusted' },
     );
     res = out.res;
     finalUrl = out.url;
@@ -295,7 +296,7 @@ export async function webFetch(url, { maxChars = MAX_TEXT_CHARS, fetchImpl, look
     const msg = String(err?.message ?? err);
     // 安全拦截 / 重定向策略要原样说出去：翻成"抓取失败"会让模型以为是网络问题，
     // 然后换个写法继续试内网 —— 那正是要防的事。
-    if (/^(拒绝访问|重定向)/.test(msg)) throw err;
+    if (/^(拒绝访问|重定向|域名解析失败)/.test(msg)) throw err;
     // 把底层异常翻成人话 —— 模型据此换路，而不是自己去 curl 十几遍
     throw new Error(explainFetchError(err, target.toString()));
   }

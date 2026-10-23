@@ -12,7 +12,8 @@
  *      这样"口令错了"和"字段名不对"用户能分清。
  *
  * 安全约束：
- *   · 只打用户填的那个域名，不跟随到别的域；
+ *   · 探测和登录按 user-config：允许用户填的本机/局域网，仍拦元数据地址；
+ *   · 重定向每一跳改按 untrusted，跳到别的内网主机会被拒绝；
  *   · 连续失败就停，不打爆对方接口；
  *   · 口令只在内存里用，不写日志。
  */
@@ -118,7 +119,7 @@ export async function probeLogin({
         lastReason = result.reason;
         lastStatus = result.status;
         // 内网在第一次就会被拒，换字段名没有意义，也不该继续打
-        if (/^(拒绝访问|重定向)/.test(lastReason)) {
+        if (/^(拒绝访问|重定向|域名解析失败)/.test(lastReason)) {
           return { ok: false, reason: lastReason, tried };
         }
       }
@@ -161,7 +162,7 @@ async function tryLogin({ base, path, body, fetchImpl, timeoutMs }) {
         signal: controller.signal,
         cache: 'no-store',
       },
-      { fetchImpl: fetchImpl || undefined },
+      { fetchImpl: fetchImpl || undefined, scope: 'user-config' }, // 探测/登录/探活：用户填的 baseUrl
     );
 
     let json = null;
@@ -242,9 +243,8 @@ export async function loginSite(site, { fetchImpl = null, timeoutMs = TIMEOUT_MS
 }
 
 /**
- * 校验站点地址是否与预期主机一致（防 SSRF / 防被引导到别处）。
- *
- * 集成方拿到的 baseUrl 来自用户输入，请求前必须确认它没被改写成内网地址。
+ * query_site 发出去之前的预检。路径是模型给的，按 untrusted：
+ * 即使用户把 baseUrl 配在本机或局域网，这里也不放行。
  *
  * @param {string} url
  * @returns {{ok:boolean, reason:string}}
@@ -260,7 +260,7 @@ export async function assertSafeUrl(url) {
     return { ok: false, reason: '只支持 http/https' };
   }
   try {
-    await assertPublicTarget(u);
+    await assertPublicTarget(u, { scope: 'untrusted' });
     return { ok: true, reason: '', host: hostOf(url) };
   } catch (err) {
     return { ok: false, reason: String(err?.message || err) };

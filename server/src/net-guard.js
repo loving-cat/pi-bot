@@ -1,7 +1,16 @@
 /**
  * 出站 SSRF 拦截。用户或模型能影响的 URL，都先过 assertPublicTarget。
  *
- * 直连时用校验当时的地址做 DNS lookup，避免查完再解析一次被换成内网（rebinding）。
+ * scope（不传按 untrusted）：
+ *   user-config  用户自己填的地址（模型组 / MCP 测试、站点探测·登录·探活、更新检查）。
+ *                允许本机和局域网，只拦 169.254.0.0/16、IPv6 链路本地、
+ *                内嵌映射进该段的地址，以及 metadata.google.internal 这类主机名。
+ *   untrusted    模型可控的 URL（web_fetch、搜索抓取、query_site 实际请求）。
+ *                回环、私网、链路本地、元数据、ULA、映射地址一律拒绝。
+ * 重定向的每一跳都改按 untrusted，同主机跳转也不再沿用 user-config。
+ *
+ * 直连只用校验当时的地址，避免查完再解析一次被换成内网（rebinding）。
+ * 解析失败或超时直接报「域名解析失败」，不再交给系统解析器重查。
  * 走 HTTP 代理时目标由代理解析，这里钉不住那一次查询。
  */
 import dns from 'node:dns/promises';
@@ -125,6 +134,57 @@ function embeddedIpv4(groups) {
   return '';
 }
 
+function normalizeScope(scope) {
+  return scope === 'user-config' ? 'user-config' : 'untrusted';
+}
+
+function isMetadataIpv4(ip) {
+  const [a, b] = String(ip).split('.').map(Number);
+  return a === 169 && b === 254;
+}
+
+/** 云元数据主机名。两种 scope 都在解析前拒绝。 */
+function isMetadataHostname(host) {
+  const h = String(host || '').replace(/\.+$/, '').toLowerCase();
+  if (!h || net.isIP(h) || altIpv4(h)) return false;
+  if (h === 'metadata' || h === 'metadata.google.internal' || h === 'metadata.goog') return true;
+  return h.endsWith('.metadata.google.internal') || h.endsWith('.metadata.goog');
+}
+
+/** user-config 只拦元数据段和 IPv6 链路本地（含嵌进 169.254/16 的写法）。 */
+function isMetadataAddress(addr) {
+  const raw = String(addr || '').replace(/^\[|\]$/g, '').split('%')[0];
+  const v4 = net.isIPv4(raw) ? raw : altIpv4(raw);
+  if (v4 && net.isIPv4(v4)) return isMetadataIpv4(v4);
+  if (!net.isIPv6(raw)) return false;
+  const groups = expandIpv6(raw);
+  if (!groups) return false;
+  const embedded = embeddedIpv4(groups);
+  if (embedded && isMetadataIpv4(embedded)) return true;
+  return (groups[0] & 0xffc0) === 0xfe80;
+}
+
+function isBlockedForScope(addr, scope) {
+  if (scope === 'user-config') return isMetadataAddress(addr);
+  return isBlockedAddress(addr);
+}
+
+function blockedTargetError(scope, address, host) {
+  if (scope === 'user-config') {
+    const raw = String(address || '').split('%')[0];
+    const groups = net.isIPv6(raw) ? expandIpv6(raw) : null;
+    const embedded = groups ? embeddedIpv4(groups) : '';
+    const linkLocal = groups && !embedded && (groups[0] & 0xffc0) === 0xfe80;
+    const kind = linkLocal ? '链路本地地址' : '元数据地址';
+    return host
+      ? new Error(`拒绝访问：${host} 解析到${kind}（${address}）`)
+      : new Error(`拒绝访问${kind}（${address}）`);
+  }
+  return host
+    ? new Error(`拒绝访问：${host} 解析到内网地址（${address}）`)
+    : new Error(`拒绝访问内网地址（${address}）`);
+}
+
 function isBlockedAddress(addr) {
   const raw = String(addr || '').replace(/^\[|\]$/g, '').split('%')[0];
   const v4 = net.isIPv4(raw) ? raw : altIpv4(raw);
@@ -154,15 +214,19 @@ async function resolveAll(host, lookup) {
   const resolve = lookup ?? dns.lookup;
   let timer;
   try {
-    return await Promise.race([
+    const rows = await Promise.race([
       Promise.resolve(resolve(host, { all: true, verbatim: true })),
       new Promise((_, reject) => {
         timer = setTimeout(() => reject(new Error('dns timeout')), DNS_TIMEOUT_MS);
       }),
     ]);
-  } catch {
-    // 解析失败交给后面的连接报「域名解析不出来」，这里不说成权限问题
-    return [];
+    const list = asAddressList(rows);
+    // 空结果和超时一样：不能留空让后面的连接再走系统解析器
+    if (!list.length) throw new Error(`域名解析失败（${host}）`);
+    return list;
+  } catch (err) {
+    if (String(err?.message || '').startsWith('域名解析失败')) throw err;
+    throw new Error(`域名解析失败（${host}）`);
   } finally {
     clearTimeout(timer);
   }
@@ -186,29 +250,30 @@ function asAddressList(rows) {
 }
 
 /**
- * 目标必须落在公网。域名会解析出全部地址，有一个是内网就拒绝。
+ * 按 scope 检查目标。域名会解析出全部地址，有一个被当前 scope 拒绝就失败。
+ * 解析不出地址时直接抛「域名解析失败」，不把空列表交给连接层。
  *
  * @param {string|URL} url
- * @param {{lookup?: Function}} [opts]
+ * @param {{lookup?: Function, scope?: 'user-config'|'untrusted'}} [opts]
  * @returns {Promise<{url: URL, addresses: {address: string, family: number}[]}>}
  */
-export async function assertPublicTarget(url, { lookup } = {}) {
+export async function assertPublicTarget(url, { lookup, scope } = {}) {
+  const mode = normalizeScope(scope);
   const u = url instanceof URL ? url : new URL(String(url));
   if (u.protocol !== 'http:' && u.protocol !== 'https:') {
     throw new Error(`只支持 http/https，收到的是 ${u.protocol}`);
   }
   const host = u.hostname.replace(/^\[|\]$/g, '');
   if (!host) throw new Error('地址里没有主机名');
+  if (isMetadataHostname(host)) throw new Error(`拒绝访问元数据主机（${host}）`);
   const literal = canonicalIp(host);
   if (literal) {
-    if (isBlockedAddress(literal.address)) throw new Error(`拒绝访问内网地址（${literal.address}）`);
+    if (isBlockedForScope(literal.address, mode)) throw blockedTargetError(mode, literal.address);
     return { url: u, addresses: [literal] };
   }
-  const rows = asAddressList(await resolveAll(host, lookup));
+  const rows = await resolveAll(host, lookup);
   for (const row of rows) {
-    if (isBlockedAddress(row.address)) {
-      throw new Error(`拒绝访问：${host} 解析到内网地址（${row.address}）`);
-    }
+    if (isBlockedForScope(row.address, mode)) throw blockedTargetError(mode, row.address, host);
   }
   return { url: u, addresses: rows };
 }
@@ -288,6 +353,9 @@ function nodeRequest(urlString, init, addresses) {
   } else {
     body = null;
   }
+  if (!addresses?.length) {
+    return Promise.reject(new Error(`域名解析失败（${u.hostname}）`));
+  }
   const opts = {
     protocol: u.protocol,
     hostname: u.hostname,
@@ -295,9 +363,9 @@ function nodeRequest(urlString, init, addresses) {
     method: init.method || 'GET',
     path: `${u.pathname}${u.search}` || '/',
     headers,
+    // 无代理时只连校验过的 IP，不再让系统解析器重查
+    lookup: pinnedLookup(addresses),
   };
-  // 空列表表示解析失败，让系统解析器自己报错；有结果就只用这些地址
-  if (addresses?.length) opts.lookup = pinnedLookup(addresses);
 
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -358,29 +426,33 @@ async function dispatch(url, init, addresses, fetchImpl) {
 }
 
 /**
- * 逐跳校验后再连接。禁止自动跟随重定向：每一跳都重新 assertPublicTarget。
+ * 逐跳校验后再连接。禁止自动跟随重定向：第一跳用调用方的 scope，
+ * 之后每一跳（含同主机、含 user-config 跨主机）都按 untrusted。
  *
  * @param {string|URL} input
  * @param {object} [init]
- * @param {{fetchImpl?: Function, lookup?: Function, timeoutMs?: number, maxRedirects?: number}} [deps]
+ * @param {{fetchImpl?: Function, lookup?: Function, timeoutMs?: number, maxRedirects?: number, scope?: 'user-config'|'untrusted'}} [deps]
  */
 export async function publicFetch(input, init = {}, deps = {}) {
   const fetchImpl = deps.fetchImpl ?? init.fetchImpl;
   const lookup = deps.lookup ?? init.lookup;
   const timeoutMs = deps.timeoutMs ?? init.timeoutMs ?? 0;
   const maxRedirects = deps.maxRedirects ?? MAX_REDIRECTS;
+  const scope = normalizeScope(deps.scope ?? init.scope);
   const {
     timeoutMs: _timeout,
     fetchImpl: _fetchImpl,
     lookup: _lookup,
     maxRedirects: _max,
+    scope: _scope,
     ...rest
   } = init;
 
   let current = input instanceof URL ? new URL(input.href) : new URL(String(input));
   let headers = headerMap(rest.headers);
   for (let hop = 0; hop <= maxRedirects; hop++) {
-    const checked = await assertPublicTarget(current, { lookup });
+    const hopScope = hop === 0 ? scope : 'untrusted';
+    const checked = await assertPublicTarget(current, { lookup, scope: hopScope });
     const linked = linkTimeout(rest.signal, timeoutMs);
     try {
       const res = await dispatch(

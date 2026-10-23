@@ -236,7 +236,7 @@ export async function testModelGroup({
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(new Error('超时')), ms);
     try {
-      const { res } = await publicFetch(url, { ...init, signal: ac.signal }, { fetchImpl });
+      const { res } = await publicFetch(url, { ...init, signal: ac.signal }, { fetchImpl, scope: 'user-config' });
       return res;
     } finally {
       clearTimeout(timer);
@@ -245,7 +245,7 @@ export async function testModelGroup({
 
   const blocked = (err) => {
     const msg = String(err?.message ?? err);
-    return /^(拒绝访问|重定向)/.test(msg) ? msg : '';
+    return /^(拒绝访问|重定向|域名解析失败)/.test(msg) ? msg : '';
   };
 
   const explain = (status) => {

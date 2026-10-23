@@ -117,7 +117,7 @@ export async function checkForUpdate({
           'user-agent': `pi-bot/${VERSION}`,
         },
       },
-      { fetchImpl: typeof fetchImpl === 'function' ? fetchImpl : undefined },
+      { fetchImpl: typeof fetchImpl === 'function' ? fetchImpl : undefined, scope: 'user-config' },
     );
     if (!res.ok) {
       return {

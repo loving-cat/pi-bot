@@ -151,7 +151,7 @@ async function fetchOnce({ url, method, body, token, site, fetchImpl, timeoutMs 
         body: body ? JSON.stringify(body) : undefined,
         signal: controller.signal,
       },
-      { fetchImpl: fetchImpl || undefined },
+      { fetchImpl: fetchImpl || undefined, scope: 'untrusted' }, // 模型可控的 path/URL
     );
 
     const text = await readLimited(res, MAX_RESPONSE_BYTES);
