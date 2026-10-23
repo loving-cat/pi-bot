@@ -15,29 +15,64 @@
  * @param {object} [opts]
  * @param {number} [opts.maxChars] 总字数预算
  * @param {number} [opts.maxItems] 条数上限（两重限制取先到者）
- * @returns {{items:Array, usedChars:number, dropped:number}} dropped = 前面丢掉几条
+ * @param {(m:object)=>number} [opts.capOf] 这条最终最多展示多少字。预算按展示长度记，
+ *   不按原文长度 —— 一条会被截到 1600 字的 4000 字报告，不该占掉 4000 字的预算。默认不截。
+ * @param {(m:object)=>boolean} [opts.mustKeep] 必须保留的消息（派给它的活、用户的话）。
+ *   先于其它消息装，不受预算和条数限制 —— 否则派活之后同事们一通长讨论，
+ *   最先被挤掉的恰恰是最早的那条派活。
+ * @returns {{items:Array, usedChars:number, dropped:number, leadingDropped:number}}
+ *   dropped = 一共丢了几条；leadingDropped = 其中排在最前面的几条。
+ *   中间跳过的条数记在后一条的 gapBefore 上（这条会拷贝一份，不改传进来的对象）。
  */
-export function trimTranscript(messages = [], { maxChars = 12000, maxItems = 30 } = {}) {
+export function trimTranscript(
+  messages = [],
+  { maxChars = 12000, maxItems = 30, capOf = null, mustKeep = null } = {},
+) {
   const list = Array.isArray(messages) ? messages : [];
   if (!list.length || maxChars <= 0 || maxItems <= 0) {
-    return { items: [], usedChars: 0, dropped: list.length };
+    return { items: [], usedChars: 0, dropped: list.length, leadingDropped: list.length };
   }
 
-  const picked = [];
+  const lengthOf = (m) => {
+    const len = String(m?.text ?? '').length;
+    const cap = capOf ? Number(capOf(m)) : Infinity;
+    return Number.isFinite(cap) && cap >= 0 ? Math.min(len, cap) : len;
+  };
+  const take = new Array(list.length).fill(false);
   let used = 0;
-  // 从最新往回装：新的消息对当前决策更重要
-  for (let i = list.length - 1; i >= 0; i--) {
-    if (picked.length >= maxItems) break;
-    const text = String(list[i]?.text ?? '');
-    // 第一条永远收下（哪怕它自己就超预算），否则会出现"一条都装不下"
-    if (picked.length > 0 && used + text.length > maxChars) break;
-    picked.push(list[i]);
-    used += text.length;
-    if (used >= maxChars) break;
+  let taken = 0;
+  const grab = (i) => {
+    take[i] = true;
+    used += lengthOf(list[i]);
+    taken++;
+  };
+
+  // 最新的一条永远收下（哪怕它自己就超预算），否则会出现"一条都装不下"
+  grab(list.length - 1);
+  if (mustKeep) {
+    for (let i = 0; i < list.length - 1; i++) if (mustKeep(list[i])) grab(i);
+  }
+  // 其余从最新往回装：新的消息对当前决策更重要；装不下就停
+  for (let i = list.length - 2; i >= 0; i--) {
+    if (take[i]) continue;
+    if (used >= maxChars || taken >= maxItems) break;
+    if (used + lengthOf(list[i]) > maxChars) break;
+    grab(i);
   }
 
-  picked.reverse();
-  return { items: picked, usedChars: used, dropped: list.length - picked.length };
+  const items = [];
+  let gap = 0;
+  let leadingDropped = 0;
+  for (let i = 0; i < list.length; i++) {
+    if (!take[i]) {
+      gap++;
+      continue;
+    }
+    if (!items.length) leadingDropped = gap;
+    items.push(gap && items.length ? { ...list[i], gapBefore: gap } : list[i]);
+    gap = 0;
+  }
+  return { items, usedChars: used, dropped: list.length - items.length, leadingDropped };
 }
 
 /**
