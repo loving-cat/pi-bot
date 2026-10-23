@@ -8,9 +8,12 @@
  *
  * 所以入口先看参数：像 pi CLI 就把参数原样交给 pi CLI，否则才起服务端。
  */
+import './child-env.js';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { childEnv } from './child-env.js';
+import { providerKeys } from './provider-keys.js';
 
 /** pi CLI 的特征参数（子 agent 派活时一定带） */
 const PI_FLAGS = new Set([
@@ -72,15 +75,15 @@ export function resolvePiCli() {
  * 信号转发：派活的扩展超时后会先 SIGTERM 我们，得把子进程一起带走，
  * 否则真正的 pi 会变成孤儿进程继续跑。
  */
-export function runPiCli(argv, { env = process.env } = {}) {
+export function runPiCli(argv, { env = process.env, spawnImpl = spawn } = {}) {
   const { command, args } = resolvePiCli();
   return new Promise((resolve) => {
     let child;
     try {
-      child = spawn(command, [...args, ...argv], {
+      child = spawnImpl(command, [...args, ...argv], {
         stdio: 'inherit',
         windowsHide: true,
-        env,
+        env: childEnv(env, providerKeys(env, argv)),
       });
     } catch (err) {
       console.error(`pi 入口调用失败（${command}）：${err?.message || err}`);
