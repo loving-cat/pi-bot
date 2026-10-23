@@ -225,13 +225,13 @@ await test('登录（非探测）：用站点保存的配置', async () => {
 
 // ---------------------------------------------------------------- 安全
 
-await test('拒绝内网地址', () => {
-  assert.equal(assertSafeUrl('http://127.0.0.1:8080').ok, false);
-  assert.equal(assertSafeUrl('http://192.168.1.1').ok, false);
-  assert.equal(assertSafeUrl('http://10.0.0.1').ok, false);
-  assert.equal(assertSafeUrl('http://172.16.0.1').ok, false);
-  assert.equal(assertSafeUrl('https://example.com').ok, true);
-  assert.equal(assertSafeUrl('file:///etc/passwd').ok, false);
+await test('拒绝内网地址', async () => {
+  assert.equal((await assertSafeUrl('http://127.0.0.1:8080')).ok, false);
+  assert.equal((await assertSafeUrl('http://192.168.1.1')).ok, false);
+  assert.equal((await assertSafeUrl('http://10.0.0.1')).ok, false);
+  assert.equal((await assertSafeUrl('http://172.16.0.1')).ok, false);
+  assert.equal((await assertSafeUrl('https://example.com')).ok, true);
+  assert.equal((await assertSafeUrl('file:///etc/passwd')).ok, false);
 });
 
 // ---------------------------------------------------------------- 运行时
