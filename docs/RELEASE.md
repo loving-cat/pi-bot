@@ -75,6 +75,25 @@ gh release upload v1.3.0 dist/pi-bot-windows-v1.3.0.zip --clobber
 找不到本平台资产的客户端会自动退到发布页（`UpdateInfo.canDownload == false`），
 不会崩、也不会装错包。
 
+## 6. 提交身份只用 noreply 邮箱
+
+仓库是公开的，**每个提交的作者 / 提交者邮箱任何人都能看到**，而且进了历史就删不掉。
+
+```bash
+# 每台开发机、每个 agent 环境都要设（地址在 GitHub 设置 → Emails 里看）
+git config --global user.email "<id>+<账号>@users.noreply.github.com"
+```
+
+**违反会怎样**：macOS 没配邮箱时 git 会自动用 `用户名@主机名.local`，把本机主机名公开；
+用 QQ 邮箱等于公开 QQ 号。两种都发生过（2026-10），只能改写整个历史、强推全部分支和 tag 来清。
+
+CI 的 secret scan 会拦：PR 扫 PR 里的提交（`--meta`），直接 push 到 main 扫新推的提交（`--push`）。
+但 CI 是在**推上去之后**才跑的 —— 拦下来时地址已经公开了，所以提交前自己先跑一遍：
+
+```bash
+node scripts/check-secrets.mjs --push origin/main HEAD
+```
+
 ## 发布清单
 
 ```bash

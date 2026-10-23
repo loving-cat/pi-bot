@@ -36,6 +36,8 @@ const ALLOW = [
   /example\.(com|test|org)/i,
   /fixture[-_]?(credential|secret|password|token)/i,
   /<[^>]*(用户|your|token|key)[^>]*>/i,
+  // 自动化工具的署名行（地址是工具本身的，不含个人信息）
+  /^Co-authored-by: Cursor Agent <cursoragent@cursor\.com>$/,
 ];
 
 /** 只报"确定是凭据"的形状；宁可少报也不要把每个 password 字样都算上 */
@@ -161,27 +163,55 @@ function scanText(where, text) {
 /**
  * --meta <base>..<head>：扫这段提交的作者、提交者、提交信息，以及环境变量 PR_BODY。
  * 只扫本次 PR 的提交，不扫历史（旧提交的问题另行处理）。
+ *
+ * --push <before> <after>：push 到 main 时用。扫 before..after 这段新提交的元数据。
+ * before 全是 0（新分支）或在本地找不到（强推覆盖了历史）时，整条历史都扫。
+ * 为什么要有这一档：直接 push 到 main 不走 PR，--meta 那一步根本不跑 ——
+ * 2026-10 就是这样把带本机主机名 / QQ 邮箱的提交带进了公开历史，只能改写历史清掉。
  */
 const metaIdx = process.argv.indexOf('--meta');
+const pushIdx = process.argv.indexOf('--push');
+
+/** 自动化身份的地址不含个人信息，放行；其余必须是 noreply 或明显的样例域名 */
+const okMail = (m) => /@users\.noreply\.github\.com$/i.test(m) || /^noreply@github\.com$/i.test(m)
+  || /@pi-bot\.local$/i.test(m) || /@[A-Za-z0-9.-]+\.(test|example|invalid)$/i.test(m) || /@example\./i.test(m)
+  || /^codex@localhost$/i.test(m) || /^pi@bot$/i.test(m) || /^cursoragent@cursor\.com$/i.test(m);
+
+function scanCommitMeta(range) {
+  const SEP = '\u001e';
+  const out = execFileSync('git', ['log', '--format=%h%x1f%ae%x1f%ce%x1f%B' + SEP, ...range], { encoding: 'utf8', maxBuffer: 1 << 28 });
+  for (const rec of out.split(SEP).map((r) => r.trim()).filter(Boolean)) {
+    const [sha, author, committer, body] = rec.split('\u001f');
+    for (const [who, mail] of [['作者', author], ['提交者', committer]]) {
+      if (!okMail(mail)) hits.push({ file: `commit ${sha}`, line: 0, rule: `${who}邮箱不是 noreply`, text: mail });
+    }
+    scanText(`commit ${sha} 提交信息`, body);
+  }
+}
+
 if (metaIdx !== -1) {
   const range = process.argv[metaIdx + 1];
-  if (range) {
-    const SEP = '\u001e';
-    const out = execFileSync('git', ['log', '--format=%h%x1f%ae%x1f%ce%x1f%B' + SEP, range], { encoding: 'utf8' });
-    const okMail = (m) => /@users\.noreply\.github\.com$/i.test(m) || /^noreply@github\.com$/i.test(m)
-      || /@pi-bot\.local$/i.test(m) || /@[A-Za-z0-9.-]+\.(test|example|invalid)$/i.test(m) || /@example\./i.test(m);
-    for (const rec of out.split(SEP).map((r) => r.trim()).filter(Boolean)) {
-      const [sha, author, committer, body] = rec.split('\u001f');
-      for (const [who, mail] of [['作者', author], ['提交者', committer]]) {
-        if (!okMail(mail)) hits.push({ file: `commit ${sha}`, line: 0, rule: `${who}邮箱不是 noreply`, text: mail });
-      }
-      scanText(`commit ${sha} 提交信息`, body);
-    }
-  }
+  if (range) scanCommitMeta([range]);
   if (process.env.PR_BODY) scanText('PR 正文', process.env.PR_BODY);
 }
 
-for (const file of (metaIdx !== -1 ? [] : trackedFiles())) {
+if (pushIdx !== -1) {
+  const before = process.argv[pushIdx + 1] ?? '';
+  const after = process.argv[pushIdx + 2] || 'HEAD';
+  let known = false;
+  if (before && !/^0+$/.test(before)) {
+    try {
+      execFileSync('git', ['cat-file', '-e', `${before}^{commit}`], { stdio: 'ignore' });
+      known = true;
+    } catch {
+      known = false; // 强推后旧提交不在了：按整条历史扫
+    }
+  }
+  scanCommitMeta(known ? [`${before}..${after}`] : [after]);
+}
+
+const metaMode = metaIdx !== -1 || pushIdx !== -1;
+for (const file of (metaMode ? [] : trackedFiles())) {
   // 这个脚本自己里面就有规则示例，别自匹配
   if (file === 'scripts/check-secrets.mjs') continue;
   const text = readFile(file);
@@ -190,7 +220,7 @@ for (const file of (metaIdx !== -1 ? [] : trackedFiles())) {
 }
 
 if (!hits.length) {
-  console.log(`✓ 敏感信息扫描：${metaIdx !== -1 ? '提交元数据与 PR 正文' : trackedFiles().length + ' 个文件'}，未发现疑似凭据/本机路径`);
+  console.log(`✓ 敏感信息扫描：${metaMode ? '提交元数据与 PR 正文' : trackedFiles().length + ' 个文件'}，未发现疑似凭据/本机路径`);
   process.exit(0);
 }
 
