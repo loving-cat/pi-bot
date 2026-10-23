@@ -380,6 +380,45 @@ await test('DNS rebinding：第二次解析出的回环地址不能连上', asyn
   assert.equal(lookups, 1, '连接阶段不能再解析一次');
 });
 
+// 上一条只在「没开代理」的机器上走到直连分支。开着系统代理时，以前会把
+// localhost 这类「不走代理的主机」交给 proxyFetch，而它对这类主机是裸 fetch，
+// 按域名重新解析 → 钉住的地址失效。这里强制打开代理，CI 也能覆盖到。
+await test('DNS rebinding：开着系统代理时，直连主机仍只连校验过的地址', async () => {
+  const { setProxyOverride } = await import('../src/http-client.js');
+  const hits = { n: 0 };
+  const server = http.createServer((req, res) => {
+    hits.n += 1;
+    res.end('secret');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  let lookups = 0;
+  const lookup = async () => {
+    lookups += 1;
+    if (lookups === 1) return [{ address: '203.0.113.10', family: 4 }];
+    return [{ address: '127.0.0.1', family: 4 }];
+  };
+  // 代理地址指向一个没人听的本机端口：就算请求被错误地交给代理，也只会连不上，
+  // 不会发到外网。
+  setProxyOverride('http://127.0.0.1:9');
+  let text = '';
+  try {
+    const raced = await Promise.race([
+      webFetch(`http://localhost:${port}/secret`, { lookup, timeoutMs: 700 }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('测试超时')), 2500)),
+    ]);
+    text = raced.text || '';
+  } catch (err) {
+    text = String(err?.message || err);
+  } finally {
+    setProxyOverride('');
+    await new Promise((resolve) => server.close(resolve));
+  }
+  assert.equal(hits.n, 0, '开着代理时连到了回环上的探针：直连主机被交给了会重新解析的裸 fetch');
+  assert.equal(text.includes('secret'), false);
+  assert.equal(lookups, 1, '连接阶段不能再解析一次');
+});
+
 let failed = 0;
 for (const r of results) {
   if (r.ok) console.log(`  ✓ ${r.name}`);

@@ -10,15 +10,16 @@
  * 重定向的每一跳都改按 untrusted，同主机跳转也不再沿用 user-config。
  *
  * 直连只用校验当时的地址，避免查完再解析一次被换成内网（rebinding）。
+ * 「直连」包括开着系统代理、但主机本来就不走代理的情况（本机 / 局域网 / 短主机名）。
  * 解析失败或超时直接报「域名解析失败」，不再交给系统解析器重查。
- * 走 HTTP 代理时目标由代理解析，这里钉不住那一次查询。
+ * 真正走 HTTP 代理时目标由代理解析，这里钉不住那一次查询。
  */
 import dns from 'node:dns/promises';
 import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
 
-import { currentProxy, proxyFetch } from './http-client.js';
+import { currentProxy, isDirectHost, proxyFetch } from './http-client.js';
 
 const MAX_REDIRECTS = 5;
 const DNS_TIMEOUT_MS = 2_000;
@@ -420,8 +421,13 @@ async function dispatch(url, init, addresses, fetchImpl) {
   if (typeof fetchImpl === 'function') {
     return fetchImpl(target, { ...init, redirect: 'manual' });
   }
-  const proxy = await currentProxy();
-  if (proxy) return proxyFetch(target, { ...init, redirect: 'manual' });
+  // 本机 / 局域网 / 短主机名本来就不走代理。以前开着代理时也把它们交给 proxyFetch，
+  // 而那边对这类主机是裸 fetch —— 按域名再解析一次，刚校验过的地址就白钉了，
+  // 第二次解析可以被换成回环（DNS rebinding）。直连一律只连校验时拿到的地址。
+  if (!isDirectHost(url.hostname)) {
+    const proxy = await currentProxy();
+    if (proxy) return proxyFetch(target, { ...init, redirect: 'manual' });
+  }
   return nodeRequest(target, init, addresses);
 }
 

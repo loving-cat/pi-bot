@@ -50,8 +50,11 @@ let cache = { at: 0, proxy: null };
  * 等等，这里要小心：**假 IP 正是需要走代理的那种**。
  * 如果目标解析出来是 198.18.x.x，说明域名被代理解析了，此时应该走代理
  * 让代理按域名重新拿真实地址。所以 198.18 不放进"直连"名单。
+ *
+ * net-guard 也用它决定「这一跳直连还是走代理」——两边必须是同一份规则，
+ * 否则会出现「判成直连、却交给 proxyFetch 裸 fetch 重新解析」的缝。
  */
-function isDirectHost(hostname) {
+export function isDirectHost(hostname) {
   const host = String(hostname ?? '').toLowerCase();
   if (!host) return false;
   if (host === 'localhost' || host === '::1' || host === '[::1]') return true;
