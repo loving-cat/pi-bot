@@ -430,8 +430,15 @@ export class Store {
   touchDevice(token) {
     const d = this.state.devices[token];
     if (d) {
-      d.lastSeenAt = now();
-      this.scheduleSave();
+      const t = now();
+      // 只是「最近在线」的时间戳：只在内存里更新，每台设备最多每分钟落一次盘。
+      // 以前每个带 token 的请求都 scheduleSave()，把整份 state.json（实测 230KB）重写一遍。
+      const persistedAt = d.lastSeenSavedAt ?? 0;
+      d.lastSeenAt = t;
+      if (t - persistedAt >= 60_000) {
+        d.lastSeenSavedAt = t;
+        this.scheduleSave();
+      }
     }
   }
 

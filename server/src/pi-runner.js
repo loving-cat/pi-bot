@@ -494,13 +494,20 @@ export class PiRunner {
     }
     logMenu(this.health);
 
-    // 后台探活：结果缓存 24h，菜单按它自动切到活着的线路
-    this.health.runAll({ concurrency: 6 }).catch((err) => log('模型探活出错：', err?.message || err));
+    // 后台探活：结果缓存 24h，菜单按它自动切到活着的线路。
+    //   首次启动会对每个有凭证的模型真发一次请求（会花钱、也会占满并发）。
+    //   PI_BOT_PROBE=0 关掉：菜单照样有，只是不自动探、也不按探活结果切线路，
+    //   要探可以让主控手动调 probe_model。
+    if (config.autoProbe) {
+      this.health.runAll({ concurrency: 6 }).catch((err) => log('模型探活出错：', err?.message || err));
 
-    // 菜单里那些模型的「档位矩阵」：找出会静默返回空的组合（思考等级 × 模型）
-    this.health
-      .runLevelMatrix(menuSlugs())
-      .catch((err) => log('档位矩阵出错：', err?.message || err));
+      // 菜单里那些模型的「档位矩阵」：找出会静默返回空的组合（思考等级 × 模型）
+      this.health
+        .runLevelMatrix(menuSlugs())
+        .catch((err) => log('档位矩阵出错：', err?.message || err));
+    } else {
+      log('模型探活已关闭（PI_BOT_PROBE=0）：不自动探活');
+    }
 
     return this;
   }
