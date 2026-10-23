@@ -74,11 +74,14 @@ await test('规则校验：拒绝"匹配所有命令"的规则', () => {
   assert.equal(validateRule('aws:*s3 rm*'), null);
 });
 
-await test('规则匹配：整条 / 可执行体 / 前缀 / 冒号写法', () => {
+await test('规则匹配：整条 / 可执行体 / 参数子集 / 冒号写法', () => {
   assert.equal(matchRule('rm -rf *', exec('rm -rf build')), true);
   assert.equal(matchRule('rm', exec('rm -rf /')), true, '只写可执行体也算命中');
-  assert.equal(matchRule('rm -rf', exec('rm -rf /')), true, '前缀命中');
-  assert.equal(matchRule('rm -rf', exec('rm -rfx /')), false, '不能误伤同前缀');
+  assert.equal(matchRule('rm -rf', exec('rm -rf /')), true, '参数子集命中');
+  assert.equal(matchRule('rm -rf', exec('rm -fr /')), true, '短选项拆开后仍命中');
+  assert.equal(matchRule('rm -rf', exec('rm -rfx /')), true, '多出来的短选项仍包含规则选项');
+  assert.equal(matchRule('rm -rf', exec('rm -r /')), false, '缺了 -f 不算命中');
+  assert.equal(matchRule('rm -rf /', exec('rm -rf /tmp')), false, '位置参数按词，不按字符前缀');
   assert.equal(matchRule('git:*push*', exec('git push origin main')), true);
   assert.equal(matchRule('git:*push*', exec('git status')), false);
 });
