@@ -6,11 +6,14 @@
  */
 import './child-env.js';
 import { isPiInvocation, runPiCli } from './pi-args.js';
+import { markServerBoot } from './data-migration.js';
 
 const argv = process.argv.slice(2);
 
 if (isPiInvocation(argv)) {
   process.exit(await runPiCli(argv));
 } else {
+  // 只有真的起服务端时，config.js 才会迁移 / 修复数据目录（见 data-migration.js）
+  markServerBoot();
   await import('./server-main.js');
 }
