@@ -85,6 +85,35 @@ const RULES = [
     name: '别人的 Windows 用户目录',
     re: /\b[A-Za-z]:\\+Users\\+(?!you\b|someone\b|user\b|runner\b|runneradmin\b|public\b|example\b|xxx\b|test\b|%USERPROFILE%)[A-Za-z][A-Za-z0-9._-]{1,}/i,
   },
+  {
+    name: '别人的 macOS 用户目录',
+    re: /\/Users\/(?!you\b|someone\b|user\b|runner\b|shared\b|example\b|test\b|Shared\b)[A-Za-z][A-Za-z0-9._-]{1,}/,
+  },
+  {
+    name: '别人的 Linux 用户目录',
+    re: /\/home\/(?!you\b|someone\b|user\b|runner\b|example\b|test\b|node\b)[A-Za-z][A-Za-z0-9._-]{1,}/,
+  },
+  {
+    name: '开发环境工作目录',
+    re: /(?:^|[\s'"`(=])\/(?:workspace\b|opt\/cursor\b|tmp\/node-v\d)/,
+  },
+  {
+    name: '本机主机名 *.local',
+    // 只拦像主机名的写法（带连字符，或跟在 @ / // 后面），放行 pi-bot.local 与 relay.local 这类样例值
+    re: /(?<![\w.-])(?!(?:pi-bot|relay)\.local\b)(?:[A-Za-z0-9]+-[A-Za-z0-9-]*\.local\b|(?<=[@/])[A-Za-z0-9-]+\.local\b)/,
+  },
+  {
+    name: '云代理链接',
+    re: /cursor\.com\/agents\/|\bbc-[0-9a-f]{8}-[0-9a-f]{4}-/i,
+  },
+  {
+    name: 'QQ 邮箱',
+    re: /\b[A-Za-z0-9._%+-]+@(?:qq|foxmail|vip\.qq)\.com\b/i,
+  },
+  {
+    name: '真实邮箱',
+    re: /\b[A-Za-z0-9._%+-]+@(?!users\.noreply\.github\.com\b|example\.|pi-bot\.local\b|[A-Za-z0-9.-]+\.(?:test|example|invalid)\b)[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b/,
+  },
 ];
 
 const MAX_BYTES = 2 * 1024 * 1024;
@@ -114,27 +143,54 @@ function readFile(file) {
 const isAllowed = (line) => ALLOW.some((re) => re.test(line));
 
 const hits = [];
-for (const file of trackedFiles()) {
-  // 这个脚本自己里面就有规则示例，别自匹配
-  if (file === 'scripts/check-secrets.mjs') continue;
-  const text = readFile(file);
-  if (!text) continue;
-  const lines = text.split(/\r?\n/);
+
+function scanText(where, text) {
+  const lines = String(text ?? '').split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (line.length > 2000) continue; // 压缩产物
-    if (isAllowed(line)) continue;
+    if (line.length > 2000 || isAllowed(line)) continue;
     for (const rule of RULES) {
       if (rule.re.test(line)) {
-        hits.push({ file, line: i + 1, rule: rule.name, text: line.trim().slice(0, 120) });
+        hits.push({ file: where, line: i + 1, rule: rule.name, text: line.trim().slice(0, 120) });
         break;
       }
     }
   }
 }
 
+/**
+ * --meta <base>..<head>：扫这段提交的作者、提交者、提交信息，以及环境变量 PR_BODY。
+ * 只扫本次 PR 的提交，不扫历史（旧提交的问题另行处理）。
+ */
+const metaIdx = process.argv.indexOf('--meta');
+if (metaIdx !== -1) {
+  const range = process.argv[metaIdx + 1];
+  if (range) {
+    const SEP = '\u001e';
+    const out = execFileSync('git', ['log', '--format=%h%x1f%ae%x1f%ce%x1f%B' + SEP, range], { encoding: 'utf8' });
+    const okMail = (m) => /@users\.noreply\.github\.com$/i.test(m) || /^noreply@github\.com$/i.test(m)
+      || /@pi-bot\.local$/i.test(m) || /@[A-Za-z0-9.-]+\.(test|example|invalid)$/i.test(m) || /@example\./i.test(m);
+    for (const rec of out.split(SEP).map((r) => r.trim()).filter(Boolean)) {
+      const [sha, author, committer, body] = rec.split('\u001f');
+      for (const [who, mail] of [['作者', author], ['提交者', committer]]) {
+        if (!okMail(mail)) hits.push({ file: `commit ${sha}`, line: 0, rule: `${who}邮箱不是 noreply`, text: mail });
+      }
+      scanText(`commit ${sha} 提交信息`, body);
+    }
+  }
+  if (process.env.PR_BODY) scanText('PR 正文', process.env.PR_BODY);
+}
+
+for (const file of (metaIdx !== -1 ? [] : trackedFiles())) {
+  // 这个脚本自己里面就有规则示例，别自匹配
+  if (file === 'scripts/check-secrets.mjs') continue;
+  const text = readFile(file);
+  if (!text) continue;
+  scanText(file, text);
+}
+
 if (!hits.length) {
-  console.log(`✓ 敏感信息扫描：${trackedFiles().length} 个文件，未发现疑似凭据/本机路径`);
+  console.log(`✓ 敏感信息扫描：${metaIdx !== -1 ? '提交元数据与 PR 正文' : trackedFiles().length + ' 个文件'}，未发现疑似凭据/本机路径`);
   process.exit(0);
 }
 
