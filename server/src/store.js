@@ -641,10 +641,16 @@ export class Store {
     const list = Array.isArray(this.state.sites) ? this.state.sites : [];
     return list
       .map((s) => {
-        const plain = this.secretsKey
-          ? { ...s, password: decrypt(s?.password, this.secretsKey) }
-          : s;
-        return normalizeSite(plain);
+        let password = s?.password;
+        if (this.secretsKey) {
+          try {
+            password = decrypt(s?.password, this.secretsKey);
+          } catch (err) {
+            // 解不开就停。不能把空口令交给 #persistSites，否则下一次保存会把密文擦掉。
+            throw new Error(`站点「${s?.name || s?.id || ''}」口令解密失败，未改存储：${err.message}`);
+          }
+        }
+        return normalizeSite({ ...s, password });
       })
       .filter(Boolean);
   }

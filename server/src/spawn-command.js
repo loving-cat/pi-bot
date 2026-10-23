@@ -18,9 +18,11 @@
  *
  * 非 Windows 平台：原样 `spawn`，不引入任何行为变化。
  */
+import './child-env.js';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { childEnv } from './child-env.js';
 
 const isWindows = process.platform === 'win32';
 
@@ -138,7 +140,11 @@ export function killProcessTree(child) {
  * @returns {import('node:child_process').ChildProcess}
  */
 export function spawnCommand(command, args = [], options = {}) {
-  const base = { windowsHide: true, ...options };
+  const base = {
+    windowsHide: true,
+    ...options,
+    env: childEnv(options.env ?? process.env),
+  };
   if (!isWindows) return spawn(command, args, base);
 
   const env = options.env ?? process.env;
