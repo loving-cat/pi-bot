@@ -215,6 +215,34 @@ await test('不相关的命令仍然放行', () => {
   passed('( git status )', { allowCommands: ['git status'] });
 });
 
+/** 没配 deny/allow 时必须与改动前一样放行，不能因为包装形式被拦。 */
+const UNRULED_COMMANDS = [
+  'npm test',
+  'npm install',
+  'npm ci',
+  'npm run build',
+  'git status',
+  'git diff',
+  'git log -5',
+  'git add .',
+  'git commit -m "save"',
+  'node -v',
+  'node --version',
+  'node server.js',
+  'node -e "console.log(1)"',
+  "sh -c 'git status'",
+  'bash -c "git status"',
+];
+
+await test('未配置任何命令规则时，npm/git/node 与 sh -c 均放行', () => {
+  for (const cmd of UNRULED_COMMANDS) {
+    const plain = decideCommand(cmd);
+    assert.equal(plain.allowed, true, `${cmd} → ${plain.deniedBy || plain.reason}`);
+    const empty = decideCommand(cmd, { denyCommands: [], allowCommands: [] });
+    assert.equal(empty.allowed, true, cmd);
+  }
+});
+
 function install(roomId = 'r_bypass') {
   let handler = null;
   createPolicyExtension({ roomId, bot: { id: 'b1', name: '测试员' } }).factory({
@@ -237,6 +265,15 @@ shells.write = (_id, chars) => {
   writes.push(String(chars));
   return { ok: true };
 };
+
+await test('未配置命令规则时，bash 入口不拦 npm/git/node 和 sh -c', () => {
+  store.updatePolicy({ dangerous: 'allow', denyCommands: [], allowCommands: [] });
+  const handler = install();
+  for (const cmd of UNRULED_COMMANDS) {
+    assert.equal(handler({ toolName: 'bash', input: { command: cmd } }), undefined, cmd);
+    assert.equal(handler({ toolName: 'run_background', input: { command: cmd } }), undefined, `bg ${cmd}`);
+  }
+});
 
 await test('write_stdin：整段被禁命令在入口被拒绝', () => {
   resetStdin();
