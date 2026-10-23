@@ -121,6 +121,22 @@ await test('停过的健康检查不会留下定时器（进程能退出）', ()
   assert.equal(h.refreshTimer, null);
 });
 
+await test('★ PI_BOT_PROBE=0（autoProbe:false）：结果过期也不自己发请求', async () => {
+  const h = new ModelHealth(fakeRunner(), { ttlMs: 20, autoProbe: false });
+  let calls = 0;
+  h.runAll = async () => {
+    calls++;
+    return { skipped: true };
+  };
+  fresh(h, 'a/off');
+  await sleep(40);
+  assert.equal(h.get('a/off'), null, '过期仍然报「暂无结论」');
+  await sleep(1000);
+  assert.equal(calls, 0, `关了自动探活就不该重探，实际 ${calls} 次`);
+  assert.equal(h.refreshTimer, null);
+  h.stop();
+});
+
 const passed = results.filter((r) => r.ok).length;
 console.log('\n================ 探活缓存测试 ================');
 for (const r of results) {
