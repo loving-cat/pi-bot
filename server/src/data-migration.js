@@ -39,6 +39,18 @@ export const ENTRIES = Object.freeze([
 export const MIGRATION_MARKER = '.migrated-from.json';
 
 /**
+ * 进程内标记：这次是不是真的在起服务端。
+ * config.js 只有看到它才会迁移 / 修复数据目录。放在 globalThis 上、不用环境变量：
+ * 环境变量会被子进程继承，这个不会。
+ */
+export const SERVER_BOOT = Symbol.for('pi-bot.server-boot');
+
+/** 入口在导入 server-main（也就是 config / store）之前调用 */
+export function markServerBoot() {
+  globalThis[SERVER_BOOT] = true;
+}
+
+/**
  * 上次迁移记下的「继续用旧工作目录」。
  *
  * workspace 里是 bot 做出来的东西，往往还带着几百 MB 的 .venv / node_modules。

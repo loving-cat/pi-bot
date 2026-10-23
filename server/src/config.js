@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { migrateLegacyData, migratedWorkspace, repairSessionRefs } from './data-migration.js';
+import { migrateLegacyData, migratedWorkspace, repairSessionRefs, SERVER_BOOT } from './data-migration.js';
 
 const pkgRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 
@@ -38,16 +38,23 @@ const home = process.env.PI_BOT_HOME
 
 // ⇩ 必须在 store 读 state.json 之前跑（store 在它自己的模块加载时就读）。
 //   迁移和修复都只是文件操作，失败不能挡住启动。
+//
+// ★ 只在「真的要起服务端」时动数据：index.js 在导入 server-main 之前调用 markServerBoot()。
+//   否则任何 import 了 config 的脚本（诊断、维护、一次性检查）都会惄悄改写用户的
+//   state.json —— 开发时真踩过。用进程内的标记而不是环境变量：PI_BOT_* 会被子进程
+//   继承（见 child-env.js），bot 的 shell 里再跑一个导入 config 的脚本也会触发。
 const warn = (msg) => console.warn(msg);
-try {
-  if (!process.env.PI_BOT_HOME) {
-    const legacy = path.join(pkgRoot, 'data');
-    if (migrateLegacyData({ legacy, target: home, log: warn }).migrated) migratedFrom = legacy;
+if (globalThis[SERVER_BOOT] === true) {
+  try {
+    if (!process.env.PI_BOT_HOME) {
+      const legacy = path.join(pkgRoot, 'data');
+      if (migrateLegacyData({ legacy, target: home, log: warn }).migrated) migratedFrom = legacy;
+    }
+    // 已经按老办法搬过的用户：state.json 里还有指向旧目录的会话文件，每次启动修一遍。
+    repairSessionRefs({ dataDir: home, log: warn });
+  } catch (err) {
+    console.warn('[config] 数据迁移/修复失败（继续启动，旧目录未动）：', err?.message || err);
   }
-  // 已经按老办法搬过的用户：state.json 里还有指向旧目录的会话文件，每次启动修一遍。
-  repairSessionRefs({ dataDir: home, log: warn });
-} catch (err) {
-  console.warn('[config] 数据迁移/修复失败（继续启动，旧目录未动）：', err?.message || err);
 }
 
 const dataDir = home;

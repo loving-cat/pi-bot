@@ -226,6 +226,68 @@ await test('要搬的清单覆盖服务端读写的所有顶层数据', () => {
   for (const name of names) assert.ok(ENTRIES.includes(name), `${name} 在数据目录里，但迁移不会搬它`);
 });
 
+// ---------------------------------------------------------------------------
+// ★ 只有真的起服务端才动数据：单纯 import config 的脚本不能改写用户的 state.json
+// （开发时真踩过：一个只读的诊断脚本 import 了 pairing.js，顺带把真实数据修了一遍）
+// ---------------------------------------------------------------------------
+const { execFileSync } = await import('node:child_process');
+const { pathToFileURL } = await import('node:url');
+
+function stateWithOutsideRef() {
+  const { legacy, target } = fresh();
+  const old = path.join(legacy, 'sessions', 'e.jsonl');
+  write(old, '{"type":"session"}\n');
+  const text = JSON.stringify({ version: 2, rooms: {}, sessions: { 'r7:b7': old } });
+  write(path.join(target, 'state.json'), text);
+  return { target, text };
+}
+
+function runChild(code, home) {
+  return execFileSync(process.execPath, ['--input-type=module', '-e', code], {
+    cwd: process.cwd(),
+    env: { ...process.env, PI_BOT_HOME: home, PI_BOT_WORKSPACE: '' },
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+}
+
+const configUrl = pathToFileURL(path.join(process.cwd(), 'src', 'config.js')).href;
+const migrationUrl = pathToFileURL(path.join(process.cwd(), 'src', 'data-migration.js')).href;
+
+await test('★ 只是 import config（脚本 / 诊断工具）：不碰 state.json', () => {
+  const { target, text } = stateWithOutsideRef();
+  runChild(`await import(${JSON.stringify(configUrl)});`, target);
+  assert.equal(fs.readFileSync(path.join(target, 'state.json'), 'utf8'), text, 'state.json 被改了');
+});
+
+await test('★ 起服务端的入口打了标记：才修复', () => {
+  const { target, text } = stateWithOutsideRef();
+  runChild(
+    `const m = await import(${JSON.stringify(migrationUrl)}); m.markServerBoot();` +
+      ` await import(${JSON.stringify(configUrl)});`,
+    target,
+  );
+  const after = fs.readFileSync(path.join(target, 'state.json'), 'utf8');
+  assert.notEqual(after, text, '起服务端时应该修复');
+  assert.ok(isInside(JSON.parse(after).sessions['r7:b7'], path.join(target, 'sessions')));
+});
+
+await test('★ 标记不会经环境变量传给子进程（bot 的 shell 里再跑脚本也不触发）', () => {
+  const { target, text } = stateWithOutsideRef();
+  // 父进程打了标记（它自己用一个空的数据目录），再起一个只 import config 、
+  // 数据目录指向 target 的子进程 —— 子进程不该修复。
+  const child = `await import(${JSON.stringify(configUrl)});`;
+  const parentHome = path.join(path.dirname(target), 'parent-home');
+  runChild(
+    `const m = await import(${JSON.stringify(migrationUrl)}); m.markServerBoot();` +
+      ` const cp = await import('node:child_process');` +
+      ` cp.execFileSync(process.execPath, ['--input-type=module', '-e', ${JSON.stringify(child)}],` +
+      ` { env: { ...process.env, PI_BOT_HOME: ${JSON.stringify(target)} }, stdio: 'ignore' });`,
+    parentHome,
+  );
+  assert.equal(fs.readFileSync(path.join(target, 'state.json'), 'utf8'), text, '子进程不该修复');
+});
+
 let failed = 0;
 for (const r of results) {
   if (r.ok) console.log(`  ✓ ${r.name}`);
