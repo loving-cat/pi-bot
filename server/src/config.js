@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { migrateLegacyData, migratedWorkspace, repairSessionRefs } from './data-migration.js';
 
 const pkgRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 
@@ -28,28 +29,6 @@ function userDataDir() {
   return path.join(base, 'pi-bot', 'data');
 }
 
-/**
- * 一次性迁移：把 `<repo>/data` 的数据复制到用户数据目录。
- *
- * 仅当新目录没有 state.json 且旧目录有时执行；旧目录保持原样。
- * 以下划线开头的目录（测试产物）不迁移。
- */
-function migrateLegacyData(legacy, target) {
-  try {
-    if (fs.existsSync(path.join(target, 'state.json'))) return;
-    if (!fs.existsSync(path.join(legacy, 'state.json'))) return;
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.cpSync(legacy, target, {
-      recursive: true,
-      filter: (src) => !path.basename(src).startsWith('_'),
-    });
-    migratedFrom = legacy;
-    console.warn(`[config] 已把旧数据目录搬过来：${legacy} → ${target}（旧的留着当备份）`);
-  } catch (err) {
-    console.warn('[config] 搬旧数据失败（继续用新目录）：', err?.message || err);
-  }
-}
-
 /** 本次启动是否执行了数据迁移（未迁移为 null） */
 let migratedFrom = null;
 
@@ -57,12 +36,25 @@ const home = process.env.PI_BOT_HOME
   ? path.resolve(process.env.PI_BOT_HOME)
   : userDataDir();
 
-if (!process.env.PI_BOT_HOME) migrateLegacyData(path.join(pkgRoot, 'data'), home);
+// ⇩ 必须在 store 读 state.json 之前跑（store 在它自己的模块加载时就读）。
+//   迁移和修复都只是文件操作，失败不能挡住启动。
+const warn = (msg) => console.warn(msg);
+try {
+  if (!process.env.PI_BOT_HOME) {
+    const legacy = path.join(pkgRoot, 'data');
+    if (migrateLegacyData({ legacy, target: home, log: warn }).migrated) migratedFrom = legacy;
+  }
+  // 已经按老办法搬过的用户：state.json 里还有指向旧目录的会话文件，每次启动修一遍。
+  repairSessionRefs({ dataDir: home, log: warn });
+} catch (err) {
+  console.warn('[config] 数据迁移/修复失败（继续启动，旧目录未动）：', err?.message || err);
+}
 
 const dataDir = home;
+// 优先级：环境变量 > 迁移时记下的旧工作目录（没复制，继续用）> <数据目录>/workspace
 const workspace = process.env.PI_BOT_WORKSPACE
   ? path.resolve(process.env.PI_BOT_WORKSPACE)
-  : path.join(home, 'workspace');
+  : (migratedWorkspace(home) ?? path.join(home, 'workspace'));
 
 for (const dir of [home, dataDir, workspace, path.join(dataDir, 'rooms'), path.join(dataDir, 'sessions')]) {
   fs.mkdirSync(dir, { recursive: true });
