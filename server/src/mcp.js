@@ -1,3 +1,5 @@
+import { publicFetch } from './net-guard.js';
+
 /**
  * MCP 服务库（MCP server library）—— 纯函数，无 IO。
  *
@@ -306,7 +308,7 @@ export async function testMcpServer(server = {}) {
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(new Error('超时')), timeoutMs);
     try {
-      const res = await fetch(server.url, {
+      const { res } = await publicFetch(server.url, {
         method: 'POST',
         headers: { 'content-type': 'application/json', ...(server.headers ?? {}) },
         // MCP 的最小合法探测：一个 initialize 请求
@@ -321,7 +323,7 @@ export async function testMcpServer(server = {}) {
           },
         }),
         signal: ac.signal,
-      });
+      }, { scope: 'user-config' });
       const ms = Date.now() - t0;
       // 401/403 说明地址是对的，只是凭据没配好 —— 这跟"连不上"是两件事
       if (res.status === 401 || res.status === 403) {
@@ -347,6 +349,7 @@ export async function testMcpServer(server = {}) {
     } catch (err) {
       const ms = Date.now() - t0;
       const msg = String(err?.message ?? err);
+      if (/^(拒绝访问|重定向|域名解析失败)/.test(msg)) return { ok: false, ms, error: msg };
       return {
         ok: false, ms,
         error: /超时/.test(msg)

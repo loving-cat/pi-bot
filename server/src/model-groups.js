@@ -28,6 +28,7 @@ import { config } from './config.js';
 import { log, newId, now, readJson, writeJsonAtomic } from './util.js';
 import { mergeGroupModels } from './model-capacity.js';
 import { modelFailure } from './model-reply.js';
+import { publicFetch } from './net-guard.js';
 import {
   THINKING_LEVELS,
   thinkingCompat,
@@ -218,6 +219,7 @@ export async function testModelGroup({
   apiKey,
   api = 'openai-completions',
   model,
+  fetchImpl,
 } = {}) {
   const base = String(baseUrl || '').trim().replace(/\/+$/, '');
   if (!/^https?:\/\//i.test(base)) {
@@ -234,10 +236,16 @@ export async function testModelGroup({
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(new Error('超时')), ms);
     try {
-      return await fetch(url, { ...init, signal: ac.signal, redirect: 'follow' });
+      const { res } = await publicFetch(url, { ...init, signal: ac.signal }, { fetchImpl, scope: 'user-config' });
+      return res;
     } finally {
       clearTimeout(timer);
     }
+  };
+
+  const blocked = (err) => {
+    const msg = String(err?.message ?? err);
+    return /^(拒绝访问|重定向|域名解析失败)/.test(msg) ? msg : '';
   };
 
   const explain = (status) => {
@@ -275,6 +283,8 @@ export async function testModelGroup({
     }
     // 其他状态（404/405…）继续往下试 chat
   } catch (err) {
+    const deny = blocked(err);
+    if (deny) return { ok: false, ms: Date.now() - t0, error: deny };
     netError = modelFailure(err).error;
   }
 
@@ -300,6 +310,8 @@ export async function testModelGroup({
     }
     return { ok: false, ms: Date.now() - t0, error: explain(res.status) };
   } catch (err) {
+    const deny = blocked(err);
+    if (deny) return { ok: false, ms: Date.now() - t0, error: deny };
     const e = modelFailure(err).error;
     return {
       ok: false,

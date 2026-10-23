@@ -57,6 +57,7 @@ const TESTS = [
   'net-guard',
   'security-regress',
   'relay-openstream',
+  'ssrf-regress',
 ];
 
 let failed = 0;

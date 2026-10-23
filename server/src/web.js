@@ -16,11 +16,12 @@
  *   3. 正文要截断。一个网页塞进上下文，几千 token 就没了。
  */
 import * as cheerio from 'cheerio';
-import dns from 'node:dns/promises';
-import net from 'node:net';
 
-import { proxyFetch, proxyStatus } from './http-client.js';
+import { proxyStatus } from './http-client.js';
 import { config } from './config.js';
+import { publicFetch } from './net-guard.js';
+
+export { assertPublicTarget } from './net-guard.js';
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
@@ -32,140 +33,25 @@ const MAX_TEXT_CHARS = Number(process.env.PI_BOT_WEB_MAX_CHARS || 8000);
 /** 下载上限（字节），防止有人甩个大文件过来把内存吃光 */
 const MAX_BYTES = 4 * 1024 * 1024;
 
-/** 带超时的 fetch —— AbortSignal.timeout 在某些 Node 组合上不给力，自己控一次 */
+/**
+ * 搜索用的抓取。web_fetch 自己调 publicFetch，同样逐跳校验。
+ * 没代理时直连并钉住已解析地址；开了代理则交给 proxyFetch。
+ */
 async function fetchWithTimeout(url, options = {}) {
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(new Error('超时')), options.timeoutMs ?? FETCH_TIMEOUT_MS);
-  try {
-    // ★ 用 proxyFetch 而不是原生 fetch：
-    //   用户开了 clash/surge 这类代理（尤其 TUN 模式）时，域名会被解析成
-    //   假地址（198.18.x.x），而 Node 的 fetch **不读系统代理**，直连假 IP 必挂。
-    //   表现就是“一开代理 agent 就搜不了网了”。proxyFetch 会自动探测
-    //   系统/环境变量里的代理并转过去，没代理时行为跟原生 fetch 一致。
-    return await proxyFetch(url, {
+  const { res } = await publicFetch(
+    url,
+    {
       ...options,
-      signal: ac.signal,
-      // 抓页面要逐跳校验，调用方会显式传 manual
-      redirect: options.redirect ?? 'follow',
       headers: { 'user-agent': UA, ...(options.headers || {}) },
-    });
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 内网拦截（web_fetch 的 SSRF 防护）
-// ---------------------------------------------------------------------------
-
-/**
- * 这些地址一律不许 web_fetch 去碰。
- *
- * 为什么必须拦：web_fetch 的输入来自模型 —— 模型读了任何一个被投毒的网页，
- * 就可能被诱导去抓 `http://127.0.0.1:<端口>/api/...`。本机 API 对 loopback
- * 免鉴权，能读到全部聊天记录、模型组和配置；部署到云服务器时
- * `169.254.169.254` 还能拿到实例元数据。这类问题不报错，只是"内容被抓回来了"，
- * 事后很难发现。
- *
- * ★ 198.18.0.0/15 **不拦**：那是 clash/surge TUN 的假 IP 段。本机开着代理时
- *   所有域名都解析到这里，拦了等于把联网功能全废掉。它只是代理的占位地址，
- *   真正的目标域名由代理去解析，不是内网服务。
- */
-function isBlockedAddress(addr) {
-  const ip = String(addr || '').replace(/^\[|\]$/g, '').split('%')[0];
-  if (net.isIPv4(ip)) {
-    const [a, b] = ip.split('.').map(Number);
-    if (a === 0 || a === 10 || a === 127) return true;
-    if (a === 169 && b === 254) return true; // link-local + 云元数据
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
-    if (a >= 224) return true; // 组播 / 保留
-    return false;
-  }
-  if (net.isIPv6(ip)) {
-    const low = ip.toLowerCase();
-    if (low === '::' || low === '::1') return true;
-    const mapped = low.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-    if (mapped) return isBlockedAddress(mapped[1]);
-    // URL 会把 ::ffff:127.0.0.1 规范成 ::ffff:7f00:1 这种十六进制写法
-    const mappedHex = low.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
-    if (mappedHex) {
-      const hi = parseInt(mappedHex[1], 16);
-      const lo = parseInt(mappedHex[2], 16);
-      return isBlockedAddress(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`);
-    }
-    if (/^f[cd]/.test(low)) return true; // 唯一本地地址（内网）
-    if (/^fe[89ab]/.test(low)) return true; // link-local
-    return false;
-  }
-  return false;
-}
-
-/**
- * 目标必须落在公网才允许抓（域名先解析，逐地址检查）。
- *
- * 解析失败不在这里报错 —— 交给 fetch 报"域名解析不出来"，措辞更准确；
- * 在这里拦反而会让模型以为是权限问题。
- *
- * @param {string|URL} url
- */
-export async function assertPublicTarget(url) {
-  const u = url instanceof URL ? url : new URL(String(url));
-  const host = u.hostname.replace(/^\[|\]$/g, '');
-  if (!host) throw new Error('地址里没有主机名');
-  if (net.isIP(host)) {
-    if (isBlockedAddress(host)) {
-      throw new Error(`拒绝访问内网地址（${host}）：web_fetch 只能抓公网`);
-    }
-    return;
-  }
-  let rows = [];
-  try {
-    rows = await dns.lookup(host, { all: true, verbatim: true });
-  } catch {
-    return;
-  }
-  for (const row of rows) {
-    if (isBlockedAddress(row.address)) {
-      throw new Error(
-        `拒绝访问：${host} 解析到内网地址（${row.address}）—— web_fetch 不能用来读本机或局域网服务`,
-      );
-    }
-  }
-}
-
-const MAX_REDIRECTS = 5;
-
-/**
- * 逐跳校验的抓取。
- *
- * 为什么不能用 `redirect:'follow'`：首跳是公网域名，不等于它 302 去的还是公网。
- * 攻击者只要让首跳返回 `Location: http://127.0.0.1:18787/api/state`，
- * follow 就会替它把内网内容抓回来 —— 首跳校验白做。
- */
-async function safeFetch(url, options = {}) {
-  let current = url instanceof URL ? url : new URL(String(url));
-  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-    await assertPublicTarget(current);
-    const res = await fetchWithTimeout(current.toString(), { ...options, redirect: 'manual' });
-    const location = res.headers.get('location');
-    if (res.status >= 300 && res.status < 400 && location) {
-      let next;
-      try {
-        next = new URL(location, current);
-      } catch {
-        throw new Error('重定向地址不合法');
-      }
-      if (!/^https?:$/.test(next.protocol)) {
-        throw new Error(`重定向到了不支持的协议：${next.protocol}`);
-      }
-      current = next;
-      continue;
-    }
-    return { res, url: current };
-  }
-  throw new Error(`重定向次数过多（超过 ${MAX_REDIRECTS} 次）`);
+    },
+    {
+      fetchImpl: options.fetchImpl,
+      lookup: options.lookup,
+      timeoutMs: options.timeoutMs ?? FETCH_TIMEOUT_MS,
+      scope: 'untrusted', // 搜索抓取：查询词和结果链接都可能被模型影响
+    },
+  );
+  return res;
 }
 
 /**
@@ -385,7 +271,7 @@ export async function webSearch(query, { limit = 6 } = {}) {
  * 不是 HTML（JSON / 纯文本）就原样给回来 —— 很多 API 直接返回 JSON，
  * 那正是 agent 想要的，别去做"可读化"。
  */
-export async function webFetch(url, { maxChars = MAX_TEXT_CHARS } = {}) {
+export async function webFetch(url, { maxChars = MAX_TEXT_CHARS, fetchImpl, lookup, timeoutMs } = {}) {
   let target;
   try {
     target = new URL(String(url || '').trim());
@@ -399,14 +285,18 @@ export async function webFetch(url, { maxChars = MAX_TEXT_CHARS } = {}) {
   let res;
   let finalUrl = target;
   try {
-    const out = await safeFetch(target, { accept: 'text/html,*/*' });
+    const out = await publicFetch(
+      target,
+      { headers: { 'user-agent': UA, accept: 'text/html,*/*' } },
+      { fetchImpl, lookup, timeoutMs: timeoutMs ?? FETCH_TIMEOUT_MS, scope: 'untrusted' },
+    );
     res = out.res;
     finalUrl = out.url;
   } catch (err) {
     const msg = String(err?.message ?? err);
     // 安全拦截 / 重定向策略要原样说出去：翻成"抓取失败"会让模型以为是网络问题，
     // 然后换个写法继续试内网 —— 那正是要防的事。
-    if (/^(拒绝访问|重定向)/.test(msg)) throw err;
+    if (/^(拒绝访问|重定向|域名解析失败)/.test(msg)) throw err;
     // 把底层异常翻成人话 —— 模型据此换路，而不是自己去 curl 十几遍
     throw new Error(explainFetchError(err, target.toString()));
   }

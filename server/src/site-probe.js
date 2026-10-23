@@ -12,11 +12,12 @@
  *      这样"口令错了"和"字段名不对"用户能分清。
  *
  * 安全约束：
- *   · 只打用户填的那个域名，不跟随到别的域；
+ *   · 探测和登录按 user-config：允许用户填的本机/局域网，仍拦元数据地址；
+ *   · 重定向每一跳改按 untrusted，跳到别的内网主机会被拒绝；
  *   · 连续失败就停，不打爆对方接口；
  *   · 口令只在内存里用，不写日志。
  */
-import { proxyFetch } from './http-client.js';
+import { assertPublicTarget, publicFetch } from './net-guard.js';
 import {
   LOGIN_PATH_CANDIDATES,
   ACCOUNT_FIELDS,
@@ -57,7 +58,7 @@ export async function probeLogin({
   baseUrl,
   account,
   password,
-  fetchImpl = proxyFetch,
+  fetchImpl = null,
   paths = LOGIN_PATH_CANDIDATES,
   accountField = '',
   passwordField = '',
@@ -117,6 +118,10 @@ export async function probeLogin({
         }
         lastReason = result.reason;
         lastStatus = result.status;
+        // 内网在第一次就会被拒，换字段名没有意义，也不该继续打
+        if (/^(拒绝访问|重定向|域名解析失败)/.test(lastReason)) {
+          return { ok: false, reason: lastReason, tried };
+        }
       }
     }
   }
@@ -148,14 +153,17 @@ async function tryLogin({ base, path, body, fetchImpl, timeoutMs }) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetchImpl(`${base}${path}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-      // 登录请求不该被浏览器缓存
-      cache: 'no-store',
-    });
+    const { res } = await publicFetch(
+      `${base}${path}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+        cache: 'no-store',
+      },
+      { fetchImpl: fetchImpl || undefined, scope: 'user-config' }, // 探测/登录/探活：用户填的 baseUrl
+    );
 
     let json = null;
     const text = await res.text().catch(() => '');
@@ -214,7 +222,7 @@ async function tryLogin({ base, path, body, fetchImpl, timeoutMs }) {
  * @param {object} [opts]
  * @returns {Promise<{ok:boolean, token?:string, reason:string}>}
  */
-export async function loginSite(site, { fetchImpl = proxyFetch, timeoutMs = TIMEOUT_MS } = {}) {
+export async function loginSite(site, { fetchImpl = null, timeoutMs = TIMEOUT_MS } = {}) {
   const auth = site?.auth ?? {};
   const result = await tryLogin({
     base: String(site?.baseUrl ?? '').replace(/\/+$/, ''),
@@ -235,14 +243,13 @@ export async function loginSite(site, { fetchImpl = proxyFetch, timeoutMs = TIME
 }
 
 /**
- * 校验站点地址是否与预期主机一致（防 SSRF / 防被引导到别处）。
- *
- * 集成方拿到的 baseUrl 来自用户输入，请求前必须确认它没被改写成内网地址。
+ * query_site 发出去之前的预检。路径是模型给的，按 untrusted：
+ * 即使用户把 baseUrl 配在本机或局域网，这里也不放行。
  *
  * @param {string} url
  * @returns {{ok:boolean, reason:string}}
  */
-export function assertSafeUrl(url) {
+export async function assertSafeUrl(url) {
   let u;
   try {
     u = new URL(String(url));
@@ -252,17 +259,10 @@ export function assertSafeUrl(url) {
   if (u.protocol !== 'https:' && u.protocol !== 'http:') {
     return { ok: false, reason: '只支持 http/https' };
   }
-  // 内网 / 环回地址：用户自己填的可以连，但这里只做提示性拦截
-  const host = u.hostname.toLowerCase();
-  const isLocal =
-    host === 'localhost' ||
-    host === '127.0.0.1' ||
-    host === '::1' ||
-    /^10\./.test(host) ||
-    /^192\.168\./.test(host) ||
-    /^172\.(1[6-9]|2\d|3[01])\./.test(host);
-  if (isLocal) {
-    return { ok: false, reason: '不能接入本机或内网地址' };
+  try {
+    await assertPublicTarget(u, { scope: 'untrusted' });
+    return { ok: true, reason: '', host: hostOf(url) };
+  } catch (err) {
+    return { ok: false, reason: String(err?.message || err) };
   }
-  return { ok: true, reason: '', host: hostOf(url) };
 }
