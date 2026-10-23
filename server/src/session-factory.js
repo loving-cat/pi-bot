@@ -20,7 +20,7 @@ import {
 
 import { config, resourceOptions } from './config.js';
 import { store } from './store.js';
-import { isDelegatingLead, toolsForRole, customToolsForRole, roleConfigurationKey } from './role-tools.js';
+import { isDelegatingLead, isReadonlyPolicy, toolsForRole, customToolsForRole, roleConfigurationKey } from './role-tools.js';
 import { applyCompactionBudget, withCapacity } from './context-budget.js';
 import { buildAppendSystemPrompt } from './system-prompt.js';
 import { buildChiefTools, buildCommonTools } from './tools.js';
@@ -79,13 +79,14 @@ export function createSessionBuilder({
     const isChief = bot.role === 'main';
     const room = store.getRoom(roomId);
     const isDeptLead = isDelegatingLead(room, bot);
+    const policy = store.policy();
     const roleKey = roleConfigurationKey(room, bot);
     // isMain 决定要不要给 ask_user（主控不给 —— 它直接跟用户对话，不弹卡片）
     const commonTools = buildCommonTools({ runner, roomId, botId, isMain: isChief });
     const customTools = customToolsForRole([
       ...commonTools,
       ...(isChief ? buildChiefTools({ runner, health, roomId, botId }) : []),
-    ], { room, bot, leadTools: config.leadTools });
+    ], { room, bot, leadTools: config.leadTools, policy });
 
     const resourceLoader = new DefaultResourceLoader({
       cwd: config.workspace,
@@ -123,13 +124,13 @@ export function createSessionBuilder({
       appendSystemPrompt: buildAppendSystemPrompt(bot, {
         userName: store.userName(),
         // 部门规矩跟着会话走：工具集和提示都是建会话时定的，规矩变了会作废重建
-        policy: store.policy(),
+        policy,
         // MCP 清单只给主控：它要知道有哪些能力可以派给成员。
         // 成员自己不拿这份清单 —— 它们要的是已经挂载的工具，不是能力目录。
         mcpLines: isChief ? mcpSectionForPrompt() : '',
       }),
       ...resourceOptions,
-      ...(isDeptLead ? { noExtensions: true, noMcp: true } : {}),
+      ...(isDeptLead || isReadonlyPolicy(policy) ? { noExtensions: true, noMcp: true } : {}),
     });
     await resourceLoader.reload();
 
@@ -140,7 +141,7 @@ export function createSessionBuilder({
       chiefTools: config.chiefTools,
       leadTools: config.leadTools,
       memberTools: config.tools,
-      policy: store.policy(),
+      policy,
     });
 
     const botModel = bot.model ? resolveModel(bot.model) : null;

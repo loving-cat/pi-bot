@@ -23,7 +23,7 @@
 import { store } from './store.js';
 import { toMcpServersConfig } from './mcp.js';
 import { log } from './util.js';
-import { isDelegatingLead } from './role-tools.js';
+import { isDelegatingLead, isReadonlyPolicy } from './role-tools.js';
 
 /**
  * 造一个只注册 MCP 服务的扩展。
@@ -35,6 +35,8 @@ import { isDelegatingLead } from './role-tools.js';
  */
 export function createMcpExtension({ botId, roomId = null }) {
   return function mcpExtension(pi) {
+    // 只读模式不连接 MCP：工具名不固定，连上之后就能写文件、跑命令。
+    if (isReadonlyPolicy(store.policy())) return;
     // 负责人的外部能力由成员执行，不在此会话连接或注册 MCP。
     if (isDelegatingLead(store.getRoom(roomId), store.getBot(botId))) return;
     // 建会话时就把名字定下来：会话中途用户改了配置也不会突然多连/少连，

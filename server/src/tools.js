@@ -21,6 +21,7 @@ import { extractText } from './extract.js';
 import { webSearch, webFetch } from './web.js';
 import { shells } from './shells.js';
 import { decideCommand } from './shell-policy.js';
+import { readonlyBlockReason } from './role-tools.js';
 import { log, now, isBusyError, planDispatchRetry } from './util.js';
 import { CODING_BASELINE_TITLE, CODING_BASELINE_HOWTO, isCodingRole } from './coding-baseline.js';
 import { scanLocalCapabilities } from './local-capabilities.js';
@@ -530,6 +531,8 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
       }),
       execute: async (_toolCallId, { command, cwd }) => {
         const policy = store.policy();
+        const blocked = readonlyBlockReason(policy, 'run_background');
+        if (blocked) return fail(blocked);
         const verdict = decideCommand(command, {
           denyCommands: policy.denyCommands ?? [],
           allowCommands: policy.allowCommands ?? [],
@@ -609,6 +612,8 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
         chars: Type.String({ description: '要写入的内容' }),
       }),
       execute: async (_toolCallId, { shell_id, chars }) => {
+        const blocked = readonlyBlockReason(store.policy(), 'write_stdin');
+        if (blocked) return fail(blocked);
         const r = shells.write(shell_id, chars);
         return r.ok ? ok(`已写入 ${String(chars).length} 个字符`) : fail(r.error);
       },
@@ -623,6 +628,8 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
         keep: Type.Optional(Type.Boolean({ description: '只结束、保留记录以便回看输出' })),
       }),
       execute: async (_toolCallId, { shell_id, keep }) => {
+        const blocked = readonlyBlockReason(store.policy(), 'kill_shell');
+        if (blocked) return fail(blocked);
         const r = keep ? shells.kill(shell_id) : shells.remove(shell_id);
         if (!r.ok) return fail(r.error);
         return ok(keep ? '已结束（记录保留）' : '已结束并移除');
