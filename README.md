@@ -284,8 +284,8 @@ flutter analyze
 - bot 有 `bash`/`write`，**不要裸奔到公网**。公网部署请套 nginx + HTTPS，并只给固定 token
 - 所有工具的文件操作都被限制在 `data/workspace` 内
 - 命令黑名单 / 白名单默认都是空的。**一条都没配时，行为和改动前完全一致**，`npm` / `git` / `node` 以及 `sh -c 'git status'` 不会被拦
-- **配了任一规则之后**，`sh -c` / `bash -c`、`xargs <命令>`、`node -e` / `python -c` 这类包装会拒绝。白名单只有 `git status` 时，`sh -c 'git status'` 也会被拒，直接写 `git status` 可以
-- 黑名单看不到脚本文件、Makefile、`npm` scripts 里面的命令。字符串规则盖不住这些入口，长期方案是沙箱，另行立项。详见 [docs/AGENT-MODEL.md](docs/AGENT-MODEL.md)
+- **配了任一规则之后**，`sh -c` / `bash -c`、`xargs <命令>`、解释器调用会拒绝，只放行 `--version` / `-V` / `--help`。白名单只有 `git status` 时，`sh -c 'git status'` 也会被拒，直接写 `git status` 可以。`rm -rf` 这类规则会拆开短选项，并把 `rm` 的 `--recursive` / `--force` 当成 `-r` / `-f`
+- 黑名单看不到脚本文件、Makefile、`npm` scripts 里面的命令。字符串规则盖不住这些入口，长期方案是沙箱，另行立项。`awk` 的 `system`、`vim -c`、`npx`、`make` 等间接执行也没有列全；要严格限制，请用白名单模式，或把危险操作设为“需要批准”。详见 [docs/AGENT-MODEL.md](docs/AGENT-MODEL.md)
 - 仓库本身**不含任何密钥、本机路径、内网地址**——全部走用户级配置或环境变量
 
 ## 参考与许可

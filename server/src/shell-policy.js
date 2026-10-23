@@ -500,18 +500,75 @@ function unwrapFind(args) {
   return commands.length ? { many: commands } : null;
 }
 
-function unwrapInterpreter(args) {
-  const codeFlags = new Set(['-c', '-e', '-r', '-p', '--eval']);
-  if (!args.length) return { opaque: true, reason: '解释器会执行标准输入里的代码' };
-  for (const arg of args) {
-    if (codeFlags.has(arg) || (/^-c.+/.test(arg))) {
-      return { opaque: true, reason: '解释器执行的代码无法按命令规则静态检查' };
-    }
-    if (!arg.startsWith('-')) {
-      return { opaque: true, reason: '解释器脚本无法按命令规则静态检查' };
+function unwrapDashC(args, emptyReason) {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '-c' || arg === '--command') return { script: args.slice(i + 1).join(' ') };
+    if (/^-[^-]*c$/.test(arg)) return { script: args.slice(i + 1).join(' ') };
+    if (arg.startsWith('--command=')) {
+      const glued = arg.slice('--command='.length);
+      const tail = args.slice(i + 1);
+      return { script: glued + (tail.length ? ` ${tail.join(' ')}` : '') };
     }
   }
-  return null;
+  return { opaque: true, reason: emptyReason };
+}
+
+function unwrapFlock(args) {
+  const withArg = new Set(['-w', '--timeout', '-E', '--conflict-exit-code']);
+  const words = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '-c' || arg === '--command' || /^-[^-]*c$/.test(arg)) {
+      if (i + 1 >= args.length) return { opaque: true, reason: 'flock 没有可检查的命令' };
+      return { script: args.slice(i + 1).join(' ') };
+    }
+    if (arg === '--') {
+      words.push(...args.slice(i + 1));
+      break;
+    }
+    if (!words.length && arg.startsWith('-') && arg !== '-') {
+      if (!arg.includes('=') && withArg.has(arg)) i++;
+      continue;
+    }
+    words.push(arg);
+  }
+  if (words.length >= 2 && (words[1] === '-c' || words[1] === '--command')) {
+    if (words.length < 3) return { opaque: true, reason: 'flock 没有可检查的命令' };
+    return { script: words.slice(2).join(' ') };
+  }
+  if (words.length < 2) return { opaque: true, reason: 'flock 没有可检查的命令' };
+  return { words: words.slice(1) };
+}
+
+function unwrapChroot(args) {
+  const rest = skipFlags(args, new Set(['--userspec', '--groups']));
+  if (rest.length < 2) return { opaque: true, reason: 'chroot 没有可检查的命令' };
+  return { words: rest.slice(1) };
+}
+
+function unwrapUnshare(args) {
+  const rest = skipFlags(args, new Set([
+    '--propagation', '--setgroups',
+    '--map-user', '--map-group', '--map-users', '--map-groups',
+    '--root', '--wd', '-R', '-w', '-S', '-G', '--setuid', '--setgid',
+    '--monotonic', '--boottime',
+  ]));
+  if (!rest.length) return { opaque: true, reason: 'unshare 没有可检查的命令' };
+  return { words: rest };
+}
+
+function unwrapNsenter(args) {
+  const rest = skipFlags(args, new Set(['-t', '--target', '-S', '--setuid', '-G', '--setgid']));
+  if (!rest.length) return { opaque: true, reason: 'nsenter 没有可检查的命令' };
+  return { words: rest };
+}
+
+/** 配了规则时，解释器只有版本/帮助能放行；`-i`、`--interactive` 都会进交互执行。`-v` 不算，python 的 `-v` 不是版本。 */
+function unwrapInterpreter(args) {
+  const safe = (arg) => arg === '-V' || arg === '-h' || fold(arg) === '--version' || fold(arg) === '--help';
+  if (args.length > 0 && args.every(safe)) return null;
+  return { opaque: true, reason: '解释器执行的代码无法按命令规则静态检查' };
 }
 
 function unwrap(base, exe, args) {
@@ -544,6 +601,13 @@ function unwrap(base, exe, args) {
     return wordsOrNull(skipFlags(args, new Set(['-n', '--interval', '-d', '--differences'])));
   }
   if (base === 'find') return unwrapFind(args);
+  if (base === 'su') return unwrapDashC(args, 'su 会进入 shell，无法静态检查');
+  if (base === 'script') return unwrapDashC(args, 'script 会进入 shell，无法静态检查');
+  if (base === 'flock') return unwrapFlock(args);
+  if (base === 'chroot') return unwrapChroot(args);
+  if (base === 'unshare') return unwrapUnshare(args);
+  if (base === 'nsenter') return unwrapNsenter(args);
+  if (base === 'ssh') return { opaque: true, reason: 'ssh 远端命令无法静态检查' };
   if (base === 'busybox' || base === 'toybox') return wordsOrNull(skipFlags(args, new Set()));
   if (base === 'cmd') return unwrapCmd(args);
   if (base === 'powershell' || base === 'pwsh') return unwrapPowershell(args);
@@ -680,6 +744,61 @@ function commandTexts(command) {
   return exeKeys(command?.executable).map((exe) => (args ? `${exe} ${args}` : exe));
 }
 
+/** rm 的常见长选项折成短选项，好和 `-rf` 对齐。 */
+const RM_LONG = {
+  recursive: 'r',
+  force: 'f',
+  dir: 'd',
+  directory: 'd',
+  verbose: 'v',
+  interactive: 'i',
+};
+
+function classifyArgs(executable, args) {
+  const longMap = canonicalBase(executable) === 'rm' ? RM_LONG : null;
+  const flags = new Set();
+  const positionals = [];
+  let optionsDone = false;
+  for (const raw of args ?? []) {
+    const arg = fold(raw);
+    if (optionsDone || arg === '-' || /^-\d+$/.test(arg)) {
+      positionals.push(arg);
+      continue;
+    }
+    if (arg === '--') {
+      optionsDone = true;
+      continue;
+    }
+    if (arg.startsWith('--')) {
+      const body = arg.slice(2);
+      const eq = body.indexOf('=');
+      const name = eq >= 0 ? body.slice(0, eq) : body;
+      flags.add(longMap?.[name] || name);
+      continue;
+    }
+    if (arg.startsWith('-')) {
+      for (const ch of arg.slice(1)) flags.add(ch);
+      continue;
+    }
+    positionals.push(arg);
+  }
+  return { flags, positionals };
+}
+
+/** 规则里的选项是命令选项的子集，位置参数按词前缀（不是字符前缀）。 */
+function ruleArgsCovered(ruleExe, ruleArgs, command) {
+  const want = classifyArgs(ruleExe, ruleArgs);
+  const got = classifyArgs(command?.executable, command?.args);
+  for (const flag of want.flags) {
+    if (!got.flags.has(flag)) return false;
+  }
+  if (want.positionals.length > got.positionals.length) return false;
+  for (let i = 0; i < want.positionals.length; i++) {
+    if (want.positionals[i] !== got.positionals[i]) return false;
+  }
+  return true;
+}
+
 /** 一条命令段是否命中规则 */
 export function matchRule(rule, command) {
   const text = fold(String(rule ?? '').trim());
@@ -697,10 +816,11 @@ export function matchRule(rule, command) {
   }
 
   if (texts.some((body) => globToRegExp(text).test(body))) return true;
-  // 不带通配符时，规则也可以只写可执行体；或作为前缀（`rm -rf` 拦 `rm -rf /`）
+  // 不带通配符：短选项拆开，rm 的长选项折成短选项，规则选项 ⊆ 命令选项；位置参数仍按词前缀
   if (!text.includes('*')) {
-    if (exes.includes(text)) return true;
-    if (texts.some((body) => body.startsWith(`${text} `))) return true;
+    const parts = text.split(/\s+/).filter(Boolean);
+    const ruleExe = canonicalBase(parts[0]);
+    if (exes.includes(ruleExe) && ruleArgsCovered(ruleExe, parts.slice(1), command)) return true;
   }
   return false;
 }

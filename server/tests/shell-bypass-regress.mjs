@@ -215,6 +215,45 @@ await test('不相关的命令仍然放行', () => {
   passed('( git status )', { allowCommands: ['git status'] });
 });
 
+await test('规则 rm -rf：短选项换序、拆开、长选项都命中', () => {
+  const rules = { denyCommands: ['rm -rf'] };
+  for (const cmd of ['rm -fr /', 'rm -r -f /', 'rm --recursive --force /']) {
+    assert.equal(blocked(cmd, rules).deniedBy, 'deny-rule', cmd);
+  }
+  passed('rm -r /', rules);
+  passed('rm -f /', rules);
+});
+
+await test('su -c 和 script -c 按 sh -c 检查内层命令', () => {
+  assert.equal(blocked("su -c 'rm -rf /'").deniedBy, 'deny-rule');
+  assert.equal(blocked("script -c 'rm -rf /'").deniedBy, 'deny-rule');
+});
+
+await test('flock、chroot、unshare、nsenter 跳过自身参数后检查内层', () => {
+  for (const cmd of [
+    'flock lock rm -rf /',
+    'flock -n lock rm -rf /',
+    'chroot /mnt rm -rf /',
+    'unshare -r rm -rf /',
+    'nsenter -t 1 rm -rf /',
+  ]) {
+    assert.equal(blocked(cmd).deniedBy, 'deny-rule', cmd);
+  }
+});
+
+await test('ssh 远端命令无法静态判定', () => {
+  assert.equal(blocked('ssh host rm -rf /').deniedBy, 'unparseable');
+});
+
+await test('配了规则时，解释器只放行版本和帮助', () => {
+  assert.equal(blocked('python3 -i').deniedBy, 'unparseable');
+  assert.equal(blocked('node --interactive').deniedBy, 'unparseable');
+  passed('python3 --version');
+  passed('python3 -V');
+  passed('node --help');
+  passed('node -h');
+});
+
 /** 没配 deny/allow 时必须与改动前一样放行，不能因为包装形式被拦。 */
 const UNRULED_COMMANDS = [
   'npm test',
@@ -231,7 +270,10 @@ const UNRULED_COMMANDS = [
   'node server.js',
   'node -e "console.log(1)"',
   "sh -c 'git status'",
+  'sh -c "git status"',
   'bash -c "git status"',
+  'python3 -c "print($(echo 1))"',
+  'npx --yes cowsay hi',
 ];
 
 await test('未配置任何命令规则时，npm/git/node 与 sh -c 均放行', () => {
@@ -266,13 +308,18 @@ shells.write = (_id, chars) => {
   return { ok: true };
 };
 
-await test('未配置命令规则时，bash 入口不拦 npm/git/node 和 sh -c', () => {
+await test('未配置命令规则时，bash、后台 node/npx、write_stdin、PowerShell 均放行', () => {
   store.updatePolicy({ dangerous: 'allow', denyCommands: [], allowCommands: [] });
   const handler = install();
   for (const cmd of UNRULED_COMMANDS) {
     assert.equal(handler({ toolName: 'bash', input: { command: cmd } }), undefined, cmd);
     assert.equal(handler({ toolName: 'run_background', input: { command: cmd } }), undefined, `bg ${cmd}`);
   }
+  assert.equal(handler({ toolName: 'powershell', input: { command: 'Get-ChildItem' } }), undefined);
+  assert.equal(
+    handler({ toolName: 'write_stdin', input: { shell_id: 'sh_unruled', chars: 'npm test\n' } }),
+    undefined,
+  );
 });
 
 await test('write_stdin：整段被禁命令在入口被拒绝', () => {
