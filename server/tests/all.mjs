@@ -55,6 +55,7 @@ const TESTS = [
   'model-health',
   'net-guard',
   'security-regress',
+  'relay-openstream',
 ];
 
 let failed = 0;
