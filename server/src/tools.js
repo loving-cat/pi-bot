@@ -350,8 +350,8 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
       label: '私信某个 bot',
       description:
         '直接给某个 bot 发一条私信，让它独立干一件事并把结果回给你。\n' +
-        '★ 在部门里派活请**直接用 @名字**（用户要看得到谁领了什么活），不要用这个。\n' +
-        '这个工具只用于：跨部门找人、或者确实不该让用户看到的内部确认。',
+        '★ 在部门里派活请**直接用 @名字**（用户要看得到谁领了什么活）；群里私信同部门同事会被拒绝。\n' +
+        '这个工具只用于：跨部门找人、或者在私聊里找别的 bot 帮忙。',
       parameters: Type.Object({
         botId: Type.String({ description: '对方的 bot id（先 list_bots）' }),
         task: Type.String({
@@ -370,6 +370,16 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
         const target = store.getBot(params.botId);
         if (!target) return fail(`找不到 bot ${params.botId}`);
         if (target.id === botId) return fail('不能给自己发私信');
+        // 群里给同部门同事派活必须用 @：用户要看得见谁领了什么活。
+        // 提示词里早就这么要求，但工具照样放行，模型就会绕开群去私信。
+        // 只拦同部门：跨部门找人是这个工具正经的用途。
+        const here = roomId ? store.getRoom(roomId) : null;
+        if (here?.kind === 'group' && (here.botIds ?? []).includes(target.id)) {
+          return fail(
+            `${target.name} 就在这个部门里：直接在群里写「@${target.name}」把活派给它，` +
+              '用户要看得见谁领了什么活。message_bot 只用于找别的部门的人。',
+          );
+        }
         // 超长直接退回，不截断：截断会把「约束 / 禁止项 / 要报批」悄悄切掉，
         // 对方拿着缺约束的活去干比不收更危险；宁可让它分两次派。
         if (params.task.length > MAX_TASK_CHARS) {
