@@ -56,6 +56,7 @@ const TESTS = [
   'room-lock',
   'group-cursor',
   'abort-placeholder',
+  'data-migration',
   'model-health',
   'net-guard',
   'security-regress',

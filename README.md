@@ -142,7 +142,11 @@ Xcode 检查与 Flutter 构建，仅重新组装安装包。当前使用 ad-hoc 
 | Linux | `$XDG_DATA_HOME/pi-bot/data`（默认 `~/.local/share/pi-bot/data`） |
 
 里面有 `rooms/`（会话消息）、`sessions/`（agent 会话）、`uploads/`（附件）、
-`workspace/`（bot 的工作目录）、`state.json`。备份就备份这一个目录。
+`workspace/`（bot 的工作目录）、`state.json`、`secret.key`（加密密钥）。备份就备份这一个目录。
+
+> 从 1.1 之前的版本升级：启动时会把旧的 `server/data` 搬到上面的目录，只搬会话、消息、附件和配置。
+> **bot 的工作目录不搬**（里面常有几百 MB 的 `.venv`），继续用旧位置的 `server/data/workspace`，
+> 所以旧目录**不要删**。想把工作目录也换地方，用 `PI_BOT_WORKSPACE` 指定。
 
 ### 3. 手机端
 

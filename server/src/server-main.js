@@ -27,7 +27,8 @@ async function banner(pairing, runner) {
   if (c.migratedFrom) {
     lines.push(
       `  ★ 数据已从旧位置搬过来：${c.migratedFrom}`,
-      '    旧目录原样保留当备份，确认没问题后可以自己删。',
+      '    搬的是会话、消息、附件和配置；bot 的工作目录（workspace）没搬，还在旧位置。',
+      '    旧目录原样保留。里面有要留的文件，先拷出来再删。',
       '',
     );
   }
