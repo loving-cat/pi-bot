@@ -67,16 +67,6 @@ const CLOUD_CREDENTIALS = new Set([
   'CLOUDSDK_AUTH_ACCESS_TOKEN',
 ]);
 
-const PI_FLAGS = new Set([
-  '--mode',
-  '-p',
-  '--print',
-  '--append-system-prompt',
-  '--no-session',
-  '--tools',
-  '--output-format',
-]);
-
 /**
  * @param {string[]} argv
  * @param {string} flag
@@ -202,23 +192,4 @@ export function providerKeys(env = process.env, argv = []) {
     out[name] = String(value);
   }
   return out;
-}
-
-/**
- * 扩展派子 agent 时先起 `node <入口>/index.js --mode json ...`。
- * 这一跳如果也被滤掉，runPiCli 所在的进程里就没有 provider key 可传。
- * 只认入口脚本，普通 bash / node 命令不走这里。
- *
- * @param {NodeJS.ProcessEnv|Record<string, string|undefined|null>} env
- * @param {string[]|undefined|null} args spawn 的完整 argv，第 0 项是可执行文件
- * @returns {Record<string, string>}
- */
-export function providerKeysForEntry(env = process.env, args = []) {
-  const argv = Array.isArray(args) ? args.slice(1).map((item) => String(item)) : [];
-  const entry = argv.some((arg) => /(?:^|[\\/])index\.js$/.test(arg));
-  if (!entry) return {};
-  const hasPiFlag = argv.includes('--mode') || argv.includes('-p') || argv.includes('--print');
-  if (!hasPiFlag) return {};
-  if (!argv.some((arg) => PI_FLAGS.has(arg))) return {};
-  return providerKeys(env, argv);
 }

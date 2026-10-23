@@ -478,6 +478,38 @@ await test('拿不到 spawn_sync 时会警告', () => {
   }
 });
 
+await test('别的目录里的 index.js 拿不到 provider key', () => {
+  const previous = process.env.PI_BOT_MODEL;
+  process.env.PI_BOT_MODEL = 'openai/gpt-test';
+  const otherDir = path.join(root, 'mcp-fake');
+  fs.mkdirSync(otherDir, { recursive: true });
+  const otherIndex = path.join(otherDir, 'index.js');
+  const dump = 'process.stdout.write(JSON.stringify(process.env));\n';
+  fs.writeFileSync(otherIndex, dump);
+  try {
+    const direct = cp.spawnSync(process.execPath, [otherIndex, '--mode', 'json'], { encoding: 'utf8' });
+    assert.equal(direct.status, 0, direct.stderr || direct.error?.message);
+    const directEnv = JSON.parse(direct.stdout);
+    assert.equal(directEnv.OPENAI_API_KEY, undefined);
+    assert.ok(!JSON.stringify(directEnv).includes('test-key-o'));
+
+    const viaEval = cp.spawnSync(process.execPath, [
+      '-e',
+      'process.stdout.write(JSON.stringify(process.env));',
+      otherIndex,
+      '--mode',
+      'x',
+    ], { encoding: 'utf8' });
+    assert.equal(viaEval.status, 0, viaEval.stderr || viaEval.error?.message);
+    const evalEnv = JSON.parse(viaEval.stdout);
+    assert.equal(evalEnv.OPENAI_API_KEY, undefined);
+    assert.ok(!JSON.stringify(evalEnv).includes('test-key-o'));
+  } finally {
+    if (previous === undefined) delete process.env.PI_BOT_MODEL;
+    else process.env.PI_BOT_MODEL = previous;
+  }
+});
+
 await test('pi 子 agent 拿到目录和当前 provider 的 key，bash 拿不到', async () => {
   const previous = {
     PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
@@ -530,15 +562,6 @@ await test('pi 子 agent 拿到目录和当前 provider 的 key，bash 拿不到
     assert.equal(acmeChild.ACME_KEY, 'test-key-c');
     assert.equal(acmeChild.OPENAI_API_KEY, undefined);
 
-    const entry = path.join(root, 'index.js');
-    fs.writeFileSync(entry, 'process.stdout.write(JSON.stringify(process.env));\n');
-    process.env.PI_BOT_MODEL = 'openai/gpt-test';
-    const entered = cp.spawnSync(process.execPath, [entry, '--mode', 'json', '-p', 'hi'], { encoding: 'utf8' });
-    assert.equal(entered.status, 0, entered.stderr || entered.error?.message);
-    const entryEnv = JSON.parse(entered.stdout);
-    assert.equal(entryEnv.OPENAI_API_KEY, 'test-key-o');
-    assert.equal(entryEnv.ANTHROPIC_API_KEY, undefined);
-    assert.equal(entryEnv.PI_BOT_TOKEN, undefined);
     assert.equal(readEnv().OPENAI_API_KEY, undefined);
   } finally {
     for (const [name, value] of Object.entries(previous)) {

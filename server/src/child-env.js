@@ -24,14 +24,33 @@
  * 调用方显式给的变量（MCP 配置里的 env、后台命令的 extra、
  * runPiCli 按当前模型塞进来的 provider key）原样保留。
  * 显式名单写在内部标记里，真正 spawn 之前删掉。
- * `node <入口>/index.js` 带 pi 参数被派出去时，另外补上当前 provider 的 key，
- * 否则里面的 runPiCli 已经看不到这把 key。
+ * 只有可执行文件是当前 node、脚本正好是本包的 index.js 时，才补当前 provider 的 key。
+ * 别的 index.js（例如 MCP）即使带了 --mode 也拿不到。
  *
  * `Worker` 不走这条路，调用方用 `childEnvDirect` 传入已经收过的环境。
  */
 import crypto from 'node:crypto';
 import cp from 'node:child_process';
-import { providerKeysForEntry } from './provider-keys.js';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { providerKeys } from './provider-keys.js';
+
+/** pi-bot 自己的入口。和别的 index.js 比的是绝对路径，不是文件名。 */
+const PI_BOT_ENTRY = fileURLToPath(new URL('./index.js', import.meta.url));
+
+/**
+ * @param {string[]|undefined|null} args
+ * @returns {boolean}
+ */
+function isPiBotEntry(args) {
+  if (!Array.isArray(args) || args.length < 2) return false;
+  if (String(args[0]) !== process.execPath) return false;
+  const script = path.resolve(String(args[1]));
+  if (process.platform === 'win32') {
+    return script.toLowerCase() === PI_BOT_ENTRY.toLowerCase();
+  }
+  return script === PI_BOT_ENTRY;
+}
 
 /** 内部标记。值是本进程随机前缀加显式变量名，不是秘密。 */
 export const CHILD_ENV_MARKER = 'PI_BOT_ENV_ALLOW';
@@ -262,7 +281,9 @@ function upsertPair(pairs, name, value) {
  * @returns {string[]}
  */
 function withEntryProviderKeys(pairs, args) {
-  const extra = providerKeysForEntry(process.env, args);
+  if (!isPiBotEntry(args)) return pairs;
+  const argv = args.slice(2).map((item) => String(item));
+  const extra = providerKeys(process.env, argv);
   for (const [name, value] of Object.entries(extra)) {
     if (value == null || value === '') continue;
     upsertPair(pairs, name, String(value));
