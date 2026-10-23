@@ -39,6 +39,7 @@ const TESTS = [
   'hooks',
   'shell-policy',
   'policy-hook',
+  'readonly-regress',
   'role-tools',
   'shells',
   'change-watch',

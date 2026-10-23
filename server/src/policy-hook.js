@@ -13,21 +13,13 @@ import { log } from './util.js';
 import { bus } from './bus.js';
 import { loadHooks, applyHooks } from './hooks.js';
 import { config } from './config.js';
-import { isDelegatingLead, leadToolAllowed } from './role-tools.js';
+import { isDelegatingLead, leadToolAllowed, readonlyBlockReason, MUTATING_TOOLS } from './role-tools.js';
 
 /** 执行命令的工具名 */
 const SHELL_TOOLS = new Set(['bash', 'powershell']);
 
-/** "会动手"的工具：第三档审批只拦这些（读、搜、发消息不拦） */
-const MUTATING_TOOLS = new Set([
-  'bash',
-  'powershell',
-  'write',
-  'edit',
-  'run_background',
-  'write_stdin',
-  'kill_shell',
-]);
+/** ask 档要批准的工具，与 role-tools 的名单是同一份 */
+const MUTATING = new Set(MUTATING_TOOLS);
 
 /** 把一次调用压成一句人话，给审批卡片看 */
 export function summarizeToolCall(tool, input = {}) {
@@ -74,6 +66,10 @@ export function createPolicyExtension({ roomId, bot }) {
           return { block: true, reason: '部门负责人负责拆解、派活和汇总；请把这项操作交给成员执行。' };
         }
 
+        // 只读：默认拒绝。审批授权、命令白名单和会话里残留的工具都不能放行。
+        const readonlyReason = readonlyBlockReason(policy, tool);
+        if (readonlyReason) return { block: true, reason: readonlyReason };
+
         // ---- 钩子：可以先改入参（重写命令），也可以直接拦下 ----
         const hooked = applyHooks(loadHooks(), { tool, input: event?.input ?? {} });
         if (hooked.blocked) return { block: true, reason: hooked.reason };
@@ -85,7 +81,7 @@ export function createPolicyExtension({ roomId, bot }) {
         }
 
         // ---- 第三档：每一次"会动手"的调用都要用户点批准 ----
-        if (policy.dangerous === 'ask' && MUTATING_TOOLS.has(tool)) {
+        if (policy.dangerous === 'ask' && MUTATING.has(tool)) {
           // 用户批准过"本次任务" → 这个 bot 在这个会话里有一段时间不用逐条点
           if (store.hasApprovalGrant({ roomId, botId: bot?.id ?? null })) return undefined;
           const hash = approvalHash(tool, event?.input);
