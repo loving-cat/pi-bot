@@ -831,6 +831,8 @@ export class PiRunner {
     const limits = store.groupLimits();
     const budget = (botId) => (botId === leadId ? limits.leadTurns : limits.memberTurns);
     const used = new Map();
+    // 本轮里被叫到过的人（含首发和后来被 @ 进队列的）。收尾推游标时要跟「没被叫到的」区分开
+    const called = new Set(opening);
     const chiefId = store.mainBot()?.id ?? null;
     const queue = opening.map((botId) => ({
       botId,
@@ -1258,6 +1260,7 @@ export class PiRunner {
               sourceMessageId: res.messageId || null,
             });
             queued.add(id);
+            called.add(id);
           }
           } finally {
             // 占位要还回去 —— 不然这个人就永远"忙"了，后面再也派不动
@@ -1339,10 +1342,13 @@ export class PiRunner {
       }
     }
 
-    // 没被叫到的成员也算「看过这条了」，避免下次一次性倒一堆旧账
+    // 没被叫到的成员也算「看过这条了」，避免下次一次性倒一堆旧账。
+    // ★ 被 @ 过、排进了队列但没轮到的人除外（本轮预算用完或被跳过）：
+    //   推了它的游标，派给它的那条活就落在游标之前，下次被叫到只剩一句「X 叫了你」。
     const lastId = lastMessageId(roomId);
     for (const m of members) {
-      if (!used.has(m.id)) store.setCursor(roomId, m.id, lastId);
+      if (used.has(m.id) || called.has(m.id)) continue;
+      store.setCursor(roomId, m.id, lastId);
     }
 
     // 收尾复盘：从这一轮里提炼候选经验（只进库，不进提示词）。

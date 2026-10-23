@@ -47,15 +47,36 @@ export function openingSpeakers(room, { text = '', openerBotId = null, kickoff =
   return [others[0].id];
 }
 
+/** 同事之间的长结论只留这么多字（保头尾）。派给它的活、用户和上级的话不受这个限制 */
+export const PEER_CLIP_CHARS = 1600;
+
+/**
+ * 这条消息对「正在读记录的这个 bot」是不是必须看全的：
+ *   · 用户说的话 —— 用户是最高权威；
+ *   · 部门老大 / 主控说的话 —— 派活和改口径都从这里来；
+ *   · 点了它名字（@ 它或 @all）的话 —— 那就是派给它的活。
+ * 正文被截断的派活，受派人只能靠猜范围干活（复审实测：2530 字的派活被砍掉 930 字，
+ * 要叫的那个人的 @ 恰好在被砍掉的那段里）。
+ */
+export function isAddressedToReader(m, { readerId, leadId = null, chiefId = null, members = [] } = {}) {
+  if (!m) return false;
+  if (m.authorType === 'user') return true;
+  if (m.authorId && (m.authorId === leadId || m.authorId === chiefId)) return true;
+  if (!readerId || !members.length) return false;
+  const { all, found } = parseMentions(m.text ?? '', members, { selfId: m.authorId ?? null });
+  return all || found.includes(readerId);
+}
+
 /**
  * 某个成员"还没看过"的那段记录 —— 用游标（seenCursor）算位置，
  * 已经说过的、自己说的、没写完的都不给它看。
  *
- * 两重收口，缺一不可：
- *   · 条数（默认 200 条）—— 防止把整个房间倒给它；
- *   · 字数预算（默认 12000 字）—— 真实群聊里单条能有四千多字，
- *     光按条数截，200 条就是天量 prompt，会频繁触发上下文压缩。
- * 越新的消息越重要，所以预算从新往旧装。
+ * 三重收口：
+ *   · 条数（默认 30 条）—— 防止把整个房间倒给它；
+ *   · 字数预算（默认 12000 字）—— 真实群聊里单条能有四千多字；
+ *   · 同事的长结论按 PEER_CLIP_CHARS 保头尾截断，预算按截断后的长度记。
+ * 派给它的活、用户和上级的话不受这三重限制（见 isAddressedToReader）。
+ * 其它消息越新越重要，所以预算从新往旧装。
  */
 export function transcriptFor(roomId, botId, limit = 30, { maxChars = 12000 } = {}) {
   const list = store.listMessages(roomId, { limit: 200 });
@@ -69,11 +90,22 @@ export function transcriptFor(roomId, botId, limit = 30, { maxChars = 12000 } = 
     .slice(start)
     .filter((m) => m.authorId !== botId && m.status === 'done' && (m.text ?? '').trim());
 
-  const { items, dropped } = trimTranscript(fresh, { maxChars, maxItems: limit });
+  const room = store.getRoom(roomId);
+  const { members, leadId } = room ? departmentOf(room) : { members: [], leadId: null };
+  const chiefId = store.mainBot()?.id ?? null;
+  const addressed = (m) => isAddressedToReader(m, { readerId: botId, leadId, chiefId, members });
+  const { items, dropped } = trimTranscript(fresh, {
+    maxChars,
+    maxItems: limit,
+    mustKeep: addressed,
+    capOf: (m) => (addressed(m) ? Infinity : PEER_CLIP_CHARS),
+  });
+  // 展示时要知道哪些不能截：打上标记（拷贝一份，不动 store 里的消息对象）
+  const out = items.map((m) => (addressed(m) ? { ...m, keepFull: true } : m));
   // 调用方绝大多数只关心"有哪些消息"，所以返回值仍是数组；
   // 需要知道"前面还丢了几条"时读 droppedCount（普通属性，传递/拷贝都不会丢）。
-  items.droppedCount = dropped;
-  return items;
+  out.droppedCount = dropped;
+  return out;
 }
 
 /**
@@ -167,8 +199,12 @@ export function composeGroupPrompt(
   if (fresh?.length) {
     const lines = fresh.map((m) => {
       const who = m.authorType === 'user' ? '用户' : m.authorName;
-      // 单条超长的保留头尾：结论和数字常在末尾，只留开头会砍掉最关键的
-      return `${who}: ${clipMessage((m.text ?? '').trim(), 1600)}`;
+      const body = (m.text ?? '').trim();
+      // 派给它的活、用户和上级的话原文照给（keepFull 由 transcriptFor 标记）；
+      // 同事的长结论保头尾：结论和数字常在末尾，只留开头会砍掉最关键的
+      const shown = m.keepFull ? body : clipMessage(body, PEER_CLIP_CHARS);
+      const gap = m.gapBefore ? `（中间省略 ${m.gapBefore} 条）\n` : '';
+      return `${gap}${who}: ${shown}`;
     });
     const dropped = Number(droppedCount ?? fresh?.droppedCount ?? 0);
     parts.push(
@@ -210,7 +246,7 @@ export function composeGroupPrompt(
         '   ★ 派活时把三样写清：**做什么 / 要交回什么 / 验收标准**（一句话说清怎么算做完）。',
         '   少一样，对方就容易交回一个不好验收的东西，你还得多跑一个来回。',
         '   ★ 必须用 @ 在群里派，**不要用 message_bot 私信派活**：用户要看得见谁领了什么活。',
-        '   message_bot 只用于「跨部门找人」或「确实不该让用户看到的内部确认」。',
+        '   message_bot 只用于「跨部门找人」；私信本部门同事会被拒绝。',
         '   ★ 你缺信息（数据、代码、文件内容、口径）时 —— **@一个同事去查**，不要自己查。',
         '',
         '★ 有同事没交作业时（没动静 / 失败了），**不要默默自己接手，也不要自己补做**。按这个顺序：',

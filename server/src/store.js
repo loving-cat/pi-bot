@@ -1928,6 +1928,17 @@ export class Store {
     const idx = list.findIndex((m) => m.id === messageId);
     if (idx < 0) return false;
     list.splice(idx, 1);
+    // 指向这条消息的游标退回上一条。不退的话游标就悬空了：transcriptFor 找不到它，
+    // 会从头读，把最多 30 条已经看过的旧消息当成新任务再喜给 bot。
+    const cursors = this.state.rooms[roomId]?.cursors;
+    if (cursors) {
+      const prevId = idx > 0 ? list[idx - 1].id : null;
+      for (const [botId, cur] of Object.entries(cursors)) {
+        if (cur !== messageId) continue;
+        if (prevId) cursors[botId] = prevId;
+        else delete cursors[botId];
+      }
+    }
     this.dirtyRooms.add(roomId);
     this.scheduleSave();
     bus.emit('event', { t: 'msg.deleted', roomId, msgId: messageId });

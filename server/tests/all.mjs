@@ -54,6 +54,8 @@ const TESTS = [
   'device-revoke',
   'disk',
   'room-lock',
+  'group-cursor',
+  'abort-placeholder',
   'model-health',
   'net-guard',
   'security-regress',

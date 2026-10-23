@@ -108,5 +108,47 @@ test('空值安全', () => {
   assert.equal(clipMessage('abc', 0), 'abc', '预算 <= 0 视为不裁');
 });
 
+// ---------------------------------------------------------------------------
+// 复审 P1-1：派给它的活不能被截、也不能被后来的讨论挤掉
+// ---------------------------------------------------------------------------
+
+test('mustKeep：最早的派活被后来一串长讨论挤爆预算，也必须留下', () => {
+  const list = [
+    { text: '派活：你去做 A', important: true },
+    ...Array.from({ length: 6 }, (_, i) => msg(`同事讨论${i} `.padEnd(50, 'z'))),
+  ];
+  const r = trimTranscript(list, { maxChars: 120, maxItems: 30, mustKeep: (m) => m.important });
+  assert.equal(r.items[0].text, '派活：你去做 A', '派活必须留在最前面');
+  assert.ok(r.items.length >= 2, '新的讨论也要留几条');
+  assert.equal(r.items.at(-1).text, list.at(-1).text, '最新一条永远在');
+  assert.ok(r.dropped > 0, '预算确实爆了，中间丢了一些');
+  // 中间跳过的条数要记下来，提示词才能写「中间省略 N 条」
+  const gap = r.items.reduce((s, m) => s + (m.gapBefore ?? 0), 0) + r.leadingDropped;
+  assert.equal(gap, r.dropped, '省略的条数要对得上');
+  assert.equal(list[1].gapBefore, undefined, '不能改传进来的对象');
+});
+
+test('mustKeep：不受条数上限限制', () => {
+  const list = [{ text: 'a', important: true }, { text: 'b', important: true }, msg('c'), msg('d')];
+  const r = trimTranscript(list, { maxChars: 1000, maxItems: 1, mustKeep: (m) => m.important });
+  assert.deepEqual(r.items.map((m) => m.text), ['a', 'b', 'd']);
+});
+
+test('capOf：预算按截断后的展示长度记，不按原文', () => {
+  // 三条 4000 字的同事报告，展示时各截到 1600：总共 4800 字，应该三条都装得下
+  const list = Array.from({ length: 3 }, (_, i) => msg(String(i).repeat(4000)));
+  const r = trimTranscript(list, { maxChars: 6000, maxItems: 30, capOf: () => 1600 });
+  assert.equal(r.items.length, 3, `按原文长度算只装得下 1 条，按展示长度应该 3 条（实际 ${r.items.length}）`);
+  assert.equal(r.usedChars, 4800);
+});
+
+test('不传 mustKeep / capOf 时行为不变', () => {
+  const list = [msg('aaaa'), msg('bbbb'), msg('cccc')];
+  const r = trimTranscript(list, { maxChars: 8, maxItems: 10 });
+  assert.deepEqual(r.items.map((m) => m.text), ['bbbb', 'cccc']);
+  assert.equal(r.dropped, 1);
+  assert.equal(r.leadingDropped, 1);
+});
+
 console.log(`\n记录预算测试：${pass}/${pass + fail} 通过`);
 if (fail > 0) process.exit(1);
