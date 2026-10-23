@@ -10,7 +10,8 @@ import 'package:pi_bot/models.dart';
 import 'package:pi_bot/server/locate.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// 起一个带 HTTP + WS 的服务端子进程；返回端口和关闭函数。找不到 node 返回 null。
+/// 起一个带 HTTP + WS 的服务端子进程；返回端口和关闭函数。
+/// 找不到 node 或服务端依赖没装（server/node_modules 不存在）时返回 null，用例跳过。
 ///
 /// 脚本写成临时 .mjs 文件再跑：多行脚本经 `node -e` 传参在 Windows 上的引号处理不可靠。
 Future<({int port, Future<void> Function() stop})?> _startServer(
@@ -18,6 +19,7 @@ Future<({int port, Future<void> Function() stop})?> _startServer(
 ) async {
   final serverDir = Directory('../server').absolute.path;
   if (!File('$serverDir/src/http.js').existsSync()) return null;
+  if (!Directory('$serverDir/node_modules').existsSync()) return null;
   final node = await findNode(Directory.current.path);
   if (node == null) return null;
   final home = Directory.systemTemp.createTempSync('pi-bot-app-server-mode-');
@@ -86,7 +88,7 @@ void main() {
   test('服务器模式：没填 token 时停在「需要 token」，不发请求、不重连', () async {
     final server = await _startServer({'PI_BOT_TOKEN': 'app-test-token'});
     if (server == null) {
-      markTestSkipped('没有 node，跳过');
+      markTestSkipped('没有 node 或服务端依赖没装（cd server && npm install），跳过');
       return;
     }
     addTearDown(server.stop);
@@ -103,7 +105,7 @@ void main() {
   test('服务器模式：填对 token 后连上；token 存下来，下次直接用', () async {
     final server = await _startServer({'PI_BOT_TOKEN': 'app-test-token'});
     if (server == null) {
-      markTestSkipped('没有 node，跳过');
+      markTestSkipped('没有 node 或服务端依赖没装（cd server && npm install），跳过');
       return;
     }
     addTearDown(server.stop);
@@ -125,7 +127,7 @@ void main() {
   test('服务器模式：token 填错→说清楚「token 不对」，清掉存的，不重连', () async {
     final server = await _startServer({'PI_BOT_TOKEN': 'app-test-token'});
     if (server == null) {
-      markTestSkipped('没有 node，跳过');
+      markTestSkipped('没有 node 或服务端依赖没装（cd server && npm install），跳过');
       return;
     }
     addTearDown(server.stop);
@@ -146,7 +148,7 @@ void main() {
   test('本机部署：照旧不带 token 直连', () async {
     final server = await _startServer({});
     if (server == null) {
-      markTestSkipped('没有 node，跳过');
+      markTestSkipped('没有 node 或服务端依赖没装（cd server && npm install），跳过');
       return;
     }
     addTearDown(server.stop);
