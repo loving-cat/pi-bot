@@ -25,6 +25,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { config } from './config.js';
+import { decrypt, encrypt, isEncrypted, loadOrCreateKey } from './secrets.js';
 import { log, newId, now, readJson, writeJsonAtomic } from './util.js';
 import { mergeGroupModels } from './model-capacity.js';
 import { modelFailure } from './model-reply.js';
@@ -327,7 +328,7 @@ export async function testModelGroup({
 // 注册表（落盘 + CRUD）
 // ---------------------------------------------------------------------------
 
-class ModelGroupStore {
+export class ModelGroupStore {
   #groups = [];
   #loaded = false;
 
@@ -335,19 +336,70 @@ class ModelGroupStore {
     return path.join(config.dataDir, 'model-groups.json');
   }
 
+  /** 内存里的 key 是明文；落盘前加密。没成功载入就拒绝写，避免把文件盖成空。 */
+  #seal(apiKey) {
+    const text = String(apiKey ?? '');
+    if (!text) return '';
+    return encrypt(text, loadOrCreateKey(config.dataDir));
+  }
+
   load() {
     if (this.#loaded) return;
-    this.#loaded = true;
     const raw = readJson(this.file, null);
     const list = Array.isArray(raw?.groups) ? raw.groups : [];
-    this.#groups = list.map(ModelGroup.fromJson).filter(Boolean);
+    const needsKey = list.some((item) => item && String(item.apiKey ?? ''));
+    const key = needsKey ? loadOrCreateKey(config.dataDir) : null;
+    let migrated = 0;
+    const plainList = [];
+    for (const item of list) {
+      if (!item || typeof item !== 'object') {
+        plainList.push(item);
+        continue;
+      }
+      const stored = String(item.apiKey ?? '');
+      if (!stored || !isEncrypted(stored)) {
+        if (stored) migrated++;
+        plainList.push(item);
+        continue;
+      }
+      let plain;
+      try {
+        plain = decrypt(stored, key);
+      } catch (err) {
+        throw new Error(`模型组「${item.name || item.id || ''}」的 key 解密失败，未改文件：${err.message}`);
+      }
+      plainList.push({ ...item, apiKey: plain });
+    }
+    // 先确认每一条密文都能解开，再写迁移。任一失败都不落盘。
+    if (migrated) {
+      writeJsonAtomic(this.file, {
+        ...raw,
+        groups: list.map((item) => {
+          if (!item || typeof item !== 'object') return item;
+          const stored = String(item.apiKey ?? '');
+          if (!stored || isEncrypted(stored)) return item;
+          return { ...item, apiKey: encrypt(stored, key) };
+        }),
+      });
+      log(`🔐 已把 ${migrated} 个模型组的 key 从明文迁移为密文`);
+    }
+    this.#groups = plainList.map((item) => {
+      if (!item || typeof item !== 'object') return null;
+      return ModelGroup.fromJson(item);
+    }).filter(Boolean);
+    this.#loaded = true;
     if (this.#groups.length) log(`📦 载入 ${this.#groups.length} 个自定义模型组`);
   }
 
   save() {
+    if (!this.#loaded) throw new Error('模型组未成功载入，拒绝写入');
     writeJsonAtomic(this.file, {
       version: 1,
-      groups: this.#groups.map((g) => g.toJson()),
+      groups: this.#groups.map((g) => {
+        const json = g.toJson();
+        json.apiKey = this.#seal(json.apiKey);
+        return json;
+      }),
     });
   }
 

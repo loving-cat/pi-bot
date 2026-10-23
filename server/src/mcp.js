@@ -1,3 +1,4 @@
+import { childEnv, explicitChildEnv } from './child-env.js';
 import { publicFetch } from './net-guard.js';
 
 /**
@@ -250,7 +251,10 @@ export function toMcpServersConfig(servers = []) {
         type: 'stdio',
         command: server.command,
         ...(server.args?.length ? { args: server.args } : {}),
-        ...(server.env && Object.keys(server.env).length ? { env: server.env } : {}),
+        // 只放用户显式写的 env。pi 默认还会并上 process.env，
+        // spawn 补丁见到标记后改回白名单，并留下这些显式项。
+        env: explicitChildEnv(server.env),
+        inheritEnv: false,
         ...(server.cwd ? { cwd: server.cwd } : {}),
       };
     }
@@ -375,7 +379,7 @@ export async function testMcpServer(server = {}) {
     try {
       child = spawnCommand(server.command, server.args ?? [], {
         cwd: server.cwd || undefined,
-        env: { ...process.env, ...(server.env ?? {}) },
+        env: childEnv(process.env, server.env ?? {}),
         stdio: ['pipe', 'pipe', 'pipe'],
       });
     } catch (err) {

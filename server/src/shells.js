@@ -10,7 +10,9 @@
  *   · 空闲超过 IDLE_MS 自动结束（防忘记关）；
  *   · 只登记输出与状态，不做任何命令判定 —— 规则在调用方（工具层）执行。
  */
+import './child-env.js';
 import { spawn } from 'node:child_process';
+import { childEnv } from './child-env.js';
 import { newId, now, log } from './util.js';
 
 /**
@@ -97,7 +99,7 @@ export class ShellRegistry {
       // 自己拼 argv 会在 Windows 上把引号转义成字面量（cmd 不认反斜杠转义）。
       child = spawn(text, {
         cwd,
-        env: env ? { ...process.env, ...env } : process.env,
+        env: childEnv(process.env, env || undefined),
         windowsHide: true,
         shell: true,
         stdio: ['pipe', 'pipe', 'pipe'],

@@ -6,6 +6,7 @@
  * 生产环境请套一层 TLS 反代（nginx/caddy），把 https/wss 转给这个端口；
  * 手机端地址就是 `https://<你的域名>/<配对码>`。
  */
+import './child-env.js';
 import { createRelay } from './relay/server.js';
 import { log } from './util.js';
 

@@ -6,6 +6,7 @@
  * 不指定 --code 就随机生成一个（会打印出来）；也可以设 RELAY_SECRET 与中转对齐。
  * 手机 App 的服务器地址填 `https://<中转域名>/<配对码>`，token 用电脑上配的那个。
  */
+import './child-env.js';
 import crypto from 'node:crypto';
 import { startRelayAgent } from './relay/agent.js';
 import { log } from './util.js';

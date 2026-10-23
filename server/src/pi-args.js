@@ -8,9 +8,11 @@
  *
  * 所以入口先看参数：像 pi CLI 就把参数原样交给 pi CLI，否则才起服务端。
  */
+import './child-env.js';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { childEnv } from './child-env.js';
 
 /** pi CLI 的特征参数（子 agent 派活时一定带） */
 const PI_FLAGS = new Set([
@@ -80,7 +82,7 @@ export function runPiCli(argv, { env = process.env } = {}) {
       child = spawn(command, [...args, ...argv], {
         stdio: 'inherit',
         windowsHide: true,
-        env,
+        env: childEnv(env),
       });
     } catch (err) {
       console.error(`pi 入口调用失败（${command}）：${err?.message || err}`);

@@ -28,6 +28,7 @@
 
 import net from 'node:net';
 import { execFile } from 'node:child_process';
+import { childEnvDirect } from './child-env.js';
 import { promisify } from 'node:util';
 import { Worker } from 'node:worker_threads';
 
@@ -105,6 +106,7 @@ async function proxyFromMacos() {
   try {
     const { stdout } = await execFileAsync('scutil', ['--proxy'], {
       timeout: DETECT_TIMEOUT_MS,
+      env: childEnvDirect(),
     });
     const num = (key) => {
       const m = new RegExp(`\\b${key}\\s*:\\s*(\\d+)`).exec(stdout);
@@ -205,7 +207,7 @@ function readWindowsProxyValue() {
       resolve(typeof value === 'string' ? value : '');
     };
     try {
-      worker = new Worker(WINDOWS_PROXY_WORKER, { eval: true });
+      worker = new Worker(WINDOWS_PROXY_WORKER, { eval: true, env: childEnvDirect() });
     } catch {
       return finish('');
     }

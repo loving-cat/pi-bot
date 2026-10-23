@@ -51,17 +51,17 @@ await test('同一个口令两次加密结果不同（IV 随机）', () => {
   assert.equal(decrypt(b, key), 'same');
 });
 
-await test('换密钥解不开（返回空，不抛错）', () => {
+await test('换密钥解不开（报错，不返回空）', () => {
   const enc = encrypt('secret', key);
   const other = crypto.randomBytes(32);
-  assert.equal(decrypt(enc, other), '', '密钥不对就该解不出');
+  assert.throws(() => decrypt(enc, other), /解密失败/);
 });
 
 await test('密文被篡改后解不开', () => {
   const enc = encrypt('secret', key);
   // 改最后一个字符
   const tampered = enc.slice(0, -1) + (enc.endsWith('A') ? 'B' : 'A');
-  assert.equal(decrypt(tampered, key), '', 'GCM 校验失败应返回空');
+  assert.throws(() => decrypt(tampered, key), /解密失败/);
 });
 
 await test('空值安全', () => {
@@ -107,7 +107,7 @@ await test('密钥文件与数据分开：拷走 state.json 没用', () => {
   // 模拟"只拿 state.json 里的密文"：没有 key 文件就解不开
   const otherDir = fs.mkdtempSync(path.join(tmpRoot, 'other-'));
   const otherKey = loadOrCreateKey(otherDir);
-  assert.equal(decrypt(enc, otherKey), '', '换机器（不同密钥）读不到口令');
+  assert.throws(() => decrypt(enc, otherKey), /解密失败/);
 });
 
 // ---------------------------------------------------------------- 真实 store 落盘

@@ -59,6 +59,7 @@ const TESTS = [
   'security-regress',
   'relay-openstream',
   'ssrf-regress',
+  'secrets-regress',
 ];
 
 let failed = 0;
