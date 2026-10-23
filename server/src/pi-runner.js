@@ -28,6 +28,7 @@ import { assistantFailure, fallbackModels, modelFailure, recoverModelReply } fro
 import { invalidateSessions, retireStaleSession, reserveSession } from './session-refresh.js';
 import { deliverDirectInput } from './direct-message-delivery.js';
 import { MergeQueue, MERGE_QUIET_MS } from './merge-messages.js';
+import { buildMemoryDigest, memoryConversation } from './memory-digest.js';
 
 /**
  * 多久之内又来一条，算"连发"（于是开始攒）。
@@ -768,6 +769,39 @@ export class PiRunner {
     }
   }
 
+  /**
+   * 等这一轮的 pending 落定 —— 但用户插话/终止后只给一小段缓冲。
+   *
+   * 为什么：旧轮的成员可能正卡在一个很慢的工具/模型请求里（最长要等 watchdog 6 分钟），
+   * 如果一直 await，房间锁就会被扣死 —— 用户发的新消息要等好几分钟才轮得到，
+   * 表现就是"问进度像卡死、负责人也不出来"。用户已经插话的情况下，
+   * 旧轮的产出本来就要作废（stale），没必要为了等它阻塞新的一轮。
+   */
+  async #awaitPending(pending, stale, { graceMs = 5000, pollMs = 100 } = {}) {
+    if (!pending.length) return;
+    let settled = false;
+    const all = Promise.allSettled(pending).then(() => {
+      settled = true;
+    });
+    // 正常等：跟以前一样，谁先落地谁走（不引入轮询延迟 —— 轮询会拖慢
+    // "上一波落地 → 下一波派发"的节奏，之前的实现就因为 250ms 轮询把
+    // 成员派发拖到用户插话之后，被误判成"插话后不该再派"）。
+    const watch = (async () => {
+      while (!settled) {
+        if (stale()) return true;
+        await new Promise((r) => setTimeout(r, pollMs));
+      }
+      return false;
+    })();
+    const wentStale = await Promise.race([watch, all.then(() => false)]);
+    if (!wentStale || settled) return;
+    // 已经插话/终止：最多再等 graceMs，然后放行，绝不把房间锁扣死
+    await Promise.race([all, new Promise((r) => setTimeout(r, graceMs))]);
+    if (!settled) {
+      log(`用户已插话/终止：旧轮还有 ${pending.length} 个会话没退出，先释放房间锁`);
+    }
+  }
+
   async runRound(
     roomId,
     {
@@ -859,7 +893,7 @@ export class PiRunner {
         break;
       }
       if (!queue.length) {
-        await Promise.allSettled(pending.splice(0));
+        await this.#awaitPending(pending.splice(0), stale);
         continue;
       }
       const item = queue.shift();
@@ -895,6 +929,20 @@ export class PiRunner {
       });
       if (plan.kind === 'skip') {
         log(`【${room.name}】${plan.why} → 不再叫它`);
+        // ★ 不能静默：用户看到"A @ 了 B"却没人动，会以为群卡死了。
+        //   在群里留一条可见提示，并说明怎么解（调高部门预算/发新消息重置）。
+        if (item.fromId) {
+          store.appendMessage({
+            roomId,
+            authorType: 'system',
+            authorName: '调度提示',
+            text:
+              `${bot.name} 本轮已发言 ${done} 次（上限 ${budget(bot.id)} 次），` +
+              `这条 @ 没有派发。发一条新消息可重置本轮预算，或在「部门预算」里调高每轮发言次数。`,
+            status: 'done',
+            meta: { via: 'turn_budget_skip', botId: bot.id, fromId: item.fromId ?? null },
+          });
+        }
         continue;
       }
       // ★ 上级叫它 → 无论多忙都要**停下来听**。
@@ -1107,6 +1155,8 @@ export class PiRunner {
               // 隔一会儿再试：立刻重发大概率撞上同样的偶发问题
               await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
               if (this.aborting.has(roomId)) break;
+              // ★ 重试等待期间用户插话 → 旧任务作废，别再起跑
+              if (stale()) break;
               // 换个说法再发，而不是原样重发（原样输入很可能得到同样结果）
               const hinted = retryHint({ attempt: attempt - 1, error: lastError, kind: decision.kind });
               res = await this.run(roomId, bot.id, hinted + prompt, {
@@ -1219,7 +1269,8 @@ export class PiRunner {
       );
     }
     // 收尾：还在跑的人别被丢下（它们的 @ 已经在上面补进队列了）
-    await Promise.allSettled(pending);
+    // ★ 用户插话/终止后只等一小段缓冲，不能把房间锁扣死（见 #awaitPending）
+    await this.#awaitPending(pending, stale);
 
     // ★ 用户插话：本轮到此为止。
     //   不叫老大收尾（收的是旧需求的尾）、不推进未参与者的游标
@@ -1475,11 +1526,150 @@ export class PiRunner {
     return { userMessage, bot, group: room.kind === 'group' };
   }
 
+  /**
+   * 记忆摘要：把这个私聊最近的对话整理成"它记住了什么"。
+   *
+   * 存在 store 里（roomId:botId → {text, lastId, count, at}），有缓存；
+   * 有新消息（lastId 变了）或 force 时才重新生成。
+   */
+  async summarizeMemory(roomId, botId, { force = false } = {}) {
+    // 同一对 room:bot 同时只跑一个摘要任务（两个客户端同时点"更新"也不会并发调模型）
+    const jobKey = `${roomId}:${botId}`;
+    if (!this.memoryJobs) this.memoryJobs = new Map();
+    if (!force && this.memoryJobs.has(jobKey)) return this.memoryJobs.get(jobKey);
+    const job = this.#summarizeMemoryNow(roomId, botId, { force });
+    this.memoryJobs.set(jobKey, job);
+    try {
+      return await job;
+    } finally {
+      this.memoryJobs.delete(jobKey);
+    }
+  }
+
+  async #summarizeMemoryNow(roomId, botId, { force = false } = {}) {
+    const room = store.getRoom(roomId);
+    if (!room) return { error: '会话不存在' };
+    const bot = store.getBot(botId);
+    if (!bot) return { error: 'bot 不存在' };
+
+    const all = store.listMessages(roomId, { limit: 200 });
+    const conversation = memoryConversation(all);
+    const lastId = store.listMessages(roomId, { limit: 1 })[0]?.id ?? null;
+    if (!conversation.length) return { text: '', at: null, count: 0, stale: false, lastId };
+
+    const cached = store.memorySummaryFor(roomId, botId);
+    if (!force && cached && cached.lastId === lastId) return cached;
+
+    const digest = buildMemoryDigest(all);
+
+    const prompt = [
+      `下面是「${bot.name}」与用户最近的对话记录。请把它整理成一份"记忆摘要"：`,
+      '1) 用户长期关注什么、有什么偏好与要求；',
+      '2) 已经确定的结论/数据/口径（保留关键数字）；',
+      '3) 还没做完的事与下一步；',
+      '4) 重要的文件路径或系统状态。',
+      '要求：要点式中文，每行一条，总长不超过 500 字；不要复述原话，不要寒暄。',
+      '',
+      digest,
+    ].join('\n');
+
+    const model = (bot.model ? this.resolveModel(bot.model) : null) ?? this.model;
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => controller.abort(new Error('记忆摘要超时（90 秒）')),
+      90_000,
+    );
+    try {
+      const reply = await this.modelRuntime.completeSimple(
+        model,
+        {
+          systemPrompt: '你是一个记忆整理器，只输出整理后的记忆摘要。',
+          messages: [{ role: 'user', content: prompt, timestamp: Date.now() }],
+        },
+        { maxTokens: 1200, signal: controller.signal },
+      );
+      const text = textOf(reply).trim();
+      if (!text) {
+        return { ...(cached ?? {}), error: '模型没有返回内容', stale: true };
+      }
+      return store.setMemorySummary(roomId, botId, {
+        text,
+        lastId,
+        count: conversation.length,
+        at: Date.now(),
+      });
+    } catch (err) {
+      return { ...(cached ?? {}), error: String(err?.message || err), stale: true };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * 主动压缩：上下文到 config.compactAtPercent 就先收成摘要。
+   *
+   * 为什么要自己做，不交给 pi 的自动压缩：
+   *   pi 的触发线是 contextWindow - reserveTokens（1M 窗口 / 16k reserve ≈ 98.4%），
+   *   压完只剩 1.6% 余量 —— 随便读一份数据又满了，群聊长任务就进入
+   *   「99% → 压缩 → 读一下 → 100% → 再压缩」的死循环。
+   *   这里提前到 80% 触发，压完通常只剩 5% 左右，能撑很多轮。
+   */
+  async #compactIfNeeded(entry, bot) {
+    const session = entry?.session;
+    if (!session || session.isCompacting) return;
+    try {
+      const usage = session.getContextUsage?.();
+      const percent = usage?.percent;
+      if (typeof percent !== 'number') return;
+      const threshold = Math.min(0.95, Math.max(0.5, config.compactAtPercent || 0.8));
+      if (percent < threshold * 100) return;
+      entry.startedAt = Date.now();
+      entry.progressAt = entry.startedAt;
+      log(
+        `【${bot.name}】上下文 ${percent.toFixed(0)}% ≥ ${Math.round(threshold * 100)}% → 先压缩成摘要`,
+      );
+      // 压缩可能跑好几分钟（要把几十万 tokens 读一遍）：期间每 15s 续一次心跳，
+      // 否则 watchdog 会以为这一轮卡死、把会话 abort 掉。
+      const beat = setInterval(() => {
+        entry.progressAt = Date.now();
+      }, 15_000);
+      try {
+        await Promise.race([
+          session.compact(
+            '把这段工作压缩成一份"接着干"的摘要，只保留：\n' +
+              '1) 当前任务目标与约束；\n' +
+              '2) 已经得出的结论/关键数据（保留数字与口径）；\n' +
+              '3) 还没做完的待办与下一步；\n' +
+              '4) 关键文件路径。\n' +
+              '删掉寒暄、重复和过程细节，用要点式中文，尽量短。',
+          ),
+          // 兜底：压缩本身也不能无限卡住（否则这个 bot 永远轮不到）
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('压缩超时（5 分钟）')), 5 * 60 * 1000),
+          ),
+        ]);
+      } finally {
+        clearInterval(beat);
+      }
+      entry.progressAt = Date.now();
+    } catch (err) {
+      // 压缩失败不能挡住这一轮 —— pi 自己的 98% 自动压缩还在兜底
+      log(`【${bot.name}】主动压缩失败（继续本轮）：`, err?.message || err);
+      try {
+        await session.abort?.();
+      } catch {
+        // 中断压缩失败也不影响本轮继续
+      }
+    }
+  }
+
+
   // ---------------------------------------------------------------- 核心：跑一轮
 
   /**
    * @returns {Promise<{ok:boolean, text:string, ms:number, error?:string, messageId:string}>}
    */
+
   async run(
     roomId,
     botId,
@@ -1524,6 +1714,9 @@ export class PiRunner {
       if (cancelled()) throw turnController.signal.reason ?? Object.assign(new Error('已终止'), { name: 'AbortError' });
     };
     entry.lastUsed = Date.now();
+    // ★ 先看上下文：到阈值就压缩成摘要，再开始这一轮。
+    //   （别等 pi 的 98% 触发线 —— 压完没余量，群聊长任务会陷入压缩循环）
+    await this.#compactIfNeeded(entry, entry.bot);
     // ★ 心跳：这一轮从什么时候开始、最后一次动静是什么时候、
     //   以及它正在写的是哪条消息（卡死时要拿这个收尾）。
     entry.startedAt = Date.now();
@@ -2159,6 +2352,8 @@ export class PiRunner {
       const [roomId] = key.split(':');
       store.clearSessionFile(roomId, botId);
     }
+    // 记忆都没了，摘要也必须作废 —— 否则「记忆」页还显示旧内容
+    store.clearMemorySummariesForBot(botId);
     return removed.length;
   }
 
@@ -2182,6 +2377,8 @@ export class PiRunner {
     for (const key of removed) {
       store.clearSessionFile(roomId, key.slice(roomId.length + 1));
     }
+    // 开新会话 = 清记忆：这个房间的记忆摘要一起作废
+    store.clearMemorySummariesForRoom(roomId);
     return removed.length;
   }
 

@@ -37,6 +37,16 @@ import '../widgets/teach_dialog.dart';
 
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+/// 列表显示顺序：把「还在思考」的流式占位（还没有一个字）挪到最底部。
+///
+/// 并发群里，先开始、后完成的 bot 的占位本来排在前面；后完成的 bot 内容一长，
+/// 就会把还空着的占位顶到上面 —— 用户看起来像"它还在想，但被压上去了/卡住了"。
+/// 只影响显示顺序，不影响消息本身的时间顺序。
+List<Msg> displayOrderMsgs(List<Msg> msgs) => [
+  ...msgs.where((m) => !(m.isStreaming && m.text.trim().isEmpty)),
+  ...msgs.where((m) => m.isStreaming && m.text.trim().isEmpty),
+];
+
 class ChatScreen extends StatefulWidget {
   const ChatScreen({
     super.key,
@@ -430,7 +440,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       orElse: () => widget.room,
     );
     final msgs = state.messages[room.id] ?? const <Msg>[];
-    final progressGroups = groupProgressMessages(msgs);
+    // ★ 并发时"还在思考"的占位（streaming 且一个字都没有）统一挪到列表最底部，
+    //   否则先开始、后完成的 bot 的占位会被后完成 bot 的长内容顶上去。
+    final display = displayOrderMsgs(msgs);
+    final progressGroups = groupProgressMessages(display);
     final busy = state.typing[room.id] == true;
     final lead =
         state.botById(room.leadBotId) ??
@@ -668,8 +681,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             //   消息每 80ms 重建一次，这些节点就在焦点竞争里把焦点从输入框
                             //   拽走：用户打字打一半断掉，得重新点一下输入框。
                             //
-                            //   ExcludeFocus 从根上关掉这条路。代价是消息里不能再用键盘
-                            //   Ctrl+C —— 但每条消息长按有「复制」菜单，功能没丢。
+                            //   现在不再套 ExcludeFocus —— 那会把 SelectionArea 的
+                            //   键盘快捷键一起挡掉（⌘C 复制整段就靠它）。
                             RepaintBoundary(
                               child: NotificationListener<Notification>(
                                 onNotification:
@@ -686,9 +699,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                     sidePad,
                                     20,
                                   ),
-                                  itemCount: msgs.length,
+                                  itemCount: display.length,
                                   itemBuilder: (ctx, i) {
-                                    final msg = msgs[i];
+                                    final msg = display[i];
 
                                     if (msg.isProgress) {
                                       final run = progressGroups[i];
@@ -701,7 +714,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                       );
                                     }
 
-                                    final prev = i > 0 ? msgs[i - 1] : null;
+                                    final prev = i > 0 ? display[i - 1] : null;
                                     final newAuthor =
                                         prev == null ||
                                         prev.authorId != msg.authorId ||
@@ -711,8 +724,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                     // 同一个人连着发好几条时，头像挂在**最后一条**上 ——
                                     // 这样整串气泡都在头像的右上方，头像在底部托着。
                                     // （挂在第一条的话，头像会卡在整串中间，很怪。）
-                                    final next = i + 1 < msgs.length
-                                        ? msgs[i + 1]
+                                    final next = i + 1 < display.length
+                                        ? display[i + 1]
                                         : null;
                                     final endOfRun =
                                         next == null ||
@@ -1825,17 +1838,15 @@ class _MessageRow extends StatelessWidget {
                             alpha: 0.28,
                           ),
                         ),
-                        child: ExcludeFocus(
-                          child: MdText(
-                            msg.text,
-                            selectable: true,
-                            onMentionTap: (name) => openBotDm(context, name),
-                            mentionOf: mentionOf,
-                            style: const TextStyle(
-                              fontSize: PB.fsBase,
-                              height: 1.45,
-                              color: Colors.white,
-                            ),
+                        child: MdText(
+                          msg.text,
+                          selectable: true,
+                          onMentionTap: (name) => openBotDm(context, name),
+                          mentionOf: mentionOf,
+                          style: const TextStyle(
+                            fontSize: PB.fsBase,
+                            height: 1.45,
+                            color: Colors.white,
                           ),
                         ),
                       ),
@@ -1987,19 +1998,17 @@ class _MessageRow extends StatelessWidget {
                         ),
                         child: streaming && msg.text.isEmpty
                             ? const _TypingDots()
-                            : ExcludeFocus(
-                                child: MdText(
-                                  streaming ? '${msg.text}▍' : msg.text,
-                                  selectable: !streaming,
-                                  onMentionTap: (name) =>
-                                      openBotDm(context, name),
-                                  mentionOf: mentionOf,
-                                  mentions: mentions,
-                                  style: const TextStyle(
-                                    fontSize: PB.fsBase,
-                                    height: 1.5,
-                                    color: PB.textPrimary,
-                                  ),
+                            : MdText(
+                                streaming ? '${msg.text}▍' : msg.text,
+                                selectable: !streaming,
+                                onMentionTap: (name) =>
+                                    openBotDm(context, name),
+                                mentionOf: mentionOf,
+                                mentions: mentions,
+                                style: const TextStyle(
+                                  fontSize: PB.fsBase,
+                                  height: 1.5,
+                                  color: PB.textPrimary,
                                 ),
                               ),
                       ),

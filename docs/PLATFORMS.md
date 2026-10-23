@@ -55,6 +55,9 @@ PR 之前逐条过一遍：
 - 短期特性分支 → PR → `main`；**不再用长期平台分支**。
 - 发布产物都从 `main` 构建：Windows zip（`scripts/pack-windows.ps1`）、
   Android apk（`flutter build apk`）、macOS dmg（`scripts/pack-macos.sh`）。
+- **版本号 / tag / 资产命名**见 [发布约定](RELEASE.md)：tag 只能是纯 semver（`v1.3.0`），
+  平台词只进资产文件名。带平台后缀的 tag 会被更新检查判成「预发布 = 比正式版旧」，
+  用户永远收不到更新提示。
 - CI（`.github/workflows/ci.yml`）在 ubuntu / windows / macos 上跑服务端单测，
   并在 Windows + macOS 上跑 `flutter analyze` / `flutter test` —— 就是为了在合并前
   抓"mac 的改动把 Windows 弄红了"这种问题。

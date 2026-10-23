@@ -51,8 +51,17 @@ export function applyCompactionBudget(session, bot = {}) {
   const sm = session?.settingsManager;
   if (!sm || typeof sm.applyOverrides !== 'function') return null;
 
-  const reserve = positiveOrNull(bot.reserveTokens) ?? config.reserveTokens ?? null;
-  const keep = positiveOrNull(bot.keepRecentTokens) ?? config.keepRecentTokens ?? null;
+  let reserve = positiveOrNull(bot.reserveTokens) ?? config.reserveTokens ?? null;
+  let keep = positiveOrNull(bot.keepRecentTokens) ?? config.keepRecentTokens ?? null;
+  // ★ 防御：reserve / keep ≥ 上下文窗口 = 没有意义的值。
+  //   reserve 用来算"什么时候压缩"，等于窗口时触发线变成 0；
+  //   keep 等于窗口时等于"什么都保留"，压缩压不动，会话会一路顶到 100% 再炸。
+  //   这种配置直接丢弃，回退到 pi 的默认值。
+  const cw = Number(session?.model?.contextWindow ?? 0);
+  if (cw > 0) {
+    if (reserve != null && reserve >= cw) reserve = null;
+    if (keep != null && keep >= cw) keep = null;
+  }
   const overrides = {};
   if (reserve != null) overrides.reserveTokens = reserve;
   if (keep != null) overrides.keepRecentTokens = keep;

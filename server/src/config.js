@@ -131,17 +131,8 @@ export const config = {
    * 一次 assistant 发言 = 一轮（里面可以带好几个工具调用）。
    * 按工具调用算的话，模型连查带改跑十几个 bash 就把额度烧光了，活才刚开头。
    */
-  groupTurnMaxSteps: Number(process.env.PI_BOT_GROUP_MAX_STEPS || 30),
-  /** 部门里单轮最长跑多久（毫秒），到点收住交给下一个人 */
-  groupTurnMaxMs: Number(process.env.PI_BOT_GROUP_TURN_MAX_MS || 300_000),
-  /** 部门老大每次发言最多能跑几轮 */
-  groupTurnsLead: Number(process.env.PI_BOT_GROUP_TURNS_LEAD || 4),
-  /** 普通成员每次发言最多能跑几轮 */
-  groupTurnsMember: Number(process.env.PI_BOT_GROUP_TURNS_MEMBER || 2),
   /** 同时驻留的 agent 会话上限（每个 房间×bot 一个，各自占内存），超出按 LRU 释放 */
   maxSessions: Number(process.env.PI_BOT_MAX_SESSIONS || 40),
-  /** 一条用户消息最多触发几次 bot 运行（防部门内部无限互吹） */
-  groupMaxRuns: Number(process.env.PI_BOT_GROUP_MAX_RUNS || 10),
   /** 主控只有只读文件工具 —— 它是调度者，不是干活的人 */
   chiefTools: (process.env.PI_BOT_CHIEF_TOOLS || 'read,ls,grep,find').split(',').map((s) => s.trim()).filter(Boolean),
   /** 多人部门负责人的只读内置工具；执行工具不参与此配置。 */
@@ -162,6 +153,14 @@ export const config = {
    */
   reserveTokens: Number(process.env.PI_BOT_RESERVE_TOKENS || 0) || null,
   keepRecentTokens: Number(process.env.PI_BOT_KEEP_RECENT_TOKENS || 0) || null,
+  /**
+   * 主动压缩阈值（0-1）。到这条线就先压缩成摘要，不等 pi 的 98% 触发线。
+   *
+   * 为什么：pi 默认到 contextWindow - reserveTokens（1M 窗口下约 98%）才压，
+   * 压完只剩几个点余量 —— 群聊里读一份数据就回到 100%，又压，循环。
+   * 提前到 80% 压，压完通常只剩 5% 左右，能撑很多轮。
+   */
+  compactAtPercent: Number(process.env.PI_BOT_COMPACT_AT_PERCENT || 0.8),
   /** 关掉自动压缩（PI_BOT_AUTO_COMPACT=0）。关掉之后长会话会直接撞上下文上限 */
   autoCompact: process.env.PI_BOT_AUTO_COMPACT !== '0',
   /** 单轮 agent 运行的硬超时（毫秒），0 = 不限 */
