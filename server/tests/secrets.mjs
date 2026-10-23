@@ -59,9 +59,12 @@ await test('换密钥解不开（报错，不返回空）', () => {
 
 await test('密文被篡改后解不开', () => {
   const enc = encrypt('secret', key);
-  // 改最后一个字符
-  const tampered = enc.slice(0, -1) + (enc.endsWith('A') ? 'B' : 'A');
-  assert.throws(() => decrypt(tampered, key), /解密失败/);
+  // 改认证 tag 中间一位。末字符是 base64url 填充位，改它不一定会让解密失败。
+  const parts = enc.split(':');
+  assert.equal(parts.length, 5);
+  const tag = parts[3];
+  parts[3] = tag.slice(0, 4) + (tag[4] === 'A' ? 'B' : 'A') + tag.slice(5);
+  assert.throws(() => decrypt(parts.join(':'), key), /解密失败/);
 });
 
 await test('空值安全', () => {

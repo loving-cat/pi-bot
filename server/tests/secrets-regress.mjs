@@ -7,6 +7,7 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import cp from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -21,9 +22,12 @@ const { ModelGroupStore } = await import('../src/model-groups.js');
 const { store } = await import('../src/store.js');
 const {
   CHILD_ENV_MARKER,
+  attachSpawnSyncScrub,
   childEnv,
   childEnvDirect,
 } = await import('../src/child-env.js');
+const { runPiCli } = await import('../src/pi-args.js');
+const { providerKeys } = await import('../src/provider-keys.js');
 const { ShellRegistry } = await import('../src/shells.js');
 const { spawnCommand } = await import('../src/spawn-command.js');
 const { toMcpServersConfig } = await import('../src/mcp.js');
@@ -36,7 +40,8 @@ async function test(name, fn) {
     console.log(`✓ ${name}`);
     pass++;
   } catch (err) {
-    console.log(`✗ ${name}\n    ${err?.stack || err}`);
+    console.log(`✗ ${name} ${err?.message || err}`);
+    if (err?.stack) console.log(err.stack);
     fail++;
   }
 }
@@ -70,7 +75,16 @@ function writePlainGroups() {
 }
 
 function tamper(value) {
-  return value.slice(0, -1) + (value.endsWith('A') ? 'B' : 'A');
+  // enc:v1:<iv>:<tag>:<data>。tag 是第 4 段。
+  // base64url 末字符的低位是填充，改它大约有 1/4 解码后字节不变，认证仍能通过。
+  const parts = String(value).split(':');
+  if (parts.length !== 5 || parts[0] !== 'enc' || parts[1] !== 'v1') {
+    throw new Error('密文格式不是 enc:v1:<iv>:<tag>:<data>');
+  }
+  const tag = parts[3];
+  if (tag.length < 6) throw new Error('认证 tag 太短');
+  parts[3] = tag.slice(0, 4) + (tag[4] === 'A' ? 'B' : 'A') + tag.slice(5);
+  return parts.join(':');
 }
 
 await test('新写入的模型 key 落盘是密文，内存仍是明文', () => {
@@ -241,7 +255,6 @@ const leaked = {
   PI_BOT_TOKEN: 'test-tok',
   OPENAI_API_KEY: 'test-key-o',
   ANTHROPIC_OAUTH_TOKEN: 'test-oaut',
-  PI_BOT_SEARCH_KEY: 'test-seek',
   RELAY_SECRET: 'test-sec',
   PI_BOT_SECRET_KEY: 'ef'.repeat(32),
   UNRELATED_CUSTOM: 'test-drop',
@@ -395,6 +408,143 @@ await test('白名单环境里 node、npm、git 仍能启动', () => {
     const res = cp.spawnSync(cmd, args, { encoding: 'utf8' });
     assert.equal(res.status, 0, `${cmd} ${res.stderr || res.error?.message || ''}`);
     assert.ok(String(res.stdout || '').trim().length > 0, cmd);
+  }
+});
+
+await test('新放行的变量会进子进程，云凭证和敏感 PI_BOT_ 不进', () => {
+  const added = {
+    PI_CODING_AGENT_DIR: 'agent-dir',
+    XDG_CACHE_HOME: 'xdg-cache',
+    SSH_AUTH_SOCK: 'ssh.sock',
+    GIT_SSH_COMMAND: 'ssh-cmd',
+    NODE_EXTRA_CA_CERTS: 'ca.pem',
+    SSL_CERT_FILE: 'cert.pem',
+    DISPLAY: ':9',
+    ProgramFiles: 'pf-test',
+    'ProgramFiles(x86)': 'pf86-test',
+    ProgramData: 'pdata-test',
+    PSModulePath: 'psmod-test',
+    NUMBER_OF_PROCESSORS: '4',
+    PROCESSOR_ARCHITECTURE: 'x64',
+    OS: 'Windows_NT',
+    PUBLIC: 'public-test',
+    PI_BOT_SEARCH_KEY: 'test-seek',
+    AWS_ACCESS_KEY_ID: 'aws-id-x',
+    AWS_SECRET_ACCESS_KEY: 'aws-sec-x',
+    GOOGLE_APPLICATION_CREDENTIALS: 'gac-file',
+  };
+  const previous = {};
+  for (const name of Object.keys(added)) previous[name] = process.env[name];
+  Object.assign(process.env, added);
+  try {
+    const env = readEnv();
+    for (const [name, value] of Object.entries(added)) {
+      if (name.startsWith('AWS_') || name === 'GOOGLE_APPLICATION_CREDENTIALS') {
+        assert.equal(env[name], undefined, name);
+        assert.ok(!JSON.stringify(env).includes(value), name);
+      } else {
+        assert.equal(env[name], value, name);
+      }
+    }
+    assert.equal(env.PI_BOT_HOME, root);
+    assert.equal(env.PI_BOT_TOKEN, undefined);
+    assert.equal(env.PI_BOT_SECRET_KEY, undefined);
+  } finally {
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+});
+
+await test('spawnSync 子进程看不到 *_TOKEN', () => {
+  const env = readEnv();
+  const blob = JSON.stringify(env);
+  assert.equal(env.PI_BOT_TOKEN, undefined);
+  assert.equal(env.ANTHROPIC_OAUTH_TOKEN, undefined);
+  assert.ok(!blob.includes('test-tok'));
+  assert.ok(!blob.includes('test-oaut'));
+});
+
+await test('拿不到 spawn_sync 时会警告', () => {
+  const lines = [];
+  const orig = console.warn;
+  console.warn = (...args) => { lines.push(args.map(String).join(' ')); };
+  try {
+    assert.equal(attachSpawnSyncScrub(null), false);
+    assert.ok(lines.some((line) => line.includes('拿不到 spawn_sync')));
+  } finally {
+    console.warn = orig;
+  }
+});
+
+await test('pi 子 agent 拿到目录和当前 provider 的 key，bash 拿不到', async () => {
+  const previous = {
+    PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
+    PI_BOT_MODEL: process.env.PI_BOT_MODEL,
+    ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+    ACME_KEY: process.env.ACME_KEY,
+  };
+  const agentDir = path.join(root, 'agent');
+  fs.mkdirSync(agentDir, { recursive: true });
+  fs.writeFileSync(path.join(agentDir, 'models.json'), JSON.stringify({
+    providers: { acme: { apiKey: '$ACME_KEY' } },
+  }));
+  process.env.PI_CODING_AGENT_DIR = agentDir;
+  process.env.PI_BOT_MODEL = 'openai/gpt-test';
+  process.env.ANTHROPIC_API_KEY = 'test-key-n';
+  process.env.ACME_KEY = 'test-key-c';
+  try {
+    const child = new EventEmitter();
+    child.kill = () => {};
+    let seen;
+    const code = await runPiCli(['--mode', 'json', '-p', 'hi'], {
+      env: process.env,
+      spawnImpl(_cmd, _args, opts) {
+        seen = opts.env;
+        queueMicrotask(() => child.emit('exit', 0, null));
+        return child;
+      },
+    });
+    assert.equal(code, 0);
+    assert.equal(seen.OPENAI_API_KEY, 'test-key-o');
+    assert.equal(seen.ANTHROPIC_API_KEY, undefined);
+    const scrubbed = readEnv({ env: seen });
+    assert.equal(scrubbed.PI_CODING_AGENT_DIR, agentDir);
+    assert.equal(scrubbed.OPENAI_API_KEY, 'test-key-o');
+    assert.equal(scrubbed.ANTHROPIC_API_KEY, undefined);
+    assert.equal(scrubbed.ACME_KEY, undefined);
+    assert.equal(scrubbed.PI_BOT_TOKEN, undefined);
+    assert.equal(scrubbed[CHILD_ENV_MARKER], undefined);
+
+    const bash = readEnv();
+    assert.equal(bash.OPENAI_API_KEY, undefined);
+    assert.equal(bash.ANTHROPIC_API_KEY, undefined);
+    assert.equal(bash.ACME_KEY, undefined);
+    assert.equal(bash.PI_CODING_AGENT_DIR, agentDir);
+
+    process.env.PI_BOT_MODEL = 'acme/widget';
+    const acmeKeys = providerKeys(process.env, []);
+    assert.deepEqual(acmeKeys, { ACME_KEY: 'test-key-c' });
+    const acmeChild = readEnv({ env: childEnv(process.env, acmeKeys) });
+    assert.equal(acmeChild.ACME_KEY, 'test-key-c');
+    assert.equal(acmeChild.OPENAI_API_KEY, undefined);
+
+    const entry = path.join(root, 'index.js');
+    fs.writeFileSync(entry, 'process.stdout.write(JSON.stringify(process.env));\n');
+    process.env.PI_BOT_MODEL = 'openai/gpt-test';
+    const entered = cp.spawnSync(process.execPath, [entry, '--mode', 'json', '-p', 'hi'], { encoding: 'utf8' });
+    assert.equal(entered.status, 0, entered.stderr || entered.error?.message);
+    const entryEnv = JSON.parse(entered.stdout);
+    assert.equal(entryEnv.OPENAI_API_KEY, 'test-key-o');
+    assert.equal(entryEnv.ANTHROPIC_API_KEY, undefined);
+    assert.equal(entryEnv.PI_BOT_TOKEN, undefined);
+    assert.equal(readEnv().OPENAI_API_KEY, undefined);
+  } finally {
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
   }
 });
 

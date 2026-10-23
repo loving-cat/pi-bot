@@ -9,18 +9,29 @@
  * 白名单（大小写不敏感，保留原来的名字）：
  *   PATH、HOME、USER、USERNAME、LOGNAME、SHELL、TERM、
  *   TMPDIR、TEMP、TMP、LANG、LC_*、
+ *   PI_CODING_AGENT_DIR、XDG_*、SSH_AUTH_SOCK、GIT_SSH*、
+ *   NODE_EXTRA_CA_CERTS、SSL_CERT_*、DISPLAY、
  *   SystemRoot、windir、SystemDrive、ComSpec、PATHEXT、
  *   USERPROFILE、APPDATA、LOCALAPPDATA、HOMEDRIVE、HOMEPATH、
+ *   ProgramFiles、ProgramFiles(x86)、ProgramData、PSModulePath、
+ *   NUMBER_OF_PROCESSORS、PROCESSOR_ARCHITECTURE、OS、PUBLIC、
+ *   PI_BOT_*（除外名单见下）、
  *   以及名字以 `_PROXY` 结尾的代理变量。
  *
- * `PI_BOT_TOKEN`、`*_API_KEY`、`*_TOKEN`、`*_SECRET` 一律不继承。
- * 调用方显式给的变量（MCP 配置里的 env、后台命令的 extra）原样保留，
- * 哪怕名字看起来像 key。显式名单写在内部标记里，真正 spawn 之前删掉。
+ * `PI_BOT_TOKEN`、`PI_BOT_SECRET_KEY`、`*_API_KEY`、`*_TOKEN`、`*_SECRET`
+ * 一律不继承。以后新增敏感的 `PI_BOT_` 变量，加进 `PI_BOT_BLOCKED`。
+ * 云凭证不在白名单里，也没有运行时放行接口。
+ * 调用方显式给的变量（MCP 配置里的 env、后台命令的 extra、
+ * runPiCli 按当前模型塞进来的 provider key）原样保留。
+ * 显式名单写在内部标记里，真正 spawn 之前删掉。
+ * `node <入口>/index.js` 带 pi 参数被派出去时，另外补上当前 provider 的 key，
+ * 否则里面的 runPiCli 已经看不到这把 key。
  *
  * `Worker` 不走这条路，调用方用 `childEnvDirect` 传入已经收过的环境。
  */
 import crypto from 'node:crypto';
 import cp from 'node:child_process';
+import { providerKeysForEntry } from './provider-keys.js';
 
 /** 内部标记。值是本进程随机前缀加显式变量名，不是秘密。 */
 export const CHILD_ENV_MARKER = 'PI_BOT_ENV_ALLOW';
@@ -50,6 +61,27 @@ const EXACT = new Set([
   'LOCALAPPDATA',
   'HOMEDRIVE',
   'HOMEPATH',
+  'PI_CODING_AGENT_DIR',
+  'SSH_AUTH_SOCK',
+  'NODE_EXTRA_CA_CERTS',
+  'DISPLAY',
+  'PROGRAMFILES',
+  'PROGRAMFILES(X86)',
+  'PROGRAMDATA',
+  'PSMODULEPATH',
+  'NUMBER_OF_PROCESSORS',
+  'PROCESSOR_ARCHITECTURE',
+  'OS',
+  'PUBLIC',
+]);
+
+/**
+ * `PI_BOT_*` 默认放行。这两项除外。
+ * 以后新增敏感的 PI_BOT_ 变量，加进这里（后缀规则盖不住 PI_BOT_SECRET_KEY）。
+ */
+const PI_BOT_BLOCKED = new Set([
+  'PI_BOT_TOKEN',
+  'PI_BOT_SECRET_KEY',
 ]);
 
 /**
@@ -71,9 +103,14 @@ function isSensitive(name) {
 function isAllowed(name) {
   const upper = String(name ?? '').toUpperCase();
   if (!upper || upper === CHILD_ENV_MARKER) return false;
+  if (PI_BOT_BLOCKED.has(upper)) return false;
   if (isSensitive(upper)) return false;
   if (EXACT.has(upper)) return true;
   if (upper.startsWith('LC_')) return true;
+  if (upper.startsWith('XDG_')) return true;
+  if (upper.startsWith('GIT_SSH')) return true;
+  if (upper.startsWith('SSL_CERT_')) return true;
+  if (upper.startsWith('PI_BOT_')) return true;
   if (upper.endsWith('_PROXY')) return true;
   return false;
 }
@@ -206,9 +243,39 @@ export function childEnvDirect(base = process.env, extra) {
  * 所以改最后一跳：异步走 `ChildProcess.prototype.spawn`，同步走 `spawn_sync`。
  *
  * @param {string[]|undefined|null} pairs
+ * @param {string[]|undefined|null} args
  * @returns {string[]}
  */
-function scrubPairs(pairs) {
+function upsertPair(pairs, name, value) {
+  const line = `${name}=${value}`;
+  const idx = pairs.findIndex((item) => {
+    const cut = item.indexOf('=');
+    return (cut === -1 ? item : item.slice(0, cut)) === name;
+  });
+  if (idx >= 0) pairs[idx] = line;
+  else pairs.push(line);
+}
+
+/**
+ * @param {string[]} pairs
+ * @param {string[]|undefined|null} args
+ * @returns {string[]}
+ */
+function withEntryProviderKeys(pairs, args) {
+  const extra = providerKeysForEntry(process.env, args);
+  for (const [name, value] of Object.entries(extra)) {
+    if (value == null || value === '') continue;
+    upsertPair(pairs, name, String(value));
+  }
+  return pairs;
+}
+
+/**
+ * @param {string[]|undefined|null} pairs
+ * @param {string[]|undefined|null} [args]
+ * @returns {string[]}
+ */
+function scrubPairs(pairs, args) {
   const entries = [];
   for (const pair of pairs || []) {
     const text = String(pair);
@@ -223,9 +290,12 @@ function scrubPairs(pairs) {
     ? marker.value.slice(markerPrefix.length).split(',').filter(Boolean)
     : null;
   if (!names) {
-    return entries
-      .filter((entry) => isAllowed(entry.name))
-      .map((entry) => `${entry.name}=${entry.value}`);
+    return withEntryProviderKeys(
+      entries
+        .filter((entry) => isAllowed(entry.name))
+        .map((entry) => `${entry.name}=${entry.value}`),
+      args,
+    );
   }
   /** @type {string[]} */
   const out = [];
@@ -233,6 +303,12 @@ function scrubPairs(pairs) {
   for (const [name, value] of Object.entries(pickWhitelist(process.env))) {
     seen.add(name);
     out.push(`${name}=${value}`);
+  }
+  withEntryProviderKeys(out, args);
+  seen.clear();
+  for (const item of out) {
+    const cut = item.indexOf('=');
+    seen.add(cut === -1 ? item : item.slice(0, cut));
   }
   for (const name of names) {
     const found = entries.find((entry) => entry.name === name);
@@ -254,7 +330,27 @@ function scrubPairs(pairs) {
  */
 function scrubSpawnOptions(options) {
   if (!options || !Array.isArray(options.envPairs)) return;
-  options.envPairs = scrubPairs(options.envPairs);
+  options.envPairs = scrubPairs(options.envPairs, options.args);
+}
+
+/**
+ * 包住同步 spawn。拿不到 binding 时警告，不静默放过。
+ *
+ * @param {{spawn?: Function}|undefined|null} binding
+ * @returns {boolean}
+ */
+export function attachSpawnSyncScrub(binding) {
+  if (!binding || typeof binding.spawn !== 'function') {
+    console.warn('拿不到 spawn_sync，同步子进程环境不会按白名单过滤');
+    return false;
+  }
+  if (binding.spawn.name === 'patchedSyncSpawn') return true;
+  const origSync = binding.spawn;
+  binding.spawn = function patchedSyncSpawn(options) {
+    scrubSpawnOptions(options);
+    return origSync.call(this, options);
+  };
+  return true;
 }
 
 let installed = false;
@@ -268,12 +364,13 @@ export function installChildEnvScrub() {
     scrubSpawnOptions(options);
     return origSpawn.call(this, options);
   };
-  const binding = process.binding('spawn_sync');
-  const origSync = binding.spawn;
-  binding.spawn = function patchedSyncSpawn(options) {
-    scrubSpawnOptions(options);
-    return origSync.call(this, options);
-  };
+  let binding = null;
+  try {
+    binding = process.binding('spawn_sync');
+  } catch {
+    binding = null;
+  }
+  attachSpawnSyncScrub(binding);
 }
 
 installChildEnvScrub();
