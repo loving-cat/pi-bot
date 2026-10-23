@@ -3,7 +3,7 @@
  *
  * 纯函数，不碰进程与网络。分三步：
  *   1. 归一化：去掉不可见字符，还原 shell 的引号与转义，得到命令真正会执行的形态；
- *   2. 解析：按 `&& || ; | &` 切段，每段取可执行体、参数与子命令；
+ *   2. 解析：按 `&& || ; | &` 和换行切段，剥掉赋值/重定向/分组，再拆开包装命令；
  *   3. 判定：deny 规则优先 → 无法静态判定则拒绝（判不了就拒绝）→ allow 清单。
  *
  * 归一化是必要的一步：`r''m -rf /`、`\rm -rf /`、`"rm" -rf /`、`$'\x72m' -rf /`
@@ -143,6 +143,11 @@ function splitSegments(raw) {
         i += 2;
         continue;
       }
+      // 双引号拦不住命令替换和反引号
+      if (quote === '"') {
+        if (c === '`') opaque ??= '双引号内的反引号';
+        if (c === '$' && next === '(') opaque ??= '双引号内的命令替换';
+      }
       if (c === quote) quote = null;
       buf += c;
       i++;
@@ -162,16 +167,24 @@ function splitSegments(raw) {
       continue;
     }
 
+    // 反斜杠续行不是分隔符（bash 会把 \ 和换行吃掉）
+    if (c === '\\' && (next === '\n' || next === '\r')) {
+      i += 2;
+      if (next === '\r' && raw[i] === '\n') i++;
+      continue;
+    }
+
     // 命令替换 / 进程替换 / heredoc：内容在运行期才确定，静态判定不了
     if (c === '$' && next === '(') opaque ??= '命令替换 $(...)';
     if (c === '`') opaque ??= '反引号命令替换';
     if (c === '<' && next === '<') opaque ??= 'heredoc <<';
     if ((c === '<' || c === '>') && next === '(') opaque ??= '进程替换 <(...)';
 
-    // 分隔符
-    if (c === ';' || c === '\n') {
+    // 分隔符。换行 / CR 不能先被压成空格，否则 `echo ok\\nrm` 会被看成一条 echo。
+    if (c === ';' || c === '\n' || c === '\r') {
       push();
       i++;
+      if (c === '\r' && raw[i] === '\n') i++;
       continue;
     }
     if (c === '&' || c === '|') {
@@ -187,6 +200,459 @@ function splitSegments(raw) {
   return { segments, opaque };
 }
 
+const SHELLS = new Set(['sh', 'bash', 'dash', 'zsh', 'ksh', 'ash', 'rbash']);
+const INTERPRETER = /^(?:python\d*(?:\.\d+)?|node|nodejs|perl\d*|ruby\d*|php\d*|lua\d*)$/;
+
+/** 尚未换行的半截 stdin。write_stdin 分多次写入时要拼起来再检查。 */
+const stdinTail = new Map();
+
+function stdinKey(shellId) {
+  return String(shellId ?? '');
+}
+
+/** 已写入但还没换行的内容和这次写入拼在一起。不修改记录。 */
+export function previewStdin(shellId, chars) {
+  return (stdinTail.get(stdinKey(shellId)) ?? '') + String(chars ?? '');
+}
+
+/** 写入成功后只保留最后一行没写完的部分。 */
+export function commitStdin(shellId, chars) {
+  const lines = previewStdin(shellId, chars).split(/\r?\n/);
+  const rest = (lines.pop() ?? '').slice(-8192);
+  const key = stdinKey(shellId);
+  if (!rest) stdinTail.delete(key);
+  else stdinTail.set(key, rest);
+  while (stdinTail.size > 200) stdinTail.delete(stdinTail.keys().next().value);
+}
+
+/** 进程结束或测试隔离时丢掉半截输入。shellId 省略则全清。 */
+export function resetStdin(shellId) {
+  if (shellId == null) stdinTail.clear();
+  else stdinTail.delete(stdinKey(shellId));
+}
+
+function wordsOf(segment) {
+  const saved = [];
+  // Windows 路径里的反斜杠是分隔符，不能按 bash 转义吃掉
+  const protectedSeg = segment.replace(/[A-Za-z]:\\[^\s'"]+|\\\\[^\s'"]+/g, (m) => {
+    saved.push(m);
+    return `\uE000${saved.length - 1}\uE000`;
+  });
+  const flat = unescapeShellQuotes(protectedSeg).replace(/[ \t\f\v]+/g, ' ').trim();
+  if (!flat) return [];
+  return flat.split(' ').filter(Boolean).map((word) =>
+    word.replace(/\uE000(\d+)\uE000/g, (_, n) => saved[Number(n)] ?? ''),
+  );
+}
+
+function flattenGrouping(words) {
+  const out = [];
+  for (const word of words) {
+    if (/\$[{('`]/.test(word) || word.includes('`')) {
+      out.push(word);
+      continue;
+    }
+    const parts = word.split(/(\(\)|[{}()!;])/).filter((part) => part !== '');
+    out.push(...(parts.length ? parts : [word]));
+  }
+  return out;
+}
+
+function isAssignment(word) {
+  return /^[A-Za-z_][A-Za-z0-9_]*=/.test(word);
+}
+
+function isRedirect(word) {
+  return /^(?:[0-9]*|&)?[<>]{1,2}/.test(word) || /^&>/.test(word) || /^<&/.test(word);
+}
+
+function redirectTakesNext(word) {
+  return /^(?:[0-9]*|&)?[<>]{1,2}$/.test(word)
+    || /^[<>]&$/.test(word)
+    || /^[0-9]+[<>]&$/.test(word)
+    || /^&>$/.test(word)
+    || /^<&$/.test(word);
+}
+
+/** 跳过赋值、重定向、子 shell / 函数分组，留下真正的命令词。 */
+function peelPrefixes(words) {
+  let i = 0;
+  while (i < words.length) {
+    const word = words[i];
+    if (word === '(' || word === ')' || word === '{' || word === '}' || word === '()' || word === '!' || word === ';' || word === '') {
+      i++;
+      continue;
+    }
+    if (word === 'function') {
+      i++;
+      if (words[i] && /^[A-Za-z_][A-Za-z0-9_]*$/.test(words[i])) i++;
+      if (words[i] === '()') i++;
+      if (words[i] === '{') i++;
+      continue;
+    }
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(word) && words[i + 1] === '()') {
+      i += 2;
+      if (words[i] === '{') i++;
+      continue;
+    }
+    if (isAssignment(word)) {
+      i++;
+      continue;
+    }
+    if (isRedirect(word)) {
+      const takes = redirectTakesNext(word);
+      i++;
+      if (takes && i < words.length) i++;
+      continue;
+    }
+    break;
+  }
+  return words.slice(i);
+}
+
+function makeCommand(exe, args) {
+  return {
+    text: [exe, ...args].join(' '),
+    executable: exe,
+    args,
+    // 子命令：非选项参数（`git reset --hard` → reset）
+    subcommands: args.filter((arg) => !arg.startsWith('-')).slice(0, 3),
+  };
+}
+
+function skipFlags(args, withArg) {
+  let i = 0;
+  while (i < args.length) {
+    const arg = args[i];
+    if (arg === '--') {
+      i++;
+      break;
+    }
+    if (!arg.startsWith('-') || arg === '-') break;
+    if (arg.includes('=')) {
+      i++;
+      continue;
+    }
+    if (withArg.has(arg)) {
+      i += 2;
+      continue;
+    }
+    if (withArg.has(arg.slice(0, 2))) {
+      i++;
+      continue;
+    }
+    i++;
+  }
+  return args.slice(i);
+}
+
+function wordsOrNull(words) {
+  return words?.length ? { words } : null;
+}
+
+function unwrapEnv(args) {
+  let i = 0;
+  while (i < args.length) {
+    const arg = args[i];
+    if (arg === '--') {
+      i++;
+      break;
+    }
+    if (arg === '-i' || arg === '-0' || arg === '-v' || arg === '--ignore-environment') {
+      i++;
+      continue;
+    }
+    if (arg === '-u' || arg === '--unset' || arg === '-C' || arg === '--chdir') {
+      i += 2;
+      continue;
+    }
+    if (arg === '-S' || arg === '--split-string') return { script: args.slice(i + 1).join(' ') };
+    if (arg.startsWith('-')) return { opaque: true, reason: 'env 参数无法静态判定' };
+    if (isAssignment(arg)) {
+      i++;
+      continue;
+    }
+    break;
+  }
+  return wordsOrNull(args.slice(i));
+}
+
+function unwrapXargs(args) {
+  const withArg = new Set([
+    '-a', '-d', '-E', '-e', '-I', '-i', '-L', '-l', '-n', '-P', '-s', '-J',
+    '--arg-file', '--delimiter', '--eof', '--replace', '--max-lines', '--max-args',
+    '--max-procs', '--max-chars', '--process-slot-var',
+  ]);
+  let i = 0;
+  while (i < args.length) {
+    const arg = args[i];
+    if (arg === '--') {
+      i++;
+      break;
+    }
+    if (!arg.startsWith('-') || arg === '-') break;
+    if (/^-I./.test(arg) || /^-i./.test(arg)) {
+      i++;
+      continue;
+    }
+    if (arg.includes('=')) {
+      i++;
+      continue;
+    }
+    if (withArg.has(arg)) {
+      i += 2;
+      continue;
+    }
+    if (withArg.has(arg.slice(0, 2))) {
+      i++;
+      continue;
+    }
+    if (arg.startsWith('--') || !/^-[0ptrx]+$/.test(arg)) {
+      return { opaque: true, reason: 'xargs 参数无法静态判定' };
+    }
+    i++;
+  }
+  const rest = args.slice(i);
+  if (!rest.length) return null;
+  if (rest.some((arg) => arg.includes('{}'))) {
+    return { opaque: true, reason: 'xargs 替换符命令无法静态判定' };
+  }
+  // xargs 还会把标准输入接到参数后面：`echo / | xargs rm -rf` 实际是 `rm -rf /`
+  return { words: rest, alsoOpaque: 'xargs 会把标准输入拼进参数，整行参数无法静态判定' };
+}
+
+function unwrapShell(args) {
+  let i = 0;
+  while (i < args.length) {
+    const arg = args[i];
+    if (arg === '--') {
+      i++;
+      break;
+    }
+    if (arg === '-c') return { script: args.slice(i + 1).join(' ') };
+    // bash -lc 'script'：c 在选项簇末尾，后面整段都是脚本
+    if (/^-[^-]*c$/.test(arg)) return { script: args.slice(i + 1).join(' ') };
+    if (arg.startsWith('-')) {
+      i++;
+      continue;
+    }
+    return { opaque: true, reason: 'shell 脚本文件无法静态检查' };
+  }
+  return { opaque: true, reason: 'shell 从标准输入读命令，无法静态检查' };
+}
+
+function unwrapCmd(args) {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (/^[/\\][cCkK]$/.test(arg) || /^-[cCkK]$/.test(arg)) {
+      return { script: args.slice(i + 1).join(' ') };
+    }
+    const glued = arg.match(/^[/\\][cCkK]:(.*)$/);
+    if (glued) {
+      const tail = args.slice(i + 1);
+      return { script: glued[1] + (tail.length ? ` ${tail.join(' ')}` : '') };
+    }
+  }
+  return { opaque: true, reason: 'cmd 没有可检查的 /c 脚本' };
+}
+
+function decodePowerShell(b64) {
+  try {
+    const buf = Buffer.from(String(b64 ?? ''), 'base64');
+    if (!buf.length || buf.length % 2) return null;
+    const text = buf.toString('utf16le').replace(/\u0000/g, '').trim();
+    return text || null;
+  } catch {
+    return null;
+  }
+}
+
+function unwrapPowershell(args) {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i].toLowerCase();
+    const next = args[i + 1];
+    if (arg === '-command' || arg === '-c' || arg === '/command' || arg === '/c') {
+      return { script: args.slice(i + 1).join(' ') };
+    }
+    if (['-encodedcommand', '-enc', '-ec', '/encodedcommand', '/enc', '/ec'].includes(arg)) {
+      if (!next || next.startsWith('-')) return { opaque: true, reason: 'powershell 编码命令解不出来' };
+      const script = decodePowerShell(next);
+      if (!script) return { opaque: true, reason: 'powershell 编码命令解不出来' };
+      return { script };
+    }
+  }
+  return { opaque: true, reason: 'powershell 命令无法静态检查' };
+}
+
+function unwrapFind(args) {
+  const flags = new Set(['-exec', '-execdir', '-ok', '-okdir']);
+  const commands = [];
+  for (let i = 0; i < args.length; i++) {
+    if (!flags.has(args[i].toLowerCase())) continue;
+    const cmd = [];
+    for (let j = i + 1; j < args.length; j++) {
+      if (args[j] === ';' || args[j] === '+' || args[j] === '\\;') break;
+      cmd.push(args[j]);
+    }
+    if (!cmd.length) return { opaque: true, reason: 'find -exec 没有命令' };
+    commands.push(cmd);
+  }
+  return commands.length ? { many: commands } : null;
+}
+
+function unwrapDashC(args, emptyReason) {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '-c' || arg === '--command') return { script: args.slice(i + 1).join(' ') };
+    if (/^-[^-]*c$/.test(arg)) return { script: args.slice(i + 1).join(' ') };
+    if (arg.startsWith('--command=')) {
+      const glued = arg.slice('--command='.length);
+      const tail = args.slice(i + 1);
+      return { script: glued + (tail.length ? ` ${tail.join(' ')}` : '') };
+    }
+  }
+  return { opaque: true, reason: emptyReason };
+}
+
+function unwrapFlock(args) {
+  const withArg = new Set(['-w', '--timeout', '-E', '--conflict-exit-code']);
+  const words = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '-c' || arg === '--command' || /^-[^-]*c$/.test(arg)) {
+      if (i + 1 >= args.length) return { opaque: true, reason: 'flock 没有可检查的命令' };
+      return { script: args.slice(i + 1).join(' ') };
+    }
+    if (arg === '--') {
+      words.push(...args.slice(i + 1));
+      break;
+    }
+    if (!words.length && arg.startsWith('-') && arg !== '-') {
+      if (!arg.includes('=') && withArg.has(arg)) i++;
+      continue;
+    }
+    words.push(arg);
+  }
+  if (words.length >= 2 && (words[1] === '-c' || words[1] === '--command')) {
+    if (words.length < 3) return { opaque: true, reason: 'flock 没有可检查的命令' };
+    return { script: words.slice(2).join(' ') };
+  }
+  if (words.length < 2) return { opaque: true, reason: 'flock 没有可检查的命令' };
+  return { words: words.slice(1) };
+}
+
+function unwrapChroot(args) {
+  const rest = skipFlags(args, new Set(['--userspec', '--groups']));
+  if (rest.length < 2) return { opaque: true, reason: 'chroot 没有可检查的命令' };
+  return { words: rest.slice(1) };
+}
+
+function unwrapUnshare(args) {
+  const rest = skipFlags(args, new Set([
+    '--propagation', '--setgroups',
+    '--map-user', '--map-group', '--map-users', '--map-groups',
+    '--root', '--wd', '-R', '-w', '-S', '-G', '--setuid', '--setgid',
+    '--monotonic', '--boottime',
+  ]));
+  if (!rest.length) return { opaque: true, reason: 'unshare 没有可检查的命令' };
+  return { words: rest };
+}
+
+function unwrapNsenter(args) {
+  const rest = skipFlags(args, new Set(['-t', '--target', '-S', '--setuid', '-G', '--setgid']));
+  if (!rest.length) return { opaque: true, reason: 'nsenter 没有可检查的命令' };
+  return { words: rest };
+}
+
+/** 配了规则时，解释器只有版本/帮助能放行；`-i`、`--interactive` 都会进交互执行。`-v` 不算，python 的 `-v` 不是版本。 */
+function unwrapInterpreter(args) {
+  const safe = (arg) => arg === '-V' || arg === '-h' || fold(arg) === '--version' || fold(arg) === '--help';
+  if (args.length > 0 && args.every(safe)) return null;
+  return { opaque: true, reason: '解释器执行的代码无法按命令规则静态检查' };
+}
+
+function unwrap(base, exe, args) {
+  if (base === 'env') return unwrapEnv(args);
+  if (base === 'xargs') return unwrapXargs(args);
+  if (base === 'command' || base === 'builtin') return wordsOrNull(skipFlags(args, new Set()));
+  if (base === 'exec') return wordsOrNull(skipFlags(args, new Set(['-a'])));
+  if (base === 'eval') return { script: args.join(' ') };
+  if (base === 'timeout') {
+    const rest = skipFlags(args, new Set(['-k', '--kill-after', '-s', '--signal']));
+    if (rest.length < 2) return { opaque: true, reason: 'timeout 没有可检查的命令' };
+    return { words: rest.slice(1) };
+  }
+  if (base === 'nice') return wordsOrNull(skipFlags(args, new Set(['-n', '--adjustment'])));
+  if (base === 'nohup' || base === 'setsid') return wordsOrNull(skipFlags(args, new Set()));
+  if (base === 'time') return wordsOrNull(skipFlags(args, new Set(['-f', '-o', '--format', '--output'])));
+  if (base === 'stdbuf') {
+    return wordsOrNull(skipFlags(args, new Set(['-i', '-o', '-e', '--input', '--output', '--error'])));
+  }
+  if (base === 'ionice') {
+    return wordsOrNull(skipFlags(args, new Set(['-c', '-n', '-p', '-t', '--class', '--classdata', '--pid'])));
+  }
+  if (base === 'sudo' || base === 'doas') {
+    return wordsOrNull(skipFlags(args, new Set([
+      '-u', '-g', '-h', '-p', '-U', '-C', '-D', '-R', '-T',
+      '--user', '--group', '--host', '--prompt', '--other-user', '--close-from', '--chdir', '--role',
+    ])));
+  }
+  if (base === 'watch') {
+    return wordsOrNull(skipFlags(args, new Set(['-n', '--interval', '-d', '--differences'])));
+  }
+  if (base === 'find') return unwrapFind(args);
+  if (base === 'su') return unwrapDashC(args, 'su 会进入 shell，无法静态检查');
+  if (base === 'script') return unwrapDashC(args, 'script 会进入 shell，无法静态检查');
+  if (base === 'flock') return unwrapFlock(args);
+  if (base === 'chroot') return unwrapChroot(args);
+  if (base === 'unshare') return unwrapUnshare(args);
+  if (base === 'nsenter') return unwrapNsenter(args);
+  if (base === 'ssh') return { opaque: true, reason: 'ssh 远端命令无法静态检查' };
+  if (base === 'busybox' || base === 'toybox') return wordsOrNull(skipFlags(args, new Set()));
+  if (base === 'cmd') return unwrapCmd(args);
+  if (base === 'powershell' || base === 'pwsh') return unwrapPowershell(args);
+  if (SHELLS.has(base)) return unwrapShell(args);
+  if (INTERPRETER.test(base)) return unwrapInterpreter(args);
+  if (base === 'source' || exe === '.') return { opaque: true, reason: 'source 读入的脚本无法静态检查' };
+  return null;
+}
+
+function absorb(words, acc, box, depth) {
+  if (depth > 6) {
+    box.reason ??= '命令嵌套过深';
+    return;
+  }
+  const peeled = peelPrefixes(flattenGrouping(words));
+  if (!peeled.length) return;
+  const [exe, ...args] = peeled;
+  if (/[\$`]/.test(exe)) {
+    box.reason ??= '命令名由变量展开，无法静态判定';
+    return;
+  }
+  acc.push(makeCommand(exe, args));
+  const base = canonicalBase(exe);
+  const inner = unwrap(base, exe, args);
+  if (!inner) return;
+  if (inner.opaque) {
+    box.reason ??= inner.reason || '无法静态判定';
+    return;
+  }
+  if (inner.script != null) {
+    const nested = parseCommand(inner.script, depth + 1);
+    if (nested.opaque) box.reason ??= nested.reason || '无法静态判定';
+    acc.push(...nested.commands);
+    return;
+  }
+  if (inner.many) {
+    for (const cmd of inner.many) absorb(cmd, acc, box, depth + 1);
+    return;
+  }
+  if (inner.words) {
+    absorb(inner.words, acc, box, depth + 1);
+    if (inner.alsoOpaque) box.reason ??= inner.alsoOpaque;
+  }
+}
+
 /**
  * 解析一条命令。
  *
@@ -198,26 +664,25 @@ function splitSegments(raw) {
  *   commands: Array<{text:string, executable:string, args:string[], subcommands:string[]}>
  * }}
  */
-export function parseCommand(raw) {
-  const normalized = normalizeCommand(raw);
-  if (!normalized) {
+export function parseCommand(raw, depth = 0) {
+  const stripped = String(raw ?? '').replace(INVISIBLE, '');
+  const normalized = stripped.replace(/[ \t\f\v]+/g, ' ').trim();
+  if (depth > 6) {
+    return { ok: false, opaque: true, reason: '命令嵌套过深', normalized, commands: [] };
+  }
+  if (!stripped.trim()) {
     return { ok: false, opaque: false, reason: '空命令', normalized, commands: [] };
   }
-  const { segments, opaque } = splitSegments(normalized);
+  const { segments, opaque } = splitSegments(stripped);
   const commands = [];
-  for (const text of segments) {
-    const flat = unescapeShellQuotes(text).replace(/\s+/g, ' ').trim();
-    const words = flat.split(' ').filter(Boolean);
-    if (!words.length) continue;
-    const [executable, ...args] = words;
-    // 子命令：非选项参数（`git reset --hard` → reset）
-    const subcommands = args.filter((a) => !a.startsWith('-')).slice(0, 3);
-    commands.push({ text: flat, executable, args, subcommands });
-  }
+  const box = { reason: opaque };
+  for (const text of segments) absorb(wordsOf(text), commands, box, depth);
+  // 只有赋值/重定向、没有可执行体时也算一条命令，避免被当成空命令拒绝
+  const ok = commands.length > 0 || (!box.reason && Boolean(stripped.trim()));
   return {
-    ok: commands.length > 0,
-    opaque: Boolean(opaque),
-    reason: opaque,
+    ok,
+    opaque: Boolean(box.reason),
+    reason: box.reason,
     normalized,
     commands,
   };
@@ -259,25 +724,103 @@ export function validateRule(rule) {
   return null;
 }
 
+function fold(text) {
+  return String(text ?? '').toLowerCase();
+}
+
+/** 路径只看最后一段，并去掉 Windows 自动补上的 .exe。大小写不敏感。 */
+function canonicalBase(executable) {
+  return fold(String(executable ?? '').split(/[/\\]/).pop()).replace(/\.exe$/i, '');
+}
+
+function exeKeys(executable) {
+  const base = fold(String(executable ?? '').split(/[/\\]/).pop());
+  const stripped = base.replace(/\.exe$/i, '');
+  return stripped === base ? [base] : [base, stripped];
+}
+
+function commandTexts(command) {
+  const args = fold((command?.args ?? []).join(' '));
+  return exeKeys(command?.executable).map((exe) => (args ? `${exe} ${args}` : exe));
+}
+
+/** rm 的常见长选项折成短选项，好和 `-rf` 对齐。 */
+const RM_LONG = {
+  recursive: 'r',
+  force: 'f',
+  dir: 'd',
+  directory: 'd',
+  verbose: 'v',
+  interactive: 'i',
+};
+
+function classifyArgs(executable, args) {
+  const longMap = canonicalBase(executable) === 'rm' ? RM_LONG : null;
+  const flags = new Set();
+  const positionals = [];
+  let optionsDone = false;
+  for (const raw of args ?? []) {
+    const arg = fold(raw);
+    if (optionsDone || arg === '-' || /^-\d+$/.test(arg)) {
+      positionals.push(arg);
+      continue;
+    }
+    if (arg === '--') {
+      optionsDone = true;
+      continue;
+    }
+    if (arg.startsWith('--')) {
+      const body = arg.slice(2);
+      const eq = body.indexOf('=');
+      const name = eq >= 0 ? body.slice(0, eq) : body;
+      flags.add(longMap?.[name] || name);
+      continue;
+    }
+    if (arg.startsWith('-')) {
+      for (const ch of arg.slice(1)) flags.add(ch);
+      continue;
+    }
+    positionals.push(arg);
+  }
+  return { flags, positionals };
+}
+
+/** 规则里的选项是命令选项的子集，位置参数按词前缀（不是字符前缀）。 */
+function ruleArgsCovered(ruleExe, ruleArgs, command) {
+  const want = classifyArgs(ruleExe, ruleArgs);
+  const got = classifyArgs(command?.executable, command?.args);
+  for (const flag of want.flags) {
+    if (!got.flags.has(flag)) return false;
+  }
+  if (want.positionals.length > got.positionals.length) return false;
+  for (let i = 0; i < want.positionals.length; i++) {
+    if (want.positionals[i] !== got.positionals[i]) return false;
+  }
+  return true;
+}
+
 /** 一条命令段是否命中规则 */
 export function matchRule(rule, command) {
-  const text = String(rule ?? '').trim();
+  const text = fold(String(rule ?? '').trim());
   if (!text || !command) return false;
+  const exes = exeKeys(command.executable);
+  const texts = commandTexts(command);
 
   const colon = text.indexOf(':');
   if (colon > 0) {
     const exePattern = text.slice(0, colon).trim();
     const argsPattern = text.slice(colon + 1).trim();
-    if (!globToRegExp(exePattern).test(command.executable)) return false;
+    if (!exes.some((exe) => globToRegExp(exePattern).test(exe))) return false;
     if (!argsPattern) return true;
-    return globToRegExp(argsPattern).test(command.args.join(' '));
+    return globToRegExp(argsPattern).test(fold((command.args ?? []).join(' ')));
   }
 
-  if (globToRegExp(text).test(command.text)) return true;
-  // 不带通配符时，规则也可以只写可执行体；或作为前缀（`rm -rf` 拦 `rm -rf /`）
+  if (texts.some((body) => globToRegExp(text).test(body))) return true;
+  // 不带通配符：短选项拆开，rm 的长选项折成短选项，规则选项 ⊆ 命令选项；位置参数仍按词前缀
   if (!text.includes('*')) {
-    if (text === command.executable) return true;
-    if (command.text.startsWith(`${text} `)) return true;
+    const parts = text.split(/\s+/).filter(Boolean);
+    const ruleExe = canonicalBase(parts[0]);
+    if (exes.includes(ruleExe) && ruleArgsCovered(ruleExe, parts.slice(1), command)) return true;
   }
   return false;
 }
@@ -294,11 +837,13 @@ export function normalizeRules(rules) {
   return out;
 }
 
+const ALLOW = { allowed: true, deniedBy: null, rule: null, reason: null, message: null };
+
 /**
  * 判定一条命令。
  *
- * 顺序：deny 命中 → 拒绝；命令无法静态判定且配置了 deny → 拒绝（判不了就拒绝）；
- * 配置了 allow → 每一段都必须在 allow 里。
+ * 顺序：deny 命中 → 拒绝；命令无法静态判定且配置了 deny 或 allow → 拒绝（判不了就拒绝）；
+ * 配置了 allow → 每一段都必须在 allow 里。没配规则时不拦。
  *
  * @returns {{allowed:boolean, deniedBy:string|null, rule:string|null, reason:string|null, message:string|null}}
  */
@@ -317,15 +862,23 @@ export function decideCommand(raw, { denyCommands = [], allowCommands = [] } = {
       '请改用别的做法，或让用户在终端里手动执行。你可以继续处理任务的其余部分。',
   });
 
-  if (!parsed.ok) return reject('empty', '命令为空');
+  if (!deny.length && !allow.length) {
+    if (!parsed.ok && !parsed.opaque) return reject('empty', '命令为空');
+    return ALLOW;
+  }
+
+  if (!parsed.ok && !parsed.opaque) return reject('empty', '命令为空');
 
   if (deny.length) {
     for (const rule of deny) {
       const hit = parsed.commands.find((cmd) => matchRule(rule, cmd));
       if (hit) return reject('deny-rule', `命中禁用规则 ${rule}`, rule);
     }
-    if (parsed.opaque) return reject('unparseable', parsed.reason);
   }
+
+  if (parsed.opaque) return reject('unparseable', parsed.reason);
+
+  if (!parsed.ok) return reject('empty', '命令为空');
 
   if (allow.length) {
     const outside = parsed.commands.find(
@@ -334,5 +887,27 @@ export function decideCommand(raw, { denyCommands = [], allowCommands = [] } = {
     if (outside) return reject('not-allowlisted', '不在允许清单内');
   }
 
-  return { allowed: true, deniedBy: null, rule: null, reason: null, message: null };
+  return ALLOW;
+}
+
+const COMMAND_TOOLS = new Set(['bash', 'powershell', 'run_background', 'write_stdin']);
+
+/**
+ * bash / powershell / run_background / write_stdin 共用这一处。
+ * 不是这四类工具时返回 null。write_stdin 会带上该 shell 还没换行的半截输入。
+ */
+export function verdictForTool(tool, input, policy = {}) {
+  if (!COMMAND_TOOLS.has(tool)) return null;
+  const denyCommands = policy.denyCommands ?? [];
+  const allowCommands = policy.allowCommands ?? [];
+  if (tool === 'write_stdin') {
+    const text = previewStdin(input?.shell_id, input?.chars ?? '');
+    if (!String(text).trim()) return ALLOW;
+    if (!denyCommands.length && !allowCommands.length) return ALLOW;
+    return decideCommand(text, { denyCommands, allowCommands });
+  }
+  const text = input?.command ?? input?.cmd ?? '';
+  // 后台命令即使没配规则，空字符串也要拒绝；bash 没配规则时保持原样放行
+  if (tool !== 'run_background' && !denyCommands.length && !allowCommands.length) return ALLOW;
+  return decideCommand(text, { denyCommands, allowCommands });
 }

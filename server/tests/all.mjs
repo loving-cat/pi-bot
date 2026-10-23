@@ -38,6 +38,7 @@ const TESTS = [
   'approvals',
   'hooks',
   'shell-policy',
+  'shell-bypass-regress',
   'policy-hook',
   'readonly-regress',
   'role-tools',
