@@ -286,6 +286,9 @@ flutter analyze
 - 命令黑名单 / 白名单默认都是空的。**一条都没配时，行为和改动前完全一致**，`npm` / `git` / `node` 以及 `sh -c 'git status'` 不会被拦
 - **配了任一规则之后**，`sh -c` / `bash -c`、`xargs <命令>`、解释器调用会拒绝，只放行 `--version` / `-V` / `--help`。白名单只有 `git status` 时，`sh -c 'git status'` 也会被拒，直接写 `git status` 可以。`rm -rf` 这类规则会拆开短选项，并把 `rm` 的 `--recursive` / `--force` 当成 `-r` / `-f`
 - 黑名单看不到脚本文件、Makefile、`npm` scripts 里面的命令。字符串规则盖不住这些入口，长期方案是沙箱，另行立项。`awk` 的 `system`、`vim -c`、`npx`、`make` 等间接执行也没有列全；要严格限制，请用白名单模式，或把危险操作设为“需要批准”。详见 [docs/AGENT-MODEL.md](docs/AGENT-MODEL.md)
+- 子进程（bash / powershell、后台命令、MCP 本地服务）只继承一份白名单环境：`PATH`、`HOME`、`USER` / `USERNAME` / `LOGNAME`、`SHELL`、`TERM`、`LANG`、`LC_*`、`TMPDIR` / `TEMP` / `TMP`，Windows 启动所需的 `SystemRoot`、`windir`、`SystemDrive`、`ComSpec`、`PATHEXT`、`USERPROFILE`、`APPDATA`、`LOCALAPPDATA`、`HOMEDRIVE`、`HOMEPATH`，以及名字以 `_PROXY` 结尾的代理变量。`PI_BOT_TOKEN`、`*_API_KEY`、`*_TOKEN`、`*_SECRET` 不会传下去
+- AWS、gcloud 等云凭证，以及其他 token / key，也不会传给子进程。某个 MCP 服务自己要用的变量，写在这个服务配置的显式 `env` 里，例如 `OPENAI_API_KEY=test-key-a`。这样写的值会传给该服务；父进程里的同名变量仍然不继承
+- 站点口令和模型组 API key 用 AES-256-GCM 落在数据目录里，不写明文。密钥默认是 `<数据目录>/secret.key`（权限 0600）。设置了 `PI_BOT_SECRET_KEY`（32 字节的 hex 或 base64）就用环境变量，此时不读、不写 `secret.key`。密钥丢失或换错后，已经加密的口令和 key 无法还原：操作会报错，不会把密文写成空
 - 仓库本身**不含任何密钥、本机路径、内网地址**——全部走用户级配置或环境变量
 
 ## 参考与许可
