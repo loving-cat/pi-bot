@@ -10,8 +10,8 @@
  * 不在这里做的：解析对方业务字段。这里是通用传输层，
  * "这个字段叫什么、怎么组合成回答"由 bot 自己看返回的 JSON 决定。
  */
-import { proxyFetch } from './http-client.js';
 import { loginSite, assertSafeUrl } from './site-probe.js';
+import { publicFetch } from './net-guard.js';
 import { isTokenExpired } from './sites.js';
 
 /** token 缓存多久（毫秒）。JWT 自带 exp 时以 exp 为准 */
@@ -30,7 +30,7 @@ const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
  * @param {Function} [deps.fetchImpl]
  * @param {Function} [deps.log]
  */
-export function createSiteRuntime({ fetchImpl = proxyFetch, log = () => {} } = {}) {
+export function createSiteRuntime({ fetchImpl = null, log = () => {} } = {}) {
   /** siteId -> { token, at, error } */
   const sessions = new Map();
 
@@ -74,8 +74,8 @@ export function createSiteRuntime({ fetchImpl = proxyFetch, log = () => {} } = {
     if (!String(path ?? '').startsWith('/')) {
       return { ok: false, reason: '接口路径要以 / 开头' };
     }
-    // 前一道校验：地址不能是内网（用户填的地址可能是被篡改的）
-    const safe = assertSafeUrl(site.baseUrl);
+    // 用户填的地址可能被改成内网；登录和查询都还要再校验（含重定向）
+    const safe = await assertSafeUrl(site.baseUrl);
     if (!safe.ok) return { ok: false, reason: safe.reason };
 
     const url = new URL(site.baseUrl + path);
@@ -143,12 +143,16 @@ async function fetchOnce({ url, method, body, token, site, fetchImpl, timeoutMs 
     if (token) headers[header] = scheme ? `${scheme} ${token}` : token;
     if (body) headers['content-type'] = 'application/json';
 
-    const res = await fetchImpl(url.toString(), {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
-      signal: controller.signal,
-    });
+    const { res } = await publicFetch(
+      url.toString(),
+      {
+        method,
+        headers,
+        body: body ? JSON.stringify(body) : undefined,
+        signal: controller.signal,
+      },
+      { fetchImpl: fetchImpl || undefined },
+    );
 
     const text = await readLimited(res, MAX_RESPONSE_BYTES);
     let data = null;

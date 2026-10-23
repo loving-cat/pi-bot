@@ -13,6 +13,7 @@
  */
 import { VERSION } from './version.js';
 import { buildUpdateInfo, pickAssetFor } from './update-check.js';
+import { publicFetch } from './net-guard.js';
 
 /** 结果缓存多久（毫秒）。检查更新不需要实时，30 分钟足够 */
 const CACHE_MS = 30 * 60 * 1000;
@@ -75,7 +76,7 @@ export function fromGithubRelease(json) {
 export async function checkForUpdate({
   platform = process.platform,
   force = false,
-  fetchImpl = globalThis.fetch,
+  fetchImpl = undefined,
   env = process.env,
   now = Date.now(),
 } = {}) {
@@ -85,7 +86,8 @@ export async function checkForUpdate({
     return { ...cache.info, recommended: pickAssetFor(cache.info.assets, platform), cached: true };
   }
 
-  if (typeof fetchImpl !== 'function') {
+  // null 表示调用方明确没有 fetch；undefined 走 publicFetch 的默认传输（含 SSRF 校验）
+  if (fetchImpl === null || (fetchImpl !== undefined && typeof fetchImpl !== 'function')) {
     return {
       ok: false,
       reason: '当前运行环境没有 fetch，无法检查更新',
@@ -106,13 +108,17 @@ export async function checkForUpdate({
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   let payload;
   try {
-    const res = await fetchImpl(url, {
-      signal: controller.signal,
-      headers: {
-        accept: 'application/vnd.github+json',
-        'user-agent': `pi-bot/${VERSION}`,
+    const { res } = await publicFetch(
+      url,
+      {
+        signal: controller.signal,
+        headers: {
+          accept: 'application/vnd.github+json',
+          'user-agent': `pi-bot/${VERSION}`,
+        },
       },
-    });
+      { fetchImpl: typeof fetchImpl === 'function' ? fetchImpl : undefined },
+    );
     if (!res.ok) {
       return {
         ok: false,
