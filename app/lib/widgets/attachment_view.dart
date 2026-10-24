@@ -279,7 +279,7 @@ class _FileChip extends StatelessWidget {
             Flexible(child: openArea),
           // 「用系统程序打开」：只在桌面端出现 —— 手机上交给系统的分享/打开
           // 机制是另一件事，先不给（给了也点不了）。价值在于：**看原样**，
-          // 而不是我们抽出来的文字（PDF 的版式、xlsx 的公式都在原文件里）。
+          // 而不是这里抽出来的文字（PDF 的版式、xlsx 的公式都在原文件里）。
           if (!kIsWeb &&
               (Platform.isWindows || Platform.isMacOS || Platform.isLinux))
             _IconAction(
@@ -564,7 +564,7 @@ class _FilePreviewState extends State<_FilePreview> {
               ),
             ),
           ),
-          // 下载在 X 左边 —— 用户要的就是这个位置
+          // 下载在 X 左边
           _IconAction(
             icon: LucideIcons.download,
             tip: '下载',

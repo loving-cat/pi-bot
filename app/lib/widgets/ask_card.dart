@@ -367,7 +367,7 @@ class _OptionButtonState extends State<_OptionButton> {
   }
 }
 
-/// 「我自己说」—— 就是用户说的"自定义 query"
+/// 「我自己说」—— 即"自定义 query"
 class _CustomAnswer extends StatefulWidget {
   const _CustomAnswer({required this.onSubmit});
 

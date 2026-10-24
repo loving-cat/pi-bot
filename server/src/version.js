@@ -1,6 +1,7 @@
 /**
- * 服务端版本：唯一来源是 package.json（以前 /health、ws hello、serverInfo 三处各写死
- * 一个 "0.2.0"，和 package.json 对不上，客户端显示的版本永远是错的）。
+ * 服务端版本：唯一来源是 package.json。
+ * 若在 /health、ws hello、serverInfo 三处各写死，就会和 package.json 对不上，
+ * 客户端显示的版本也就是错的。
  */
 import fs from 'node:fs';
 

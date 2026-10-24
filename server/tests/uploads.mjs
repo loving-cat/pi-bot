@@ -37,7 +37,7 @@ await test('顺序分片 + 合并，内容一致', async () => {
   assert.equal(done.error, undefined);
   assert.equal(done.name, 'a.txt');
   assert.equal(done.mime, 'text/plain');
-  // 新实现不整读进内存：返回临时文件路径，由调用方搬走
+  // 不整读进内存：返回临时文件路径，由调用方移走
   assert.ok(done.filePath);
   assert.ok(fs.readFileSync(done.filePath).equals(body));
   fs.rmSync(done.filePath, { force: true });

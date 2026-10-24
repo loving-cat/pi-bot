@@ -40,7 +40,7 @@ class BlobAvatar extends StatefulWidget {
   /// 心情：闲 / 干活中（干活中视线略抬，而且不会"睡着"）
   final AvatarMood mood;
 
-  /// 外面告诉我们"鼠标停在**这一行**上"（不只是头像那 46px 的框）。
+  /// 外面告诉本组件"鼠标停在**这一行**上"（不只是头像那 46px 的框）。
   ///
   /// 为什么要这个：用户的心智是"我进到这条会话上，它就该看着我"——
   /// 而头像本身只有 46px，鼠标停在名字/预览文字上时它还是呆的，看着像坏了。
@@ -76,8 +76,8 @@ class BlobAvatar extends StatefulWidget {
 ///   · 成员列表 → 整个成员行
 ///   · 消息     → 整条消息（含气泡）
 ///
-/// 用户原话："头像要在自己负责这个范围跟随鼠标，例如胶囊内的 bot 头像，
-/// 当鼠标挪动到胶囊内时跟随。"
+/// 头像在自己负责的范围内跟随鼠标：例如胶囊内的 bot 头像，
+/// 当鼠标挪动到胶囊内时跟随。
 ///
 /// 用法：把这块区域包起来就行，里面的 BlobAvatar 不用各自声明 hovered。
 /// forceHovered 是给"按下也算"这类外部状态用的（会话行按住要持续跟随）。
@@ -173,10 +173,10 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
-    // ★ 眼神跟随改成了**悬停才订阅**（见 _onEnter/_onExit）。
-    //   以前是每个头像都订阅全局指针 —— 侧边栏一列十几个，鼠标一动它们全部
-    //   重绘，快速划过时会明显发卡（用户报的）。
-    //   现在同一时刻最多只有一个头像在跟随，成本几乎为零。
+    // ★ 眼神跟随是**悬停才订阅**（见 _onEnter/_onExit）。
+    //   不能每个头像都订阅全局指针：侧边栏一列十几个，鼠标一动它们全部
+    //   重绘，快速划过时会明显发卡。
+    //   同一时刻最多只有一个头像在跟随，成本几乎为零。
     if (!_alive) return;
 
     _rng = math.Random(widget.seed.hashCode);
@@ -257,11 +257,11 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
 
   /// 鼠标离开头像自己这块
   ///
-  /// ★ 这里**不能**直接 `_stopFollow()`。以前就是直接停的，于是：
+  /// ★ 这里**不能**直接 `_stopFollow()`，否则：
   ///   "鼠标从头像上移到同一行的文字上"时，头像自己发的 onExit 把跟随停掉，
   ///   而外层区域（会话行 / 胶囊）的悬停状态**没变**、不会再通知一次
-  ///   → 跟随就死了。用户看到的就是"只有鼠标在头像里面时才跟随"。
-  ///   现在交给 _syncFollow 统一判断：只要还在自己负责的区域里就继续跟随。
+  ///   → 跟随就死了，用户看到的就是"只有鼠标在头像里面时才跟随"。
+  ///   交给 _syncFollow 统一判断：只要还在自己负责的区域里就继续跟随。
   void _onExit(PointerExitEvent _) {
     _selfHovered = false;
     _syncFollow();
@@ -274,9 +274,9 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
     _following = true;
     // ★ 挂上监听之后**立刻按当前位置算一次**。
     //   不这么做的话：眼睛的偏移只在"鼠标移动"时才更新，而"鼠标进到这一行"
-    //   那一下不会触发移动事件 → 必须再动一下才跟随。用户鼠标停在行上不动时
-    //   眼睛就是呆的（这是他三次报"只在头像内部跟随"的真正原因：
-    //   鼠标在头像里时本来就在动，所以看着反而像"只有头像内部才跟随"）。
+    //   那一下不会触发移动事件 → 必须再动一下才跟随。鼠标停在行上不动时
+    //   眼睛就是呆的；而且鼠标在头像里时本来就在动，问题会表现成
+    //   "只有头像内部才跟随"。
     _followPointer();
     _wake(); // 顺便眨个眼/动一下，像注意到你了
   }
@@ -288,16 +288,16 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
     if (_gaze.value != Offset.zero) _gaze.value = Offset.zero;
   }
 
-  /// 我所在的这块区域（会话行 / 胶囊 / 成员行…）有没有被悬停。
+  /// 本头像所在的这块区域（会话行 / 胶囊 / 成员行…）有没有被悬停。
   /// 缓存在字段里：didUpdateWidget 里不能调 dependOnInheritedWidgetOfExactType。
   bool _scopeHovered = false;
 
   /// 鼠标在不在头像自己这几十像素里（头像自己的 MouseRegion 报的）
   bool _selfHovered = false;
 
-  /// 我"被悬停"了吗 —— **三个来源取或**：
+  /// 本头像"被悬停"了吗 —— **三个来源取或**：
   ///   ① 外面显式传的（会话行：整行 hover / 按住）
-  ///   ② 我所在的这块区域（AvatarHoverScope：胶囊、消息、成员行…）
+  ///   ② 本头像所在的这块区域（AvatarHoverScope：胶囊、消息、成员行…）
   ///   ③ 头像自己这几十像素
   bool _hoveredNow() => widget.hovered || _scopeHovered || _selfHovered;
 
@@ -356,7 +356,7 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
   Widget? _emojiBadge() {
     final e = widget.emoji;
     // ★ 只有主控（ring=true，也就是总经理）才挂角标。
-    //   以前每个 bot 都挂一个（📄⚙️💻🧪…），一列看下去全是小图标碎片，
+    //   不能每个 bot 都挂一个（📄⚙️💻🧪…）：一列看下去全是小图标碎片，
     //   反而把"谁是主控"这个真正重要的信息淹了。
     if (!widget.ring) return null;
     if (e == null || e.trim().isEmpty || widget.size < 40) return null;
@@ -461,8 +461,8 @@ class _Harmonic {
 /// 头像轮廓的四种形状。
 ///
 /// **每只 bot 的形状不一样**（有的圆胖、有的圆角方、有的六边形、
-/// 有的胶囊）。以前全项目只有一种"有机 blob"，一屏十几个头像看过去像同一块橡皮泥
-/// 捏出来的 —— 只靠换颜色区分，越看越廉价。
+/// 有的胶囊）。不能全项目只用一种"有机 blob"：一屏十几个头像会像同一块橡皮泥
+/// 捏出来的，只靠换颜色区分，越看越廉价。
 enum _ShapeKind {
   /// 正圆 —— 最中性，但单独用会显得偷懒，所以权重给得低
   circle,
@@ -519,10 +519,10 @@ class _BlobShape {
   factory _BlobShape.fromSeed(String seed) {
     final rng = math.Random(seed.hashCode & 0x7fffffff);
     double range(double a, double b) => a + rng.nextDouble() * (b - a);
-    // ★ 形状从固定集合里挑，**不再用随机谐波生成轮廓**。
-    //   以前每个 bot 的轮廓是三阶正弦叠加算出来的 —— 每个都不一样，但每个
-    //   都"歪七扭八"：看不出是什么形状，也就没有辨识度（用户报的）。
-    //   现在十种规整对称的形状按权重分：圆的权重最低（太普通），
+    // ★ 形状从固定集合里挑，**不用随机谐波生成轮廓**：
+    //   三阶正弦叠加算出来的轮廓每个都不一样，但每个都"歪七扭八"，
+    //   看不出是什么形状，也就没有辨识度。
+    //   十种规整对称的形状按权重分：圆的权重最低（太普通），
     //   有性格的（蛋形/菱形/拱形/水滴/胶囊）权重高一些。
     const weighted = <_ShapeKind>[
       _ShapeKind.circle,
@@ -560,9 +560,8 @@ class _BlobShape {
         ),
       ],
       range(0.41, 0.48),
-      // ★ 眼睛间距比之前收一点（0.19~0.235 → 0.175~0.21）：
-      //   形状改成规整的之后，水滴/拱形这类在眼睛那一行比较窄，
-      //   原来的间距会让眼睛压到边缘。
+      // ★ 眼睛间距收窄（0.175~0.21）：
+      //   水滴/拱形这类形状在眼睛那一行比较窄，间距过大会让眼睛压到边缘。
       range(0.175, 0.21),
       range(-0.16, 0.16),
       range(-0.22, 0.22),
@@ -775,11 +774,10 @@ class _BlobPainter extends CustomPainter {
 
     // 1) 主体：左上到右下的渐变
     //
-    // ★ 这里以前还叠了「径向渐变落影 + 径向高光 + 渐变描边」，加上主体一共
-    //   4 个 shader —— 每个头像每帧 4 次 createShader + 4 层抗锯齿填充。
-    //   一屏十几个头像（群头像还是 2~4 个叠一起）全在吃光栅时间，而实测帧采样里
-    //   raster 一直是瓶颈。这类头像本来就该是**接近平涂**的饱和色块，
-    //   没有落影也没有高光 —— 砍掉之后既更像它，也更省。
+    // ★ 不叠「径向渐变落影 + 径向高光 + 渐变描边」：加上主体一共 4 个 shader，
+    //   每个头像每帧 4 次 createShader + 4 层抗锯齿填充，一屏十几个头像
+    //   （群头像还是 2~4 个叠一起）全在吃光栅时间，raster 会成为瓶颈。
+    //   这类头像本来就该是**接近平涂**的饱和色块，没有落影也没有高光。
     canvas.drawPath(
       path,
       Paint()
@@ -787,12 +785,12 @@ class _BlobPainter extends CustomPainter {
             LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-              // ★ 以前是 white 0.30 → 黑 0.26，再叠一层 white 0.26 高光 +
-              //   white 0.30 描边 —— 四层白下来，调色板里的饱和色全被洗成粉彩，
+              // ★ 不用 white 0.30 → 黑 0.26 再叠一层 white 0.26 高光 +
+              //   white 0.30 描边：四层白下来，调色板里的饱和色全被洗成粉彩，
               //   一屏头像看着发灰。这里只留一点体积感。
               // 立体感就靠这一条渐变（**只开这一个 shader**）：
               // 左上提亮一点点、右下压深一点点 —— 看着有体积，但整体仍然是
-              // "一块纯色"。四层 shader 那版是 2 倍光栅开销，这个只有 1/4。
+              // "一块纯色"。叠四层 shader 是 2 倍光栅开销，这个只有 1/4。
               colors: [
                 Color.lerp(color, Colors.white, 0.18)!,
                 color,
@@ -823,10 +821,9 @@ class _BlobPainter extends CustomPainter {
       );
     }
 
-    // ★ 这里以前是「有 emoji 就画 emoji，不画眼睛」。
-    //   结果是每个 bot 都是「一块饱和色 + 一张全彩 emoji 贴纸」——
-    //   emoji 自带的白/橙/紫和 blob 的颜色互相打架，像贴歪了的贴纸。
-    //   纯色块 + 两只眼睛干净得多；emoji 降级成小角标。
+    // ★ 不在头像主体上画 emoji：直接画的话，每个 bot 都是「一块饱和色 +
+    //   一张全彩 emoji 贴纸」—— emoji 自带的白/橙/紫和 blob 的颜色互相打架，
+    //   像贴歪了的贴纸。纯色块 + 两只眼睛干净得多；emoji 降级成小角标。
     //
     // 眼睛：两个圆角竖条，眨眼时压扁。
     // 侧看的时候再横向压扁一点（真实的脸转过去时眼白就是变窄的）——

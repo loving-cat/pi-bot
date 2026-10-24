@@ -29,7 +29,7 @@ class LocalServerLauncher {
         File('${stateDir.path}${Platform.pathSeparator}server.log'),
       );
 
-  /// 每个平台放"我们自己的小文件"（日志 / pid / 启动脚本）的位置。
+  /// 每个平台放本组件自己的小文件（日志 / pid / 启动脚本）的位置。
   ///
   /// Windows 是 `%LOCALAPPDATA%\pi-bot`，macOS 是
   /// `~/Library/Application Support/pi-bot` —— 不能用临时目录（重启就没了）。
@@ -200,7 +200,7 @@ class LocalServerLauncher {
         return const ServerLaunchResult(ok: true, alreadyRunning: false);
       }
 
-      // 端口上有人在听但 /health 不是我们的 → 被别的程序占着了
+      // 端口上有人在听但 /health 不是 pi-bot 的 → 被别的程序占着了
       final uri = Uri.parse(baseUrl);
       if (await portOpen(uri.host, uri.port)) {
         return ServerLaunchResult(

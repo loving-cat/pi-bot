@@ -126,9 +126,8 @@ class _RoomsScreenState extends State<RoomsScreen> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   // ★ 显示**用户自己**的名字，不是主机名。
-                  //   以前那行是 serverInfo.hostname（机器的名字）——
-                  //   对用户来说没意义；而 bot 们要称呼的正是这个名字。
-                  //   主机名挪到「设置 → 服务端」里去看。
+                  //   主机名对用户没意义，而 bot 们要称呼的正是这个名字。
+                  //   主机名在「设置 → 服务端」里查看。
                   Row(
                     children: [
                       Flexible(
@@ -182,8 +181,8 @@ class _RoomsScreenState extends State<RoomsScreen> {
         actions: [
           // 这里不需要给窗口控制按钮让位：按钮住在**全局标题条**里
           // （main.dart 的 Column 第一条），页面全在它下面。
-          // 以前按钮是浮在最上层的，谁挨着窗口顶部谁就得手动避让 ——
-          // 这个侧边栏还因此被撑走 280px，把标题挤成 0 宽过。
+          // 按钮浮在最上层时，挨着窗口顶部的页面都得手动避让，
+          // 否则会被撑走宽度、把标题挤没。
           _CircleIcon(
             icon: _searching ? LucideIcons.x : LucideIcons.search,
             onTap: () => setState(() {
@@ -723,7 +722,7 @@ class _RoomRowState extends State<_RoomRow> {
                           ? '负责人 ${room.leadName} · ${room.botIds.length} 人'
                           : '还没有消息')))
         // 名字现查，别用消息里存的那份快照 ——
-        // 用户给 bot 改名之后，它以前发过的消息还挂着旧名字。
+        // bot 改名之前发过的消息里存的还是旧名字。
         : '${last.isUser ? '我' : (state.botById(last.authorId)?.name ?? last.authorName)}：'
               '${preview(last.text, 46)}';
 
@@ -893,9 +892,9 @@ class _RoomRowState extends State<_RoomRow> {
   /// 隐藏 / 删除。
   ///
   /// 桌面右键和手机长按共用这一个菜单，只是弹出位置不同（都贴着触发点）。
-  /// 以前这里是 `showModalBottomSheet`，两个毛病：桌面上从屏幕最底下窜出来、
-  /// 离你点的那行半个屏幕远；而且只给群一个"解散这个群" —— **私聊根本删不掉**
-  /// （服务端 deleteRoom 也把 dm 挡住了，这次一起修）。
+  /// 不用 `showModalBottomSheet`：桌面上它会从屏幕最底下窜出来、离点的那行
+  /// 半个屏幕远；而且它只给群一个"解散这个群"，**私聊删不掉**
+  /// （服务端 deleteRoom 也把 dm 挡住了）。
   /// 把一个部门存成模板（只存班子，不存聊天记录）
   Future<void> _saveAsTemplate(BuildContext context, Room room) async {
     final controller = TextEditingController(text: room.name);

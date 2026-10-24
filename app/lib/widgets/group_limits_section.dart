@@ -25,7 +25,7 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
   final _runs = TextEditingController();
   final _steps = TextEditingController();
 
-  /// 单轮最长几分钟（存的是毫秒，界面给人看分钟 —— 用户报的"为什么会有超过 300 秒中断"）
+  /// 单轮最长几分钟（存的是毫秒，界面给人看分钟）
   final _turnMin = TextEditingController();
   bool _dirty = false;
   bool _saving = false;

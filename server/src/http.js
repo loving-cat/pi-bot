@@ -88,7 +88,7 @@ function extractToken(req, url) {
 /**
  * 是不是本机发来的请求。
  *
- * PC 端 App 就跑在这台机器上，它就是宿主，不应该还要配对。
+ * PC 端 App 就跑在本机上，它就是宿主，不应该还要配对。
  * 所以 loopback 来的请求直接信任（本机用户就是主人）。
  * 远程设备（手机）仍然必须带 token。
  *
@@ -441,7 +441,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         const all = runner.availableModels;
         const list = keyword ? all.filter((m) => `${m.provider}/${m.id}`.toLowerCase().includes(keyword)) : all;
         // ★ 带上模型组里的思考声明：前台靠它决定要不要展示思考档位。
-        //   注册到 pi runtime 的模型对象不会带我们自己的 thinkingLevelMap，
+        //   注册到 pi runtime 的模型对象不会带模型组自己的 thinkingLevelMap，
         //   所以要回去查模型组那份原始配置。
         const thinkingBySlug = new Map();
         for (const group of modelGroups.list()) {
@@ -542,7 +542,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         }
 
         // 部门只放一个人：它专门负责回答这个系统的事。
-        // 不再自动塞一堆角色 —— 用户要的是"一个系统一个团队"，
+        // 不再自动塞一堆角色 —— 保持"一个系统一个团队"，
         // 人多了反而互相推诿。
         const persona =
           `你负责「${site.name}」这个系统（${site.baseUrl}）。` +
@@ -850,7 +850,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         const body = await readBody(req).catch(() => ({}));
         const done = await uploads.complete(completeMatch[1], { sha256: body?.sha256 });
         if (done.error) return send(res, 400, { error: done.error });
-        // 不整读：临时文件直接搬进附件目录（rename，跨盘才退化成 copy）
+        // 不整读：临时文件直接移进附件目录（rename，跨盘才退化成 copy）
         const meta = saveMovedFile(done.filePath, { name: done.name, mime: done.mime });
         return send(res, 200, { attachment: { ...meta, url: `/api/files/${meta.id}` } });
       }
@@ -925,7 +925,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         const user = store.updateUserName(body.name);
         // 名字是拼进系统提示的，而提示只在建会话时构造 —— 不重建会话的话
         // 改名只对以后新开的会话生效，正在用的那些还记着旧名字。
-        // 用户要求"每次修改要通知到全局"，所以这里把内存里的会话全丢掉重建
+        // 改名要立刻通知到所有会话，所以这里把内存里的会话全丢掉重建
         // （reload 而不是 reset：对话历史保留）。
         const n = runner.reloadAllSessions();
         log(`👤 用户改名叫：${user.name}（已重建 ${n} 个会话，下一轮起生效）`);

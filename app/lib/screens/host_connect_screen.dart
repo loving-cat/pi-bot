@@ -289,7 +289,7 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
                   ),
                   const SizedBox(height: 10),
                   // ★ PC 端**不给**去手机配对表单的入口。
-                  //   PC 是宿主：服务端就跑在这台机器上，它没有"去连别人"这个需求。
+                  //   PC 是宿主：服务端就跑在本机上，它没有"去连别人"这个需求。
                   //   真正需要的是"把手机接进来" —— 那是「设置 → 远程连接」里的
                   //   二维码 + 配对码，扫一下就行，不用在这填任何东西。
                   const Text(

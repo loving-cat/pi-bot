@@ -16,7 +16,7 @@ import 'spawn_posix.dart';
 /// 启动链上**必须保住那个隐藏控制台**：服务端派生的每个子进程（rg / fd / git /
 /// node）默认继承父进程的控制台；父进程没有控制台时，Windows 会给每个子进程
 /// 新建一个控制台窗口，于是工具一跑屏幕上就闪黑框。
-/// 实测：给服务端加 `windowsHide` 或 `detached` 都会把控制台剥掉（
+/// 给服务端加 `windowsHide` 或 `detached` 都会把控制台剥掉（
 /// `GetConsoleWindow() == 0`），随后每次派生都会新建窗口。
 class ServerSupervisor {
   ServerSupervisor(this.stateDir);
@@ -150,7 +150,7 @@ fs.writeSync(fd, header);
 // - 两者都会把继承来的隐藏控制台剥掉（子进程 GetConsoleWindow()==0），
 //   服务端之后派生的每个控制台子进程（rg / fd / git / node）都会被系统
 //   分配一个新控制台窗口，表现为工具一跑就闪黑框；
-// - 实测 detached 还会让服务端起不来。
+// - detached 还会让服务端起不来。
 // 本脚本由 WScript.Shell.Run(...,0) 以隐藏窗口启动，自带隐藏控制台，
 // 服务端直接继承即可；父进程退出后子进程继续存活，不依赖 detached。
 const child = spawn(node, [entry], {

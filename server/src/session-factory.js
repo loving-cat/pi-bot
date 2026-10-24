@@ -1,7 +1,7 @@
 /**
  * 建会话（执行层）：把一个 bot 在某房间里"跑起来"需要的全部准备工作。
  *
- * 从 pi-runner.js 搬出来。这里最容易出错的地方不是代码复杂，而是**配置的来路**：
+ * 这里最容易出错的地方不是代码复杂，而是**配置的来路**：
  * 模型来自用户自己配的模型组、工具集受部门规矩限制、上下文预算三层回退、
  * 系统提示跟着用户名和规矩走 —— 任何一条接错，表现都是"跑不起来"或"跑错东西"，
  * 而且很难从界面看出来。
@@ -159,12 +159,12 @@ export function createSessionBuilder({
       resourceLoader,
       tools: [...baseTools, ...customTools.map((t) => t.name)],
       customTools,
-      // ★★★ 把我们自己的 model runtime 传进去。
+      // ★★★ 把 runner 的 model runtime 传进去。
       //
       //   不传的话，pi 会**另造一个** runtime（默认只认 ~/.pi/agent/auth.json
       //   和 models.json）—— 而用户在 App 里配的模型组（baseUrl + key + 模型名）
-      //   是**运行时注册到我们这个 runtime 上**的，那个新造的 runtime 根本不知道。
-      //   症状是"No API key found for local_cline."：探活和菜单（走我们的
+      //   是**运行时注册到这个 runtime 上**的，那个新造的 runtime 根本不知道。
+      //   症状是"No API key found for local_cline."：探活和菜单（走这个
       //   runtime）一直显示可用，一到真跑就找不到 key。
       modelRuntime: runner.modelRuntime,
     };

@@ -3,7 +3,7 @@ import { isDelegatingLead } from './role-tools.js';
 /**
  * 出事了往上抬：把"这单断了"告诉该知道的人，并请它重新安排。
  *
- * 从 pi-runner.js 搬出来。"该谁知晓"的规则本来就在 util.js
+ * "该谁知晓"的规则在 util.js
  * （pickEscalationHost：部门里的活先找组长，没有组长就找主控）；
  * 这里负责**怎么抬**：在哪儿说、说什么、怎么把对方叫醒。
  *
@@ -67,7 +67,7 @@ export function createEscalator({ store, run, onError = () => {} }) {
   };
 }
 
-/** 失败回执；delegateOnly 时只能重新派活或向用户报告阻塞。 */
+/** 构造失败回执文本；delegateOnly 时第三步改为向用户说明阻塞并等待决定。 */
 export function buildEscalationNote({ store, fromBotId, reason, task = '', attempts = 0, why = '', delegateOnly = false }) {
   const from = store?.getBot?.(fromBotId);
   const name = from?.name ?? fromBotId;

@@ -1,5 +1,5 @@
 // Markdown 渲染回归测试。
-// 之前踩过的坑：表格单元格用了纯 Text，模型写在单元格里的 **加粗** / `代码` 会原样漏出来。
+// 表格单元格不能用纯 Text：模型写在单元格里的 **加粗** / `代码` 会原样漏出来。
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pi_bot/widgets/md_text.dart';

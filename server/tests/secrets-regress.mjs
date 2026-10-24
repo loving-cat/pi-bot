@@ -455,7 +455,7 @@ await test('新放行的变量会进子进程，云凭证和敏感 PI_BOT_ 不�
         assert.ok(!JSON.stringify(env).includes(value), name);
       } else {
         // 期望值取父进程读回来的值，不取上面写入的字面量：Windows 上个别变量写入「成功」
-        // 但读回不变（实测有的机器上 NUMBER_OF_PROCESSORS 被钉死成真实核数，连 Win32
+        // 但读回不变（有的机器上 NUMBER_OF_PROCESSORS 被钉死成真实核数，连 Win32
         // SetEnvironmentVariableW 都改不动）。这里要验的是「白名单变量原样传给子进程」。
         const expected = process.env[name];
         assert.notEqual(expected, undefined, `${name} 父进程里应该有值`);

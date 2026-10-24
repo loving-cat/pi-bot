@@ -15,7 +15,7 @@ void main() {
     );
     await tester.pump();
 
-    // 以前每个段落/列表项/表格单元格各一个 SelectionArea → 选中会断成多截。
+    // 每个段落/列表项/表格单元格各一个 SelectionArea 会让选中断成多截。
     expect(find.byType(SelectionArea), findsOneWidget);
   });
 }

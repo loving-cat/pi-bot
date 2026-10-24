@@ -33,7 +33,7 @@ const _devOpen = String.fromEnvironment('PI_BOT_OPEN');
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // 界面层的错误也要留档（服务端有 server.log，界面以前什么都没有）
+  // 界面层的错误也要留档，和服务端的 server.log 对应
   installAppErrorLogging();
 
   // 帧耗时采样（只有带了 PI_BOT_FRAME_LOG 环境变量才工作，平时零开销）
@@ -72,7 +72,7 @@ Future<void> main() async {
       size: target?.size ?? const Size(1180, 760),
       minimumSize: kWindowMinSize,
       center: target == null,
-      // ★ 不透明。以前是 Colors.transparent —— 无边框 + 每像素 alpha 的窗口，
+      // ★ 不透明。不能用 Colors.transparent：无边框 + 每像素 alpha 的窗口，
       //   每次重绘都要走 DWM 的混合路径（每帧整窗重新合成）。界面本来就铺满
       //   bgApp，透明没有任何视觉效果，纯粹白花钱。
       backgroundColor: PB.bgApp,
@@ -243,8 +243,8 @@ class _PiBotAppState extends State<PiBotApp> with WidgetsBindingObserver {
         //   标题条是**独立的一条**，窗口控制按钮住在它里面 ——
         //   于是下面所有的页面（包括 push 出来的路由、对话框、全屏浮层）
         //   从 y=0 起就和按钮没关系了，**任何页面都不需要"让位"**。
-        //   以前按钮是浮在最上层的，谁的上边缘在窗口顶部谁就得手动避让，
-        //   每加一个页面都要想一遍（设置页就被压过、聊天页还因此白推左 132px）。
+        //   按钮不能浮在最上层：那样谁的上边缘在窗口顶部谁就得手动避让，
+        //   每加一个页面都要想一遍（设置页会被压过、聊天页还得为此白推左 132px）。
         //
         //   手机上 WindowTitleBar 返回零高，这里等于没加东西。
         builder: (context, child) => AvatarLife.watchPointer(
@@ -258,9 +258,9 @@ class _PiBotAppState extends State<PiBotApp> with WidgetsBindingObserver {
                 ],
               ),
               // ★ 缩放热区必须**浮在最上层**。
-              //   它之前在标题条下面 —— 而热区的"顶边"就在 y=0..5，
-              //   标题条（y=0..38）把它整个盖住了，于是向上拖只会移动窗口、
-              //   没法把窗口往上拉伸（用户报的"没有向上拉伸的方法了"）。
+              //   它不能放在标题条下面 —— 热区的"顶边"就在 y=0..5，
+              //   会被标题条（y=0..38）整个盖住，向上拖只会移动窗口、
+              //   没法把窗口往上拉伸。
               //   右上角那 132px 依然让开控制按钮（reserveTopRight）。
               if (WindowResizeOverlay.isSupported)
                 const Positioned.fill(child: WindowResizeOverlay()),
@@ -284,10 +284,10 @@ class _Root extends StatelessWidget {
     }
     // 桌面端是宿主：永远不显示手机那套配对界面。
     //
-    // ★ "本机服务端" 这条路要有三个状态，以前只有两个：
-    //   以前只要 localMode 就当已连上（paired 为 true）→ 直接进主界面 →
-    //   服务端根本没起时用户看到的是骨架屏 + "离线 · 自动重连中"，
-    //   永远等不到东西。现在：起服务端期间 / 一个房间都还没拿到时，
+    // ★ "本机服务端" 这条路要有三个状态：
+    //   不能只要 localMode 就当已连上（paired 为 true）直接进主界面 ——
+    //   服务端还没起时用户看到的是骨架屏 + "离线 · 自动重连中"，永远等不到东西。
+    //   起服务端期间 / 一个房间都还没拿到时，
     //   先给"正在启动 / 为什么起不来"那一页（它会自己重试，也会把服务端拉起来）。
     if (isHostPlatform) {
       final stillBooting =

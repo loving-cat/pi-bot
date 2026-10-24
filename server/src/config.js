@@ -77,7 +77,7 @@ export const config = {
   home,
   dataDir,
   workspace,
-  /** 本次启动是否从旧目录搬过来的（不是则为 null） */
+  /** 本次启动是否从旧目录迁移而来（未迁移为 null） */
   migratedFrom,
   host: process.env.PI_BOT_HOST || '0.0.0.0',
   port: Number(process.env.PI_BOT_PORT || 8787),
@@ -136,10 +136,7 @@ export const config = {
   /** 单轮最长多久没动静就算"断了"（毫秒） */
   heartbeatMs: Number(process.env.PI_BOT_HEARTBEAT_MS || 15_000),
   /**
-   * 多久没心跳就判为中断（毫秒）。
-   *
-   * 用户要的："做个心跳机制可以给工程师 bot 们，这样如果任务中断了，
-   * 组长 / 部长级别的知晓。"
+   * 多久没心跳就判为中断（毫秒）。任务中断时要让组长 / 部长级别知晓。
    *
    * 定得比较宽（6 分钟）是因为：推理型模型光"想"就能想好几分钟，
    * 中间一个字节都不吐 —— 那不算断。真正要抓的是"卡死不动了"。
@@ -147,9 +144,6 @@ export const config = {
   stallMs: Number(process.env.PI_BOT_STALL_MS || 360_000),
   /**
    * 部门里单次最多**来回几轮**（对话轮次，不是工具调用次数）。
-   *
-   * 用户原话："这个步数 不是算工具调用多少次，是每次干完要多次对话，
-   * 步数是对话次数 —— 你这 30 步很多模型活都干不完，对话次数算才行。"
    *
    * 一次 assistant 发言 = 一轮（里面可以带好几个工具调用）。
    * 按工具调用算的话，模型连查带改跑十几个 bash 就把额度烧光了，活才刚开头。
@@ -224,7 +218,7 @@ export function describeConfig() {
  *   · 扩展（extensions/）：会起子进程（派子 agent、MCP 客户端、弹窗），
  *   · MCP 服务（mcp.json）：每个会话拉一堆 python/node 进程，
  *   · skills / 提示模板：是给终端 agent 的提示词，bot 用不上。
- * bot 需要的是"模型 + 我们自己给的工具"，多一样都是隐患：占资源、塞满提示词、
+ * bot 需要的是"模型 + 这里给的工具"，多一样都是隐患：占资源、塞满提示词、
  * 几十个 bot 并存时互相打架。要开就用环境变量单独开。
  *
  * @param {Record<string,string|undefined>} env

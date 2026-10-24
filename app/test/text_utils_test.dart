@@ -1,5 +1,5 @@
 // 列表预览/通知要用的 markdown → 纯文本转换。
-// 之前列表里直接显示 `**结论：…` 和 `| 交付物 | 谁做的 |`，很难看。
+// 不转换的话，列表里会直接显示 `**结论：…` 和 `| 交付物 | 谁做的 |` 这类裸标记。
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pi_bot/text_utils.dart';
 

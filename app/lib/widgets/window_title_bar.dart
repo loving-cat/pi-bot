@@ -74,7 +74,7 @@ class _WindowTitleBarState extends State<WindowTitleBar> {
 /// ★ 图标必须用 Lucide。这个 app 的字体已经全部换成 Lucide，
 ///   MaterialIcons 字体被 tree-shake 成 1588 字节的空壳，
 ///   用 `Icons.xxx` 会渲染成**空白按钮** —— 按钮在、能点、有 hover 反馈，
-///   但看不到任何图标（这个 bug 骗了我很久）。
+///   但看不到任何图标。
 class WindowControlsOverlay extends StatefulWidget {
   const WindowControlsOverlay({super.key});
 
@@ -196,7 +196,7 @@ class _WinBtnState extends State<_WinBtn> {
     //   1. Windows 自己的最小化/最大化/关闭本来就没有 tooltip —— 加了反而多一层噪音。
     //   2. 更重要的：Tooltip 在这个叠层里会出问题 —— 悬停 600ms 后它浮出来，
     //      但没能正常画成小卡片，而是**整窗铺了一层半透明灰**；而且它不会自己收，
-    //      必须点一下才消失（用户报的"悬停右上角后整个软件变灰"就是这个）。
+    //      必须点一下才消失（悬停右上角后整个软件变灰，就是这个）。
     //      这个叠层是：无边框窗口 + MaterialApp.builder 里套的 Stack(fit: expand)，
     //      Tooltip 的 OverlayPortal 在里面算错了尺寸。
     //
@@ -288,9 +288,9 @@ Rect resizeBy({
 /// **窗口内容区**里的坐标，不是屏幕坐标。而拖上边/左边时**窗口自己会移动** ——
 /// 窗口一移，同一个屏幕位置在窗口内的坐标就变了，于是：
 ///   算出来的位移 ≈ 0 → 窗口弹回原尺寸 → 下一次算出来又反向 → 来回抽搐。
-/// 用户报的"从上方拉伸会不断抽搐"就是这个。
+/// 表现就是从上方拉伸时不断抽搐。
 ///
-/// 补偿办法：我们知道窗口被自己移动了多少（那正是我们设进去的 bounds），
+/// 补偿办法：窗口被自己移动了多少是已知的（那正是这里设进去的 bounds），
 /// 把它加回去就是屏幕位移。
 Offset screenDelta({
   required Offset viewDelta,
@@ -302,7 +302,7 @@ Offset screenDelta({
 ///
 /// 为什么要夹：窗口一旦跨到"缩放比不同的另一块屏"，Windows 会改这个窗口的 DPI，
 /// 引擎收到新的 devicePixelRatio 就会**整体重缩放** —— 用户看到的是"整个界面
-/// 被放大了"（用户原话："程序内的不可以乱动"）。
+/// 被放大了"。
 /// 夹在当前屏内就不会跨屏，也就不会触发那套重缩放。
 ///
 /// 代价：没法靠拖边框把窗口拖到另一块屏上（要挪窗口请拖标题条）。
@@ -364,9 +364,9 @@ class WindowResizeOverlay extends StatefulWidget {
 
   /// 右上角要避开多宽 —— 那是窗口控制按钮的地盘。
   ///
-  /// Windows 自己也从不在标题栏按钮上做缩放。以前这里的右上角热区正好压在
-  /// "关闭"按钮的右上角上，鼠标停在那儿会同时命中"关闭按钮"和"缩放热区"，
-  /// 表现很怪（用户报的悬停右上角后整窗变灰，就是从这个位置触发的）。
+  /// Windows 自己也从不在标题栏按钮上做缩放。右上角热区不能压在
+  /// "关闭"按钮的右上角上：鼠标停在那儿会同时命中"关闭按钮"和"缩放热区"，
+  /// 表现很怪（悬停右上角后整窗变灰，就是从这个位置触发的）。
   final double reserveTopRight;
 
   static bool get isSupported => WindowTitleBar.isSupported;
@@ -384,7 +384,7 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
   Offset? _startPointer;
   ResizeEdge? _edge;
 
-  /// 上一次我们自己设进去的矩形 —— 拿它的左上角当"窗口现在在哪"。
+  /// 上一次这里设进去的矩形 —— 拿它的左上角当"窗口现在在哪"。
   /// 拖上边/左边时要靠它把窗口自身的位移补偿掉（见 screenDelta）。
   Rect? _lastBounds;
 
@@ -395,8 +395,8 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
   // ---- 平滑 ----
   //
   // 指针事件来得比"窗口真的改完尺寸"快得多。每个事件都硬发一次 setBounds，
-  // 就会"上一发还没落地又发下一发"地堆起来 —— 看着就是一跳一跳
-  // （用户报的"波动很大、不丝滑"）。
+  // 就会"上一发还没落地又发下一发"地堆起来 —— 看着就是一跳一跳、波动很大、
+  // 不丝滑。
   //
   // 改成：指针只更新**目标**，由 Ticker 按帧率朝目标插值着走。
   // 窗口像被牵引过去，而不是每帧硬跳到新位置。
@@ -414,17 +414,15 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
   /// 两次 setBounds 之间至少隔这么久。
   ///
   /// ★ 这是"拖动卡"的关键一条：Ticker 跑 60fps，如果每帧都发一次 setBounds，
-  ///   就等于**我们主动每秒发起 60 次整窗重排 + 全量重光栅**（Windows 的尺寸
+  ///   就等于每秒主动发起 60 次整窗重排 + 全量重光栅（Windows 的尺寸
   ///   变化没有增量路径，每次都整窗重来）。窗口越大越卡。
-  ///   限到 ~30 次/秒之后重排少一半，而视觉上完全看不出差别 ——
-  ///   因为我们永远发的是**最新位置**（合并，不排队），不会落后。
+  ///   而这里永远发的是**最新位置**（合并，不排队），限流不会造成落后。
   /// 限流放宽到 12ms（≈每帧一发）。
   ///
-  /// 原来设 28ms（~30 次/秒）是为了省掉"每秒 60 次整窗重排"。但那是**内容没降级**
-  /// 时候的账 —— 现在拖动期间内容已经冻成骨架，每帧只要 ~6-7ms（实测），
-  /// 平台完全撑得住 60 次/秒。
+  /// 28ms（~30 次/秒）能把整窗重排省掉一半，但那是**内容没降级**时候的账 ——
+  /// 拖动期间内容已经冻成骨架，每帧开销小，平台完全撑得住 60 次/秒。
   /// 而 30 次/秒的代价是"窗口几何一秒只更新 30 次"，快速拖动时每步跨很大，
-  /// 看着就是一顿一顿（用户报的"不丝滑、卡卡的"）。
+  /// 看着就是一顿一顿、不丝滑。
   /// 所以：**留着限流当保险（防止平台真的顶不住时堆积），但把闸门放到几乎不生效**。
   static const _minSendGap = Duration(milliseconds: 12);
 
@@ -432,7 +430,7 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
   ///
   /// 为什么用帧时钟：限流的本质是"别让一帧里发多次"，而帧时钟正是这件事的标尺；
   /// 墙钟（DateTime.now）在单测里还会骗人 —— `pump(16ms)` 推进的是假时钟，
-  /// 墙钟只走了几毫秒，于是 12 帧全被拒掉（我就是这么发现的）。
+  /// 墙钟只走了几毫秒，于是 12 帧全被拒掉。
   Duration? _lastSendAt;
 
   @override
@@ -527,7 +525,7 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
     _sending = true;
     // ★ 补偿量必须跟着"**真的发出去**的那个矩形"走，不能跟着目标走。
     //   插值意味着窗口要几帧才走到目标；如果拿目标去补偿，补偿就超前了 ——
-    //   窗口飞过头 → 下一帧误差反向 → **震荡**（用户报的"震荡特别明显"）。
+    //   窗口飞过头 → 下一帧误差反向 → **震荡**。
     //   跳过发送时不更新（那一次窗口根本没动）。
     _lastBounds = r;
     unawaited(
@@ -637,16 +635,15 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
   ///
   /// 这里**不用** windowManager.startResizing —— 那条路会进 Windows 的原生
   /// 模态缩放循环，WM_SIZE 按消息速率猛刷，每一发都要把整个窗口重新光栅化一遍
-  /// （实测拉伸时 raster 5~8ms、20~30% 的帧超过 16ms 预算，拖起来就是"不丝滑"）。
+  /// （拉伸时光栅化容易超过 16ms 的帧预算，拖起来就是"不丝滑"）。
   /// 改成自己算：每个 pointer 事件算一次矩形交给 setBounds，节奏跟着 Flutter
   /// 的帧走，不跟系统消息队列赛跑。
   /// 降级渲染的"静默期"定时器。
   ///
-  /// ★ 这里踩过一个坑：以前是"Ticker 停下来就恢复渲染"。但插值在拖动过程中
-  ///   会不停收敛（命中吸附就 stop）—— 于是每收敛一次骨架就恢复成内容、
-  ///   你再动一下又变骨架，**内容 ↔ 骨架 反复闪**（用户报的"快速大幅度拖动
-  ///   会一直闪"）。
-  ///   所以这个状态必须由**手势**驱动：拖动开始置位，每次拖动续期，
+  /// ★ 这个状态不能由 Ticker 驱动（"Ticker 停下来就恢复渲染"）：插值在拖动
+  ///   过程中会不停收敛（命中吸附就 stop）—— 每收敛一次骨架就恢复成内容、
+  ///   再一动又变骨架，**内容 ↔ 骨架 反复闪**，快速大幅度拖动时会一直闪。
+  ///   所以必须由**手势**驱动：拖动开始置位，每次拖动续期，
   ///   松手（或 220ms 没有新的拖动事件）之后才恢复。
   Timer? _resizeQuiet;
 
@@ -661,9 +658,8 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
   /// 读当前显示器的可用区（拿不到就返回 null —— 那就退回"不夹"的老行为）
   Future<Rect?> _readWorkArea() async {
     try {
-      // ★ 取"窗口所在的那块屏"，不是主屏。
-      //   以前只取主屏：窗口在副屏时，夹到主屏范围会把窗口**推回主屏**
-      //   （用户报的"还是容易出现分辨率直接导致部分看不到"里有这一种）。
+      // ★ 取"窗口所在的那块屏"，不是主屏。只取主屏的话，窗口在副屏时，
+      //   夹到主屏范围会把窗口**推回主屏**，出现部分窗口看不到的情况。
       final displays = await ScreenRetriever.instance.getAllDisplays();
       final c = _startBounds?.center;
       Display? pick;
@@ -735,10 +731,9 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
       edge: edge,
       minSize: kWindowMinSize,
     );
-    // ★ 夹在当前屏内：不跨屏就不会触发系统的 DPI 重缩放
-    //   （用户原话："程序内的不可以乱动"）。
+    // ★ 夹在当前屏内：不跨屏就不会触发系统的 DPI 重缩放。
     final area = _workArea;
-    // 窗口中心必须落在我们选中的那块屏里才夹 —— 万一口径对不上（多屏 + 不同
+    // 窗口中心必须落在选中的那块屏里才夹 —— 万一口径对不上（多屏 + 不同
     // 缩放比时 screen_retriever 的坐标是按各自缩放比折算的），宁可不夹，
     // 也不能把窗口挪到别的地方去。
     if (area != null && area.contains(next.center)) {

@@ -26,9 +26,8 @@ const STATE_VERSION = 2;
 /**
  * 群聊的"轮次预算"默认值。
  *
- * 为什么要有这层：这几个数以前只写在环境变量里（config.groupTurns*），
- * 但它们是**用户会想按群调的东西** —— 有的群就是需要多来几轮，有的群
- * 吵起来没完。所以搬到 store 里（落盘 + 能改），config 只当默认值。
+ * 为什么要有这层：这几个数会按群调 —— 有的群就是需要多来几轮，有的群
+ * 吵起来没完。所以存在 store 里（落盘 + 能改），config 只当默认值。
  *
  * 目的很实际：**防止 bot 解不了就互相聊个没完**。
  */
@@ -59,10 +58,9 @@ export const GROUP_LIMITS_DEFAULT = {
   /**
    * 部门单轮最长跑多久（毫秒）。
    *
-   * 用户报过"为什么会有超过 300 秒中断" —— 这就是那个 300s。
-   * 5 分钟对写代码这类慢活偏紧，所以默认放到 10 分钟；
-   * 而且现在 App 的「部门预算」里能改（以前这个值在界面上根本没入口，
-   * 只能改代码或环境变量 —— 用户只能干看着它被掐断）。
+   * 默认 10 分钟：5 分钟对写代码这类慢活偏紧。
+   * 可在 App 的「部门预算」里改；只能改代码或环境变量的话，
+   * 用户只能干看着它被掐断。
    */
   turnMaxMs: 600_000,
 };
@@ -148,10 +146,8 @@ export const MAIN_BOT_ID = 'chief';
 
 /** 主控（总经理）的默认人设 */
 export const MAIN_PERSONA = [
-  // ★ 这里刻意**不写"总经理"这个词来定义它自己**。
-  //   写过，结果它回给用户的第一句话是"我是你的总经理" —— 而用户给它的名字
-  //   才是我（用户原话："所有 bot 都要用用户给他命名的名字自称，其次是负责
-  //   的内容"）。角色怎么理解归角色，自称必须用自己的名字。
+  // ★ 这里刻意**不写"总经理"这个词来定义它自己**：写了它就会自称"总经理"，
+  //   而不是用户给它起的名字。角色怎么理解归角色，自称必须用自己的名字。
   '你直接对用户负责——用户只跟你一个人对接。活交给谁、盯着谁、什么时候给交代，都是你说了算。',
   '',
   '【组织架构】',
@@ -341,8 +337,7 @@ export class Store {
     } catch (err) {
       log('⚠️  写 state.json 失败（进程继续跑）：', err?.message || err);
     }
-    // 只写有变更的房间：之前是每次变更都把全部房间重写一遍，
-    // 房间一多（每个群 500 条消息）就是纯浪费。
+    // 只写有变更的房间：全部重写的话，房间一多（每个群 500 条消息）就是纯浪费。
     //
     // 逐房间独立处理：单个房间写入失败不影响其他房间，失败的保留在 dirty 中重试。
     for (const roomId of [...this.dirtyRooms]) {
@@ -605,7 +600,7 @@ export class Store {
     for (const [k, def] of Object.entries(GROUP_LIMITS_DEFAULT)) {
       out[k] = positiveIntOrDefault(saved[k], def);
     }
-    // ★ 老默认值（4 / 2 / 10）自动升级：用户反馈"成员经常跑不完就被预算跳过"。
+    // ★ 老默认值（4 / 2 / 10）自动升级，避免成员经常跑不完就被预算跳过。
     //   只迁移一次（groupLimitsMigrated）—— 之后用户就算自己改回 4/2 也不再动它。
     if (
       this.state.groupLimitsMigrated !== true &&
@@ -1150,9 +1145,8 @@ export class Store {
   deleteRoom(id) {
     const room = this.state.rooms[id];
     if (!room) return null;
-    // ★ 私聊也能删。
-    //   以前这里写的是 `if (!room || room.kind === 'dm') return null` —— 结果侧边栏
-    //   那一列 bot 私聊（恰恰是用户最想清掉的一堆）一个都删不掉。
+    // ★ 私聊也能删：侧边栏那一列 bot 私聊（恰恰是用户最想清掉的一堆）
+    //   也要能清掉。
     //   注意删的是**这个会话**，不是那个 bot：下次点它 / @它，ensureDm 会重新开一个空的。
     delete this.state.rooms[id];
     this.messages.delete(id);
@@ -1746,9 +1740,8 @@ export class Store {
    * 追加一条消息。
    *
    * beforeStreaming：**插队**用 —— 插在"正在写的那条回复"之前。
-   *   用户插话时，bot 手上那条回复还没写完；如果按普通追加放到最后，
-   *   读起来就是"它先答了、我才插话"，因果是反的（用户报的：
-   *   "只要是插队成功的，就把 bot 的回复放到最新"）。
+   *   用户插话时，bot 手上那条回复还没写完；按普通追加放到最后的话，
+   *   读起来就是"它先答了、我才插话"，因果是反的。
    */
   appendMessage(partial, { silent = false, beforeStreaming = false } = {}) {
     const roomId = partial.roomId;
@@ -1882,7 +1875,7 @@ export class Store {
         //
         //   只把消息标成 done 是不够的：那条消息里的工具步骤会一直停在
         //   status='running' —— 客户端把它画成转圈的图标，于是群里永远显示
-        //   "正在调用工具…"，圈一直转但什么也没发生（用户报的）。
+        //   "正在调用工具…"，圈一直转但什么也没发生。
         //   服务端重启打断的那一步，就明说被打断了。
         if (Array.isArray(msg.steps) && msg.steps.some((s) => s?.status === 'running')) {
           msg.steps = msg.steps.map((s) =>

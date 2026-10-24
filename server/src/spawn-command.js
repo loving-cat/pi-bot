@@ -97,7 +97,7 @@ export function escapeCmdArgument(value, doubleEscape = false) {
  *
  * 只有 npm/pnpm 生成的 `node_modules/.bin/*.cmd` shim 需要双转义 ——
  * 那类 shim 内部会再展开一次 `%*`；普通 `.cmd` 单次就够，多转一层会让
- * 参数里凭空多出引号和 `^`（实测 `echo %~1` 会打印 `"hello world"`）。
+ * 参数里凭空多出引号和 `^`（`echo %~1` 会打印 `"hello world"`）。
  */
 export function buildCmdLine(command, args = []) {
   const isShim = /node_modules[\\/]\.bin[\\/][^\\/]+\.(cmd|bat)$/i.test(command);
@@ -107,8 +107,8 @@ export function buildCmdLine(command, args = []) {
 /**
  * 结束探测进程。
  *
- * 为什么不在这里调 taskkill：实测在装了实时防护的 Windows 上，
- * `CreateProcessW(taskkill)` 会**同步阻塞 2.8 秒**（交替出现，不是偶发）。
+ * 为什么不在这里调 taskkill：在装了实时防护的 Windows 上，
+ * `CreateProcessW(taskkill)` 会同步阻塞数秒（交替出现，不是偶发）。
  * 服务端是单进程 Node，这一下会把 HTTP/WS 全卡住 —— 为了收一个探测进程
  * 冻住整个服务端，不划算。
  *

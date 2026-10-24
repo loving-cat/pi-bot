@@ -33,7 +33,7 @@ async function test(name, fn) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// ★ 用例会临时替换 PiRunner 的方法来打桩。以前用 `delete` 收尾 ——
+// ★ 用例会临时替换 PiRunner 的方法来打桩。收尾不能用 `delete` ——
 //   那是把**类原型上的方法整个删掉**，后面的用例就再也调不到了
 //   （表现为 "runner.runRound is not a function"）。留一份原件，用完还原。
 const ORIGINAL_RUN_ROUND = PiRunner.prototype.runRound;
@@ -140,7 +140,7 @@ await test('DM：不进房间锁，行为不变', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// 群调度：成员正忙时怎么办（用户报的"组长 @ 了，却只有一个 bot 动起来"）
+// 群调度：成员正忙时怎么办（不能出现"组长 @ 了，却只有一个 bot 动起来"）
 // ---------------------------------------------------------------------------
 await test('★ 上级 @ 忙碌成员 → 必须打断（steer），不能跳过', async () => {
   const { room, lead, member } = makeDept('D');
@@ -250,8 +250,8 @@ await test('★ 终止：当场停住，不再往下派下一个人（用户："
 });
 
 await test('★★ 并发：组长 @ 三个人 → 三个人**同时**开干（不是排队）', async () => {
-  // 用户："我要的是 群组内有多少人 就要多少个 并发，可以让组长自行决定先后"
-  // 以前是 await 一个一个来 —— 六个人就是六倍时长，界面上永远"只有一个在跑"。
+  // 要求：群组内有多少人就要多少个并发，先后由组长自行决定。
+  // 不能 await 一个一个来 —— 六个人就是六倍时长，界面上永远"只有一个在跑"。
   const { room, lead, member } = makeDept('G');
   const m2 = store.createBot({ name: '乙G', persona: '干活' });
   const m3 = store.createBot({ name: '丙G', persona: '干活' });
@@ -287,7 +287,7 @@ await test('★★ 并发：组长 @ 三个人 → 三个人**同时**开干（�
 });
 
 await test('★★ 竞态：两个人同时 @ 同一个人 → 只起一轮，不报 "already processing"', async () => {
-  // 真事：用户看到红字
+  // 要避免的报错：
   //   Agent is already processing. Specify streamingBehavior ('steer' or 'followUp')…
   // 成因：并行之后，两个成员**同时**回复、同时 @ 了同一个人 ——
   // 它们各自算的"队列里有没有它"都还是旧的，于是同一个人被排进两次；
@@ -370,7 +370,7 @@ await test('★ 用户插话后：旧轮退出时把新消息接上（不丢、�
 
   assert.equal(maxConcurrent, 1, `同一房间不能并发跑两轮，实际 ${maxConcurrent}`);
   assert.ok(rounds.includes('第二轮需求'), '新需求必须被跑到，不能丢');
-  // ★ 桩必须还原：漏一次，后面的用例全都跑在这个假 runRound 上（真实踩过）
+  // ★ 桩必须还原：漏一次，后面的用例全都跑在这个假 runRound 上
   PiRunner.prototype.runRound = ORIGINAL_RUN_ROUND;
 });
 

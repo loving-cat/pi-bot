@@ -1,8 +1,8 @@
 // 「跳到某个会话」的回归测试。
 //
-// 背景：点 @提及 以前走的是 `state.openRoom(id)` —— 它只记一个字段、不发通知；
-// 而宽屏分栏的选中项是 HomeShell 自己的 `_selectedId`，压根不看那个字段。
-// 结果就是点了 @ 什么都不发生（用户报的 bug）。窄屏同样跳不动。
+// 背景：点 @提及 不能只调 `state.openRoom(id)` —— 它只记一个字段、不发通知，
+// 而宽屏分栏的选中项是 HomeShell 自己的 `_selectedId`，压根不看那个字段，
+// 结果就是点了 @ 什么都不发生。窄屏同样跳不动。
 //
 // 这个坑很隐蔽：回调确实执行了、函数没报错、只是界面不动。所以两种布局都钉住。
 import 'package:flutter/gestures.dart';
@@ -60,7 +60,7 @@ void main() {
     state.requestRoom('r2');
     await tester.pump();
 
-    // ★ 这一条就是 bug 的回归点：以前这里还是 r1
+    // ★ 这一条就是 bug 的回归点：bug 的表现就是这里停在 r1
     expect(tester.widget<ChatScreen>(find.byType(ChatScreen)).room.id, 'r2');
   });
 
@@ -88,10 +88,10 @@ void main() {
   });
 
   testWidgets('★ 先把左栏拖宽、再把窗口缩小 —— 布局不能崩', (tester) async {
-    // 用户报的"偶发会整个布局混乱"。原因：两栏宽度**只在拖动分隔条时**被
+    // 症状是"偶发会整个布局混乱"。原因：两栏宽度**只在拖动分隔条时**才被
     // 夹进合法范围 —— 于是"先拖宽、再缩小窗口"时，固定宽度会超过窗口总宽，
     // Expanded 拿到负空间，整个布局崩坏，而且**一直保持**（不拖回去恢复不了）。
-    // 现在改成渲染前按可用宽度夹一次。
+    // 修复：渲染前按可用宽度夹一次。
     tester.view.physicalSize = const Size(1400, 900);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -137,12 +137,12 @@ void main() {
   });
 
   testWidgets('★ 鼠标进到会话行上（不在头像里）就立刻跟随，不用再动一下', (tester) async {
-    // 这条是踩了三轮才找到的：眼睛偏移只在**鼠标移动**时才算，而"鼠标进入
+    // 这里的坑很隐蔽：眼睛偏移只在**鼠标移动**时才算，而"鼠标进入
     // 这一行"那一下不算移动事件 → 必须再动一下才跟随。用户鼠标停在行上不动时
     // 眼睛就是呆的，表现成"只有鼠标在头像里面时（本来就在动）才跟随"。
     //
     // 所以这条测试必须走**完整链路**：真实鼠标事件 → watchPointer → 指针通知
-    // → 头像 → painter 的 gaze。以前只验到"hovered 变 true"，验不到这一层。
+    // → 头像 → painter 的 gaze。只验到"hovered 变 true"验不到这一层。
     tester.view.physicalSize = const Size(400, 700);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);

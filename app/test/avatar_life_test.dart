@@ -1,9 +1,9 @@
 // 头像"活着"的那部分。
 //
 // 两条要钉住的东西：
-//   1. 眼睛看的方向对不对（搞反了肉眼很难发现 —— 你会觉得"有点怪"但说不上来）
+//   1. 眼睛看的方向对不对（搞反了肉眼很难发现，只会觉得"有点怪"但说不上来）
 //   2. 安静下来之后动画循环**真的停了**（一直在动不等于活，只等于一直烧光栅；
-//      我们量过桌面端 raster 是瓶颈，所以这是有意的取舍，不是偷懒）
+//      桌面端 raster 是瓶颈，所以这是有意的取舍，不是偷懒）
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pi_bot/widgets/avatar_life.dart';
@@ -65,8 +65,8 @@ void main() {
     });
 
     test('★ 幅度要够明显（不然用户"完全感觉不到"）', () {
-      // 常见距离：鼠标离头像 300px。以前这里只偏 0.07*size（46px 的头像 = 3px），
-      // 等于看不见；现在应该到 0.13*size 以上。
+      // 常见距离：鼠标离头像 300px，偏移要达到 0.13*size 以上；
+      // 只偏 0.07*size（46px 的头像 = 3px）等于看不见。
       final o = eyeOffsetToward(
         avatarCenter: center,
         pointer: const Offset(400, 100), // 距离 300
@@ -81,7 +81,7 @@ void main() {
 
     test('★ 近距离就要给满偏移（鼠标往往就在同一行里）', () {
       // 46px 的头像、鼠标在 40px 外（同一行的名字那一带）——
-      // 旧公式只偏 0.06*size（3px），用户感受不到。
+      // 只偏 0.06*size（3px）的话用户感受不到。
       final o = eyeOffsetToward(
         avatarCenter: center,
         pointer: const Offset(140, 100), // 距离 40
@@ -103,7 +103,7 @@ void main() {
       // 极近处按比例（"刚好擦到"的感觉）
       expect(at(4).dx, lessThan(at(12).dx));
       // 超过 0.3*size 之后给满 —— 同一行内的任何位置都是"满偏"，
-      // 这正是用户要的（鼠标在行里，眼睛就该看着你）
+      // 鼠标在行里，眼睛就该看着它
       expect(at(20).dx, closeTo(at(400).dx, 0.01));
     });
   });
@@ -170,8 +170,8 @@ void main() {
   });
 
   testWidgets('★ 静态头像（animate: false）也要跟着鼠标看', (tester) async {
-    // 这个 bug 真发生过：initState 里 `if (!_alive) return;` 写在登记监听之前，
-    // 于是 animate:false 的头像（侧边栏那一列）永远收不到鼠标位置，
+    // initState 里 `if (!_alive) return;` 不能写在登记监听之前，
+    // 否则 animate:false 的头像（侧边栏那一列）永远收不到鼠标位置，
     // 肉眼就是"侧边栏不跟随，只有聊天区跟随"。
     BlobAvatar.animationsEnabled = true;
     addTearDown(() => BlobAvatar.animationsEnabled = true);

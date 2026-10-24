@@ -160,7 +160,7 @@ export function normalizeLessonList(list = [], now = Date.now()) {
  * 只有 active 参与；总分 < 3 的不要（房间分单独不够，必须真的相关）。
  *
  * @param {Array} lessons 经验库
- * @param {string} task 当前任务文本（派活内容 + 用户原话）
+ * @param {string} task 当前任务文本（派活内容 + 用户消息）
  * @param {object} [opts]
  * @param {string} [opts.roomId] 当前房间（同部门经验加分）
  * @param {number} [opts.max] 最多几条

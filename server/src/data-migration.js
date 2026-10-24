@@ -114,7 +114,7 @@ function adoptSessionFile(from, to) {
  * 把 state.sessions 里不在 `<dataDir>/sessions` 下的引用改到那里。
  *
  * 只处理文件名能在旧位置或新位置找到的引用；两边都找不到的保持原样
- * （下次开会话时 session-factory 发现文件不存在会新建，这是原来就有的行为）。
+ * （下次开会话时 session-factory 发现文件不存在会新建）。
  *
  * @param {object} p
  * @param {string} p.dataDir 当前数据目录

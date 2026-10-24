@@ -3,7 +3,7 @@
  *
  * ## 问题
  *
- * 用户说话像打字：想到一句发一句。
+ * 用户连发消息：想到一句发一句。
  *
  *   「帮我看下这个系统」
  *   「https://xxx.com」
@@ -113,7 +113,7 @@ export class MergeQueue {
     slot.parts.push(clean);
 
     // 攒太久了就立刻发，别让用户一直等（他可能还在慢慢补细节，
-    // 但已经过去的 4 秒足够我们先把已知的送进去）
+    // 但已经过去的 4 秒足够先把已知的送进去）
     const waited = Date.now() - slot.firstAt;
     if (waited >= this.maxWaitMs) {
       void this.#fire(roomId);
@@ -125,7 +125,7 @@ export class MergeQueue {
     //   · quietMs：静默窗口（用户说完了）
     //   · 距离 firstAt 满 maxWaitMs：用户一直在敲，但不能再拖了
     //   只设 quietMs 的话，用户每 500ms 敲一下就会把定时器一直往后推，
-    //   永远不投递 —— 这是真事（用户一边想一边写）。
+    //   永远不投递（用户一边想一边写时就会这样）。
     const remainToMax = Math.max(0, this.maxWaitMs - (Date.now() - slot.firstAt));
     const delay = Math.min(this.quietMs, remainToMax);
     slot.timer = setTimeout(() => {
