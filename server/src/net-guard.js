@@ -421,9 +421,9 @@ async function dispatch(url, init, addresses, fetchImpl) {
   if (typeof fetchImpl === 'function') {
     return fetchImpl(target, { ...init, redirect: 'manual' });
   }
-  // 本机 / 局域网 / 短主机名本来就不走代理。以前开着代理时也把它们交给 proxyFetch，
-  // 而那边对这类主机是裸 fetch —— 按域名再解析一次，刚校验过的地址就白钉了，
-  // 第二次解析可以被换成回环（DNS rebinding）。直连一律只连校验时拿到的地址。
+  // 本机 / 局域网 / 短主机名不走代理，直连且只连校验时拿到的地址。
+  // 不能交给 proxyFetch：它对这类主机是裸 fetch，会按域名再解析一次，
+  // 第二次解析可以被换成回环（DNS rebinding）。
   if (!isDirectHost(url.hostname)) {
     const proxy = await currentProxy();
     if (proxy) return proxyFetch(target, { ...init, redirect: 'manual' });

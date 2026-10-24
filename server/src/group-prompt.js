@@ -55,8 +55,7 @@ export const PEER_CLIP_CHARS = 1600;
  *   · 用户说的话 —— 用户是最高权威；
  *   · 部门老大 / 主控说的话 —— 派活和改口径都从这里来；
  *   · 点了它名字（@ 它或 @all）的话 —— 那就是派给它的活。
- * 正文被截断的派活，受派人只能靠猜范围干活（复审实测：2530 字的派活被砍掉 930 字，
- * 要叫的那个人的 @ 恰好在被砍掉的那段里）。
+ * 派活正文被截断，受派人就只能靠猜范围干活；要叫的人的 @ 也可能恰好在被截掉的那段里。
  */
 export function isAddressedToReader(m, { readerId, leadId = null, chiefId = null, members = [] } = {}) {
   if (!m) return false;
