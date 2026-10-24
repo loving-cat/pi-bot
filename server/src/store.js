@@ -432,7 +432,7 @@ export class Store {
     if (d) {
       const t = now();
       // 只是「最近在线」的时间戳：只在内存里更新，每台设备最多每分钟落一次盘。
-      // 以前每个带 token 的请求都 scheduleSave()，把整份 state.json（实测 230KB）重写一遍。
+      // 每个带 token 的请求都会走到这里，每次都 scheduleSave() 就是把整份 state.json 重写一遍。
       const persistedAt = d.lastSeenSavedAt ?? 0;
       d.lastSeenAt = t;
       if (t - persistedAt >= 60_000) {
@@ -1936,7 +1936,7 @@ export class Store {
     if (idx < 0) return false;
     list.splice(idx, 1);
     // 指向这条消息的游标退回上一条。不退的话游标就悬空了：transcriptFor 找不到它，
-    // 会从头读，把最多 30 条已经看过的旧消息当成新任务再喜给 bot。
+    // 会从头读，把最多 30 条已经看过的旧消息当成新任务再喂给 bot。
     const cursors = this.state.rooms[roomId]?.cursors;
     if (cursors) {
       const prevId = idx > 0 ? list[idx - 1].id : null;

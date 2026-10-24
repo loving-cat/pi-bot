@@ -72,8 +72,7 @@ const walk = (d) => {
 walk(process.env.PI_BOT_HOME);
 console.log(`\n落盘总量：${(bytes / 1024 / 1024).toFixed(2)} MB`);
 
-// ---- 脏房间优化验证：改 1 个房间，不该写 20 个文件
-// 以前只是 console.log，永远退出 0 —— 增量落盘退化了也拦不住。现在是断言。
+// ---- 脏房间优化验证：改 1 个房间，不该写 20 个文件（断言，失败退出 1）
 const roomsDir = path.join(process.env.PI_BOT_HOME, 'rooms');
 store.saveNow(); // 先把前面造数据留下的脏房间都写掉
 const stamp = (f) => fs.statSync(path.join(roomsDir, f)).mtimeMs;

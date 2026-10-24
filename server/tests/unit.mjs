@@ -492,7 +492,6 @@ await test('store: 能改用户名，空字符串等于没设（退回默认）'
   assert.equal(store.userName(), '小陈');
   store.updateUserName('');
   // 退回的是配置里的默认名（PI_BOT_USER_NAME 或系统用户名），不是上一次设的「小陈」。
-  // 以前这里写成 assert.equal(x, cond ? x : '') —— 拿 x 跟自己比，永远是绿的。
   const { config } = await import('../src/config.js');
   assert.equal(store.userName(), config.userName, '空值应该退回默认名');
   assert.notEqual(store.userName(), '小陈', '不该还是上次设的名字');

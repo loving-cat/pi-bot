@@ -1,9 +1,9 @@
 /**
- * 复审 P1-5 复核：终止时不能留下永久转圈的空白消息。
+ * 终止时不能留下永久转圈的空白消息。
  *   node tests/abort-placeholder.mjs
  *
- * 复审时（1.1.0）的问题：run() 先建 streaming 消息和 typing，之后才判断 aborting 并 return，
- * 而 busy=true 在那之后才设 —— 消息永远转圈，看门狗也够不着。
+ * run() 会先建 streaming 占位消息和 typing。如果终止检查放在建占位之后、又直接 return，
+ * 消息就永远在转圈，busy 也没置上，看门狗够不着。
  * 这里用假 session 在三个时间点按终止，检查之后房间里没有 status='streaming' 的消息、
  * 会话 busy 被释放、typing 收掉。
  */

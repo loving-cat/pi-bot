@@ -1,9 +1,8 @@
 /**
- * 数据目录迁移与会话路径修复（复审 P1-6）。
+ * 数据目录迁移与会话路径修复。
  *   node tests/data-migration.mjs
  *
- * 复现的是这台开发机上实测到的状态：老版本整目录复制过去，state.json 里的会话文件
- * 仍是旧目录的绝对路径，服务端之后一直往旧目录写，新目录里那份是过期副本。
+ * 重点覆盖：state.json 里的会话文件仍是旧目录的绝对路径、旧目录那份比新目录的副本更新。
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -124,8 +123,7 @@ await test('新目录已有数据：不迁移（只跑一次）', () => {
   assert.ok(!fs.existsSync(path.join(target, 'rooms')));
 });
 
-await test('★ 已经按老办法搬过：指向旧目录、而且旧目录那份更新 → 用更新的覆盖并改路径', () => {
-  // 这台开发机的真实状态
+await test('★ 会话引用指向旧目录、而且旧目录那份更新 → 用更新的覆盖并改路径', () => {
   const { legacy, target } = fresh();
   const old = path.join(legacy, 'sessions', 'a.jsonl');
   const copy = path.join(target, 'sessions', 'a.jsonl');
@@ -227,8 +225,7 @@ await test('要搬的清单覆盖服务端读写的所有顶层数据', () => {
 });
 
 // ---------------------------------------------------------------------------
-// ★ 只有真的起服务端才动数据：单纯 import config 的脚本不能改写用户的 state.json
-// （开发时真踩过：一个只读的诊断脚本 import 了 pairing.js，顺带把真实数据修了一遍）
+// ★ 只有真的起服务端才动数据：单纯 import config 的脚本（诊断、维护）不能改写用户的 state.json
 // ---------------------------------------------------------------------------
 const { execFileSync } = await import('node:child_process');
 const { pathToFileURL } = await import('node:url');
