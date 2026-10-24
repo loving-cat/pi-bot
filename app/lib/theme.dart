@@ -28,10 +28,16 @@ class PB {
   static const bgInput = Color(0xFF1B1B1B);
 
   // ---- 文字
+  // ★ 四级文字是同一墨色（#F2F2F2）按 alpha 叠在深底上。
+  //   最低一档曾经是 0x5C（36%），在 #0E0E0E 上对比度只有 3.07:1 ——
+  //   低于 WCAG AA 对正文的 4.5:1 要求，而它被用在 160+ 处 10–12px 小字上。
+  //   深色界面本来就靠“低对比”做层次，但对比低到读不清就不是层次而是缺陷。
+  //   现在整条梯子一起上调：最低档 5.12:1（达标），且四级之间的亮度差
+  //   （54/26/28）比原来（58/46/46）更均匀 —— 层次没丢，只是整体抬亮。
   static const textPrimary = Color(0xFFF2F2F2);
-  static const textSecondary = Color(0xB8F2F2F2);
-  static const textTertiary = Color(0x8AF2F2F2);
-  static const textQuaternary = Color(0x5CF2F2F2);
+  static const textSecondary = Color(0xBCF2F2F2);
+  static const textTertiary = Color(0xA2F2F2F2);
+  static const textQuaternary = Color(0x86F2F2F2);
 
   // ---- 描边
   static const borderPrimary = Color(0x3DF2F2F2);
@@ -69,6 +75,12 @@ class PB {
   //   Inter 的 x/cap 比参考那套字体高一截（0.750 vs 0.731）——
   //   同一个 font-size 下它的字形实际更大，整页看着"胀"。
   //   统一收 1px 之后，视觉大小和参考基本对齐（这是量出来的，不是感觉）。
+  //
+  //   ★ 但这个换算只对拉丁字母成立：它算的是 x-height / cap-height 的比例，
+  //   而汉字没有这两个度量（汉字是方块字，字身框基本等于 em）。
+  //   所以收 1px 对中文是纯粹变小，不是"对齐" —— 而中文在同样的 px 下
+  //   本来就比拉丁字母难认（笔画多、内部空隙小）。这也是为什么中文 UI
+  //   通常要让正文比同牌的英文版大 1px 左右。
   static const fsXxs = 10.0;
   static const fsXs = 11.0;
   static const fsSm = 12.0;
@@ -76,6 +88,16 @@ class PB {
   static const fsLg = 14.0;
   static const fsXl = 16.0;
   static const fsXxl = 21.0;
+
+  /// 汉字专用的字号修正：正文类字号 +1px，标签类不动。
+  ///
+  /// Windows 上 Flutter 走的是**灰度抗锯齿**（不开 ClearType 次像素渲染，
+  /// 实测渲染结果 R==G==B），小字天然比系统原生控件发虚；再叠上中文笔画密，
+  /// 10–12px 这档就是"糊"。把真正承载阅读的字号抬一档最直接。
+  ///
+  /// 只对正文/标题类生效（它们整行都是中文），不碰图标旁的小标签 ——
+  /// 那些地方中文和数字混排，抬高了会挤。
+  static const cjkScale = 1.0;
 
   /// 工具调用那种小字（10 号）在 125% 缩放下是 **12.5 个物理像素** ——
   /// 半像素字号本来就不锐，中文字形又比拉丁繁复得多，两个凑一起就是"糊"。
@@ -111,9 +133,22 @@ class PB {
   static TextStyle mono(TextStyle base) =>
       base.copyWith(fontFamily: monoFamily, fontFamilyFallback: monoFallback);
 
-  /// Latin 用 Inter，中文回落到系统字体（Inter 没有 CJK 字形）
+  /// Latin 用 Inter，中文用随包分发的 Noto Sans SC。
+  ///
+  /// ★ 两套字体必须**共享同一套字重**，否则一行里的中英文会一格一格错开：
+  ///   以前中文回落系统字体（Windows 雅黑），雅黑只有 Regular / Bold 两档，
+  ///   `w500` 渲染结果和 `w400` 逐像素相同、`w600` 直接跳到 Bold（墨量 1.6 倍），
+  ///   于是“英文 Semibold + 中文粗黑”同时出现在一行里。
+  ///   现在两者都是带 wght 轴的可变字体，w400/500/600 连续可用。
   static const fontFamily = 'Inter';
+
+  /// 中文字体族名（pubspec 里登记的就是这个名字）
+  static const cjkFamily = 'NotoSansSC';
+
   static const fontFallback = <String>[
+    // ★ 自家带的中文字体排在最前：它是随包的、可变字重的，
+    //   系统字体只作为缺字时的最后保底。
+    cjkFamily,
     'Microsoft YaHei UI',
     'Microsoft YaHei',
     'PingFang SC',
@@ -190,12 +225,20 @@ class PB {
     );
 
     /// 统一字距：大标题收紧、正文略放，读起来更"贵"
+    ///
+    /// ★ 这里必须把 fontFamily **和** fontFamilyFallback 一起给。
+    ///   TextStyle 只要显式写了 fontFamily，它就不再继承 ThemeData 上的
+    ///   fontFamilyFallback —— 于是 "Inter" 里找不到的汉字会去问**系统默认
+    ///   字体**（Windows 上是雅黑），随包的 NotoSansSC 根本轮不到。
+    ///   表现就是：样式表里改了中文字体，界面里却一点变化没有。
     TextStyle t(
       double size,
       FontWeight weight, {
       double spacing = 0,
       double height = 1.4,
     }) => TextStyle(
+      fontFamily: fontFamily,
+      fontFamilyFallback: fontFallback,
       fontSize: size,
       fontWeight: weight,
       letterSpacing: spacing,

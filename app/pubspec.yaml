@@ -44,3 +44,11 @@ flutter:
     - family: Inter
       fonts:
         - asset: assets/fonts/Inter.ttf
+    # ★ 中文字体同样只登记一次：NotoSansSC.ttf 带 wght 轴（100..900），
+    #   是一条连续的字重轴，不是两档。登记成单一 asset 让 Flutter 直接走轴，
+    #   写 w400/500/600 才算数（以前回落到的雅黑只有 Regular/Bold：
+    #   w500 和 w400 渲染结果逐像素相同，w600 又直接跳到 Bold）。
+    #   文件是 tools/subset-font.py 生成的子集，不是上游全量，详见该脚本注释。
+    - family: NotoSansSC
+      fonts:
+        - asset: assets/fonts/NotoSansSC.ttf
