@@ -762,3 +762,25 @@ node -e "import('@earendil-works/pi-ai').then(async m=>{...})"
 
 **回归测试**：`server/tests/relay-safety.mjs` —— 真起 relay + 两个 WebSocket，
 断言"没 secret 的第二台被拒、第一台仍 OPEN"和"带对 secret 可以替换"。
+
+---
+
+## 45. 反向代理和服务端在同一台机器上，「本机免 token」等于谁都能进
+
+**症状**：按「nginx + HTTPS + 固定 token」部署到服务器上，公网上不带 token 的请求
+照样能 `PATCH /api/policy` 改配置（实测返回 200）。
+
+**根因**：服务端靠 `req.socket.remoteAddress` 判断「本机」。nginx 用默认的 `proxy_pass`
+转发时，连到服务端的是 nginx 自己，地址就是 127.0.0.1 —— 公网请求被当成了桌面端。
+另一个方向也有问题：如果代理保留原始 Host（`proxy_set_header Host $host;`），
+DNS rebinding 防护只认本机名和局域网 IP，带对 token 的请求也会被拒（403）。
+
+**修法**：
+- 设了 `PI_BOT_TOKEN` 就是服务器模式：`config.trustLocal = false`，本机请求也要带 token
+  （HTTP 和 WS 都是）。`PI_BOT_TRUST_LOCAL=1/0` 可以显式覆盖。
+- `PI_BOT_ALLOWED_HOSTS` 填域名，让代理保留原始 Host 时也能通过 Host 校验。
+- `/health` 返回 `auth: 'local' | 'token'`。服务器模式下不再带房间数、模型名。
+  桌面端据此在连接页提示填 token，而不是拿空 token 一直重连。
+
+**回归测试**：`server/tests/server-mode.mjs`（真起服务端子进程，覆盖 HTTP / WS / Host 白名单），
+`app/test/local_server_token_test.dart`（真实服务端 + 真实 AppState）。

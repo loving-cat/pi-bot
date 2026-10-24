@@ -46,6 +46,33 @@ void main() {
     });
   }
 
+  group('服务器模式（auth 字段）', () {
+    test('auth=token 才算要 token', () {
+      expect(
+        healthRequiresToken(
+          '{"ok":true,"serverName":"pi-bot","version":"1.3.0","auth":"token"}',
+        ),
+        isTrue,
+      );
+      expect(
+        healthRequiresToken(
+          '{"ok":true,"serverName":"pi-bot","version":"1.3.0","auth":"local"}',
+        ),
+        isFalse,
+      );
+    });
+
+    test('旧版服务端没有 auth 字段：按本机免 token 处理', () {
+      expect(healthRequiresToken(_healthy), isFalse);
+    });
+
+    test('损坏或奇怪的响应不算要 token', () {
+      expect(healthRequiresToken('{"ok":'), isFalse);
+      expect(healthRequiresToken('[]'), isFalse);
+      expect(healthRequiresToken('{"auth":true}'), isFalse);
+    });
+  });
+
   group('正文大小上限', () {
     test('合法小响应完整读取', () async {
       final body = await readHealthResponseBody(
@@ -128,6 +155,36 @@ void main() {
         expect(await serverAlive(url()), response.expected);
       });
     }
+
+    test('服务器模式的本机服务端：localServerRequiresToken 为 true', () async {
+      server.listen((request) {
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(
+          '{"ok":true,"serverName":"pi-bot","version":"1.3.0","auth":"token"}',
+        );
+        unawaited(request.response.close());
+      });
+      expect(await localServerRequiresToken(url()), isTrue);
+    });
+
+    test('本机部署的服务端：localServerRequiresToken 为 false', () async {
+      server.listen((request) {
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(
+          '{"ok":true,"serverName":"pi-bot","version":"1.3.0","auth":"local"}',
+        );
+        unawaited(request.response.close());
+      });
+      expect(await localServerRequiresToken(url()), isFalse);
+    });
+
+    test('不是 pi-bot 的服务就算写了 auth=token 也不算', () async {
+      server.listen((request) {
+        request.response.write('{"auth":"token"}');
+        unawaited(request.response.close());
+      });
+      expect(await localServerRequiresToken(url()), isFalse);
+    });
 
     test('响应正文无效 UTF8 时拒绝', () async {
       server.listen((request) {

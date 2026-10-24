@@ -31,6 +31,7 @@ List<String> mergeMemberIds(List<String> current, List<String> added) {
 class AppState extends ChangeNotifier {
   static const _kUrl = 'server_url';
   static const _kToken = 'server_token';
+  static const _kLocalToken = 'local_server_token';
   // 本机服务端的启动配置（开源里每个人环境不同，得能自己指）
   static const _kDataDir = 'server_data_dir';
   static const _kPort = 'server_port';
@@ -142,6 +143,13 @@ class AppState extends ChangeNotifier {
   /// 本机模式：桌面端直连 127.0.0.1，服务端信任 loopback，不需要 token
   bool localMode = false;
 
+  /// 本机服务端开了服务器模式（设了 PI_BOT_TOKEN），本机也要带 token。
+  /// 连接页据此显示「填 token」，而不是拿着空 token 一直重连。
+  bool localNeedsToken = false;
+
+  /// 用户为本机服务端填的 token（服务器模式下才用；和远程配对的 token 分开存）
+  String localToken = '';
+
   /// 本机服务端是不是正在拉起（界面据此显示"正在启动"而不是"连不上"）
   bool serverStarting = false;
 
@@ -209,6 +217,7 @@ class AppState extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     serverUrl = prefs.getString(_kUrl);
     token = prefs.getString(_kToken);
+    localToken = prefs.getString(_kLocalToken) ?? '';
     deviceName = prefs.getString(_kDevice) ?? '我的手机';
     serverDataDir = prefs.getString(_kDataDir) ?? '';
     serverPort = prefs.getInt(_kPort) ?? 8787;
@@ -300,6 +309,8 @@ class AppState extends ChangeNotifier {
         return;
       }
       if (serverRetryPaused) return;
+      // 服务端在跑，只是要 token 而用户还没填：等用户，不要反复重启
+      if (localNeedsToken && localToken.isEmpty) return;
       // _lastSpawnAt 已经在 bootLocalServer 里刷新过，这里只判断退避
       final backoff = Duration(
         seconds: const [0, 4, 8, 15, 30][_spawnFails.clamp(0, 4)],
@@ -364,16 +375,54 @@ class AppState extends ChangeNotifier {
   }
 
   /// 桌面端：直连本机服务端
+  ///
+  /// 服务端一般信任本机（不带 token）；开了服务器模式（设了 PI_BOT_TOKEN）时本机也要带，
+  /// 这时用用户在连接页填的 [localToken]。
   Future<void> connectLocal({String? url}) async {
     localMode = true;
     serverUrl = url ?? localUrl;
-    token = '';
-    api = Api(serverUrl!, '');
+    localNeedsToken = await localServerRequiresToken(serverUrl!);
+    token = localNeedsToken ? localToken : '';
+    api = Api(serverUrl!, token!);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kUrl, serverUrl!);
     await prefs.setString(_kToken, '');
+    if (localNeedsToken && localToken.isEmpty) {
+      // 没 token 就不去撞 401 了：直接停在连接页等用户填
+      serverProblem = localTokenHint;
+      link = LinkState.offline;
+      _notify();
+      return;
+    }
     await refresh();
+    if (localNeedsToken && _lastRefreshStatus == 401) {
+      // token 不对：清掉存下的，回到「填 token」，而不是拿着错的一直重连
+      localToken = '';
+      await prefs.remove(_kLocalToken);
+      serverProblem = localTokenRejected;
+      link = LinkState.offline;
+      _notify();
+      return;
+    }
     connect();
+  }
+
+  /// 连接页上的提示：为什么连不上、去哪里填
+  static const localTokenHint =
+      '本机服务端开了服务器模式（设了 PI_BOT_TOKEN），本机连接也要带 token。\n'
+      '把服务端的 PI_BOT_TOKEN 填在下面。只是自己电脑上用的话，去掉 PI_BOT_TOKEN 重启服务端即可。';
+
+  /// 填的 token 被服务端拒了
+  static const localTokenRejected =
+      'token 不对：服务端拒绝了这个 token。请核对服务端的 PI_BOT_TOKEN 后重新填写。';
+
+  /// 连接页填了本机 token：保存并重连
+  Future<void> setLocalToken(String value) async {
+    localToken = value.trim();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kLocalToken, localToken);
+    serverProblem = null;
+    await connectLocal();
   }
 
   Future<void> pairWithCode(String url, String code, {String? device}) async {
@@ -1024,11 +1073,16 @@ class AppState extends ChangeNotifier {
           ),
         );
       lastError = null;
+      _lastRefreshStatus = 200;
     } catch (err) {
       lastError = '$err';
+      _lastRefreshStatus = err is ApiException ? err.status : null;
     }
     _notify();
   }
+
+  /// 最近一次 /api/state 的结果（只用来判断「本机 token 填错了」）
+  int? _lastRefreshStatus;
 
   /// 设置页用：当前配对码 / 二维码信息 / 已配对设备
   Future<void> loadPairingInfo() async {
