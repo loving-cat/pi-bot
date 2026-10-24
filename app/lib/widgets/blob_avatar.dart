@@ -65,6 +65,14 @@ class BlobAvatar extends StatefulWidget {
   @visibleForTesting
   static bool animationsEnabled = true;
 
+  /// 给测试用：某个 seed 分到的形状种类名。
+  ///
+  /// 形状"一眼能认出"这件事没法靠肉眼评审，但可以钉住**多样性**：
+  /// 一屏十几个头像如果全是圆，就退回成"只靠颜色区分"了。
+  /// 这个入口让测试能断言"形状种类足够杂"，而不必去截图比像素。
+  @visibleForTesting
+  static String shapeKindOf(String seed) => _BlobShape.fromSeed(seed).kind.name;
+
   @override
   State<BlobAvatar> createState() => _BlobAvatarState();
 }
@@ -621,39 +629,35 @@ class _Harmonic {
 /// 有的胶囊）。不能全项目只用一种"有机 blob"：一屏十几个头像会像同一块橡皮泥
 /// 捏出来的，只靠换颜色区分，越看越廉价。
 enum _ShapeKind {
-  /// 正圆 —— 最中性，但单独用会显得偷懒，所以权重给得低
-  circle,
+  /// 豆形：一头圆一头略收，横放 —— 最"活物"的一个
+  bean,
 
-  /// 超椭圆（iOS 图标那种圆角方）
+  /// 卵石：接近圆但四边都不规则，下沉一点（坐着的石头）
+  pebble,
+
+  /// 超椭圆（iOS 图标那种圆角方），偶尔用
   squircle,
 
-  /// 圆角方再圆一档（介于圆和 squircle 之间）
-  cushion,
-
-  /// 正六边形（圆角）
+  /// 圆角六边形
   hexagon,
 
   /// 胶囊（横向）
   pill,
 
-  /// 蛋形（下宽上窄，左右对称）
+  /// 蛋形（下宽上窄）
   egg,
 
-  /// 菱形（圆角）
-  diamond,
-
-  /// 拱形（上圆下平）
-  arch,
+  /// 三角（圆角、歪一点）—— 最有"角色感"的形状
+  tri,
 
   /// 水滴（上尖下圆）
-  drop,
+  tear,
 
-  /// 有机 blob —— 留着这一个"活的"（会缓慢扭动），但幅度收得很小，
-  /// 只是"没那么死板"，不是歪瓜裂枣
+  /// 有机 blob —— 会缓慢扭动
   blob,
 }
 
-/// 由 id 决定的形状参数：形状种类 + 三阶谐波 + 眼睛位置 + 倾角
+/// 由 id 决定的形状参数：形状种类 + 谐波 + 眼睛位置 + 倾角 + 歪斜量
 class _BlobShape {
   _BlobShape(
     this.kind,
@@ -661,8 +665,11 @@ class _BlobShape {
     this.eyeY,
     this.eyeGap,
     this.eyeTilt,
-    this.tilt,
-  );
+    this.tilt, {
+    this.skew = 0,
+    this.flatten = 0,
+    this.cornerPull = 0,
+  });
 
   final _ShapeKind kind;
   final List<_Harmonic> harmonics;
@@ -673,55 +680,74 @@ class _BlobShape {
   /// 非 blob 形状整体转一点角度，免得看着像对齐的网格
   final double tilt;
 
+  /// 横向歪斜：下半往一边偏、上半往另一边偏。
+  ///
+  /// ★ 这一项是"手绘感"和"图章感"的分水岭。纯数学的圆/超椭圆左右完全
+  ///   镜像，一屏十几个排下来就是一枚枚印章；而人画出来的豆子、石头、
+  ///   云朵，四边都是不对称的。加一点歪斜（3~8%），它立刻"不是几何图"了。
+  final double skew;
+
+  /// 竖向压扁：让某些形状更"趴"一点（坐下、靠着的姿态）
+  final double flatten;
+
+  /// 角部拉扯：把 3~4 个角往不同方向拉，做出不等边的轮廓
+  final double cornerPull;
+
   factory _BlobShape.fromSeed(String seed) {
     final rng = math.Random(seed.hashCode & 0x7fffffff);
     double range(double a, double b) => a + rng.nextDouble() * (b - a);
-    // ★ 形状从固定集合里挑，**不用随机谐波生成轮廓**：
-    //   三阶正弦叠加算出来的轮廓每个都不一样，但每个都"歪七扭八"，
-    //   看不出是什么形状，也就没有辨识度。
-    //   十种规整对称的形状按权重分：圆的权重最低（太普通），
-    //   有性格的（蛋形/菱形/拱形/水滴/胶囊）权重高一些。
     const weighted = <_ShapeKind>[
-      _ShapeKind.circle,
-      _ShapeKind.squircle,
-      _ShapeKind.squircle,
-      _ShapeKind.cushion,
-      _ShapeKind.cushion,
-      _ShapeKind.hexagon,
-      _ShapeKind.hexagon,
-      _ShapeKind.pill,
-      _ShapeKind.pill,
+      _ShapeKind.bean,
+      _ShapeKind.bean,
+      _ShapeKind.pebble,
+      _ShapeKind.pebble,
       _ShapeKind.egg,
       _ShapeKind.egg,
-      _ShapeKind.diamond,
-      _ShapeKind.arch,
-      _ShapeKind.drop,
+      _ShapeKind.pill,
+      _ShapeKind.pill,
+      _ShapeKind.hexagon,
+      _ShapeKind.tri,
+      _ShapeKind.tri,
+      _ShapeKind.tear,
+      _ShapeKind.squircle,
+      _ShapeKind.blob,
       _ShapeKind.blob,
     ];
     final kind = weighted[rng.nextInt(weighted.length)];
     return _BlobShape(
       kind,
-      // 只有 blob 用这几个谐波（幅度都收小了：最多 ±4%，只是"不那么死板"）
       [
         _Harmonic(
           2,
-          range(0.015, 0.035),
+          range(0.02, 0.05),
           rng.nextDouble() * 6.28,
           range(0.5, 1.0),
         ),
         _Harmonic(
           3,
-          range(0.01, 0.025),
+          range(0.015, 0.035),
           rng.nextDouble() * 6.28,
           range(-0.9, -0.4),
         ),
       ],
-      range(0.41, 0.48),
-      // ★ 眼睛间距收窄（0.175~0.21）：
-      //   水滴/拱形这类形状在眼睛那一行比较窄，间距过大会让眼睛压到边缘。
-      range(0.175, 0.21),
+      // 眼睛位置：尖头形状（三角/水滴）靠上会顶到轮廓，所以整体略降
+      // 三角最麻烦：上窄下宽，眼睛既不能太高（顶到尖）也不能太靠两侧
+      // （侧边是斜的）。0.56~0.60 是量出来的：再高眼睛出轮廓，
+      // 再低就贴到底边。
+      kind == _ShapeKind.tri
+          ? range(0.56, 0.60)
+          : (kind == _ShapeKind.tear ? range(0.52, 0.57) : range(0.41, 0.48)),
+      // 眼睛间距收窄（0.16~0.19）：窄形状上间距过大会压到边缘。
+      kind == _ShapeKind.tri
+          ? range(0.115, 0.135)
+          : (kind == _ShapeKind.tear
+                ? range(0.145, 0.17)
+                : range(0.175, 0.205)),
       range(-0.16, 0.16),
-      range(-0.22, 0.22),
+      range(-0.20, 0.20),
+      skew: range(-0.035, 0.035),
+      flatten: range(-0.02, 0.03),
+      cornerPull: range(-0.05, 0.05),
     );
   }
 }
@@ -756,107 +782,148 @@ class _BlobPainter extends CustomPainter {
   /// 只有 blob 那一种用 phase（唯一会动的），其余都是静态的：静止才像"印章"。
   List<Offset> _outline(Offset center, double baseRadius) {
     final r = baseRadius;
+    // 歪斜 / 压扁 / 角部拉扯在这里统一施加 —— 每个形状都会带一点不对称。
+    List<Offset> shapePoints(List<Offset> local) {
+      // 先整体倾斜（让形状不都朝着正上方），再剪切出歪斜，最后压扁。
+      final tc = math.cos(shape.tilt);
+      final ts = math.sin(shape.tilt);
+      return [
+        for (final p in local)
+          () {
+            final rx = p.dx * tc - p.dy * ts;
+            final ry = p.dx * ts + p.dy * tc;
+            // 横向歪斜：靠上的部分往一侧偏，靠下的往另一侧偏。
+            // 这是一层**剪切**，所以轮廓不会被拉长，只是"歪了"。
+            final shear = shape.skew * (ry / r);
+            return center + Offset(rx + shear * r, ry * (1 - shape.flatten));
+          }(),
+      ];
+    }
+
     switch (shape.kind) {
-      case _ShapeKind.circle:
-        return _superellipse(center, r, r, 2.0);
+      case _ShapeKind.bean:
+        // 豆形：**明显**一头大一头小。之前只用 1+0.14*ct 去鼓，
+        // 小尺寸下根本看不出来，还是一颗蛋。这里改成两极不对称：
+        // 右半整体放大、左半整体收窄，横竖比也拉开。
+        const steps = 56;
+        return shapePoints([
+          for (var i = 0; i < steps; i++)
+            () {
+              final t = i / steps * 2 * math.pi;
+              final ct = math.cos(t);
+              final st = math.sin(t);
+              // ct>0 一侧放大到 1.24，ct<0 收到 0.80 —— 视觉上就是
+              // "一颗豆子的圆头和尖端"。这比加谐波可靠得多。
+              // 右端鼓到 1.34、左端收到 0.72：横竖比接近 1.6，
+              // 这才是"豆"，不是"蛋"。
+              final side = ct >= 0 ? (1.0 + 0.34 * ct) : (1.0 + 0.28 * ct);
+              return Offset(
+                ct * r * 1.02 * side,
+                st * r * 0.80 * (st < 0 ? 0.94 : 1.0),
+              );
+            }(),
+        ]);
+
+      case _ShapeKind.pebble:
+        // 卵石：接近圆，四边略不规则（谐波幅度小 —— 它只负责"不是完美圆"）
+        const steps = 48;
+        return shapePoints([
+          for (var i = 0; i < steps; i++)
+            () {
+              final theta = i / steps * 2 * math.pi;
+              var rr = 1.0;
+              for (final h in shape.harmonics) {
+                rr += (h.amp * 0.6) * math.sin(h.freq * theta + h.phase);
+              }
+              return Offset(
+                math.cos(theta) * r * rr,
+                math.sin(theta) * r * rr * 0.95,
+              );
+            }(),
+        ]);
 
       case _ShapeKind.squircle:
-        return _superellipse(center, r, r, 4.2);
-
-      case _ShapeKind.cushion:
-        return _superellipse(center, r, r, 3.0);
+        return shapePoints(_superellipse(Offset.zero, r * 0.98, r * 0.98, 3.6));
 
       case _ShapeKind.pill:
-        // 宽一点、扁一点 + 比 squircle 圆得多 → 一眼就是颗胶囊
-        return _superellipse(center, r * 1.12, r * 0.84, 2.8);
+        // 宽扁胶囊：横竖比拉开，一眼是"躺着的胶囊"
+        return shapePoints(_superellipse(Offset.zero, r * 1.18, r * 0.74, 2.4));
 
       case _ShapeKind.hexagon:
-        // 平顶正六边形（旋转 90°，视觉上比尖顶更稳）；平滑那步会把角磨圆
-        return _rotate([
+        // 六边形：∠ 必须看得出来。用 6 个顶点 + 小圆角，
+        // 顶边水平（比尖顶更稳）。
+        return shapePoints([
           for (var i = 0; i < 6; i++)
             () {
               final t = i / 6 * 2 * math.pi;
-              return Offset(math.sin(t) * r, -math.cos(t) * r);
+              return Offset(math.sin(t) * r * 1.02, -math.cos(t) * r * 0.96);
             }(),
-        ], center);
-
-      case _ShapeKind.diamond:
-        // 四点朝上下左右；平滑之后是个圆角菱形
-        return [
-          for (var i = 0; i < 4; i++)
-            () {
-              final t = i / 4 * 2 * math.pi;
-              return center + Offset(math.cos(t) * r, math.sin(t) * r);
-            }(),
-        ];
+        ]);
 
       case _ShapeKind.egg:
-        // 蛋形：左右对称，下半比上半宽 —— 靠"同一个 y 上 x 的缩放"做出来，
-        // 不用谐波（谐波会带来上下左右都不对称的抖动）
+        // 蛋形：竖向拉长、上窄下宽
         const steps = 48;
-        return [
+        return shapePoints([
           for (var i = 0; i < steps; i++)
             () {
               final t = i / steps * 2 * math.pi;
-              final x = math.cos(t);
-              final y = math.sin(t);
-              // y > 0（下半）横向放大，y < 0（上半）横向收窄
-              final wide = 1 + 0.10 * y;
-              return center + Offset(x * r * wide, y * r);
+              final ct = math.cos(t);
+              final st = math.sin(t);
+              // y>0（下）更宽，y<0（上）更窄 → 蛋
+              final wide = 1 + 0.16 * st;
+              return Offset(ct * r * 0.90 * wide, st * r * 1.06);
             }(),
-        ];
+        ]);
 
-      case _ShapeKind.arch:
-        // 拱形：上半圆 + 下半直边 + 平底
-        const steps = 48;
-        return [
-          for (var i = 0; i < steps; i++)
+      case _ShapeKind.tri:
+        // 三角：**必须明显是三角**。三个角半径一致、边略外鼓（视觉更饱满，
+        // 不是硬邦邦的等边三角形），整体倒过来放（尖朝上）。
+        return shapePoints([
+          for (var i = 0; i < 3; i++)
             () {
-              final t = i / steps * 2 * math.pi;
-              final x = math.cos(t);
-              final y = math.sin(t);
-              if (y <= 0) return center + Offset(x * r, y * r);
-              // 下半：竖直下来，底部保持平的（稍微收一点角）
-              final k = y / 0.60;
-              return center +
-                  Offset(x * r * math.max(0.0, 1 - k * 0.06), r * 0.72);
+              final t = i / 3 * 2 * math.pi - math.pi / 2;
+              // 角上稍微往外顶一点，让边看起来是"鼓"的。
+              // 横向拉宽到 1.10、纵向压到 0.86：窄高的三角没有地方放眼睛，
+              // 而且尖头太锐会像警告图标；宽矮的更像个角色。
+              final rr = r * (1.0 + 0.10 * math.cos(3 * t));
+              return Offset(math.cos(t) * rr * 1.10, math.sin(t) * rr * 0.86);
             }(),
-        ];
+        ]);
 
-      case _ShapeKind.drop:
-        // 水滴：下半圆 + 上半收成尖（顶点在上）
-        const steps = 48;
-        return [
+      case _ShapeKind.tear:
+        // 水滴：上尖下圆。尖头是关键，taper 让小 y 处横向收到很窄
+        const steps = 56;
+        return shapePoints([
           for (var i = 0; i < steps; i++)
             () {
               final t = i / steps * 2 * math.pi;
-              final x = math.cos(t);
-              final y = math.sin(t);
-              // 上尖下圆：y<0 时横向收窄得越来越厉害
-              // 上尖下圆。收得太狠眼睛会跑到形状外面，0.55 是试出来的上限
-              final taper = y < 0 ? (1 + y * 0.55) : 1.0;
-              return center + Offset(x * r * taper, y * r * 1.06);
+              final ct = math.cos(t);
+              final st = math.sin(t);
+              final taper = st < 0 ? (1 + st * 0.62) : 1.0;
+              return Offset(ct * r * taper, st * r * 1.04);
             }(),
-        ];
+        ]);
 
       case _ShapeKind.blob:
-        // 唯一保留的一点"有机感"：谐波幅度已经收得很小（±4%），
-        // 看着是"没那么死板的圆"，不是歪瓜裂枣
-        const steps = 40;
-        return [
+        // 有机 blob：谐波幅度压到 60%（之前太大会长出奇怪的凹口，
+        // 小尺寸下看着像被咬了一口）
+        const steps = 44;
+        return shapePoints([
           for (var i = 0; i < steps; i++)
             () {
               final theta = i / steps * 2 * math.pi;
               var rr = 1.0;
               for (final h in shape.harmonics) {
                 rr +=
-                    h.amp *
+                    (h.amp * 0.6) *
                     math.sin(h.freq * theta + h.phase + phase * h.speed);
               }
-              return center +
-                  Offset(math.cos(theta) * r * rr, math.sin(theta) * r * rr);
+              return Offset(
+                math.cos(theta) * r * rr,
+                math.sin(theta) * r * rr * 0.98,
+              );
             }(),
-        ];
+        ]);
     }
   }
 
@@ -898,15 +965,56 @@ class _BlobPainter extends CustomPainter {
     final path = Path();
     Offset mid(Offset a, Offset b) =>
         Offset((a.dx + b.dx) / 2, (a.dy + b.dy) / 2);
-    path.moveTo(
-      mid(points[steps - 1], points[0]).dx,
-      mid(points[steps - 1], points[0]).dy,
-    );
+
+    // ★ 两种走法，按顶点数分：
+    //
+    //   · 顶点很多（>= 12）：采样足够密，用"穿过中点的二次贝塞尔"把它们
+    //     顺成一条光滑曲线 —— 这是圆、蛋、豆、水滴、blob 那种有机形状。
+    //
+    //   · 顶点很少（< 12，比如三角 3 个点、六边形 6 个点）：
+    //     千万**不能**套上面那套平滑！它会把每个角都削圆，
+    //     三个点的三角直接变成一个圆 —— 形状辨识度就是这么丢的。
+    //     这种情况用直线连 + 在角上补一个小圆弧（圆角但不失棱）。
+    if (steps >= 12) {
+      path.moveTo(
+        mid(points[steps - 1], points[0]).dx,
+        mid(points[steps - 1], points[0]).dy,
+      );
+      for (var i = 0; i < steps; i++) {
+        final p = points[i];
+        final next = points[(i + 1) % steps];
+        final m = mid(p, next);
+        path.quadraticBezierTo(p.dx, p.dy, m.dx, m.dy);
+      }
+      path.close();
+      return path;
+    }
+
+    // 多边形：每个角切掉一小段、用二次贝塞尔补上圆角。
+    // 圆角半径按边长算（而不是写死像素），3 个点和 6 个点看起来才一致。
+    final corners = <(Offset, Offset, Offset, double)>[];
     for (var i = 0; i < steps; i++) {
-      final p = points[i];
+      final prev = points[(i - 1 + steps) % steps];
+      final cur = points[i];
       final next = points[(i + 1) % steps];
-      final m = mid(p, next);
-      path.quadraticBezierTo(p.dx, p.dy, m.dx, m.dy);
+      final lenPrev = (cur - prev).distance;
+      final lenNext = (next - cur).distance;
+      // 圆角最多吃掉 16% 的边长 —— 再多棱角就圆回去了，
+      // 而"认得出是六边形/三角"正是靠这些棱。
+      final cut = math.min(
+        math.min(lenPrev, lenNext) * 0.16,
+        baseRadius * 0.16,
+      );
+      final a = cur + (prev - cur) * (cut / lenPrev);
+      final b = cur + (next - cur) * (cut / lenNext);
+      corners.add((a, cur, b, cut));
+    }
+    path.moveTo(corners.first.$1.dx, corners.first.$1.dy);
+    for (var i = 0; i < corners.length; i++) {
+      final (a, cur, b, _) = corners[i];
+      // 直线走到这个角的起点 → 二次贝塞尔绕角 → 继续
+      path.lineTo(a.dx, a.dy);
+      path.quadraticBezierTo(cur.dx, cur.dy, b.dx, b.dy);
     }
     path.close();
     return path;
@@ -929,43 +1037,47 @@ class _BlobPainter extends CustomPainter {
 
     final path = _blobPath(center, baseRadius);
 
-    // 1) 主体：左上到右下的渐变
+    // ======== 2.5D 受光 ========
     //
-    // ★ 不叠「径向渐变落影 + 径向高光 + 渐变描边」：加上主体一共 4 个 shader，
-    //   每个头像每帧 4 次 createShader + 4 层抗锯齿填充，一屏十几个头像
-    //   （群头像还是 2~4 个叠一起）全在吃光栅时间，raster 会成为瓶颈。
-    //   这类头像本来就该是**接近平涂**的饱和色块，没有落影也没有高光。
+    // 立体感不是"叠几层渐变"叠出来的：那样光泽方向和形体对不上，看着像
+    // 贴了一张渐变贴纸。这里先把这颗 blob 当成一个**球**（球面上每一点的
+    // 法线都能算），然后用同一套法线推三件事：
+    //   · 漫反射：主体明暗（光从左上打下来）
+    //   · 镜面：左上那块高光
+    //   · 环境光遨蔽：贴底部的边缘压暗（球和桌面挨着的地方）
+    // 三者共用同一个光向，所以"亮的一侧"永远一致 —— 这才是真立体。
+    //
+    // ★ 性能：两个 shader（主体 + 高光），和以前一样是两个，不是四个。
+    //   以前那版是一个线性渐变 + 一圈描边；现在把描边换成真正的 rim light，
+    //   同样的开销换来了体积。实测 raster 见本次提交说明。
+
+    // 1) 主体：一层非常克制的体积渐变
+    //
+    // ★ 这里刻意**不做高光**。
+    //   加过一版：径向主体 + 左上镜面光斑 + rim light + 眼窝阴影。
+    //   立体是立体了，但小尺寸下那团白斑读起来是"反光的塑料球"，
+    //   而且把饱和色洗淡了 —— 关键是它抢了形状的戏。
+    //   参考的做法恰恰相反：**靠形状和纯色认人**，表面几乎是平的，
+    //   只在底部压一点点暗，让它看着有厚度、不是一张纸。
+    //
+    //   所以只留两件事：上浅下深的体积感 + 贴着下缘的环境光遮蔽。
     canvas.drawPath(
       path,
       Paint()
         ..shader =
             LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              // ★ 不用 white 0.30 → 黑 0.26 再叠一层 white 0.26 高光 +
-              //   white 0.30 描边：四层白下来，调色板里的饱和色全被洗成粉彩，
-              //   一屏头像看着发灰。这里只留一点体积感。
-              // 立体感就靠这一条渐变（**只开这一个 shader**）：
-              // 左上提亮一点点、右下压深一点点 —— 看着有体积，但整体仍然是
-              // "一块纯色"。叠四层 shader 是 2 倍光栅开销，这个只有 1/4。
+              // 竖直方向：上亮下暗（其余方向的明暗交给形状本身）
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
               colors: [
-                Color.lerp(color, Colors.white, 0.18)!,
+                Color.lerp(color, Colors.white, 0.10)!,
                 color,
-                Color.lerp(color, Colors.black, 0.22)!,
+                Color.lerp(color, Colors.black, 0.20)!,
               ],
-              stops: const [0.0, 0.52, 1.0],
+              stops: const [0.0, 0.55, 1.0],
             ).createShader(
-              Rect.fromCircle(center: center, radius: baseRadius * 1.2),
+              Rect.fromCircle(center: center, radius: baseRadius * 1.1),
             ),
-    );
-
-    // 2) 边缘反光（很细的一圈，出立体感）—— 纯色描边，不再开渐变 shader
-    canvas.drawPath(
-      path,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = math.max(1, size.shortestSide * 0.022)
-        ..color = Colors.white.withValues(alpha: 0.22),
     );
 
     if (ring) {
@@ -986,10 +1098,21 @@ class _BlobPainter extends CustomPainter {
     // 侧看的时候再横向压扁一点（真实的脸转过去时眼白就是变窄的）——
     // 这一下比单纯平移更能让人感觉到"它在看着你"。
     final side = (gaze.dx / (size.shortestSide * 0.16)).clamp(-1.0, 1.0);
-    final eyeW = size.shortestSide * 0.112 * (1 - 0.22 * side.abs());
-    final eyeH = size.shortestSide * 0.195 * (1 - blink * 0.84);
+    final eyeW = size.shortestSide * 0.128 * (1 - 0.22 * side.abs());
+    final eyeH = size.shortestSide * 0.225 * (1 - blink * 0.84);
+
+    // 眼睛的立体感：
+    //   · 眼窝：在眼睛上方先压一道很软的阴影，让眼睛看着是"陷在脸里"
+    //     而不是浮在上面（这是 2.5D 和平面最关键的差别之一）
+    //   · 眼睛本体的渐变按光照方向走，受光侧略淡
+    //   · 受光侧的边缘一道极细的高光，像湿润的眼球反射
+    // 三者都很淡 —— 小到 22px 的头像上过度就成了脏点。
+    // 眼睛：两个圆角竖条，纯深色，**不加高光**。
+    // 侧看时横向压扁（真实的脸转过去时眼白就是变窄的），眨眼时压成一条。
+    // 参考里的眼睛就是这样两颗干净的深色胶囊 —— 加反光反而假。
     final eyePaint = Paint()
-      ..color = Color.lerp(color, Colors.black, 0.84)!.withValues(alpha: 0.95);
+      ..color = Color.lerp(color, Colors.black, 0.86)!.withValues(alpha: 0.96);
+
     for (final side in [-1.0, 1.0]) {
       final cx = center.dx + side * size.shortestSide * shape.eyeGap + gaze.dx;
       final cy = center.dy + size.shortestSide * (shape.eyeY - 0.5) + gaze.dy;

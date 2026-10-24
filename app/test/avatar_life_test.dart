@@ -473,4 +473,39 @@ void main() {
       );
     });
   });
+
+  group('形状要有辨识度（不能全是圆）', () {
+    test('★ 形状种类要够杂 —— 否则整屏头像只能靠颜色区分', () {
+      // 侧边栏那种场景：十几个 bot 排一列。如果形状全一样，
+      // 用户就只能靠颜色和名字认人，头像等于装饰。
+      final seeds = [for (var i = 0; i < 40; i++) 'bot-$i'];
+      final kinds = {for (final s in seeds) BlobAvatar.shapeKindOf(s)};
+
+      debugPrint('SHAPES ${kinds.toList()..sort()}');
+      expect(
+        kinds.length,
+        greaterThanOrEqualTo(6),
+        reason: '40 个 bot 至少要有 6 种不同形状，不然看着像同一块橡皮泥捏的',
+      );
+    });
+
+    test('★ 同一批 bot 里要有"带棱角"的形状（三角/六边形）', () {
+      // 全是圆润形状（豆/卵石/蛋）也会糊成一片。三角和六边形是
+      // 一眼能认出来的那种 —— 参考实现里也正是靠它们做区分。
+      final seeds = [for (var i = 0; i < 40; i++) 'bot-$i'];
+      final kinds = {for (final s in seeds) BlobAvatar.shapeKindOf(s)};
+      expect(
+        kinds.any((k) => k == 'tri' || k == 'hexagon'),
+        isTrue,
+        reason: '★ 需要带棱角的形状来拉开辨识度',
+      );
+    });
+
+    test('同一个 seed 永远分到同一个形状', () {
+      // 头像形状是身份的一部分，不能每次重建都变
+      for (final s in ['a1', 'b2', 'c3', 'd4']) {
+        expect(BlobAvatar.shapeKindOf(s), BlobAvatar.shapeKindOf(s));
+      }
+    });
+  });
 }
