@@ -111,7 +111,19 @@ Future<void> showFloatingMenu({
   final overlay = Overlay.maybeOf(context);
   if (overlay == null) return;
 
-  final screen = MediaQuery.sizeOf(context);
+  // ★ 锚点是**窗口全局坐标**，而 Overlay 有自己的坐标系 —— 两者不一定重合。
+  //   `MaterialApp.builder` 在 Navigator 上面加了标题条（见 main.dart），
+  //   Overlay 随之整体下移了一条标题条的高度；把全局坐标直接交给 Positioned，
+  //   菜单就会下移同样的距离。统一换算到 Overlay 的局部坐标，
+  //   两条定位路径（鼠标 / anchorKey）都走这一遍。
+  final overlayBox = overlay.context.findRenderObject() as RenderBox?;
+  final overlayReady =
+      overlayBox != null && overlayBox.attached && overlayBox.hasSize;
+  if (overlayReady) anchor = overlayBox.globalToLocal(anchor);
+
+  // 可视区也用 Overlay 的尺寸：菜单插在 Overlay 里，边界就是它的边界；
+  // MediaQuery 给的是整个窗口高度，比 Overlay 高一截。
+  final screen = overlayReady ? overlayBox.size : MediaQuery.sizeOf(context);
   final spot = menuPlacement(
     anchor: anchor,
     screen: screen,

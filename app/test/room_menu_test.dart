@@ -117,6 +117,55 @@ void main() {
     expect(find.text('取消隐藏'), findsOneWidget);
   });
 
+  // 回归：菜单是**贴着鼠标**弹的，不能被窗口外层的东西再推开一段。
+  //
+  // main.dart 的 MaterialApp.builder 在 Navigator 上面加了一条 38px 的标题条，
+  // 于是 Overlay 自己的坐标系比窗口全局坐标低 38px。右键事件给的是全局坐标
+  // （DragDownDetails.globalPosition），直接交给 Overlay 里的 Positioned 就会
+  // 整体下移一条标题条的高度 —— 表现就是“菜单离鼠标特别远”。
+  testWidgets('标题条在 Navigator 上方时，菜单依然贴着鼠标', (tester) async {
+    tester.view.physicalSize = const Size(1200, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final state = _stateWith([
+      for (var i = 0; i < 8; i++) _room('r$i', '房间$i'),
+    ]);
+    addTearDown(state.dispose);
+
+    await tester.pumpWidget(
+      AppScope(
+        state: state,
+        child: MaterialApp(
+          // 和真实 app 一样的层级：标题条压在 Navigator 上面
+          builder: (context, child) => Column(
+            children: [
+              const SizedBox(height: 38),
+              Expanded(child: child ?? const SizedBox.shrink()),
+            ],
+          ),
+          home: const RoomsScreen(),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    for (final i in [1, 4, 6]) {
+      final at =
+          tester.getRect(find.text('房间$i')).centerLeft + const Offset(30, 0);
+      await tester.tapAt(at, buttons: kSecondaryButton);
+      await tester.pumpAndSettle();
+
+      final first = tester.getRect(find.text('置顶'));
+      // 卡片顶边 = 鼠标下方 gap(10)，文字再往里一点；上限 40 就不会把
+      // 标题条高度（38）叠进去 —— 叠进去时这里会变成 64 左右。
+      expect(first.top - at.dy, lessThan(40), reason: '垂直方向贴鼠标下方，不能被标题条再推下去');
+      expect(first.left - at.dx, lessThan(80), reason: '水平方向贴鼠标左边缘');
+
+      await tester.tapAt(const Offset(1100, 850));
+      await tester.pumpAndSettle();
+    }
+  });
+
   group('menuPlacement：菜单别被顶出可视区', () {
     const screen = Size(1180, 760);
     const anchorMid = Offset(140, 380);
@@ -918,7 +967,9 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
     final state = _stateWith(
-      [Room(id: 'r1', name: '甲', kind: 'dm', botIds: const ['b1'])],
+      [
+        Room(id: 'r1', name: '甲', kind: 'dm', botIds: const ['b1']),
+      ],
       bots: [Bot(id: 'b1', name: '甲')],
     );
     addTearDown(state.dispose);
@@ -957,7 +1008,9 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
     final state = _stateWith(
-      [Room(id: 'r1', name: '甲', kind: 'dm', botIds: const ['b1'])],
+      [
+        Room(id: 'r1', name: '甲', kind: 'dm', botIds: const ['b1']),
+      ],
       bots: [Bot(id: 'b1', name: '甲')],
     );
     addTearDown(state.dispose);
@@ -1000,11 +1053,7 @@ void main() {
         .toList();
     expect(fades, isNotEmpty, reason: '卡片里应该有 FadeTransition');
     final firstOpacity = fades.first.opacity.value;
-    expect(
-      firstOpacity,
-      lessThan(1.0),
-      reason: '★ 第一帧不该是"已经全部到位"（那就是没有动画）',
-    );
+    expect(firstOpacity, lessThan(1.0), reason: '★ 第一帧不该是"已经全部到位"（那就是没有动画）');
 
     await tester.pumpAndSettle();
     expect(find.text('行情看板'), findsOneWidget);
@@ -1034,7 +1083,9 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
     final state = _stateWith(
-      [Room(id: 'r1', name: '甲', kind: 'dm', botIds: const ['b1'])],
+      [
+        Room(id: 'r1', name: '甲', kind: 'dm', botIds: const ['b1']),
+      ],
       bots: [Bot(id: 'b1', name: '甲', model: 'grp1/flash', thinking: 'medium')],
     );
     addTearDown(state.dispose);
@@ -1081,7 +1132,9 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
     final state = _stateWith(
-      [Room(id: 'g1', name: '研发组', kind: 'group', botIds: const ['b1'])],
+      [
+        Room(id: 'g1', name: '研发组', kind: 'group', botIds: const ['b1']),
+      ],
       bots: [
         Bot(id: 'b1', name: '组员甲'),
         Bot(id: 'b2', name: '评分汇总官'),
