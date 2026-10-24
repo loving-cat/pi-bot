@@ -50,7 +50,10 @@ void main() {
     addTearDown(state.dispose);
 
     await tester.pumpWidget(
-      AppScope(state: state, child: const MaterialApp(home: HomeShell())),
+      AppScope(
+        state: state,
+        child: const MaterialApp(home: HomeShell()),
+      ),
     );
     await tester.pump();
 
@@ -73,7 +76,10 @@ void main() {
     addTearDown(state.dispose);
 
     await tester.pumpWidget(
-      AppScope(state: state, child: const MaterialApp(home: HomeShell())),
+      AppScope(
+        state: state,
+        child: const MaterialApp(home: HomeShell()),
+      ),
     );
     await tester.pump();
 
@@ -98,14 +104,19 @@ void main() {
     final state = _stateWith([_room('r1', '甲'), _room('r2', '乙')]);
     addTearDown(state.dispose);
     await tester.pumpWidget(
-      AppScope(state: state, child: const MaterialApp(home: HomeShell())),
+      AppScope(
+        state: state,
+        child: const MaterialApp(home: HomeShell()),
+      ),
     );
     await tester.pump();
 
     // 抓住左边那条分隔条，往右拖 300px（想把它拖到 480 的上限）
     final handle = find
         .byWidgetPredicate(
-          (w) => w is MouseRegion && w.cursor == SystemMouseCursors.resizeLeftRight,
+          (w) =>
+              w is MouseRegion &&
+              w.cursor == SystemMouseCursors.resizeLeftRight,
         )
         .first;
     await tester.drag(handle, const Offset(300, 0));
@@ -151,9 +162,12 @@ void main() {
     AvatarLife.pointer.value = null;
     addTearDown(() => AvatarLife.pointer.value = null);
 
-    final state = _stateWith([
-      Room(id: 'r1', name: '甲', kind: 'dm', botIds: const ['b1']),
-    ], bots: [Bot(id: 'b1', name: '甲')]);
+    final state = _stateWith(
+      [
+        Room(id: 'r1', name: '甲', kind: 'dm', botIds: const ['b1']),
+      ],
+      bots: [Bot(id: 'b1', name: '甲')],
+    );
     addTearDown(state.dispose);
     await tester.pumpWidget(
       AppScope(
@@ -190,10 +204,17 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    expect(
-      gazeOf().distance,
-      greaterThan(3),
-      reason: '★ 进到行上就该立刻看着鼠标，不该"再动一下才跟"',
-    );
+    // ★ 这里验的是"**有没有开始跟随**"，不是"一帧就到位"。
+    //   视线现在是缓动转过去的（见 advanceGaze），一帧只走一小段；
+    //   要区分的是"进到行上就触发"和"必须再动一下鼠标才触发"——
+    //   后者才是这个用例要防的 bug，它会让偏移一直停在 0。
+    final firstFrame = gazeOf().distance;
+    expect(firstFrame, greaterThan(0), reason: '★ 进到行上就该开始看着鼠标，不该"再动一下才跟"');
+
+    // 给它时间把眼睛转过去，最终要到位
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(gazeOf().distance, greaterThan(3), reason: '转完之后要达到原来的跟随幅度');
   });
 }

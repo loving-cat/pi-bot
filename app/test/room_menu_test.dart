@@ -629,11 +629,18 @@ void main() {
     await tester.pump();
     await tester.pump();
 
+    // 视线是缓动转过去的，一帧走不完；这里要区分的是"进到胶囊就触发"
+    // 和"必须再动一下鼠标才触发"（后者会让偏移一直停在 0）。
     expect(
       gazeOf().distance,
-      greaterThan(3),
-      reason: '★ 鼠标进到胶囊里（哪怕落在名字上）头像就该跟随',
+      greaterThan(0),
+      reason: '★ 鼠标进到胶囊里（哪怕落在名字上）头像就该开始跟随',
     );
+
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(gazeOf().distance, greaterThan(3), reason: '转完之后要达到原来的跟随幅度');
   });
 
   test('把新成员接在名单后面：去重、不乱序', () {

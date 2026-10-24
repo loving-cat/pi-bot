@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/material.dart';
 
 import '../theme.dart';
@@ -166,9 +167,30 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
   /// 这里只让 CustomPaint 重绘。
   final ValueNotifier<Offset> _gaze = ValueNotifier(Offset.zero);
 
+  /// 视线**要去的**位置。和 _gaze（当前显示的位置）分开：
+  /// 两者之间靠 [_gazeTicker] 逐帧插值，眼睛才是“看过去”而不是“瞬移”。
+  Offset _gazeTarget = Offset.zero;
+
+  /// 驱动视线缓动的 ticker。只在“还没到站”的时候转 ——
+  /// 静止时停掉，不烧光栅。
+  Ticker? _gazeTicker;
+  Duration _lastGazeTick = Duration.zero;
+
+  /// 没被盯着的时候，自己在动的小动作。
+  Timer? _ambientTimer;
+
   bool _awake = false;
 
   bool get _alive => widget.animate && BlobAvatar.animationsEnabled;
+
+  /// 要不要能发出“自发小动作”：
+  ///   · 干活中的头像**总是**要 —— 它就该显得在做事，与 animate 无关
+  ///     （侧边栏的房间行是 animate:false，但那里恰恰最需要露出工作状态）
+  ///   · 其它的只在“醒着”时才有（聊天头部那颗）；侧边栏那些静止的
+  ///     就保持静止 —— 一屏几十个一起动，光栅线程直接满载
+  bool get _ambientAllowed =>
+      BlobAvatar.animationsEnabled &&
+      (widget.mood == AvatarMood.busy || (_alive && _awake));
 
   @override
   void initState() {
@@ -177,9 +199,20 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
     //   不能每个头像都订阅全局指针：侧边栏一列十几个，鼠标一动它们全部
     //   重绘，快速划过时会明显发卡。
     //   同一时刻最多只有一个头像在跟随，成本几乎为零。
-    if (!_alive) return;
 
+    // ★ _rng 不能放在下面的 _alive 判断之后。
+    //   animate:false 的头像（侧边栏那一列）不需要呼吸/眨眼，但**仍需**
+    //   自己有随机源：干活中的头像靠它做自发小动作（见 _doAmbient）。
+    //   以前这两件事被同一个 return 绑在一起，结果就是
+    //   “侧边栏里的头像永远看不出谁在干活”。
     _rng = math.Random(widget.seed.hashCode);
+
+    if (!_alive) {
+      // 不呼吸的头像：直接排一下自发小动作（干活中的才有，见 _ambientAllowed）
+      _syncAmbient();
+      return;
+    }
+
     _wobble = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 11),
@@ -205,6 +238,7 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
       _wobble?.repeat();
       _scheduleBlink();
     }
+    _syncAmbient();
     _settleTimer?.cancel();
     // 干活中的不睡：它本来就该显得"在动"
     if (widget.mood == AvatarMood.busy) return;
@@ -217,6 +251,7 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
     _blinkTimer?.cancel();
     _blink?.value = 0;
     _awake = false;
+    _syncAmbient();
   }
 
   void _scheduleBlink() {
@@ -237,16 +272,66 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
   void _followPointer() {
     final p = AvatarLife.pointer.value;
     if (!mounted || !BlobAvatar.animationsEnabled || p == null) return;
+    // ★ pointer 是 null 时**不能就return 了事**：
+    //   指针位置是由全局 watchPointer 写的，而“鼠标移进来停住”只有
+    //   进入那一瞬间的 onEnter（见 AvatarLife.watchPointer）。
+    //   _startFollow 里已经挂上了 pointer 监听，所以下一次指针变动
+    //   会再调到这里 —— 但前提是 hover 本身不能因为拿不到坐标就失效。
+    //   所以下面每次都按**当前**坐标重算，不做“已跟过就不再算”。
     final box = context.findRenderObject() as RenderBox?;
     if (box == null || !box.hasSize) return;
-    final next = eyeOffsetToward(
-      avatarCenter: box.localToGlobal(box.size.center(Offset.zero)),
-      pointer: p,
-      size: widget.size,
+    _aimGaze(
+      eyeOffsetToward(
+        avatarCenter: box.localToGlobal(box.size.center(Offset.zero)),
+        pointer: p,
+        size: widget.size,
+      ),
     );
-    if ((next - _gaze.value).distance < 0.2) return;
-    _gaze.value = next;
     _wake();
+  }
+
+  /// 定下视线目标，交给缓动去追。
+  ///
+  /// ★ 以前是直接把新值塞给 _gaze —— 鼠标一动眼睛就"瞬移"一帧，
+  ///   离开跟随区时又是硬回 Offset.zero。看起来就是"啪"地跳一下。
+  ///   真实的眼睛有个转动过程，哪怕只有 100ms，感觉也完全不同。
+  void _aimGaze(Offset next) {
+    // TEMP-DEBUG
+    if ((next - _gazeTarget).distance < 0.2) return;
+    _gazeTarget = next;
+    _startGazeTicker();
+  }
+
+  void _startGazeTicker() {
+    if (_gazeTicker?.isActive ?? false) return;
+    if (!mounted) return;
+    _lastGazeTick = Duration.zero;
+    // 用单例 ticker，反复起停（每次鼠标移动都跑一遍）—— 不新建对象。
+    // vsync 来自 TickerProviderStateMixin；不能用 SingleTickerProviderStateMixin，
+    // 那个只能 createTicker 一次，而 wobble/blink/poke 已经占着这个混入的可复用处。
+    (_gazeTicker ??= createTicker(_onGazeTick)).start();
+  }
+
+  /// 逐帧把当前视线往目标推。
+  void _onGazeTick(Duration elapsed) {
+    final dt = _lastGazeTick == Duration.zero
+        ? 1 / 60
+        : (elapsed - _lastGazeTick).inMicroseconds / 1e6;
+    _lastGazeTick = elapsed;
+    if (!mounted) return;
+    final step = advanceGaze(
+      current: _gaze.value,
+      target: _gazeTarget,
+      dtSeconds: dt,
+      rate: AvatarLife.gazeFollowRate,
+    );
+    _gaze.value = step.value;
+
+    if (step.arrived) {
+      // 到站：停 ticker。不停的话每帧都在重绘一个静止的头像。
+      _gazeTicker?.stop();
+      _gazeTicker = null;
+    }
   }
 
   /// 鼠标进到头像自己这几十像素里
@@ -279,13 +364,20 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
     //   "只有头像内部才跟随"。
     _followPointer();
     _wake(); // 顺便眨个眼/动一下，像注意到你了
+    // ★ 用户开始盯它了，就把“自发小动作”停掉 ——
+    //   两边都在写视线目标会互相抢，表现为眼睛抽搽。
+    _syncAmbient();
   }
 
   void _stopFollow() {
     if (!_following) return;
     AvatarLife.pointer.removeListener(_followPointer);
     _following = false;
-    if (_gaze.value != Offset.zero) _gaze.value = Offset.zero;
+    // ★ 视线回正也走缓动（_aimGaze(Offset.zero)），不直接置零。
+    //   鼠标离开时眼睛"慢慢看回正前方"，而不是啪一下弹回去。
+    _aimGaze(Offset.zero);
+    // 回到自己的小动作（鼠标在时小动作会暂停，避免和跟随抢眼睛）
+    _syncAmbient();
   }
 
   /// 本头像所在的这块区域（会话行 / 胶囊 / 成员行…）有没有被悬停。
@@ -319,7 +411,7 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
     // 依赖的 AvatarHoverScope 变化会走到这里
     _scopeHovered =
         context.dependOnInheritedWidgetOfExactType<_AvatarHover>()?.hovered ??
-            false;
+        false;
     _syncFollow();
   }
 
@@ -328,6 +420,12 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
     super.didUpdateWidget(old);
     // 显式 hovered 的变化（区域悬停的变化走 didChangeDependencies）
     if (widget.hovered != old.hovered) _syncFollow();
+    // ★ 忙/闲切换要重排小动作：干活中动得秘，而且侧边栏那行是 animate:false，
+    //   开工/停工发生时不会走 _wake，不在这里接一下，状态就永远变不了。
+    if (widget.mood != old.mood) {
+      _syncAmbient();
+      if (widget.mood == AvatarMood.busy) _wake();
+    }
   }
 
   void _onPoke() {
@@ -336,12 +434,71 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
     _poke!.forward(from: 0).then((_) => _poke!.reverse());
   }
 
+  // ---- 自发小动作（鼠标没盯着它的时候）
+
+  /// 排下一次小动作。
+  ///
+  /// "活"不等于一直在动：真正让人觉得活的是**偶尔**有点小动作，
+  /// 而且这个动作要能表达它的状态。所以这里按 mood 分两套：
+  ///   · 干活中 → 视线往侧面扫一下又回来（像在看另一块面板 / 在查资料）
+  ///   · 闲着   → 眼睛歪一下又回来（东张西望）
+  /// 不引入新的绘制状态，只改视线的目标 —— 代价最低，效果已够。
+  void _syncAmbient() {
+    _ambientTimer?.cancel();
+    _ambientTimer = null;
+    if (!_ambientAllowed) return;
+    _scheduleAmbient();
+  }
+
+  void _scheduleAmbient() {
+    if (!mounted || !_ambientAllowed) return;
+    // 现在正被盯着看 —— 不要抢眼睛（用户要看的是"它在看我"）
+    if (_following) return;
+    final rng = _rng;
+    if (rng == null) return;
+    // 干活中的动得秘一些（它正在忙），闲着的懒一些
+    final base = widget.mood == AvatarMood.busy ? 1400 : 2600;
+    final jitter = rng.nextInt(widget.mood == AvatarMood.busy ? 1600 : 4200);
+    _ambientTimer = Timer(Duration(milliseconds: base + jitter), _doAmbient);
+  }
+
+  void _doAmbient() {
+    if (!mounted || !_ambientAllowed || _following) return;
+    final rng = _rng;
+    if (rng == null) return;
+
+    // 上限和 eyeOffsetToward 一致（0.16*size）：再大窄形状会把眼睛顶到轮廓上
+    final reach = widget.size * 0.16;
+    final Offset target;
+    if (widget.mood == AvatarMood.busy) {
+      // 干活中：往两侧扫（“在看别的面板”），幅度大一点
+      final dir = rng.nextBool() ? 1.0 : -1.0;
+      target = Offset(dir * reach * 0.85, -reach * 0.35);
+    } else {
+      // 闲着：小幅度东张西望 + 一点点上下
+      target = Offset(
+        (rng.nextDouble() * 2 - 1) * reach * 0.55,
+        (rng.nextDouble() * 2 - 1) * reach * 0.3,
+      );
+    }
+    _aimGaze(target);
+    // 看一眼再回来，然后排下一次
+    final holdMs = widget.mood == AvatarMood.busy ? 900 : 1200;
+    _ambientTimer = Timer(Duration(milliseconds: holdMs), () {
+      if (!mounted || !_ambientAllowed || _following) return;
+      _aimGaze(Offset.zero);
+      _scheduleAmbient();
+    });
+  }
+
   @override
   void dispose() {
     // 没注册过也安全（removeListener 对未注册的是 no-op）
     AvatarLife.pointer.removeListener(_followPointer);
     _blinkTimer?.cancel();
     _settleTimer?.cancel();
+    _ambientTimer?.cancel();
+    _gazeTicker?.dispose();
     _gaze.dispose();
     _wobble?.dispose();
     _blink?.dispose();

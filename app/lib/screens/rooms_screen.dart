@@ -7,6 +7,7 @@ import '../scope.dart';
 import '../text_utils.dart';
 import '../theme.dart';
 import '../widgets/toast.dart';
+import '../widgets/avatar_life.dart';
 import '../widgets/blob_avatar.dart';
 import '../widgets/floating_menu.dart';
 import '../widgets/skeleton.dart';
@@ -786,6 +787,12 @@ class _RoomRowState extends State<_RoomRow> {
                                 ?.emoji,
                             size: 46,
                             animate: false,
+                            // ★ 聊天头部一直传了 mood，侧边栏没传 —— 于是"哪个群/同事
+                            //   正在干活"这个状态在列表里完全看不到，要在所有行里
+                            //   长得一模一样。busy 从 state.typing 拿（和预览行的"正在干活…"同源）。
+                            //   animate:false 不影响小动作：干活中的头像不靠呼吸也会自己动
+                            //   （见 BlobAvatar._ambientAllowed）。
+                            mood: busy ? AvatarMood.busy : AvatarMood.idle,
                             // 整行被指到（悬停/按下）就让它跟着鼠标看 ——
                             // 用户的心智是"我进到这条会话上，它就该看着我"，
                             // 而不是"鼠标必须精确压在头像那 46px 里"。
@@ -953,7 +960,8 @@ class _RoomRowState extends State<_RoomRow> {
     toast(context, err ?? '已存成模板「$name」—— 以后可以让主控照它开新部门');
   }
 
-  Future<void> _roomMenu(BuildContext context, Room room, Offset at) async {    final state = widget.state;
+  Future<void> _roomMenu(BuildContext context, Room room, Offset at) async {
+    final state = widget.state;
     final bot = state.botById(
       room.botIds.isNotEmpty ? room.botIds.first : null,
     );

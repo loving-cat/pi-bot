@@ -36,11 +36,7 @@ void main() {
 
     test('鼠标正好在头像中心 → 视线回正（不能抖动）', () {
       expect(
-        eyeOffsetToward(
-          avatarCenter: center,
-          pointer: center,
-          size: size,
-        ),
+        eyeOffsetToward(avatarCenter: center, pointer: center, size: size),
         Offset.zero,
       );
     });
@@ -220,10 +216,261 @@ void main() {
       ),
     );
     await tester.pump();
-    AvatarLife.pointer.value = tester.getCenter(find.byType(BlobAvatar)) +
-        const Offset(300, 0);
+    AvatarLife.pointer.value =
+        tester.getCenter(find.byType(BlobAvatar)) + const Offset(300, 0);
     await tester.pump();
     expect(tester.takeException(), isNull);
     AvatarLife.pointer.value = null;
+  });
+
+  group('advanceGaze：视线是"转过去"的，不是"瞬移"', () {
+    const rate = AvatarLife.gazeFollowRate;
+
+    test('★ 一步走不完：不能一帧就到站（否则白做缓动）', () {
+      final r = advanceGaze(
+        current: Offset.zero,
+        target: const Offset(10, 0),
+        dtSeconds: 1 / 60,
+        rate: rate,
+      );
+      expect(r.arrived, isFalse);
+      expect(r.value.dx, greaterThan(0), reason: '要往目标走');
+      expect(r.value.dx, lessThan(10), reason: '★ 一帧就走完 = 瞬移');
+    });
+
+    test('★ 约 100ms 走完八成（跟真实眼球扫视同量级）', () {
+      var v = Offset.zero;
+      const target = Offset(10, 0);
+      for (var i = 0; i < 6; i++) {
+        v = advanceGaze(
+          current: v,
+          target: target,
+          dtSeconds: 1 / 60,
+          rate: rate,
+        ).value;
+      }
+      expect(v.dx / 10, greaterThan(0.7), reason: '100ms 后要走过大半，不能慢吞吞');
+      expect(v.dx / 10, lessThan(1.0), reason: '100ms 也不该完全到站');
+    });
+
+    test('单调逼近目标，不冲过头', () {
+      var v = Offset.zero;
+      const target = Offset(0, -8);
+      var last = 0.0;
+      for (var i = 0; i < 30; i++) {
+        v = advanceGaze(
+          current: v,
+          target: target,
+          dtSeconds: 1 / 60,
+          rate: rate,
+        ).value;
+        expect(v.dy, lessThanOrEqualTo(0), reason: '方向不能反');
+        expect(v.dy.abs(), greaterThanOrEqualTo(last), reason: '不能往回退');
+        last = v.dy.abs();
+      }
+    });
+
+    test('到站后贴齐目标，并报告 arrived（好让 ticker 停下）', () {
+      final r = advanceGaze(
+        current: const Offset(9.9, 0),
+        target: const Offset(10, 0),
+        dtSeconds: 1 / 60,
+        rate: rate,
+      );
+      expect(r.arrived, isTrue);
+      expect(r.value, const Offset(10, 0), reason: '要贴齐，不能留半像素');
+    });
+
+    test('★ 大 dt（窗口卡顿/切回前台）也不会算出荒唐的值', () {
+      final r = advanceGaze(
+        current: Offset.zero,
+        target: const Offset(10, 0),
+        dtSeconds: 5, // 卡了 5 秒
+        rate: rate,
+      );
+      expect(r.value.dx, lessThanOrEqualTo(10.0001), reason: '不能冲过头');
+    });
+  });
+
+  group('组件行为：离开缓慢回正 / 没盯着时有小动作', () {
+    /// 读当前视线偏移（从 CustomPaint 的 painter 上拿，不用截图）
+    Offset gazeOf(WidgetTester tester) {
+      final paint = tester.widget<CustomPaint>(
+        find.descendant(
+          of: find.byType(BlobAvatar),
+          matching: find.byType(CustomPaint),
+        ),
+      );
+      return (paint.painter as dynamic).gaze as Offset;
+    }
+
+    setUp(() => AvatarLife.pointer.value = null);
+    tearDown(() => AvatarLife.pointer.value = null);
+
+    testWidgets('★ 鼠标离开后，眼睛不是啪一下回正，而是分几帧走回去', (tester) async {
+      BlobAvatar.animationsEnabled = true;
+      addTearDown(() => BlobAvatar.animationsEnabled = true);
+
+      // 用 hovered 显式驱动（就是会话行那条路），不跟 MouseRegion 的 enter 事件较劲
+      Widget build(bool hovered) => MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: BlobAvatar(
+              seed: 'gaze-测试',
+              color: Colors.blue,
+              hovered: hovered,
+            ),
+          ),
+        ),
+      );
+
+      await tester.pumpWidget(build(true));
+      await tester.pump();
+      final center = tester.getCenter(find.byType(BlobAvatar));
+      AvatarLife.pointer.value = center + const Offset(200, 0);
+      await tester.pump();
+      for (var i = 0; i < 20; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      final looking = gazeOf(tester);
+      expect(looking.distance, greaterThan(1), reason: '应该已经在看鼠标了');
+
+      // 鼠标离开：目标变成 0，但要花时间
+      AvatarLife.pointer.value = null;
+      await tester.pumpWidget(build(false));
+      await tester.pump(const Duration(milliseconds: 16));
+
+      final afterOneFrame = gazeOf(tester);
+      expect(
+        afterOneFrame.distance,
+        greaterThan(0),
+        reason: '★ 一帧就归零 = 还是瞬移，缓动没生效',
+      );
+      expect(
+        afterOneFrame.distance,
+        lessThan(looking.distance),
+        reason: '但要开始往回走',
+      );
+
+      for (var i = 0; i < 40; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      expect(gazeOf(tester).distance, lessThan(0.5), reason: '最终要回正');
+    });
+
+    testWidgets('★ 干活中的头像（animate:false）也会自己动 —— 侧边栏要看得出谁在忙', (tester) async {
+      BlobAvatar.animationsEnabled = true;
+      addTearDown(() => BlobAvatar.animationsEnabled = true);
+      AvatarLife.pointer.value = null;
+
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: BlobAvatar(
+                seed: 'busy-测试',
+                color: Colors.orange,
+                animate: false, // 侧边栏的房间行就是这样
+                mood: AvatarMood.busy,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      // ★ busy 的 gaze 基线里含 busyLift（"抬眼想事情"的固定偏移），
+      //   所以不能拿它跟 0 比 —— 要比较的是**相对基线有没有再动**。
+      final baseline = gazeOf(tester);
+
+      var moved = false;
+      for (var i = 0; i < 60; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+        if ((gazeOf(tester) - baseline).distance > 0.8) {
+          moved = true;
+          break;
+        }
+      }
+      expect(moved, isTrue, reason: '★ 干活中的头像该有自发小动作（视线挪开一下），否则列表里看不出谁在忙');
+    });
+
+    testWidgets('闲着的静态头像不该自己动（一屏几十个一起动会卡）', (tester) async {
+      BlobAvatar.animationsEnabled = true;
+      addTearDown(() => BlobAvatar.animationsEnabled = true);
+      AvatarLife.pointer.value = null;
+
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: BlobAvatar(
+                seed: 'idle-测试',
+                color: Colors.teal,
+                animate: false,
+                mood: AvatarMood.idle,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      for (var i = 0; i < 40; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(gazeOf(tester).distance, lessThan(0.5), reason: '闲着的静态头像保持静止');
+    });
+
+    testWidgets('★ 先 hover、之后指针才有值：眼睛也要跟上去', (tester) async {
+      // 真机上就是这个顺序：onEnter 那一刻 AvatarLife.pointer 可能还是 null
+      // （鼠标刚进窗口/刚移进这一行、onHover 还没发）。如果 _startFollow
+      // 那一次算不出偏移就永久放弃，眼睛就一直是呆的 —— 这正是"看起来
+      // 跟随功能坏了"的原因。
+      BlobAvatar.animationsEnabled = true;
+      addTearDown(() => BlobAvatar.animationsEnabled = true);
+      AvatarLife.pointer.value = null;
+
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: BlobAvatar(seed: 'late-测试', color: Colors.purple),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      // hover 先发生（此时没有指针位置）
+      final box = tester.widget<BlobAvatar>(find.byType(BlobAvatar));
+      expect(box.hovered, isFalse);
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: BlobAvatar(
+                seed: 'late-测试',
+                color: Colors.purple,
+                hovered: true, // ← 开始跟随，但 pointer 还是 null
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      // 指针位置随后才到
+      final center = tester.getCenter(find.byType(BlobAvatar));
+      AvatarLife.pointer.value = center + const Offset(150, 0);
+      await tester.pump();
+      for (var i = 0; i < 20; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+
+      expect(
+        gazeOf(tester).distance,
+        greaterThan(1),
+        reason: '★ 指针晚到也要跟上，不能一直发呆',
+      );
+    });
   });
 }
