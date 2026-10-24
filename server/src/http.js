@@ -91,8 +91,12 @@ function extractToken(req, url) {
  * PC 端 App 就跑在这台机器上，它就是宿主，不应该还要配对。
  * 所以 loopback 来的请求直接信任（本机用户就是主人）。
  * 远程设备（手机）仍然必须带 token。
+ *
+ * 服务器部署时不信任本机（config.trustLocal = false）：反向代理转发过来的
+ * 公网请求在这里看也是回环地址。
  */
 export function isLoopback(req) {
+  if (!config.trustLocal) return false;
   // 中转进来的请求物理上也是回环，但代表远程设备，不能当主人
   if (req.headers?.['x-pi-relay']) return false;
   const raw = req.socket?.remoteAddress ?? '';
@@ -155,6 +159,7 @@ export function hostAllowed(hostHeader) {
   const lower = name.toLowerCase();
   if (lower === '127.0.0.1' || lower === 'localhost' || lower === '::1') return true;
   if (config.hostname && lower === String(config.hostname).toLowerCase()) return true;
+  if (config.allowedHosts?.includes(lower)) return true;
   return lanAddresses().some((a) => String(a.address).toLowerCase() === lower);
 }
 
@@ -177,13 +182,18 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
     try {
       // ---------- 公开 ----------
       if (pathname === '/health') {
+        // 服务器模式下 /health 对公网公开（探活要用），只给身份和就绪状态；
+        // 房间数、模型名这些只给本机部署（桌面端启动页要显示）。
         return send(res, 200, {
           ok: true,
           serverName: config.serverName,
           version: VERSION,
-          stats: store.stats(),
-          model: runner.modelLabel(),
-          note: runner.initNote,
+          // 只说「本机要不要 token」，不带 token 本身：桌面端据此提示去设置里填 token，
+          // 而不是拿着空 token 一直重连。
+          auth: config.trustLocal ? 'local' : 'token',
+          ...(config.trustLocal
+            ? { stats: store.stats(), model: runner.modelLabel(), note: runner.initNote }
+            : {}),
         });
       }
 
@@ -233,7 +243,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         return send(res, 200, {
           // 不带 token：撤销用 id，客户端拿不到别人的凭证
           devices: store.listDevicesPublic(),
-          localTrusted: true,
+          localTrusted: config.trustLocal,
         });
       }
 

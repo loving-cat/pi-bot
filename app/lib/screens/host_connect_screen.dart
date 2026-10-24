@@ -25,6 +25,8 @@ class HostConnectScreen extends StatefulWidget {
 class _HostConnectScreenState extends State<HostConnectScreen> {
   Timer? _ticker;
   bool _retrying = false;
+  final _tokenController = TextEditingController();
+  bool _savingToken = false;
 
   @override
   void initState() {
@@ -34,6 +36,8 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
     _ticker = Timer.periodic(const Duration(seconds: 3), (_) async {
       final state = AppScope.read(context);
       if (state.link == LinkState.online) return;
+      // 服务端要 token 而用户还没填：等用户，不重试
+      if (state.localNeedsToken && state.localToken.isEmpty) return;
       if (_retrying || state.serverStarting || state.serverRetryPaused) return;
       _retrying = true;
       try {
@@ -47,7 +51,19 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
   @override
   void dispose() {
     _ticker?.cancel();
+    _tokenController.dispose();
     super.dispose();
+  }
+
+  Future<void> _saveToken() async {
+    final value = _tokenController.text.trim();
+    if (value.isEmpty || _savingToken) return;
+    setState(() => _savingToken = true);
+    try {
+      await AppScope.read(context).setLocalToken(value);
+    } finally {
+      if (mounted) setState(() => _savingToken = false);
+    }
   }
 
   @override
@@ -86,6 +102,8 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
                         ? '连上了'
                         : starting
                         ? '正在启动本机服务端…（第 $attempts 次）'
+                        : state.localNeedsToken && state.localToken.isEmpty
+                        ? '需要服务端 token'
                         : problem != null
                         ? '服务端没起来'
                         : '正在连接本机服务端…',
@@ -138,6 +156,24 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
                           height: 1.6,
                         ),
                       ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  if (state.localNeedsToken) ...[
+                    TextField(
+                      controller: _tokenController,
+                      obscureText: true,
+                      enabled: !_savingToken,
+                      onSubmitted: (_) => _saveToken(),
+                      decoration: const InputDecoration(
+                        labelText: '服务端 token（PI_BOT_TOKEN）',
+                        isDense: true,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    FilledButton(
+                      onPressed: _savingToken ? null : _saveToken,
+                      child: Text(_savingToken ? '正在连接…' : '连接'),
                     ),
                     const SizedBox(height: 12),
                   ],

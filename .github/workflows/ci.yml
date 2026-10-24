@@ -67,6 +67,16 @@ jobs:
         with:
           channel: stable
           cache: true
+      # App 的集成用例（local_server_token_test 等）会真起服务端子进程，要有服务端依赖。
+      # 不装的话那些用例会自己跳过，等于没测。
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: server/package.json
+      - name: Install server deps (for app integration tests)
+        working-directory: server
+        run: npm install --omit=dev --no-audit --no-fund
       - name: Flutter analyze
         working-directory: app
         run: flutter analyze

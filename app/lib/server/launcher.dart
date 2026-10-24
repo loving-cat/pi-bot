@@ -410,6 +410,23 @@ Future<bool> serverAlive(
   String baseUrl, {
   Duration timeout = const Duration(seconds: 2),
 }) async {
+  final body = await _healthBody(baseUrl, timeout);
+  return body != null && isPiBotHealthResponse(body);
+}
+
+/// 本机服务端是否开了服务器模式（本机请求也要带 token）。连不上或旧版服务端都算「不要」。
+Future<bool> localServerRequiresToken(
+  String baseUrl, {
+  Duration timeout = const Duration(seconds: 2),
+}) async {
+  final body = await _healthBody(baseUrl, timeout);
+  return body != null &&
+      isPiBotHealthResponse(body) &&
+      healthRequiresToken(body);
+}
+
+/// 读 `/health` 正文（带大小上限和超时）；任何失败都返回 null。
+Future<String?> _healthBody(String baseUrl, Duration timeout) async {
   final client = HttpClient()..connectionTimeout = timeout;
   try {
     final req = await client
@@ -417,12 +434,11 @@ Future<bool> serverAlive(
         .timeout(timeout);
     final res = await req.close().timeout(timeout);
     if (res.statusCode != 200 || res.contentLength > maxHealthResponseBytes) {
-      return false;
+      return null;
     }
-    final body = await readHealthResponseBody(res).timeout(timeout);
-    return body != null && isPiBotHealthResponse(body);
+    return await readHealthResponseBody(res).timeout(timeout);
   } catch (_) {
-    return false;
+    return null;
   } finally {
     client.close(force: true);
   }

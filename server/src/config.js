@@ -84,6 +84,25 @@ export const config = {
   serverName: process.env.PI_BOT_NAME || 'pi-bot',
   /** 固定 token：设了就跳过配对码（自用/服务器部署方便） */
   staticToken: process.env.PI_BOT_TOKEN || null,
+  /**
+   * 本机请求免 token。
+   *
+   * 桌面端和服务端在同一台机器上，本机就是主人，默认免 token。
+   * 服务器部署（设了 PI_BOT_TOKEN）时默认关闭：反向代理和服务端在同一台机器上，
+   * 公网请求经代理转发后也是回环地址，免 token 就等于谁都能进。
+   * PI_BOT_TRUST_LOCAL=1 / 0 可以显式打开 / 关闭。
+   */
+  trustLocal: process.env.PI_BOT_TRUST_LOCAL
+    ? process.env.PI_BOT_TRUST_LOCAL === '1'
+    : !process.env.PI_BOT_TOKEN,
+  /**
+   * 额外允许的 Host（逗号分隔，不含端口）。反向代理保留原始 Host 时，
+   * 把你的域名填在这里，否则会被 DNS rebinding 防护拒掉（403 bad host）。
+   */
+  allowedHosts: (process.env.PI_BOT_ALLOWED_HOSTS || '')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean),
   /** 形如 provider/model-id；不设则用 pi 的默认模型 */
   model: process.env.PI_BOT_MODEL || null,
   thinking: process.env.PI_BOT_THINKING || 'medium',
@@ -194,6 +213,7 @@ export function describeConfig() {
     thinking: config.thinking,
     tools: config.tools.join(','),
     auth: config.staticToken ? 'static-token' : 'pairing-code',
+    trustLocal: config.trustLocal,
   };
 }
 
