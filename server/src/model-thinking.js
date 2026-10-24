@@ -159,7 +159,7 @@ export function normalizeThinking(src = {}, previous = {}) {
  * 转成 pi 认识的 `compat` 片段。
  *
  * 注意：pi 的 `getApiKeyAndHeaders` 依据**模型级** compat 决定怎么附带凭据和思考参数，
- * provider 级写了不生效（这一点在 model-groups.js 里已经踩过一次）。
+ * provider 级写了不生效（model-groups.js 里也提到这一点）。
  */
 export function thinkingCompat(thinking = {}) {
   if (!thinking.reasoning) {

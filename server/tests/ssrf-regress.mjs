@@ -380,8 +380,8 @@ await test('DNS rebinding：第二次解析出的回环地址不能连上', asyn
   assert.equal(lookups, 1, '连接阶段不能再解析一次');
 });
 
-// 上一条只在「没开代理」的机器上走到直连分支。开着系统代理时，以前会把
-// localhost 这类「不走代理的主机」交给 proxyFetch，而它对这类主机是裸 fetch，
+// 上一条只在「没开代理」的机器上走到直连分支。开着系统代理时，不能把
+// localhost 这类「不走代理的主机」交给 proxyFetch：它对这类主机是裸 fetch，
 // 按域名重新解析 → 钉住的地址失效。这里强制打开代理，CI 也能覆盖到。
 await test('DNS rebinding：开着系统代理时，直连主机仍只连校验过的地址', async () => {
   const { setProxyOverride } = await import('../src/http-client.js');

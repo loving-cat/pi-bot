@@ -114,7 +114,7 @@ export class UploadSessions {
         return { error: '校验失败：内容与 sha256 不一致，已丢弃' };
       }
     }
-    // 会话记录先摘掉（临时文件保留给调用方搬走）
+    // 会话记录先摘掉（临时文件保留给调用方取走）
     this.sessions.delete(id);
     return { filePath: s.file, name: s.name, mime: s.mime, size: s.size };
   }

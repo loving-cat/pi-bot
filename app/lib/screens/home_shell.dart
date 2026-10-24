@@ -84,10 +84,9 @@ class _HomeShellState extends State<HomeShell> {
 
     // ★ 渲染前先把两栏宽度夹进"当前窗口放得下"的范围。
     //
-    //   以前只在**拖动分隔条**时 clamp —— 于是"先把分隔条拖宽、再把窗口缩小"时，
+    //   只在**拖动分隔条**时 clamp 不够："先把分隔条拖宽、再把窗口缩小"时，
     //   两栏的固定宽度会超过窗口总宽：Expanded 拿到负空间，整个布局崩坏，
     //   而且会**一直保持**（不把分隔条拖回来就恢复不了）。
-    //   用户报的"偶发会整个布局混乱"就是这个。
     //   _leftWidth/_rightWidth 仍然是用户的偏好值，只是显示时按可用宽度夹一下。
     final total = width;
     final panelW = panelOpen ? _rightWidth : 0.0;
@@ -148,7 +147,7 @@ class _HomeShellState extends State<HomeShell> {
                       // ★ 包一层 RepaintBoundary：这两栏的宽度是**固定**的，
                       //   窗口缩放时它们只是平移、形状不变 —— 于是光栅结果可以复用。
                       //   不包的话，每一帧整棵树（三个栏）都要重光栅一遍，
-                      //   开着右侧面板时尤其明显（用户报的"打开新组件后拖动非常卡"）。
+                      //   开着右侧面板时尤其明显，拖动会非常卡。
                       RepaintBoundary(
                         child: SizedBox(
                           width: leftW,

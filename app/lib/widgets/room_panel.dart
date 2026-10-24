@@ -16,11 +16,10 @@ import 'bot_run_section.dart';
 /// 不堆功能入口（那些归「…」菜单），面板一挤就没人看了。
 ///
 /// 群聊多一个「成员」页：那是唯一能**把某个 bot 移出群**的地方，
-/// 所以要给它一个显眼的位置（用户明确提过这个需求）。
+/// 所以要给它一个显眼的位置。
 /// 窄屏（手机）用：面板作为一整页滑进来。
 /// 宽屏不要用这个 —— 那边它是**布局里的一栏**（见 HomeShell），
-/// 不该有遮罩、也不该盖住聊天（用户："应该跟我其他区域同级别的侧边栏，
-/// 而不是一个有遮罩的二级菜单"）。
+/// 不该有遮罩、也不该盖住聊天，应与其他区域同级，而不是有遮罩的二级菜单。
 Future<void> showRoomPanel(BuildContext context, Room room) async {
   await Navigator.of(context).push(
     PageRouteBuilder(
@@ -530,7 +529,7 @@ class _MemberRow extends StatelessWidget {
 }
 
 /// 「添加成员」：一条虚位以待的按钮 —— 不抢成员行的视觉权重，
-/// 但一眼能看出"这里还能加人"（用户要的：自己加 bot，不用先跟主控说）。
+/// 但一眼能看出"这里还能加人"（自己加 bot，不用先跟主控说）。
 class _AddMemberButton extends StatefulWidget {
   const _AddMemberButton({required this.remaining, this.onTap});
 
@@ -587,7 +586,7 @@ class _AddMemberButtonState extends State<_AddMemberButton> {
 
 /// 「资料库」：这个会话里出现过的**所有附件**，按"谁给的"分两组。
 ///
-/// 为什么值得单独一栏：聊到第三天，用户要的是"上周那份 PPT 在哪"，
+/// 为什么值得单独一栏：聊到第三天，要找的是"上周那份 PPT 在哪"，
 /// 而不是"翻聊天记录一行行找"。附件是这条对话流里最容易丢的东西 ——
 /// 消息会被刷走，资料不该。
 ///

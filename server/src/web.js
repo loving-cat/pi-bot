@@ -10,7 +10,7 @@
  *   PI_BOT_SEARCH_URL   例：https://api.search.brave.com/res/v1/web/search?q={q}
  *   PI_BOT_SEARCH_KEY   配了就带上 Authorization: Bearer
  *
- * 三条硬约束（都是踩过的坑）：
+ * 三条硬约束：
  *   1. 一切都要有超时和大小上限 —— 网络是最容易把整个 agent 卡死的地方。
  *   2. 抓不到就**老实说抓不到**，绝不能编。模型拿不到内容时最爱圆一个答案出来。
  *   3. 正文要截断。一个网页塞进上下文，几千 token 就没了。
@@ -57,9 +57,9 @@ async function fetchWithTimeout(url, options = {}) {
 /**
  * 把 fetch 的底层异常翻译成**能指导下一步**的话。
  *
- * 为什么必须翻译：原来失败就抛一句 "fetch failed"，模型只能看到个光秃秃的
- * 错误，于是自己去 curl 一遍遍试 —— 十几步才摸出来"这台机器上那个域名
- * 走了假 IP"。把原因直接说出来，它第一步就知道该换路。
+ * 为什么必须翻译：只抛一句 "fetch failed"，模型只能看到个光秃秃的错误，
+ * 于是自己去 curl 一遍遍试，而失败可能是本机那个域名走了假 IP。
+ * 把原因直接说出来，它第一步就知道该换路。
  *
  * 常见成因（按实际遇到过的排序）：
  *   · ENOTFOUND       域名根本没解析

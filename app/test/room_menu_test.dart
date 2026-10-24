@@ -1,8 +1,7 @@
 // 侧边栏会话的右键菜单。
 //
-// 背景：以前只有「长按 → 底部弹窗」，而且**只给群一个"解散这个群"** ——
-// 侧边栏那一列 bot 私聊（恰恰是最想清掉的一堆）根本删不掉，因为服务端
-// deleteRoom 也把 dm 挡住了。这个文件把菜单的每一项和隐藏/删除的行为钉住。
+// 背景：菜单要能隐藏和删除侧边栏那一列 bot 私聊（恰恰是最想清掉的一堆），
+// 服务端 deleteRoom 也不能把 dm 挡住。这个文件把菜单的每一项和隐藏/删除的行为钉住。
 //
 // 用组件测试而不是截图：合成鼠标事件要跟 DPI/焦点较劲，而且不防回归。
 import 'package:flutter/gestures.dart';
@@ -78,7 +77,7 @@ void main() {
     expect(find.text('重命名 Bot'), findsOneWidget, reason: '私聊改的是 bot 名');
     expect(find.text('复制对话 ID'), findsOneWidget);
     expect(find.text('从侧边栏隐藏'), findsOneWidget);
-    // ★ 这一条就是当初缺的：私聊必须能删
+    // ★ 私聊必须能删
     expect(find.text('删除这个对话'), findsOneWidget);
   });
 
@@ -130,7 +129,7 @@ void main() {
     });
 
     test('★ 靠近窗口上边（右键的那一行在最上面）→ 必须往下开', () {
-      // 以前一律往上开：锚点在 y=20，菜单底边在 y=10，前五项全在窗口外
+      // 不能一律往上开：锚点在 y=20 时菜单底边在 y=10，前五项全在窗口外
       final p = menuPlacement(
         anchor: const Offset(140, 20),
         screen: screen,
@@ -181,9 +180,9 @@ void main() {
   });
 
   testWidgets('菜单文字不能被 Flutter 画上"缺 Material"的黄色双下划线', (tester) async {
-    // 这个坑很隐蔽：菜单是插进 Overlay 的，而 Overlay 不在 app 的 Material 之下。
+    // 菜单是插进 Overlay 的，而 Overlay 不在 app 的 Material 之下。
     // 没有 Material 祖先时 Flutter 会**故意**给所有 Text 画黄色双下划线提示主题
-    // 没接上 —— 表现就是每一项文字下面挂两条杠，而且颜色不受我们控制。
+    // 没接上 —— 表现就是每一项文字下面挂两条杠，颜色也不受本组件控制。
     // 修法是在卡片外面套一层 Material(type: MaterialType.transparency)。
     final state = _stateWith([_room('r1', '甲')]);
     await _pump(tester, state);
@@ -217,7 +216,7 @@ void main() {
 
   testWidgets('私聊菜单能删掉这个 bot（但要二次确认）', (tester) async {
     // 「删对话」和「删 bot」是两件事：前者清聊天记录（人还在），
-    // 后者把人从花名册除名。用户明确要后者也能在菜单里点到。
+    // 后者把人从花名册除名。后者也要能在菜单里点到。
     final state = _stateWith(
       [
         _room('r1', '甲', botIds: const ['b1']),
@@ -286,9 +285,8 @@ void main() {
   });
 
   testWidgets('@ 提及：只点击跳转，不做悬停卡、不给"可拖"的指针', (tester) async {
-    // 用户明确要求过：悬停卡浮出来会挡住旁边正在读的字，而且鼠标变手型
-    // 看着像"可以拖"。这里把两条都钉住 —— 这种"多出来的东西"很容易被
-    // 后来的人好心加回去。
+    // 悬停卡浮出来会挡住旁边正在读的字，鼠标变手型又看着像"可以拖"，
+    // 所以两条都不做，并在这里钉住 —— 这种"多出来的东西"很容易被好心加回去。
     var tapped = '';
     tester.view.physicalSize = const Size(700, 500);
     tester.view.devicePixelRatio = 1.0;
@@ -329,7 +327,7 @@ void main() {
   });
 
   testWidgets('宽屏点胶囊 → 右侧多一栏，不是带遮罩的弹层', (tester) async {
-    // 用户："应该跟我其他区域同级别的侧边栏，而不是一个有遮罩的二级菜单"。
+    // 要的是跟其他区域同级的侧边栏，而不是有遮罩的二级菜单。
     // 所以这里除了"面板出来了"，还要断言**没有模态遮罩** ——
     // 有遮罩就说明又变成弹层了。
     tester.view.physicalSize = const Size(1400, 900);
@@ -458,7 +456,7 @@ void main() {
     );
     await tester.pump();
 
-    // 胶囊里有名字（那是允许的，也是用户要的）
+    // 胶囊里有名字（这是允许的）
     expect(find.text('甲'), findsWidgets);
     // 但气泡区域里不该再挂一份名字：正文两条都在，名字只出现在顶部胶囊
     expect(find.text('第一条'), findsOneWidget);
@@ -472,9 +470,8 @@ void main() {
   });
 
   testWidgets('★ 输入框不会"发完就丢焦点"（没人的时候要自己拿回来）', (tester) async {
-    // 用户："我发送第一条后，第二条就没有聚焦在输入框了，这样体感会很差，
-    // 什么时候都要聚焦在输入框"。回车提交时框架会先把焦点收走，
-    // 如果没人接管，就得靠这个兜底拿回来。
+    // 发送第一条后，输入框要保持焦点，什么时候都能直接接着输入。
+    // 回车提交时框架会先把焦点收走，如果没人接管，就得靠这个兜底拿回来。
     tester.view.physicalSize = const Size(1200, 800);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -515,8 +512,7 @@ void main() {
   });
 
   testWidgets('★ 鼠标进到胶囊里（不在头像上）头像就跟随', (tester) async {
-    // 用户点名要的："头像要在自己负责这个范围跟随鼠标，例如胶囊内的 bot 头像，
-    // 当鼠标挪动到胶囊内时跟随。"
+    // 头像要在自己负责的范围跟随鼠标，例如胶囊内的 bot 头像，鼠标挪到胶囊内时跟随。
     // 胶囊里除了头像还有会话名 —— 鼠标落在**名字**上也算"在胶囊里"。
     tester.view.physicalSize = const Size(900, 700);
     tester.view.devicePixelRatio = 1.0;
@@ -551,7 +547,7 @@ void main() {
     await tester.pump();
 
     // ★ 只量**胶囊里**那个头像 —— 空会话中间还有一个 64px 的大头像，
-    //   find.byType(BlobAvatar).first 会拿到它（我第一版就量错了对象）。
+    //   find.byType(BlobAvatar).first 会拿到它。
     Offset gazeOf() {
       final cp = tester
           .widgetList<CustomPaint>(
@@ -604,7 +600,7 @@ void main() {
   });
 
   testWidgets('★ 成员面板能自己加 bot：按钮 + 选人对话框', (tester) async {
-    // 用户要的："这个成员 要允许 用户自己增加 bot" —— 不用再跟主控说。
+    // 成员面板要允许用户自己增加 bot，不用再跟主控说。
     tester.view.physicalSize = const Size(1200, 900);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -701,8 +697,7 @@ void main() {
   });
 
   testWidgets('★ 发完第一条、bot 正在回 —— 第二条还能点能打', (tester) async {
-    // 用户报："我发送第一条消息 想输入第二条 结果没有聚焦到输入框，
-    //          就算我去点击也不行，直接没法输入。"
+    // 发完第一条想接着输入第二条时，输入框要保持可点击、可输入。
     // 这是**空房间 → 有消息**那一下的结构切换（空态换成消息栈），
     // 而且 bot 正在流式回复（消息上会挂一条"已打断它"的提示）。
     tester.view.physicalSize = const Size(900, 700);
@@ -778,10 +773,10 @@ void main() {
   });
 
   testWidgets('★ 在已聚焦的输入框上再点一下 —— 会把输入连接重开一次', (tester) async {
-    // 用户报的那个状态：Dart 侧 hasFocus=true，但引擎那边的文本输入连接断了，
-    // 键盘事件到不了 Dart。这时"再点一下"本来是没有状态变化的（已经聚焦了），
-    // 所以引擎不会重连 —— 用户的原话就是"就算我去点击也不行"。
-    // 现在点一下会走一次真正的 unfocus → 下一帧 requestFocus。
+    // 有一种状态是：Dart 侧 hasFocus=true，但引擎那边的文本输入连接断了，
+    // 键盘事件到不了 Dart。这时"再点一下"本来没有状态变化（已经聚焦了），
+    // 引擎不会重连，点击也没用。
+    // 点一下走一次真正的 unfocus → 下一帧 requestFocus 才能重开连接。
     tester.view.physicalSize = const Size(900, 700);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -833,10 +828,10 @@ void main() {
   });
 
   testWidgets('★★ 发出第一条之后，输入框**不能被重建**（重建＝打字就没反应）', (tester) async {
-    // 这条是真凶，用户报的原始现象："我发送第一条消息、想输入第二条，
-    // 结果没有聚焦到输入框，就算我去点击也不行，直接没法输入。"
+    // 关键：发出第一条后输入框不能被重建 —— 否则想接着输入第二条时会没焦点，
+    // 点击也不行，直接没法输入。
     //
-    // 量出来的链条：
+    // 失效链条：
     //   发出去的一瞬间 → 消息上多出"已打断它"那条提示（busy 变了）
     //   → Column 凭空多一个孩子 → Flutter 按位置配对错位
     //   → 整个输入行被**重建** → 新的 EditableText 拿着一个**已经聚焦**的
@@ -918,7 +913,7 @@ void main() {
   });
 
   testWidgets('★ 连着插三句，只挂**一个**"它下一步会看到"', (tester) async {
-    // 用户："这个下面闪电 说下一步会看到不需要每一句话都有"
+    // 闪电那行"下一步会看到"只挂一条，不需要每句话都有。
     tester.view.physicalSize = const Size(900, 700);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -957,7 +952,7 @@ void main() {
   });
 
   testWidgets('★ 询问卡片要有入场动效（不是直接出现）', (tester) async {
-    // 用户："这个询问卡片 要有动态动画，现在没有动画 触发的感觉都没有"
+    // 询问卡片要有入场动效，没有动画就没有触发的感觉。
     tester.view.physicalSize = const Size(900, 700);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -1033,8 +1028,8 @@ void main() {
   });
 
   testWidgets('★ 面板「详情」里能就地改运行参数（模型 / 思考等级 / 上下文预算）', (tester) async {
-    // 用户："不是应该在胶囊点击后的右侧侧边栏 有一个可以调模型 上下文窗口
-    // 思考等级之类的吗？" —— 以前这些只能跑去 bot 花名册里改。
+    // 胶囊点击后的右侧侧边栏要能调模型、上下文窗口、思考等级，
+    // 而不是只能跑去 bot 花名册里改。
     tester.view.physicalSize = const Size(1200, 900);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);

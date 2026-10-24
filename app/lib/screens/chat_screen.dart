@@ -154,7 +154,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   ///
   /// 为什么不能只在 build 里排：焦点丢了**不等于界面要重建** ——
   /// 比如回车提交之后，Flutter 不会因为焦点变化就把整个 ChatScreen 重build，
-  /// 于是那时候注册的帧后回调根本不会跑（我第一版就是这么写的，没用）。
+  /// 于是那时候注册的帧后回调根本不会跑。
   void _onFocusChanged() {
     // 延后一帧再判：对话框 / 悬浮菜单通常在同一帧里就把焦点拿走了，
     // 等一帧再看，能少抢很多次
@@ -167,13 +167,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   /// 把**文本输入连接**重开一次。
   ///
-  /// 用户报："我发送第一条消息、想输入第二条，结果没有聚焦到输入框，
-  /// 就算我去点击也不行，直接没法输入。"
+  /// 解决的问题：发送第一条消息后想输入第二条，输入框没有聚焦、
+  /// 点击也无效，直接没法输入。
   ///
-  /// 真机上量过（注入真实鼠标点击 + 截图）：**点击其实能聚焦** ——
-  /// 边框变亮、光标也出来了。所以不是"点不动"，是**键盘输入这条路断了**：
-  /// Dart 侧 `hasFocus` 还是 true，但引擎那边的文本输入连接已经废了，
-  /// 键盘事件根本到不了 Dart。
+  /// 其实**点击是能聚焦的** —— 边框变亮、光标也出来了。所以不是"点不动"，
+  /// 是**键盘输入这条路断了**：Dart 侧 `hasFocus` 还是 true，但引擎那边的
+  /// 文本输入连接已经废了，键盘事件根本到不了 Dart。
   ///
   /// 为什么"再点一下"救不回来：输入框**已经**聚焦了，没有状态变化，
   /// 引擎不会重新 attach。必须先 unfocus、下一帧再 requestFocus，
@@ -195,7 +194,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   /// 点了输入框（但没拖）但键盘还是没反应 —— 顺手重连一次。
   ///
-  /// 这是用户那句“就算我去点击也不行”的正面回答：点一下现在真的会重连。
   /// 拖不算（拖是选中文字，不能打断）；没聚焦时也不插手，
   /// 让正常的“点一下聚焦”自己走。
   Widget _tapToReattach(Widget child) {
@@ -224,8 +222,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// 把焦点兜回输入框 —— 但**只在"无主"时**。
   ///
   /// 为什么需要：回车提交之后框架会先把焦点从输入框收走；如果这时没有别的控件
-  /// 接管，焦点就落在"空"上，用户得再点一下才能接着打（用户报的"发一句、
-  /// 再点一下输入框"）。
+  /// 接管，焦点就落在"空"上，得再点一下输入框才能接着打。
   ///
   /// 三条不抢的规则（避免把别人的焦点抢歪）：
   ///   · 上面压着别的页面（设置页）→ 不抢
@@ -474,7 +471,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
     // ★ 群里左边要**减掉头像列**（34+8=42）。
     //   头像列是内容的一部分；如果两边留白一样大，群里的气泡会整体右移 42px ——
-    //   肉眼看就是"群聊的列比私聊窄了一截"（用户报的）。
+    //   肉眼看就是"群聊的列比私聊窄了一截"。
     //   减掉之后，气泡的左右边缘在私聊和群聊里落在同一个位置。
     final leftPad = room.isGroup ? math.max(12.0, sidePad - 42) : sidePad;
 
@@ -641,8 +638,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       ),
       // ★ 把附件（图片 / PDF / Word…）直接拖进聊天框。
       //   只在桌面端有效（desktop_drop 在移动端不注册），移动端就是普通 Scaffold。
-      //   反馈用提示条 —— 不去做布满全屏的高亮层（以前加过，一不小心就把 body
-      //   的嵌套改坏、整个文件都不编译了）。
+      //   反馈用提示条 —— 不做布满全屏的高亮层（容易把 body 的嵌套改坏）。
       body: DropTarget(
         onDragEntered: (_) => setState(() => _draggingOver = true),
         onDragExited: (_) => setState(() => _draggingOver = false),
@@ -736,7 +732,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                     // ★ 这条是**外面的人说的**（不在这个会话的名单里）——
                                     //   比如负责人把某个成员的报告转进群里。
                                     //   挂一条「消息来自 X」，点开是**只读**的窥视：
-                                    //   看那个 bot 的私聊里到底说了什么（用户要的"链路可见"）。
+                                    //   看那个 bot 的私聊里到底说了什么，让链路可见。
                                     //   注意：主控不算「外面的人」—— 它在哪儿说话都是派活。
                                     final authorBot =
                                         msg.authorType == 'bot' &&
@@ -1180,7 +1176,7 @@ class _ComposerState extends State<_Composer> {
           //   不加的话：busy 一变，这个孩子就凭空插到 Column 最前面，
           //   Flutter 按位置配对 → 后面的输入框整棵被**重建** →
           //   新的 EditableText 拿着一个"已经聚焦"的 FocusNode 初始化，
-          //   于是它**永远不会打开文本输入连接**。表现就是用户报的：
+          //   于是它**永远不会打开文本输入连接**。表现就是：
           //   发完第一条，光标在闪、打字没反应、点一下也没用（点它没有状态变化，
           //   引擎不会重连）。有 key 之后 Flutter 按 key 配对，输入框原地不动。
           if (busy)
@@ -1364,7 +1360,7 @@ class _ComposerState extends State<_Composer> {
                         return KeyEventResult.handled;
                       },
                       // ★ 桌面快捷键：按系统习惯绑定（Mac ⌘ / Windows Ctrl）。
-                      //   显式声明而不是全靠 Flutter 默认，是因为我们在
+                      //   显式声明而不是全靠 Flutter 默认，是因为这里在
                       //   PasteTextIntent 上加了"剪贴板有图就发图"的逻辑 ——
                       //   接管了默认行为，就得把配套的编辑快捷键补全，
                       //   否则那些键在某一端会变成死的。
@@ -1463,11 +1459,10 @@ class _ComposerState extends State<_Composer> {
               ],
             ),
           ),
-          // ★ 这里以前有一行「Enter 发送 · Shift+Enter 换行」的操作说明。
-          //   删除的两个理由：
-          //   1. **没人需要被告知回车能发送** —— 正常聊天软件都不说。
-          //   2. 它是"有字才出现"的，一出现就把整个输入区顶高一行 ——
-          //      用户报的"直接从下面突然出现导致整个界面波动一下"就是它。
+          // ★ 不放「Enter 发送 · Shift+Enter 换行」的操作说明：
+          //   1. 回车能发送不需要被告知 —— 正常聊天软件都不说。
+          //   2. 若做成"有字才出现"，一出现就把整个输入区顶高一行，
+          //      整个界面会突然波动一下。
           //   快捷键本身照旧（Enter 发送、Shift+Enter 换行）。
         ],
       ),
@@ -1556,7 +1551,7 @@ class _AppearState extends State<_Appear> with SingleTickerProviderStateMixin {
 /// 判断依据是「作者不在这个会话的名单里」，但**主控永远不算**：
 /// 主控是全局派活的人，它出现在部门群/某个 bot 的私聊里，本身就是正常的下发任务
 /// 或者对任务的回复。把它标成「消息来自 主控」，用户会以为这些消息是从别处
-/// 搬进来的二手信息，反而看不清真正的链路。
+/// 转进来的二手信息，反而看不清真正的链路。
 ///
 /// 真正需要标记的是：某个成员 bot 被负责人转进群里的话（它确实不在这个会话）。
 bool isRelayedAuthor({Bot? author, required Room room}) {
@@ -1569,7 +1564,7 @@ bool isRelayedAuthor({Bot? author, required Room room}) {
 ///
 /// 形态：一行居中的小字 + 头像，**可点** ——
 /// 点开是**只读**的窥视，看那个 bot 的私聊里到底说了什么，整条链路就看清了。
-/// 以前只有"已发送给 X"那种（bot 主动私信时才有），转发进来的没有标记。
+/// bot 主动私信时另有"已发送给 X"标记；这条覆盖转发进来的消息。
 class _RelayedFrom extends StatefulWidget {
   const _RelayedFrom({required this.bot, this.onTap});
 
@@ -1752,8 +1747,8 @@ class _MessageRow extends StatelessWidget {
     // ★ 用户按 Esc 终止的那一条：整条不渲染。
     //
     //   跟 pi agent 里的体验对齐：终止就是终止，聊天记录里不留痕。
-    //   以前这里会把消息画成"已按你的要求终止"的灰气泡，
-    //   看起来像程序出错了 —— 而那是用户自己的操作，不需要被告知。
+    //   不画"已按你的要求终止"的灰气泡 —— 看起来像程序出错了，
+    //   而那是用户自己的操作，不需要被告知。
     if (msg.isAborted) return const SizedBox.shrink();
 
     final isUser = msg.isUser;
@@ -1761,7 +1756,7 @@ class _MessageRow extends StatelessWidget {
 
     // ★ 名字和 emoji 一律**从 authorId 现查**，不信消息里存的那一份。
     //   消息里的 authorName 是写入时的快照 —— 用户给 bot 改完名字，
-    //   它以前发过的消息就会一直挂着旧名字（改名的经典坑）。
+    //   已发出的消息就会一直挂着旧名字（改名的经典坑）。
     //   存着那份只当兜底：bot 被删掉之后，历史消息还得有个署名。
     final displayName = bot?.name ?? msg.authorName;
     final displayEmoji = bot?.emoji ?? msg.authorEmoji;
@@ -1775,17 +1770,16 @@ class _MessageRow extends StatelessWidget {
     final avatar = showAvatar && reserveAvatarColumn;
     // 名字/职位**只在群里标**：
     //   · 私聊里一条条都是同一个人，顶上那个胶囊已经写着是谁了 ——
-    //     每条气泡上再挂一遍名字，纯属重复（用户："只要有胶囊让我知道他是谁就行了"）
+    //     每条气泡上再挂一遍名字，纯属重复。
     //   · 群里主控（总经理）也不标：它是"你这边的人"，标出来只是噪音。
     //     头像还留着 —— 一眼能看出"这条是它说的"。
     final showName = isGroup && showAuthor && bot?.isMain != true;
-    // 气泡最宽：屏幕 78%，桌面端最多 620，避免一行铺到大半个屏
-    // 气泡最宽：屏幕的 82%，桌面端最多 760（以前 620，用户嫌窄）
+    // 气泡最宽：屏幕的 82%，桌面端最多 760，避免一行铺到大半个屏
     final maxBubble = math.min(MediaQuery.sizeOf(context).width * 0.82, 760.0);
 
     if (isUser) {
       return Padding(
-        // 我发的消息也一样要喘气（以前 10，比 bot 那侧还挤）
+        // 我发的消息也一样要喘气，不能比 bot 那侧还挤
         padding: const EdgeInsets.only(top: 22),
         child: Align(
           alignment: Alignment.centerRight,
@@ -1890,12 +1884,12 @@ class _MessageRow extends StatelessWidget {
     return AvatarHoverScope(
       child: Padding(
         // ★ 气泡之间的呼吸：换个人发言 26px，
-        //   同一个人连着说 6px。以前是 16 / 3 —— 谁跟谁说的都黏成一坨。
+        //   同一个人连着说 6px —— 间距再小，谁跟谁说的就黏成一坨。
         padding: EdgeInsets.only(top: showAuthor ? 26 : 6),
         child: Row(
           // ★ 头像**贴底**，不是贴顶 —— 这样气泡就落在头像的右上方，
           //   同时名字/职位在气泡的左上方。三者的相对位置一眼看清是谁在说。
-          //   （以前是 CrossAxisAlignment.start，头像顶在最上面，名字反而跑到它右边。）
+          //   （不能用 CrossAxisAlignment.start：头像顶在最上面，名字反而跑到它右边。）
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             if (reserveAvatarColumn) ...[
@@ -2111,9 +2105,9 @@ Future<void> openBotDm(BuildContext context, String name) async {
   if (target == null) return;
   final room = await state.ensureDm(target.id);
   if (room == null || !context.mounted) return;
-  // ★ 以前这里是 state.openRoom(room.id) —— 它只记一个"正在看哪个房间"，
-  //   不发通知；而宽屏分栏的选中项是 HomeShell 自己的状态，压根不看这个字段，
-  //   所以点了 @ 什么都不会发生。走统一入口，由 HomeShell 按布局决定怎么切。
+  // ★ 不能用 state.openRoom(room.id)：它只记一个"正在看哪个房间"，不发通知；
+  //   而宽屏分栏的选中项是 HomeShell 自己的状态，压根不看这个字段，
+  //   点了 @ 什么都不会发生。走统一入口，由 HomeShell 按布局决定怎么切。
   requestRoom(context, room.id);
 }
 

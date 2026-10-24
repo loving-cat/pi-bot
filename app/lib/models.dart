@@ -424,7 +424,7 @@ class Bot {
   String? thinking;
 
   /// 上下文预算（null = 用全局默认）。
-  /// 服务端一直支持这两个值，客户端以前根本没解析 —— 所以面板里也就改不了。
+  /// 服务端一直支持这两个值；客户端不解析的话，面板里也就改不了。
   int? reserveTokens;
   int? keepRecentTokens;
 
@@ -717,7 +717,7 @@ class ModelGroup {
   List<ModelSpec> models;
   bool enabled;
 
-  /// 从本机已有配置带出来的（我们自己在用的那套）—— 不给删
+  /// 从本机已有配置带出来的内置组 —— 不给删
   final bool builtin;
 
   /// 给模型选择器用：`<组id>/<模型id>` —— 和 pi 的 slug 格式一致
@@ -999,7 +999,7 @@ class MsgRef {
   final String roomId;
 
   /// 他俩那个私聊里现在有多少条消息。
-  /// 界面用它显示「5 条消息往来」—— 用户要的是"进展到哪一步了"，
+  /// 界面用它显示「5 条消息往来」—— 让用户看出进展到哪一步了，
   /// 只写"已发送给 X"看不出有多少来回。
   final int? count;
 

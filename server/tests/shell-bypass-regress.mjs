@@ -1,5 +1,5 @@
 /**
- * 命令策略绕过回归。每条用例都对应修之前 decideCommand / write_stdin 会放行的写法。
+ * 命令策略绕过回归。每条用例都对应 decideCommand / write_stdin 必须拒绝的绕过写法。
  *   node tests/shell-bypass-regress.mjs
  */
 import fs from 'node:fs';

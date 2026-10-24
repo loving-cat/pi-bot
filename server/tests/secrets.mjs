@@ -3,7 +3,7 @@
  *
  * 两件事必须钉住：
  *   1. 加密是可用的（能还原、错密钥解不开、同一口令两次密文不同）；
- *   2. **state.json 里绝不能出现明文口令** —— 这是用户明确要求。
+ *   2. **state.json 里绝不能出现明文口令**。
  *      第 2 条用真实 store 落盘验证，不是测 mock。
  */
 import assert from 'node:assert/strict';

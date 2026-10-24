@@ -69,7 +69,7 @@ class _MdTextState extends State<MdText> {
   /// 网址的"点一下复制"识别器。
   ///
   /// 行内代码里的 localhost 地址（http://127.0.0.1:8765/ 这种）点开也没用，
-  /// 用户要的是把地址拿走 —— 点一下直接复制，比让用户先拖选再 ⌘C 快得多。
+  /// 目的是把地址拿走 —— 点一下直接复制，比先拖选再 ⌘C 快得多。
   TapGestureRecognizerHandle _copyUrlRecognizer(String url) {
     return _links.putIfAbsent(
       'copy:$url',
@@ -121,9 +121,9 @@ class _MdTextState extends State<MdText> {
     if (!widget.selectable) return body;
     // ★ 整个消息**只有一个** SelectionArea。
     //
-    //   以前是每个段落/列表项/表格单元格各自一个 SelectionArea —— 拖动选择
-    //   跨行时每一块各选各的，复制出来断成一截一截（用户："每一句分行后，
-    //   就各论各的了"）。收成一个之后，整条消息可以一次拖选、⌘C/Ctrl+C 复制。
+    //   每个段落/列表项/表格单元格各自一个 SelectionArea 时，拖动选择
+    //   跨行会各选各的，复制出来断成一截一截。收成一个之后，
+    //   整条消息可以一次拖选、⌘C/Ctrl+C 复制。
     return SelectionArea(child: body);
   }
 
@@ -296,7 +296,7 @@ class _MdTextState extends State<MdText> {
       } else if (token.startsWith('@')) {
         // @提及：画成「小头像 + 名字」的 chip。
         //
-        // 以前只是一段高亮文字（@名字）。但颜色 + 头像比文字快得多 ——
+        // 颜色 + 头像比一段高亮文字快得多 ——
         // 群里一串 @ 排在一起时，"这活到底派给谁了"要能扫一眼看出来。
         final name = cleanMentionName(token);
         final onTap = widget.onMentionTap;
@@ -634,7 +634,7 @@ class _CodeBlock extends StatelessWidget {
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               // 自己写的小分词器上色（见 lib/highlight.dart）：
-              // 认不出的语言一律当纯文本，绝不猜；纯文本时行为和以前一样。
+              // 认不出的语言一律当纯文本，绝不猜。
               child: Text.rich(
                 TextSpan(
                   children: [
@@ -665,8 +665,8 @@ class _TableView extends StatelessWidget {
   final TextStyle base;
   final Widget Function(String, TextStyle, TextStyle) renderInline;
 
-  // ★ 表格以前太挤（横向 10 / 纵向 7），两行字几乎贴在一起。
-  //   放大到 14 / 11 —— 就这一下，密表从"看不动"变成能扫。
+  // ★ 表格内边距取 14 / 11：横向 10 / 纵向 7 时两行字几乎贴在一起，
+  //   密表看不动。
   static const double _padH = 14;
   static const double _padV = 11;
 

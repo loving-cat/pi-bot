@@ -54,7 +54,7 @@ export function resolveMenu(input, health, entries) {
   // 这一族现在有没有新鲜结论？有新鲜结论且都不是好的 → 真的不能用（照旧判死）
   const fresh = health?.hasFreshFor?.(entry.slugs);
   const staleGood = entry.slugs.filter((s) => health?.wasGood?.(s));
-  // 没有新鲜结论：以前跑通过（或全库都没结论）就先乐观放行，后台重探完会给真结论
+  // 没有新鲜结论：有历史可用结论（或全库都没结论）就先乐观放行，后台重探完会给真结论
   const optimistic =
       !alive.length &&
       fresh !== true &&

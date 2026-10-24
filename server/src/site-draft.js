@@ -73,7 +73,7 @@ export class SiteDraftStore {
     }
 
     // ★ 换了系统就把旧模块清掉。
-    //   否则用户说"改成另一个站点"时，上一家的模块会残在清单里 ——
+    //   否则改成另一个站点时，上一家的模块会残在清单里 ——
     //   建出来的团队会拿着 A 系统的接口路径去查 B 系统，一直 404。
     const switched = Boolean(existing) &&
       (existing.baseUrl !== baseUrl || existing.name !== name);
@@ -139,7 +139,7 @@ export class SiteDraftStore {
     return draft;
   }
 
-  /** 丢弃草稿（用户说"算了不接了"） */
+  /** 丢弃草稿（用户放弃接入时调用） */
   discard(roomId, botId) {
     return this.#drafts.delete(this.#key(roomId, botId));
   }

@@ -44,7 +44,7 @@ await test('app/pubspec.yaml 的版本与服务端一致', () => {
 });
 
 await test('源码里不再出现写死的旧版本号', async () => {
-  // /health、ws hello、serverInfo 以前各写死 '0.2.0'
+  // /health、ws hello、serverInfo 都不写死版本号
   const files = ['src/http.js', 'src/ws.js', 'src/index.js'];
   for (const f of files) {
     const text = fs.readFileSync(path.join(process.cwd(), f), 'utf8');

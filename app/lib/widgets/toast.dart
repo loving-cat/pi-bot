@@ -117,8 +117,8 @@ class _ToastHandle {
   /// 只取消计时器，不动 OverlayEntry。
   ///
   /// widget dispose 时用这个：那时框架正在拆树，
-  /// 再从 dispose 里调 `OverlayEntry.remove()` 会踩到断言。
-  /// 条目会随 Overlay 一起销毁，不需要我们管。
+  /// 再从 dispose 里调 `OverlayEntry.remove()` 会触发断言。
+  /// 条目会随 Overlay 一起销毁，不需要本组件处理。
   void cancelTimer() {
     _timer?.cancel();
     _timer = null;

@@ -95,7 +95,7 @@ class AppState extends ChangeNotifier {
   Map<String, int> groupLimits = const {};
 
   /// 部门规矩（危险动作 / 交付要附证据）。
-  /// 服务端一直在收，界面以前没有入口 —— 用户只能看着 bot 随便跑命令。
+  /// 服务端一直在收，这里提供界面入口，否则 bot 跑命令无从约束。
   Map<String, dynamic> policy = const {
     'dangerous': 'allow',
     'requireProof': false,
@@ -1278,9 +1278,8 @@ class AppState extends ChangeNotifier {
   Future<void> abort(String roomId) async {
     // ★ 先当场把界面停下来，再去告诉服务端。
     //
-    //   用户原话：“这个终止按钮 我点了要立即反应 立即终止，现在都要等很久。”
-    //   以前这里只发了个请求（走 WS），本地什么都不动 —— 于是服务端那边
-    //   真的在收尾，用户看到的却是**转圈照转、消息照流**，自然觉得“没反应”。
+    //   只发请求（走 WS）、本地什么都不动的话，服务端那边在收尾，
+    //   界面上却是**转圈照转、消息照流**，看起来就是“没反应”。
     //   服务端的 session 可能正卡在一个长命令里，几秒到几分钟才真的断。
     //   所以这里乐观地先改本地状态：说停就停。
     typing[roomId] = false;
@@ -1517,8 +1516,8 @@ class AppState extends ChangeNotifier {
 
   Future<void> deleteModelGroup(String id) async {
     try {
-      // ★ 以前这里写的是 '\$id'（转义了），实际发出去的是字面量 "$id"，
-      //   服务端当然找不到叫 "$id" 的组 —— 表现就是“删不掉”。
+      // ★ URL 必须用真正的 id：写成 '\$id'（转义）的话，实际发出去的是
+      //   字面量 "$id"，服务端找不到叫 "$id" 的组 —— 表现就是“删不掉”。
       await api?.delete('/api/model-groups/$id');
       await refresh();
     } catch (err) {
@@ -1623,10 +1622,9 @@ class AppState extends ChangeNotifier {
         lastError = null;
         // ★ 重连（或服务端重启）之后，"谁在干活"要重新算。
         //
-        //   以前不清：服务端中途重启（或者连接断过一次），正在跑的那一轮
-        //   就永远不会再发"干完了"，于是侧边栏永远是"正在干活…"、群里永远
+        //   不清的话：服务端中途重启（或连接断过一次），正在跑的那一轮
+        //   就永远不会再发"干完了"，侧边栏会一直显示"正在干活…"、群里一直
         //   停在"正在调用工具…"，圈一直在转但什么也没发生。
-        //   用户原话："怎么一直转 但是没开始操作"。
         //   一份全新的快照进来了，这些临时状态就该归零。
         typing.clear();
         queued.clear();

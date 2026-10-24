@@ -65,9 +65,9 @@ class _ScanScreenState extends State<ScanScreen> {
     formats: const [BarcodeFormat.qrCode],
     // 预览分辨率别开太大，低端机上启动更快
     cameraResolution: const Size(1280, 720),
-    // ★ 权限我们自己先去要（见 _askPermission），要到了再启动相机。
-    //   以前交给插件自己启自己要 —— 真机上遇到过"压根不弹权限框"（
-    //   拒过一次之后系统就不再弹了），用户看到的就是一片黑。
+    // ★ 权限由本组件先去要（见 _askPermission），要到了再启动相机。
+    //   不能交给插件自己启自己要：拒过一次之后系统就不再弹权限框，
+    //   相机起不来，用户看到的就是一片黑。
     autoStart: false,
   );
   bool _handled = false;
@@ -75,7 +75,7 @@ class _ScanScreenState extends State<ScanScreen> {
   bool _slow = false;
   Timer? _slowTimer;
 
-  /// 相机权限当前是什么状态（用户要的：不给权限就不让扫）
+  /// 相机权限当前是什么状态（不给权限就不让扫）
   PermissionStatus? _perm;
 
   @override
@@ -86,7 +86,7 @@ class _ScanScreenState extends State<ScanScreen> {
       if (mounted && !_controller.value.isInitialized)
         setState(() => _slow = true);
     });
-    // 进页面就问权限 —— 不给就不起相机（用户要的就是这个）
+    // 进页面就问权限 —— 不给就不起相机
     WidgetsBinding.instance.addPostFrameCallback((_) => _askPermission());
   }
 

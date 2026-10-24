@@ -1,7 +1,7 @@
 // 无边框窗口的八向缩放热区。
 //
 // 背景：`setAsFrameless()` 之后 Windows 不再给边框做命中测试，四个边、四个角
-// 全拖不动（用户报的"窗口不能放大缩小"）。修法是在窗口四周铺透明热区，
+// 全拖不动。做法是在窗口四周铺透明热区，
 // 把拖动转给 windowManager.startResizing —— 八个方向一个都不能少、也不能写错，
 // 而写错了只表现为"某个方向拖不动"，肉眼很难一个个试出来。
 import 'package:flutter/material.dart';
@@ -162,7 +162,7 @@ void main() {
       // 不做补偿时，窗口自身移动了多少就少算多少 —— 拖上边时恰好被抵消掉，
       // 于是位移≈0、窗口弹回、下一帧反向 = 抽搐。
       const screenTotal = Offset(0, -30); // 指针在屏幕上累计往上 30
-      const windowMove = Offset(0, -30); // 窗口也跟着上移了 30（我们设的）
+      const windowMove = Offset(0, -30); // 窗口也跟着上移了 30（这里设的）
       final viewDelta = screenTotal - windowMove; // 所以视口内几乎没动
       final d = screenDelta(
         viewDelta: viewDelta,
@@ -174,12 +174,12 @@ void main() {
   });
 
   testWidgets('★ 拖右边缘：每帧都要发（不能被限流卡成 30 次/秒），且不回弹', (tester) async {
-    // 这条钉的是"拖动不丝滑、卡卡的"那个坑：
-    // 曾经把 setBounds 限到 28ms 一次（~30 次/秒）—— 省了平台开销，
-    // 但窗口几何一秒只更新 30 次，快速拖动时每步跨很大，看着就是一顿一顿。
-    // 现在拖动期间内容已经降级成骨架（每帧只要 ~6-7ms），平台撑得住 60 次/秒，
+    // 这条钉的是拖动期间 setBounds 不能被限流卡住：
+    // 限到 28ms 一次（~30 次/秒）虽然省平台开销，但窗口几何一秒只更新 30 次，
+    // 快速拖动时每步跨很大，看着就是一顿一顿。
+    // 拖动期间内容已降级成骨架，平台撑得住 60 次/秒，
     // 所以闸门放到了 12ms（几乎不生效）。
-    // 另外这条也顺带钉"不回弹"（回弹 = 之前那个补偿超前的震荡 bug）。
+    // 另外这条也顺带钉"不回弹"（回弹 = 补偿超前导致的震荡）。
     final bounds = <Rect>[];
     const channel = MethodChannel('window_manager');
     final messenger =
@@ -250,7 +250,7 @@ void main() {
   });
 
   testWidgets('★ 斜着拖右下角：左上角不许动，宽高按位移长大', (tester) async {
-    // 用户报"拖动右下角斜着，整个界面就放大了"。
+    // 斜着拖右下角时，整个界面不能被放大。
     // 先把数学钉住：拖右下角时 left/top 一点都不能变，width/height 各加位移量。
     final bounds = <Rect>[];
     const channel = MethodChannel('window_manager');

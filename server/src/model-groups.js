@@ -97,7 +97,7 @@ export class ModelGroup {
         api,
         models,
         enabled: input.enabled === undefined ? existing?.enabled ?? true : Boolean(input.enabled),
-        // 内置组（从本机已有配置里带出来的，比如我们自己在用的 cline 线路）——
+        // 内置组（从本机已有配置里带出来的，比如 cline 线路）——
         // 不给删：它就是当前跑着的配置，删掉等于把自己踢下线。
         builtin: existing?.builtin ?? Boolean(input.builtin),
         createdAt: existing?.createdAt ?? now(),
@@ -273,7 +273,7 @@ export async function testModelGroup({
         via: '/models',
         count: ids.length,
         models: ids.slice(0, 60),
-        // ★ 实测踩到的：有些中转站的 /models **不校验 key**（假 key 也返回 200
+        // ★ 有些中转站的 /models **不校验 key**（假 key 也返回 200
         //   和一大堆模型名）。所以"通了"只说明地址和网络没问题，
         //   不等于 key 有效 —— 这句话必须传给用户，否则他会以为配好了。
         note: '地址通了。注意：部分中转站的 /models 不校验 key，所以这里通过 ≠ key 一定有效',

@@ -19,7 +19,7 @@ const AGENT_DIR = path.join(os.homedir(), '.pi', 'agent');
 
 /**
  * 镜像 ~/.pi/agent/extensions/cline-provider/index.ts 的 MODELS 定义。
- * 那边改了这里也要跟着改（成本/上下文/thinkingLevelMap 都是实测值）。
+ * 那边改了这里也要跟着改（成本/上下文/thinkingLevelMap 的取值需与那边一致）。
  */
 function clineProviderConfig(cfg) {
   const model = (id, name, input, cost) => ({

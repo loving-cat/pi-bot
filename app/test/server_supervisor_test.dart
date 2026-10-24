@@ -210,7 +210,7 @@ void main() {
       isTrue,
     );
     await launcher.stop();
-    // CI 的 Windows runner 上要真起两次 node + 跑一次 npm install，
-    // 默认 30s 的用例超时会偶发不够（实测 30s 正好卡在边界）。
+    // CI 的 Windows runner 上要起两次 node + 跑一次 npm install，
+    // 默认 30s 的用例超时会偶发不够，所以放宽到 3 分钟。
   }, timeout: const Timeout(Duration(minutes: 3)));
 }

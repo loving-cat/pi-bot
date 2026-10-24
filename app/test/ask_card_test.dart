@@ -7,8 +7,8 @@ import 'package:pi_bot/scope.dart';
 
 /// 询问卡片里的输入框必须能打字。
 ///
-/// 以前整条消息列表被 ExcludeFocus 包住（为了防流式输出抢焦点），
-/// 连带把卡片里的 TextField 也禁掉了 —— 点进去打不进字。
+/// 消息列表不能整体用 ExcludeFocus 包住（那是防流式输出抢焦点的做法）：
+/// 会连带把卡片里的 TextField 也禁掉，点进去打不进字。
 void main() {
   testWidgets('卡片里的「我自己说」可以输入', (tester) async {
     final state = AppState();
@@ -59,7 +59,7 @@ void main() {
 
   /// 回归：卡片用过一次就该收起来。
   ///
-  /// 原症状：点了选项/自己说了一句后，卡片原样摊在那里、按钮还能再点 ——
+  /// 点了选项/自己说了一句后卡片还摊在那里、按钮还能再点的话，
   /// 用户会怀疑「我刚才到底点上没有」，误点还会把进程带偏。
   testWidgets('回答过的卡片收起，不再给可点的选项', (tester) async {
     final state = AppState();

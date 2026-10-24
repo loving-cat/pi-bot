@@ -94,7 +94,7 @@ await test('本机能看设备列表，也能撤销设备', async () => {
   assert.ok(!('token' in row), '设备列表不能把 token 原文发出去');
   assert.ok(row.id, '必须给出 id —— 客户端只能靠它撤销');
 
-  // ★ 撤销走 id（App 用的就是这条；以前 App 拿不到 token，删的是 "null"，所以"移除没反应"）
+  // ★ 撤销走 id（App 用的就是这条）：App 拿不到 token，按 token 删会删成 "null"，表现为"移除没反应"
   const del = await call('127.0.0.1', `/api/devices/${row.id}`, { method: 'DELETE' });
   assert.equal(del.status, 200);
   assert.equal(del.body.revoked, true);

@@ -60,7 +60,7 @@ export function planRefBubble({
   count = null,
 }) {
   // count = 他俩那个私聊里现在有多少条消息。
-  // 界面用它显示「5 条消息往来」—— 用户要的是"进展到哪一步了"，
+  // 界面用它显示「5 条消息往来」，让用户看得到进展到哪一步；
   // 只显示"已发送给 X"看不出有多少来回。
   const ref = { botId: targetBotId, roomId: dmRoomId, at, count };
   const mergeable =
@@ -119,8 +119,8 @@ function botLine(bot) {
     .filter((r) => r.kind === 'group' && r.botIds.includes(bot.id))
     .map((r) => `${r.name}${r.leadBotId === bot.id ? '(负责)' : ''}`);
   // ★ 末尾 «» 里是内部参数，只给模型自己挑模型用。
-  //   以前这些直接裸拼在行里，模型会原样念给用户听（“他用 ctyun/glm-5.3-oc，thinking high”）——
-  //   用户要的是个同事，不是一份配置清单。
+  //   不能直接裸拼在行里：模型会原样念给用户听（"他用 ctyun/glm-5.3-oc，thinking high"），
+  //   而在用户眼里它该是个同事，不是一份配置清单。
   const internal = [
     bot.model ?? '默认模型',
     `thinking ${bot.thinking}`,
@@ -144,13 +144,10 @@ function deptLine(room) {
 
 export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
   /**
-   * 派活真没送出去 → **报给主控**，让主控重新派人。
+   * 派活真没送出去 → **报给主控**，让主控重试或重新派人（至少重试 3 次）。
    *
-   * 用户原话："发现不通，就立马反馈给 mainbot，main bot 再去把任务交接给 bot
-   * 一次，要重试 3 次至少。"
-   *
-   * 为什么不能只把失败写进工具返回值：截屏里那个 bot 的结论是
-   * "私聊派活这条路也不通 —— 这次我直接自己上"。它会自作主张把活抢过来干
+   * 为什么不能只把失败写进工具返回值：派活的 bot 看到
+   * "私聊派活这条路也不通"，会自作主张把活抢过来干
    * （往往是它最不擅长的活）。这条路必须抬到主控那儿。具体怎么抬
    * （写哪条消息、叫醒谁）都在 runner.escalate 里，和"心跳断了"共用一套。
    */
@@ -394,11 +391,9 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
 
         // ★ 排一下队，而不是一碰“正忙”就宣布“这条路不通”。
         //
-        //   用户报的原话：“发现不通，就立马反馈给 mainbot，main bot 再去把任务
-        //   交接给 bot 一次，要重试 3 次至少。”
-        //   以前是立刻失败：三个成员同时在群里干活时，第二个私信直接被打回，
-        //   主控看到的就是“私聊派活这条路也不通 —— 这次我直接自己上”。其实
-        //   对方只是还在忙。
+        //   不能立刻失败：三个成员同时在群里干活时，第二个私信会被直接打回，
+        //   主控看到“私聊派活这条路也不通”就会自己上手 —— 其实对方只是还在忙。
+        //   这里先重试 3 次，仍不通再报给主控重新派人。
         let result = null;
         let waitedMs = 0;
         let lastWhy = '';
@@ -430,8 +425,8 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
 
         if (!result?.ok) {
           const reason = result?.error || '没跑成';
-          // 真没派出去 → 报给主控（而不是让派活的那个 bot 自己上手）。
-          // 用户要的就是这个：不通就往上抬，让主控重新派人。
+          // 真没派出去 → 报给主控（而不是让派活的那个 bot 自己上手）：
+          // 不通就往上抬，让主控重新派人。
           reportDispatchFailure({
             targetName: target.name,
             task: params.task,
@@ -753,8 +748,8 @@ export function buildChiefTools({ runner, health, roomId, botId }) {
   return [
     // ★ 加技能 / 加 MCP：主控的权力仅次于用户。
     //
-    //   为什么不只让用户在设置里点：用户说话是"我想让它能查数据库"，
-    //   不是"你去设置页第三栏点添加、填 baseUrl、再点保存"。
+    //   为什么不只让用户在设置里点：用户的需求是"让它能查数据库"这件事本身，
+    //   不是去设置页第三栏点添加、填 baseUrl、再点保存。
     //   主控有权直接把这件事件掉 —— 但它加的东西**和用户加的完全一样**，
     //   都落在同一个库里、走同一套校验，没有后门。
     defineTool({
@@ -1057,8 +1052,7 @@ export function buildChiefTools({ runner, health, roomId, botId }) {
         }
         // ★ 造"开发类"bot 时**自动挂上工程基线**。
         //
-        //   用户要的："建立 coding 相关的 bot 的时候 优先让开发类 bot 必须调用
-        //   这类 skill。" 靠主控每次记得手写是不现实的 —— 它一忙就忘。
+        //   开发类 bot 必须带上这类 skill。靠主控每次记得手写是不现实的 —— 它一忙就忘。
         //   所以在这里一刀切：命中就是开发类，基线必须带。
         const skills = [...(params.skills ?? [])];
         const coding = isCodingRole({

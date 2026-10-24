@@ -32,7 +32,7 @@ class FloatingMenuEntry {
 
 /// 菜单该摆在哪 —— 纯函数，单独拎出来是为了能单测。
 ///
-/// ★ 这个函数存在的理由是踩过的坑：**一律往上开**。在窗口上边右键时，
+/// ★ 菜单不能一律往上开：在窗口上边右键时，
 ///   菜单整个被顶出可视区，前面几项直接看不见。
 ///
 /// 规则：
@@ -240,7 +240,7 @@ class _FloatingMenuLayerState extends State<_FloatingMenuLayer>
     //   菜单是插进 Overlay 的，而 Overlay **不在 app 的 Material 之下** ——
     //   没有 Material 祖先时，Flutter 会故意给所有 Text 画上"黄色双下划线"，
     //   提示你主题没接上（这是它的提示机制，不是渲染 bug）。
-    //   表现就是：菜单每一项文字下面都挂着两条杠，而且颜色不受我们控制。
+    //   表现就是：菜单每一项文字下面都挂着两条杠，而且颜色不受本组件控制。
     //
     //   MaterialType.transparency 只借 DefaultTextStyle，不画底色 ——
     //   卡片的圆角/边框/阴影还是下面这个 Container 自己画。

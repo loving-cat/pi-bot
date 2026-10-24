@@ -1,8 +1,7 @@
 /**
  * 上下文预算：模型容量覆盖 + 压缩参数 + 占用读数。
  *
- * 从 pi-runner.js 搬出来的（那边原本 2000 行，什么都在里面）。
- * 这一块的特点是**只跟 pi 的会话对象打交道**，不碰房间、不碰调度：
+ * 本模块只跟 pi 的会话对象打交道，不碰房间、不碰调度：
  *   · withCapacity        把 bot 上设的 contextWindow / maxTokens 盖到模型上
  *   · applyCompactionBudget  把"什么时候压缩、压缩时保留多少"套到会话上
  *   · readContext         读回占用（给界面显示用了多少）
