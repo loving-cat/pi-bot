@@ -44,7 +44,7 @@ squircle / blob 九种，见 `BlobAvatar.shapeKindOf`），**下一步是表情*
 测法：
 
 ```powershell
-$env:PI_BOT_FRAME_LOG="C:\Users\XL\AppData\Local\Temp\bench.log"
+$env:PI_BOT_FRAME_LOG="$env:TEMP\bench.log"
 # 启动 pi_bot.exe，等十几秒，读日志最后几行
 # 格式：帧数 平均ms P90 最慢 超16ms buildms rasterms
 ```
