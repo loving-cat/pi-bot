@@ -1,0 +1,23 @@
+app/tool/avatar_gallery.dart
+  s_06973911ad2cd6::t_c97539f868afd2 1-163
+docs/MODULE-MAP.md
+  s_06973911ad2cd6::t_354dd0baa9dbfe 101-102
+docs/TODO-AVATAR.md
+  s_06973911ad2cd6::t_81efe43714a6ab 1,3,5-9,11,13,15-21,23,25,27,29,31-34,37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "269155744772cc317219879c4b170ca1356557f1",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
