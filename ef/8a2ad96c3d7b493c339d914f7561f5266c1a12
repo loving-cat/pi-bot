@@ -1,0 +1,25 @@
+app/test/thinking_slider_test.dart
+  s_c0e2153248fc56::t_482376b7c3eff3 1-79
+app/lib/screens/bots_screen.dart
+  s_c0e2153248fc56::t_c905ab0426827d 7,387-392
+app/lib/widgets/bot_run_section.dart
+  s_c0e2153248fc56::t_c892f62ffbc2b5 4,10,31-72,201-212
+app/windows/flutter/generated_plugins.cmake
+  s_c0e2153248fc56::t_05b7be5299cf0d 15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ef8a2ad96c3d7b493c339d914f7561f5266c1a12",
+  "prompts": {},
+  "sessions": {
+    "s_c0e2153248fc56": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11fdc-b785-7c71-9a06-76fbae695e80",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
