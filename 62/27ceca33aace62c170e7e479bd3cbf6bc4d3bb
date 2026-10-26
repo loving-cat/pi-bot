@@ -1,0 +1,19 @@
+app/test/avatar_life_test.dart
+  s_c0e2153248fc56::t_a5246eab97ba01 241,244,252-266
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6227ceca33aace62c170e7e479bd3cbf6bc4d3bb",
+  "prompts": {},
+  "sessions": {
+    "s_c0e2153248fc56": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11fdc-b785-7c71-9a06-76fbae695e80",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
