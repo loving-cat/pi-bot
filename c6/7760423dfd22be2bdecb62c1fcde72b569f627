@@ -1,0 +1,14 @@
+app/lib/widgets/blob_avatar.dart
+  h_53f14b6641484b 637-638,640-641,649-650,695-697,703-704,710,735-738,871-874,881-888,1137-1146,1153-1154,1156-1161
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c67760423dfd22be2bdecb62c1fcde72b569f627",
+  "prompts": {},
+  "humans": {
+    "h_53f14b6641484b": {
+      "author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
