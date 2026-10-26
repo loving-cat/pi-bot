@@ -1,0 +1,29 @@
+app/test/avatar_solid_test.dart
+  s_06973911ad2cd6::t_0e439870d0c9b0 1
+  s_06973911ad2cd6::t_68cc6631ec066c 2-409
+app/lib/widgets/avatar_character_painter.dart
+  s_06973911ad2cd6::t_009d85a2ca98a4 2,9,67-68,76-85,94-129,207-243,246-247,250,253-257,259,274
+  s_06973911ad2cd6::t_f51abbde24e7f4 258,260-273,275-290
+app/lib/widgets/avatar_solid.dart
+  s_06973911ad2cd6::t_3ac16082e853da 1-83
+docs/MODULE-MAP.md
+  s_06973911ad2cd6::t_a4fe41b410e233 103
+docs/TODO-AVATAR.md
+  s_06973911ad2cd6::t_a4fe41b410e233 8,28,36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f6c10faf814ca7cb93388cf781012dcb053dcf70",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
