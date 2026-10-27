@@ -98,6 +98,10 @@
 | `screens/host_connect_screen.dart` | 宿主启动与失败页；重试、查看日志和打开启动配置 |
 | `screens/` | 页面：home_shell / chat_screen / rooms_screen / bots_screen / settings / pair / scan |
 | `widgets/` | 可复用组件：`tool_steps`、`changed_files`、`task_board`、`automation_sheet`、`ask_card`、**`approval_card`**、`md_text`、`attachment_view`、`avatar*`、`window_title_bar`… |
+| `widgets/avatar_character.dart` / `widgets/avatar_character_painter.dart` | 稳定角色参数与缓存的伪三维绘制；不管理交互或动画资源 |
+| `widgets/avatar_projection.dart` | 视线到yaw/pitch的透视变换，供前脸、眼睛与侧壁共用（纯逻辑） |
+| `widgets/avatar_solid.dart` | 连续侧壁网格、顶点颜色及同向实体覆盖面，按深度排列三角面 |
+| `widgets/blob_avatar.dart` / `widgets/avatar_life.dart` | 头像交互、动画生命周期、指针阻尼与群成员组合；设计约束见 `docs/TODO-AVATAR.md` |
 | `theme.dart` | 颜色/字号/圆角；新增图标需核对当前依赖字体的实际字形 |
 | `clipboard_image.dart` / `clipboard_image_macos.dart` | 剪贴板图片平台分流；Windows PowerShell、macOS PNG/TIFF 读取与临时文件清理 |
 | `window_state.dart` | 窗口位置/大小记忆：编码、解析、夹回可见区（纯函数） |
