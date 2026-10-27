@@ -1,0 +1,47 @@
+app/lib/screens/bots_screen.dart
+  s_06973911ad2cd6::t_8120b4e7b4f588 119,349
+app/lib/screens/chat_screen.dart
+  s_06973911ad2cd6::t_fa949f99bd871c 516-521
+app/lib/theme.dart
+  s_06973911ad2cd6::t_f4dae4d80eeb81 162-170
+app/lib/widgets/avatar.dart
+  s_06973911ad2cd6::t_e6661a503d36fb 4,6,25-36
+app/lib/widgets/avatar_character.dart
+  s_06973911ad2cd6::t_e88759d3cb5084 1-45
+app/lib/widgets/avatar_character_painter.dart
+  s_06973911ad2cd6::t_d2500bc47dc42f 1-424
+app/lib/widgets/avatar_life.dart
+  s_06973911ad2cd6::t_d2ecad85c3460c 31-33
+app/lib/widgets/avatar_projection.dart
+  s_06973911ad2cd6::t_214ed59fd4aef2 1-113
+app/lib/widgets/avatar_solid.dart
+  s_06973911ad2cd6::t_212aeea0199e94 1-83
+app/lib/widgets/blob_avatar.dart
+  s_06973911ad2cd6::t_e6e198ac6f88e7 10-11,13,34-35,45,51,55-56,62,100,126,158,161-165,167,170,174,178,283,301,303-304,326-342,352,409,464-465,472,499,506,512,516,518-535,544,553
+app/test/avatar_character_test.dart
+  s_06973911ad2cd6::t_1760a1415606d6 1-139
+app/test/avatar_life_test.dart
+  s_06973911ad2cd6::t_9c68249b451762 241,244,252-266
+app/test/avatar_lifecycle_test.dart
+  s_06973911ad2cd6::t_03fd3d938e3c1e 1-358
+app/test/avatar_projection_test.dart
+  s_06973911ad2cd6::t_b3fb88629b4c7b 1-430
+app/test/avatar_solid_test.dart
+  s_06973911ad2cd6::t_f715142bc6398d 1-409
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "be065acfebb5fe1ce23d6a9048624ff4d9b112aa",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
