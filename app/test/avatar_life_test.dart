@@ -238,10 +238,10 @@ void main() {
       expect(r.value.dx, lessThan(10), reason: '★ 一帧就走完 = 瞬移');
     });
 
-    test('★ 约 100ms 走完八成（跟真实眼球扫视同量级）', () {
+    test('★ 约 180ms 走完八成（整颗头像一起倾斜，比眼球扫视略慢）', () {
       var v = Offset.zero;
       const target = Offset(10, 0);
-      for (var i = 0; i < 6; i++) {
+      for (var i = 0; i < 11; i++) {
         v = advanceGaze(
           current: v,
           target: target,
@@ -249,8 +249,21 @@ void main() {
           rate: rate,
         ).value;
       }
-      expect(v.dx / 10, greaterThan(0.7), reason: '100ms 后要走过大半，不能慢吞吞');
-      expect(v.dx / 10, lessThan(1.0), reason: '100ms 也不该完全到站');
+      expect(v.dx / 10, greaterThan(0.7), reason: '180ms 后要走过大半，不能慢吞吞');
+      expect(v.dx / 10, lessThan(1.0), reason: '180ms 也不该完全到站');
+    });
+
+    test('★ 整块动比只动眼睛更容易显急 —— 100ms 内不该走完大半', () {
+      var v = Offset.zero;
+      for (var i = 0; i < 6; i++) {
+        v = advanceGaze(
+          current: v,
+          target: const Offset(10, 0),
+          dtSeconds: 1 / 60,
+          rate: rate,
+        ).value;
+      }
+      expect(v.dx / 10, lessThan(0.75), reason: '太快会像抽搐');
     });
 
     test('单调逼近目标，不冲过头', () {

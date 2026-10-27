@@ -28,8 +28,9 @@ class AvatarLife {
   /// 这个数决定眼睛转动的手感：
   ///   · 太小 → 慢吞吞的，像没睡醒
   ///   · 太大 → 又变回“瞬移”，白做了缓动
-  /// 16/s 大约是 100ms 走完 80% 行程 —— 跟真实的眼球扫视（saccade）同量级。
-  static const gazeFollowRate = 16.0;
+  /// 9/s 大约是 180ms 走完 80% 行程 —— 比眼球扫视稍慢一点，
+  /// 整颗头像倾斜时慢半拍才不显得"抽搐"（整块动比只动眼睛更容易看出急）。
+  static const gazeFollowRate = 9.0;
 
   /// 在 `MaterialApp.builder` 里套一层：让所有头像都能知道鼠标在哪。
   static Widget watchPointer({required Widget child}) {

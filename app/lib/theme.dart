@@ -159,15 +159,15 @@ class PB {
   ];
 
   static const palette = <Color>[
-    Color(0xFF2E8CF6), // blue
-    Color(0xFF22C878), // green
-    Color(0xFFF9459B), // magenta
-    Color(0xFF9A66FA), // purple
-    Color(0xFFFD7A22), // orange
-    Color(0xFF17BFA9), // cyan
-    Color(0xFFFB4B58), // red
-    Color(0xFFF5A524), // yellow
-    Color(0xFFB07A45), // brown
+    Color(0xFF238CFA), // blue
+    Color(0xFF19C781), // green
+    Color(0xFFF13E9F), // pink
+    Color(0xFF9563F4), // violet
+    Color(0xFF858B91), // slate
+    Color(0xFF1BB8A6), // teal
+    Color(0xFFE36190), // rose
+    Color(0xFFB88955), // ochre
+    Color(0xFFA2784D), // brown
   ];
 
   static Color colorFor(String id) {

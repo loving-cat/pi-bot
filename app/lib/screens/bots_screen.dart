@@ -116,7 +116,7 @@ class BotsScreen extends StatelessWidget {
             children: [
               TextField(
                 controller: emojiController,
-                decoration: const InputDecoration(labelText: 'emoji（头像）'),
+                decoration: const InputDecoration(labelText: '符号标记'),
               ),
               const SizedBox(height: 10),
               TextField(
@@ -346,7 +346,7 @@ class _BotRow extends StatelessWidget {
                     const SizedBox(height: 10),
                     TextField(
                       controller: emojiController,
-                      decoration: const InputDecoration(labelText: 'emoji（头像）'),
+                      decoration: const InputDecoration(labelText: '符号标记'),
                       onChanged: (_) => setLocal(() {}),
                     ),
                     const SizedBox(height: 10),

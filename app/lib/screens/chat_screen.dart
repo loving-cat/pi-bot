@@ -513,7 +513,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   if (room.isGroup)
-                    GroupBlobAvatar(seeds: room.botIds, size: 22, animate: busy)
+                    GroupBlobAvatar(
+                      seeds: room.botIds,
+                      size: 22,
+                      animate: busy,
+                      mood: busy ? AvatarMood.busy : AvatarMood.idle,
+                    )
                   else
                     BlobAvatar(
                       seed: room.botIds.isNotEmpty

@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../theme.dart';
+import 'blob_avatar.dart';
 
-/// 圆角方形头像 + 渐变底 + 白色字形（没有 emoji 时的兜底样式）。
+/// 兼容头像入口，使用统一角色绘制并保留可访问名称。
 class BotAvatar extends StatelessWidget {
   const BotAvatar({
     super.key,
@@ -21,60 +22,18 @@ class BotAvatar extends StatelessWidget {
   final Widget? badge;
 
   @override
-  Widget build(BuildContext context) {
-    final color = PB.colorFor(seed);
-    final glyph = emoji != null && emoji!.isNotEmpty
-        ? emoji!
-        : (label.trim().isEmpty ? 'π' : label.trim().characters.first);
-
-    return SizedBox(
-      width: size,
-      height: size,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Container(
-            width: size,
-            height: size,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(size * 0.28),
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  Color.lerp(color, Colors.white, 0.18)!,
-                  Color.lerp(color, Colors.black, 0.30)!,
-                ],
-              ),
-            ),
-            alignment: Alignment.center,
-            child: Text(
-              glyph,
-              style: TextStyle(
-                fontSize: size * (glyph.runes.length > 1 ? 0.5 : 0.46),
-                fontWeight: FontWeight.w600,
-                color: Colors.white,
-                height: 1.0,
-              ),
-            ),
-          ),
-          if (badge != null)
-            Positioned(
-              right: -2,
-              bottom: -2,
-              child: Container(
-                padding: const EdgeInsets.all(1.5),
-                decoration: const BoxDecoration(
-                  color: PB.bgApp,
-                  shape: BoxShape.circle,
-                ),
-                child: badge,
-              ),
-            ),
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) => Semantics(
+    label: label,
+    image: true,
+    child: BlobAvatar(
+      seed: seed,
+      color: PB.colorFor(seed),
+      emoji: emoji,
+      size: size,
+      badge: badge,
+      animate: false,
+    ),
+  );
 }
 
 /// 顶部/工具栏用的圆形图标按钮（截图里搜索、新建那两个）
