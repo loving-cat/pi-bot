@@ -1,0 +1,49 @@
+server/tests/fixtures/mcp-probe-server.mjs
+  s_06973911ad2cd6::t_4eff5d68d02d34 4,13,15
+  s_06973911ad2cd6::t_ec7de034590b12 8-12,14,22,24
+  s_06973911ad2cd6::t_6d0a6030f60d79 1-3,5-7,16-21,23,25-45
+server/src/mcp.js
+  s_06973911ad2cd6::t_0792a44cd994d6 1-2,178-180,187-194,307,309
+server/src/mcp-probe-cleanup.js
+  s_06973911ad2cd6::t_fb144f7ab0f113 70-80,109
+  s_06973911ad2cd6::t_453150bcfbb1d0 1-69,96-101,104-108,110-118,125
+  s_06973911ad2cd6::t_ec7de034590b12 81-95,102-103,119-124
+server/src/mcp-probe.js
+  s_06973911ad2cd6::t_c8c4a6377ef821 1-14,35,37-38,42-56,58-83,85-122
+  s_06973911ad2cd6::t_ec7de034590b12 15-34,39-41,57,84
+  s_06973911ad2cd6::t_149a9ebea3eb1b 36
+server/package.json
+  s_06973911ad2cd6::t_603a3f5b10bfc3 26
+server/src/mcp-probe-http.js
+  s_06973911ad2cd6::t_c8c4a6377ef821 1-134,136-191
+  s_06973911ad2cd6::t_6d0a6030f60d79 135
+server/src/mcp-probe-protocol.js
+  s_06973911ad2cd6::t_d848e8e9c66605 1-66
+server/tests/mcp-probe.mjs
+  s_06973911ad2cd6::t_fb144f7ab0f113 410-417
+  s_06973911ad2cd6::t_ec7de034590b12 271,274,277-297,311-331,390-401
+  s_06973911ad2cd6::t_6d0a6030f60d79 1-7,9,11-219,262-270,272-273,275-276,335-354,423-427
+  s_06973911ad2cd6::t_149a9ebea3eb1b 220-261
+  s_06973911ad2cd6::t_453150bcfbb1d0 8,10,355-389,402-409,418-422
+  s_06973911ad2cd6::t_4eff5d68d02d34 298-310,332-334
+server/src/mcp-probe-stdio.js
+  s_06973911ad2cd6::t_d848e8e9c66605 1-3,6-37,43-87,89-94
+  s_06973911ad2cd6::t_453150bcfbb1d0 4-5,88
+  s_06973911ad2cd6::t_6d0a6030f60d79 38-42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "87a9f66e03a17b1324863d95d58d6d48179b2d5a",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
