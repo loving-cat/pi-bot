@@ -40,7 +40,27 @@ localWss.on('connection', (ws) => ws.on('message', (d) => ws.send(`echo:${d}`)))
 await listen(local, '127.0.0.1');
 const localPort = local.address().port;
 
-// ---------- "外部目标"：另一个 host（127.0.0.2），HTTP + WS 都计数 ----------
+// ---------- "外部目标"：换一个 host（127.0.0.2），HTTP + WS 都计数 ----------
+//
+// macOS 的 lo0 默认没有 127.0.0.2（Linux/Windows 有整个 127.0.0.0/8），
+// 直接 listen 会 EADDRNOTAVAIL → 整个文件没跑任何用例就崩。
+// 这里挑一个**可绑定**的地址：优先 127.0.0.2（Linux/Windows 行为不变），
+// 绑不上就退回第二个 127.0.0.1（对本测试的语义没有影响 —— 它只需要一个
+// "和本地服务端不同的目标"，地址是否不同只影响可读性）。
+const EXTERNAL_HOST = await pickExternalHost();
+async function pickExternalHost() {
+  for (const host of ['127.0.0.2', '127.0.0.1']) {
+    const probe = http.createServer();
+    const ok = await new Promise((resolve) => {
+      probe.once('error', () => resolve(false));
+      probe.listen(0, host, () => resolve(true));
+    });
+    await new Promise((r) => probe.close(r));
+    if (ok) return host;
+  }
+  return '127.0.0.1';
+}
+
 let externalHits = 0;
 const external = http.createServer((req, res) => {
   externalHits++;
@@ -50,7 +70,7 @@ const external = http.createServer((req, res) => {
 const externalWss = new WebSocketServer({ server: external });
 externalWss.on('connection', () => externalHits++);
 external.on('upgrade', () => externalHits++);
-await listen(external, '127.0.0.2');
+await listen(external, EXTERNAL_HOST);
 const extPort = external.address().port;
 
 // ---------- 假中转 ----------
@@ -92,10 +112,10 @@ async function expectRejected(id, path) {
 
 await test('ws-open path=ws://evil.example/ws → 1008', () => expectRejected('abs-1', 'ws://evil.example/ws'));
 await test('ws-open path=ws://127.0.0.2:<port>/ws → 1008 且外部目标无连接', () =>
-  expectRejected('abs-2', `ws://127.0.0.2:${extPort}/ws`));
+  expectRejected('abs-2', `ws://${EXTERNAL_HOST}:${extPort}/ws`));
 await test('ws-open path=//evil.example/ws（协议相对）→ 1008', () => expectRejected('rel-1', '//evil.example/ws'));
 await test('ws-open path=//127.0.0.2:<port>/ws（协议相对）→ 1008 且外部目标无连接', () =>
-  expectRejected('rel-2', `//127.0.0.2:${extPort}/ws`));
+  expectRejected('rel-2', `//${EXTERNAL_HOST}:${extPort}/ws`));
 
 await test('ws-open path=/ws → 正常桥接到本地', async () => {
   agentSock.send(encodeFrame({ t: 'ws-open', id: 'ok-1', path: '/ws', headers: {} }));
@@ -109,7 +129,7 @@ await test('ws-open path=/ws → 正常桥接到本地', async () => {
 
 await test('req path=http://127.0.0.2:<port>/x（绝对 URL）→ 只打到本地，不外连', async () => {
   const before = externalHits;
-  const url = `http://127.0.0.2:${extPort}/x`;
+  const url = `http://${EXTERNAL_HOST}:${extPort}/x`;
   agentSock.send(encodeFrame({ t: 'req', id: 'http-1', method: 'GET', path: url, headers: {} }));
   const res = await waitFrame((f) => f?.t === 'res' && f.id === 'http-1');
   assert.ok(res, '应收到 res');
