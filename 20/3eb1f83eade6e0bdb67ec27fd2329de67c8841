@@ -1,0 +1,31 @@
+server/src/store.js
+  s_06973911ad2cd6::t_e01e5c627d3880 40-42,233,331,914-924,929,934,939,956-957
+  s_06973911ad2cd6::t_60fb55c4ecb194 227
+  s_06973911ad2cd6::t_73e10ef5c454d9 1234,1248,1276,1280,1284,1288,1291,1295
+server/src/mcp-library.js
+  s_06973911ad2cd6::t_b010dbcaa4efc4 1-8,10-14,16-44,46-78,80-88,93-104,106-117,119-123,125-134
+  s_06973911ad2cd6::t_97d31a58e8ddd8 9,15,45,79,89-92,105,124
+  s_06973911ad2cd6::t_63958bc5b7c3d4 118
+server/src/mcp-credentials.js
+  s_06973911ad2cd6::t_97d31a58e8ddd8 4,95,105-109,156-159,165
+  s_06973911ad2cd6::t_b010dbcaa4efc4 1-3,5-94,96-104,110-155,160-164,166-168
+server/tests/mcp-credentials.mjs
+  s_06973911ad2cd6::t_63958bc5b7c3d4 1-266,289-319
+  s_06973911ad2cd6::t_49009b238c0c6e 267-288
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "203eb1f83eade6e0bdb67ec27fd2329de67c8841",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
