@@ -1,0 +1,42 @@
+scripts/tests/prepare-macos-bundle-test.mjs
+  s_06973911ad2cd6::t_086c9529370556 6-7,149-155
+  s_06973911ad2cd6::t_82bcc39f31cb4c 120-138
+  s_06973911ad2cd6::t_c7efafe4659791 1-5,8-119,139-148,156-178
+docs/MACOS.md
+  s_06973911ad2cd6::t_03a0246df71cec 22-25
+  s_06973911ad2cd6::t_0548e37c026135 31-34
+scripts/pack-macos.sh
+  s_06973911ad2cd6::t_0548e37c026135 189
+  s_06973911ad2cd6::t_03a0246df71cec 65-70,100-105,107-109,111,120-165
+scripts/stage-macos-build.mjs
+  s_06973911ad2cd6::t_a45e730eff17c7 1-9,11-24,27-53,56-63
+  s_06973911ad2cd6::t_03a0246df71cec 10
+  s_06973911ad2cd6::t_b9e5341270e6db 25-26
+  s_06973911ad2cd6::t_86f4b54d4a470b 54-55
+scripts/prepare-macos-bundle.mjs
+  s_06973911ad2cd6::t_c7efafe4659791 62,185-188
+  s_06973911ad2cd6::t_82bcc39f31cb4c 105
+  s_06973911ad2cd6::t_86f4b54d4a470b 177-178
+  s_06973911ad2cd6::t_0548e37c026135 1-61,63-104,106-176,179-184,189
+scripts/tests/stage-macos-build-test.mjs
+  s_06973911ad2cd6::t_086c9529370556 1-104
+scripts/tests/pack-macos-test.sh
+  s_06973911ad2cd6::t_0548e37c026135 19,58,245,290
+  s_06973911ad2cd6::t_666439110c61c0 12-13,16,20,23-33,59-62,123-142,144,189-197,251,254-257,291-293,297
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b77a45b89ba280605f0472a8b53301651d5fbeee",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
