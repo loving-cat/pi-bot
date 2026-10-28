@@ -1,0 +1,24 @@
+app/tool/connections_gallery.dart
+  s_06973911ad2cd6::t_2737b259cc435e 1-166,169-170
+  s_06973911ad2cd6::t_92399dda03254a 167-168,171-276
+docs/APP-CONNECTIONS.md
+  s_06973911ad2cd6::t_fcc8a95405f303 1-68
+docs/MODULE-MAP.md
+  s_06973911ad2cd6::t_218ec11db1b9e9 44-47,90-91
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e4f0f8e8badde92db19b7e533269a6ca6cdeddb2",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
