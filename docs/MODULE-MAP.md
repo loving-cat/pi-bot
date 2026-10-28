@@ -134,4 +134,5 @@
 | 客户端全量 | `cd app && flutter test` |
 | 静态检查 | `cd app && flutter analyze` |
 | macOS 打包 | `./scripts/pack-macos.sh`（完整 Xcode 原生构建；`--no-build` 复用已有 Release App） |
-| Windows 打包 | `powershell -File scripts/pack-windows.ps1`（暂存后换成品；`-NoBuild` 复用、`-WithNode` 带 node.exe、`-Zip` 出压缩包） |
+| Windows 打包 | `powershell -File scripts/pack-windows.ps1`（临时目录干净构建后回填 Release；扫描本机路径与 `.pdb`；`-NoBuild` 复用、`-WithNode` 带 node.exe、`-Zip` 出压缩包） |
+| 打包脚本单测 | `node scripts/tests/all.mjs`；macOS 分支 `bash scripts/tests/pack-macos-test.sh`；Windows 分支 `powershell -File scripts/tests/pack-windows-test.ps1` |

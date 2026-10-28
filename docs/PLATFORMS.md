@@ -23,7 +23,7 @@ Flutter 官方的做法就是所有平台目录放在一个仓库里：`flutter 
 | Android | `app/android/**` | 移动端 |
 | 平台适配小文件 | `app/lib/clipboard_image_macos.dart`、`app/lib/server/spawn_posix.dart` | 对应平台；共享文件只留接口 |
 | 服务端（Node，跨平台） | `server/src/**` | 任何平台。碰进程/路径/编码的改动，**必须在 Windows 上跑 `node tests/all.mjs`** |
-| 打包脚本 | `scripts/pack-windows.ps1`、`scripts/pack-macos.sh` | 各自平台，规则一致：暂存 → 校验 → 换成品 → 失败回滚 |
+| 打包脚本 | `scripts/pack-windows.ps1`、`scripts/pack-macos.sh` | 各自平台，规则一致：干净临时构建 → 暂存 → 扫描本机路径 → 换成品 → 失败回滚 |
 | 平台文档 | `docs/WINDOWS.md`、`docs/MACOS.md` | 各自平台（构建命令 + 真机验收记录） |
 
 ## 共享代码怎么写才不打架
@@ -48,7 +48,7 @@ PR 之前逐条过一遍：
 - [ ] 新增路径拼接/解析：`Platform.pathSeparator`、双分隔符兼容
 - [ ] 新增子进程：想一遍 `.cmd/.bat`、空格与引号、控制台窗口、怎么杀
 - [ ] 用户可见的平台能力：更新对应的 `docs/WINDOWS.md` / `docs/MACOS.md`
-- [ ] 打包脚本：保留"先暂存再换成品，失败不动上一版"
+- [ ] 打包脚本：干净临时构建，先暂存再换成品；发行包残留本机路径或调试符号时失败，不改上一版
 
 ## 分支与发布
 

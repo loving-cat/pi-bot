@@ -2,27 +2,21 @@
 #
 #   .\scripts\pack-windows.ps1                 # dist/pi-bot-windows
 #   .\scripts\pack-windows.ps1 -Zip            # + dist/pi-bot-windows.zip
-#   .\scripts\pack-windows.ps1 -WithNode -Zip  # bundle node.exe (needs no Node on target)
+#   .\scripts\pack-windows.ps1 -WithNode -Zip  # bundle node.exe
 #   .\scripts\pack-windows.ps1 -NoBuild        # reuse the existing Release build
+#   .\scripts\pack-windows.ps1 -SkipDeps       # do not preinstall server deps
 #   .\scripts\pack-windows.ps1 -Help           # this text
 #
-# The desktop app starts the server by itself. It looks for
-# `server/src/index.js` next to pi_bot.exe, and for `node.exe` next to it
-# (or on PATH). So this package layout is:
+# The build copies app sources into a temp directory, excluding caches and user
+# project state, then runs flutter build windows --release. Output is copied
+# back to the Release folder. The temp copy is removed on success or failure.
+# -NoBuild skips Flutter. Packaging does not need Git and does not edit sources.
 #
-#   pi-bot-windows/
-#     pi_bot.exe
-#     <flutter runtime dlls, data/>
-#     node.exe                (only with -WithNode)
-#     server/                 (src, package.json, tools)
+# The staged package is rejected when it still contains local absolute paths,
+# .pdb files, or local state (.pi, _inbox, server/.env, logs). Server native
+# dependencies are scanned and not rewritten. A failed pack keeps the last dist.
 #
-# Packaging is staged: everything is assembled in a temporary folder first and
-# only swapped into place after npm install + layout checks succeed. If anything
-# fails, the previous dist package stays exactly as it was (same rule as
-# pack-macos.sh -- a failed pack must never destroy the last good build).
-#
-# Keep this file ASCII-only: PowerShell 5.1 decodes BOM-less files as ANSI,
-# and non-ASCII comments can break the parser.
+# Keep this file ASCII-only. PowerShell 5.1 decodes BOM-less scripts as ANSI.
 
 param(
   [string]$Out = "dist/pi-bot-windows",
@@ -40,19 +34,119 @@ function Fail([string]$message) {
   exit 1
 }
 
+function Join-Under([string]$Base, [string[]]$Child) {
+  $result = $Base
+  foreach ($part in $Child) {
+    $result = Join-Path -Path $result -ChildPath $part
+  }
+  return $result
+}
+
+function Remove-Tree([string]$Path) {
+  if ($Path -and (Test-Path -LiteralPath $Path)) {
+    Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue
+  }
+}
+
+function Publish-DebugInfo([string]$DebugDir, [string]$Built, [string]$Destination) {
+  $parent = Split-Path -Parent $Destination
+  New-Item -ItemType Directory -Path $parent -Force | Out-Null
+  $suffix = [guid]::NewGuid().ToString("N").Substring(0, 8)
+  $staging = Join-Path $parent (".debug-info-new-" + $suffix)
+  $backup = Join-Path $parent (".debug-info-old-" + $suffix)
+  Copy-Item -LiteralPath $DebugDir -Destination $staging -Recurse -Force
+  $prefix = $Built.TrimEnd('\', '/')
+  $pdbs = @(Get-ChildItem -LiteralPath $Built -Recurse -Filter *.pdb -File -ErrorAction SilentlyContinue)
+  foreach ($pdb in $pdbs) {
+    $rel = $pdb.Name
+    if ($pdb.FullName.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+      $rel = $pdb.FullName.Substring($prefix.Length).TrimStart('\', '/')
+    }
+    $dest = Join-Path $staging "pdb"
+    foreach ($part in ($rel -split '[\\/]')) {
+      if ($part) { $dest = Join-Path $dest $part }
+    }
+    New-Item -ItemType Directory -Path (Split-Path -Parent $dest) -Force | Out-Null
+    Copy-Item -LiteralPath $pdb.FullName -Destination $dest -Force
+  }
+  $moved = $false
+  try {
+    if (Test-Path -LiteralPath $Destination) {
+      Move-Item -LiteralPath $Destination -Destination $backup -Force
+      $moved = $true
+    }
+    Move-Item -LiteralPath $staging -Destination $Destination -Force
+  } catch {
+    if ($moved -and -not (Test-Path -LiteralPath $Destination) -and (Test-Path -LiteralPath $backup)) {
+      Move-Item -LiteralPath $backup -Destination $Destination -Force
+      $moved = $false
+    }
+    throw
+  } finally {
+    if ($moved) { Remove-Tree $backup }
+    Remove-Tree $staging
+  }
+}
+
+function Publish-ReleaseTree([string]$Built, [string]$Destination) {
+  $parent = Split-Path -Parent $Destination
+  if (-not $parent) { throw "release path has no parent" }
+  New-Item -ItemType Directory -Path $parent -Force | Out-Null
+  $swap = Join-Path $parent (".pack-build-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
+  $next = Join-Path $swap "next"
+  $previous = Join-Path $swap "previous"
+  New-Item -ItemType Directory -Path $next -Force | Out-Null
+  Copy-Item -Path (Join-Path $Built "*") -Destination $next -Recurse -Force
+  if (-not (Test-Path -LiteralPath (Join-Path $next "pi_bot.exe"))) {
+    Remove-Tree $swap
+    throw "copied release is missing pi_bot.exe"
+  }
+  $moved = $false
+  $published = $false
+  $keep = $false
+  try {
+    if (Test-Path -LiteralPath $Destination) {
+      Move-Item -LiteralPath $Destination -Destination $previous -Force
+      $moved = $true
+    }
+    Move-Item -LiteralPath $next -Destination $Destination -Force
+    $published = $true
+  } catch {
+    try {
+      if (-not $published -and $moved) {
+        if (Test-Path -LiteralPath $Destination) {
+          Remove-Item -LiteralPath $Destination -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        if ((Test-Path -LiteralPath $previous) -and -not (Test-Path -LiteralPath $Destination)) {
+          Move-Item -LiteralPath $previous -Destination $Destination -Force
+          $moved = $false
+        }
+      }
+    } catch {
+      $keep = $true
+      Write-Host "WARNING: release rollback failed; backup kept at $previous" -ForegroundColor Yellow
+    }
+    throw
+  } finally {
+    if (-not $keep) { Remove-Tree $swap }
+  }
+}
+
+if ($args.Count -gt 0) { Fail "unknown parameter" }
+
 if ($Help) {
   Get-Content -Path $PSCommandPath | Select-Object -First 20
   exit 0
 }
 
 $root = Split-Path -Parent $PSScriptRoot
-$release = Join-Path $root "app\build\windows\x64\runner\Release"
+$release = Join-Under $root @("app", "build", "windows", "x64", "runner", "Release")
 $outDir = if ([System.IO.Path]::IsPathRooted($Out)) { $Out } else { Join-Path $root $Out }
 $outParent = Split-Path -Parent $outDir
 $outName = Split-Path -Leaf $outDir
 $zipPath = "$outDir.zip"
-
-# ---- preflight ------------------------------------------------------------
+$stageScript = Join-Path $PSScriptRoot "stage-app-build.mjs"
+$prepareScript = Join-Path $PSScriptRoot "prepare-windows-bundle.mjs"
 
 $nodeCmd = Get-Command node -ErrorAction SilentlyContinue
 if (-not $nodeCmd) { Fail "node is not on PATH (Node 22+ is required to pack)" }
@@ -63,11 +157,11 @@ if ($nodeMajor -lt 22) { Fail "Node 22+ is required, found $nodeVersion" }
 
 $serverSrc = Join-Path $root "server"
 foreach ($item in @("src", "tools", "package.json", ".env.example")) {
-  if (-not (Test-Path (Join-Path $serverSrc $item))) {
+  if (-not (Test-Path -LiteralPath (Join-Path $serverSrc $item))) {
     Fail "missing server file: server/$item"
   }
 }
-if (-not (Test-Path (Join-Path $serverSrc "src\index.js"))) {
+if (-not (Test-Path -LiteralPath (Join-Under $serverSrc @("src", "index.js")))) {
   Fail "missing server entry: server/src/index.js"
 }
 
@@ -75,65 +169,79 @@ $version = (& node -e "const p=require(process.argv[1]);process.stdout.write(Str
 if (-not $version) { Fail "cannot read version from server/package.json" }
 Write-Host "server version: $version (node $nodeVersion)"
 
-# ---- build ----------------------------------------------------------------
-
-if (-not $NoBuild) {
-  Write-Host "== flutter build windows --release =="
-  Push-Location (Join-Path $root "app")
-  try {
-    & flutter build windows --release
-    if ($LASTEXITCODE -ne 0) { throw "flutter build failed ($LASTEXITCODE)" }
-  } finally {
-    Pop-Location
-  }
-}
-
-$exePath = Join-Path $release "pi_bot.exe"
-if (-not (Test-Path $exePath)) {
-  Fail "no release build at $release (run without -NoBuild first)"
-}
-
-# ---- stage ----------------------------------------------------------------
-
-New-Item -ItemType Directory -Path $outParent -Force | Out-Null
-$suffix = [guid]::NewGuid().ToString("N").Substring(0, 8)
-$stageDir = Join-Path $outParent ".pack-windows-$suffix"
-$stageOut = Join-Path $stageDir $outName
-$backupDir = Join-Path $outParent ".pack-windows-old-$suffix"
+$buildWork = $null
+$stageDir = $null
+$backupDir = $null
+$backupZip = $null
 $previousMoved = $false
+$zipMoved = $false
 $stageReady = $false
 
 try {
+  if (-not $NoBuild) {
+    if (-not (Get-Command flutter -ErrorAction SilentlyContinue)) { throw "flutter is not on PATH" }
+    $buildWork = Join-Path ([System.IO.Path]::GetTempPath()) ("pi-bot-windows-build-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
+    try {
+      New-Item -ItemType Directory -Path $buildWork -Force | Out-Null
+      $appSource = Join-Under $root @("app")
+      $appCopy = Join-Under $buildWork @("app")
+      Write-Host "== stage app source outside the checkout =="
+      & node $stageScript $appSource $appCopy --require pubspec.yaml --require lib/main.dart --require windows/CMakeLists.txt
+      if ($LASTEXITCODE -ne 0) { throw "staging app source failed ($LASTEXITCODE)" }
+
+      $debugDir = Join-Under $buildWork @("debug-info")
+      Write-Host "== flutter build windows --release =="
+      Push-Location $appCopy
+      try {
+        & flutter build windows --release "--split-debug-info=$debugDir"
+        if ($LASTEXITCODE -ne 0) { throw "flutter build failed ($LASTEXITCODE)" }
+      } finally {
+        Pop-Location
+      }
+
+      $built = Join-Under $buildWork @("app", "build", "windows", "x64", "runner", "Release")
+      if (-not (Test-Path -LiteralPath (Join-Path $built "pi_bot.exe"))) {
+        throw "neutral build did not produce pi_bot.exe"
+      }
+      if (-not (Test-Path -LiteralPath $debugDir)) { throw "flutter did not write split debug info" }
+      Publish-DebugInfo $debugDir $built (Join-Under $root @("app", "build", "debug-info", "windows"))
+      Publish-ReleaseTree $built $release
+    } finally {
+      Remove-Tree $buildWork
+    }
+  }
+
+  $exePath = Join-Path $release "pi_bot.exe"
+  if (-not (Test-Path -LiteralPath $exePath)) {
+    throw "no release build at $release (run without -NoBuild first)"
+  }
+
+  New-Item -ItemType Directory -Path $outParent -Force | Out-Null
+  $suffix = [guid]::NewGuid().ToString("N").Substring(0, 8)
+  $stageDir = Join-Path $outParent (".pack-windows-" + $suffix)
+  $stageOut = Join-Path $stageDir $outName
+  $backupDir = Join-Path $outParent (".pack-windows-old-" + $suffix)
+  $backupZip = Join-Path $outParent (".pack-windows-old-" + $suffix + ".zip")
+
   Write-Host "== stage $stageOut =="
   New-Item -ItemType Directory -Path $stageOut -Force | Out-Null
   Copy-Item -Path (Join-Path $release "*") -Destination $stageOut -Recurse -Force
 
-  # Strip local runtime state that may sit next to a dev build:
-  #   .pi/       pi project config (agent name, local relay settings)
-  #   _inbox/    files the user dropped in while testing
-  #   server/    a stale copy from an earlier layout (we build a fresh one below)
-  #   *.log      server/app logs
-  # Shipping these leaks local state and confuses the target machine.
   foreach ($junk in @(".pi", "_inbox", "server", "logs")) {
-    $path = Join-Path $stageOut $junk
-    if (Test-Path $path) { Remove-Item -Path $path -Recurse -Force -ErrorAction SilentlyContinue }
+    Remove-Tree (Join-Path $stageOut $junk)
   }
-  Get-ChildItem -Path $stageOut -Filter "*.log" -File -ErrorAction SilentlyContinue |
+  Get-ChildItem -LiteralPath $stageOut -Filter "*.log" -File -ErrorAction SilentlyContinue |
     Remove-Item -Force -ErrorAction SilentlyContinue
 
   $stageServer = Join-Path $stageOut "server"
   New-Item -ItemType Directory -Path $stageServer -Force | Out-Null
   foreach ($item in @("src", "tools", "package.json", "package-lock.json", ".env.example")) {
     $from = Join-Path $serverSrc $item
-    if (Test-Path $from) {
-      Copy-Item -Path $from -Destination $stageServer -Recurse -Force
+    if (Test-Path -LiteralPath $from) {
+      Copy-Item -LiteralPath $from -Destination $stageServer -Recurse -Force
     }
   }
 
-  # node_modules is NOT copied from the dev tree: it may contain dev-only
-  # packages and absolute build paths. It is installed fresh into the package
-  # below (or left out with -SkipDeps, in which case the app runs npm install
-  # on first start -- that needs npm on the target machine).
   if (-not $SkipDeps) {
     Write-Host "== install server deps into stage =="
     Push-Location $stageServer
@@ -143,7 +251,7 @@ try {
     } finally {
       Pop-Location
     }
-    if (-not (Test-Path (Join-Path $stageServer "node_modules"))) {
+    if (-not (Test-Path -LiteralPath (Join-Path $stageServer "node_modules"))) {
       throw "npm install reported success but node_modules is missing"
     }
   } else {
@@ -152,77 +260,95 @@ try {
 
   if ($WithNode) {
     $nodeExe = (Get-Item $nodeCmd.Source).FullName
-    Copy-Item $nodeExe (Join-Path $stageOut "node.exe") -Force
+    Copy-Item -LiteralPath $nodeExe -Destination (Join-Path $stageOut "node.exe") -Force
     Write-Host "bundled $nodeExe"
   } else {
     Write-Host "note: node.exe not bundled - target machine needs Node 22+ on PATH"
   }
 
-  # layout checks: do not swap in a package we already know is broken
-  foreach ($required in @("pi_bot.exe", "server\src\index.js", "server\package.json")) {
-    if (-not (Test-Path (Join-Path $stageOut $required))) {
-      throw "staged package is missing $required"
+  $requiredSets = @(
+    , @("pi_bot.exe")
+    , @("server", "src", "index.js")
+    , @("server", "package.json")
+  )
+  foreach ($required in $requiredSets) {
+    $requiredPath = $stageOut
+    foreach ($part in $required) { $requiredPath = Join-Path $requiredPath $part }
+    if (-not (Test-Path -LiteralPath $requiredPath)) {
+      throw "staged package is missing $($required -join '/')"
     }
   }
-  # never ship local state / credentials / logs
-  foreach ($leak in @(".pi", "_inbox", "server\.env")) {
-    if (Test-Path (Join-Path $stageOut $leak)) {
-      throw "staged package contains local state: $leak"
-    }
+
+  Write-Host "== scan staged package =="
+  $prepareArgs = @($prepareScript)
+  if ($SkipDeps) { $prepareArgs += "--skip-deps" }
+  $prepareArgs += $stageOut
+  foreach ($marker in @($root, (Join-Under $root @("app")), $release, $buildWork)) {
+    if ($marker) { $prepareArgs += @("--marker", $marker) }
   }
-  $logs = Get-ChildItem -Path $stageOut -Filter "*.log" -File -ErrorAction SilentlyContinue
-  if ($logs) { throw "staged package contains log files: $($logs.Name -join ', ')" }
+  & node @prepareArgs
+  if ($LASTEXITCODE -ne 0) { throw "release scan failed ($LASTEXITCODE)" }
 
   if ($Zip) {
-    $stageZip = Join-Path $stageDir "$outName.zip"
+    $stageZip = Join-Path $stageDir ($outName + ".zip")
     Write-Host "== zip $stageZip =="
     Compress-Archive -Path (Join-Path $stageOut "*") -DestinationPath $stageZip -CompressionLevel Optimal
-    if (-not (Test-Path $stageZip)) { throw "zip was not created" }
+    if (-not (Test-Path -LiteralPath $stageZip)) { throw "zip was not created" }
   }
 
-  # ---- swap (old package is only touched after everything succeeded) ----
-
-  if (Test-Path $outDir) {
-    Move-Item -Path $outDir -Destination $backupDir -Force
+  if (Test-Path -LiteralPath $outDir) {
+    Move-Item -LiteralPath $outDir -Destination $backupDir -Force
     $previousMoved = $true
   }
-  Move-Item -Path $stageOut -Destination $outDir -Force
+  if ($Zip -and (Test-Path -LiteralPath $zipPath)) {
+    Move-Item -LiteralPath $zipPath -Destination $backupZip -Force
+    $zipMoved = $true
+  }
+  Move-Item -LiteralPath $stageOut -Destination $outDir -Force
+  if ($Zip) {
+    Move-Item -LiteralPath (Join-Path $stageDir ($outName + ".zip")) -Destination $zipPath -Force
+  }
   $stageReady = $true
 
-  if ($Zip) {
-    $stageZip = Join-Path $stageDir "$outName.zip"
-    if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
-    Move-Item -Path $stageZip -Destination $zipPath -Force
-  }
-
-  if ($previousMoved) {
-    Remove-Item -Path $backupDir -Recurse -Force -ErrorAction SilentlyContinue
-  }
+  if ($previousMoved) { Remove-Tree $backupDir; $previousMoved = $false }
+  if ($zipMoved) { Remove-Tree $backupZip; $zipMoved = $false }
 } catch {
   $message = $_.Exception.Message
+  if (-not $message) { $message = "$_" }
   Write-Host "ERROR: $message" -ForegroundColor Red
-  # roll back: put the previous package back exactly where it was
   try {
-    if (-not $stageReady -and $previousMoved -and (Test-Path $backupDir)) {
-      if (Test-Path $outDir) { Remove-Item -Path $outDir -Recurse -Force -ErrorAction SilentlyContinue }
-      Move-Item -Path $backupDir -Destination $outDir -Force
-      $previousMoved = $false
-      Write-Host "previous package restored: $outDir"
+    if (-not $stageReady) {
+      if ($previousMoved -and (Test-Path -LiteralPath $backupDir)) {
+        if (Test-Path -LiteralPath $outDir) { Remove-Item -LiteralPath $outDir -Recurse -Force -ErrorAction SilentlyContinue }
+        if (-not (Test-Path -LiteralPath $outDir)) {
+          Move-Item -LiteralPath $backupDir -Destination $outDir -Force
+          $previousMoved = $false
+          Write-Host "previous package restored: $outDir"
+        }
+      }
+      if ($zipMoved -and (Test-Path -LiteralPath $backupZip)) {
+        if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force -ErrorAction SilentlyContinue }
+        if (-not (Test-Path -LiteralPath $zipPath)) {
+          Move-Item -LiteralPath $backupZip -Destination $zipPath -Force
+          $zipMoved = $false
+          Write-Host "previous zip restored: $zipPath"
+        }
+      }
     }
   } catch {
-    Write-Host "WARNING: rollback failed; backup kept at $backupDir" -ForegroundColor Yellow
+    Write-Host "WARNING: rollback failed; backup kept at $backupDir $backupZip" -ForegroundColor Yellow
   }
   exit 1
 } finally {
-  if (Test-Path $stageDir) {
-    Remove-Item -Path $stageDir -Recurse -Force -ErrorAction SilentlyContinue
-  }
-  if ($previousMoved -and (Test-Path $backupDir)) {
+  Remove-Tree $buildWork
+  Remove-Tree $stageDir
+  if ($previousMoved -and $backupDir -and (Test-Path -LiteralPath $backupDir)) {
     Write-Host "note: previous package kept at $backupDir" -ForegroundColor Yellow
+  }
+  if ($zipMoved -and $backupZip -and (Test-Path -LiteralPath $backupZip)) {
+    Write-Host "note: previous zip kept at $backupZip" -ForegroundColor Yellow
   }
 }
 
-if ($Zip) {
-  Write-Host "zip: $zipPath"
-}
+if ($Zip) { Write-Host "zip: $zipPath" }
 Write-Host "done: $outDir"

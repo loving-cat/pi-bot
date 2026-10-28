@@ -7,15 +7,12 @@
 
 ## 构建与打包
 
-环境：Flutter 3.47+（桌面端已启用）、Visual Studio 2022（含 C++ 桌面负载）、Node 22+。
+环境：Flutter 3.47+（桌面端已启用）、Visual Studio 2022（含 C++ 桌面负载）、Node 22+、npm。
+脚本必须在 Windows 上跑；`pack-windows.ps1` 保持纯 ASCII，供 Windows PowerShell 5.1 解析。
+不需要 Git，解压后的源码目录也可以打包。
 
 ```powershell
-# 只构建
-cd app
-flutter build windows --release
-# 产物：app/build/windows/x64/runner/Release/pi_bot.exe
-
-# 打完整包（exe + Flutter 运行库 + server/ + 服务端依赖）
+flutter config --enable-windows-desktop
 .\scripts\pack-windows.ps1                 # dist/pi-bot-windows
 .\scripts\pack-windows.ps1 -Zip            # + dist/pi-bot-windows.zip
 .\scripts\pack-windows.ps1 -WithNode -Zip  # 把本机 node.exe 一起打进去
@@ -23,6 +20,20 @@ flutter build windows --release
 .\scripts\pack-windows.ps1 -SkipDeps       # 不预装依赖（首启动时 npm install）
 .\scripts\pack-windows.ps1 -Help
 ```
+
+默认构建不会在原源码目录里跑 Flutter。脚本把 `app/` 复制到系统临时目录，排除
+`.dart_tool`、`build`、`.git`、`ephemeral`、`.vs`、`*.user`、`*.suo` 等生成缓存和用户工程状态，
+再执行 `flutter build windows --release --split-debug-info=...`。成功后把 Release 目录换回
+`app/build/windows/x64/runner/Release`，调试信息放到 `app/build/debug-info/windows`
+（含分离出的 Dart 符号，以及从构建结果复制的 `.pdb`）。临时副本无论成功还是失败都会删掉，
+原源码和上一份 Release 不会被半截构建改坏。
+
+`-NoBuild` 不检查 Flutter、不复制源码，只要求上述 Release 目录里已经有 `pi_bot.exe`。
+只改了服务端时可以复用；改了 Flutter 或 `app/windows` 之后要重新构建。
+
+Runner 在 MSVC 上使用 `/PDBALTPATH:%_PDB%`，让主程序只记录 PDB 文件名。打包时还会把前端
+PE 的 CodeView 绝对路径收成文件名，并删掉发行目录里的前端 `.pdb`。`node.exe` 和服务端目录
+（含 `server/node_modules` 里的第三方原生模块）只扫描、不改写。
 
 包内布局：
 
@@ -36,16 +47,28 @@ pi-bot-windows/
     node_modules/   （由打包脚本装入，不是从开发目录复制）
 ```
 
-**打包是"先暂存再换成品"**：所有内容先在 `dist/.pack-windows-<rand>/` 里铺好，
-`npm install` 和布局校验（`pi_bot.exe` / `server/src/index.js` / `server/package.json`）
-都通过后，才把旧的 `dist/pi-bot-windows` 换下去。任何一步失败都会把旧包搬回原处 ——
-打坏一次不该把上一版能发的包弄丢。这一点和 `pack-macos.sh` 是同一套规则。
+**打包是「先暂存再换成品」**：内容先铺在 `dist/.pack-windows-<rand>/`，装完依赖并做完下面的
+检查，才替换 `dist/pi-bot-windows`。失败时把上一版目录和 zip 搬回去。本地 Release 的替换也是
+同一套备份；构建失败不会拿一份残缺产物覆盖它。
+
+换成品之前，`scripts/prepare-windows-bundle.mjs` 会让这次发布失败（而不是悄悄发出去），如果暂存目录里还有：
+
+- 本机绝对路径：当前用户目录，以及本次源码目录、Release 目录、临时构建目录（含正斜杠和 JSON 转义形式）
+- 调试符号文件（`.pdb`，包括服务端目录里删不掉的那些）
+- 本机状态：`.pi`、`_inbox`、`server/.env`、任意 `.log`
+
+`server/.env.example` 会保留。声明的生产依赖必须能从发行目录里解析；`-SkipDeps` 跳过安装和这项检查，
+但路径和符号扫描照旧。
 
 目标机器：
 
 - 默认需要 **Node 22+ 在 PATH 上**（App 会自己找，找不到会在启动失败页让你指定路径）；
 - 只有 `-SkipDeps` 才需要目标机器有 npm（首启动会执行 `npm install`）；
 - 没有代码签名，首次运行会弹 SmartScreen 提示，属预期。
+
+和 macOS 一样，命令桩 / Node 单测只覆盖脚本分支，不能代替一次真实的 Flutter Windows 构建。
+Linux 上可以跑 `node scripts/tests/all.mjs`；Windows 上再跑
+`powershell -NoProfile -ExecutionPolicy Bypass -File scripts/tests/pack-windows-test.ps1`。
 
 ---
 
@@ -120,6 +143,10 @@ PowerShell（`-STA`）读 `[Windows.Forms.Clipboard]::GetImage()`，存成临时
 | `POST /api/mcp/test`（本地 .cmd 服务） | ok，3.02s 返回；不存在的命令返回中文提示 |
 | `pack-windows.ps1` 真机打包 | 成功，dist 约 296MB，server 带 160 个依赖目录 |
 
+上表是 2026-10-19 的真机记录，早于「临时目录构建 + 发行包扫描」。那次结果不能当作
+当前脚本已经在真实 Flutter Windows 构建上通过扫描。新的检查需要在装有 Visual Studio
+的 Windows 上再跑一次 `.\scripts\pack-windows.ps1`。
+
 ---
 
 ## 已知限制
@@ -136,3 +163,8 @@ PowerShell（`-STA`）读 `[Windows.Forms.Clipboard]::GetImage()`，存成临时
 4. **Node 不在 PATH 且未 `-WithNode`**：启动失败页可直接改端口/路径，
    也能打开日志目录看服务端为什么没起来。
 5. **Windows 上的 nvm 支持是"读目录"**，不执行 `nvm use`，也不改用户环境变量。
+6. **发行包扫描是字节级的**：前端 PE 只会改 CodeView 里的绝对 PDB 路径。调试信息若写在别的节里，
+   或者服务端原生模块、自编译的 `node.exe` 带有本机路径，打包会失败，脚本不会改那些文件。
+   预编译的官方 `node.exe` 一般只含构建机自己的路径，不包含打包者的用户目录。
+7. **真实的 `flutter build windows` 只能在装了 Visual Studio 的 Windows 上验证**。
+   当前自动化测试使用假的 `flutter` / `npm` 和合成 PE，证明分支、回滚和扫描，不证明链接器产物。
