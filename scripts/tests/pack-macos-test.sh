@@ -9,13 +9,28 @@ trap 'rm -rf -- "$TEST_ROOT"' EXIT
 FIXTURE="$TEST_ROOT/repo with spaces and 'quote'"
 STUBS="$TEST_ROOT/stubs"
 TRACE="$TEST_ROOT/trace"
+BUILD_TRACE="$TEST_ROOT/build-trace"
+ORIGINAL_HOME="$HOME"
 REAL_NODE="$(command -v node)"
 REAL_MV="$(command -v mv)"
-export FIXTURE TRACE REAL_NODE REAL_MV
+export FIXTURE TRACE REAL_NODE REAL_MV BUILD_TRACE ORIGINAL_HOME
 mkdir -p "$FIXTURE/scripts" "$FIXTURE/server/src" "$FIXTURE/server/tools" "$STUBS"
 cp "$ROOT/scripts/pack-macos.sh" "$FIXTURE/scripts/pack-macos.sh"
+cp "$ROOT/scripts/prepare-macos-bundle.mjs" "$FIXTURE/scripts/prepare-macos-bundle.mjs"
+cp "$ROOT/scripts/stage-macos-build.mjs" "$FIXTURE/scripts/stage-macos-build.mjs"
 mkdir -p "$FIXTURE/app/macos/Runner"
 printf '<plist><dict/></plist>\n' > "$FIXTURE/app/macos/Runner/Release.entitlements"
+mkdir -p "$FIXTURE/app/lib" "$FIXTURE/app/macos/Runner.xcodeproj"
+printf 'name: fixture\nversion: 0.1.0+1\n' > "$FIXTURE/app/pubspec.yaml"
+printf 'void main() {}\n' > "$FIXTURE/app/lib/main.dart"
+printf 'fixture project\n' > "$FIXTURE/app/macos/Runner.xcodeproj/project.pbxproj"
+cp "$FIXTURE/app/pubspec.yaml" "$TEST_ROOT/source-pubspec"
+cp "$FIXTURE/app/lib/main.dart" "$TEST_ROOT/source-main"
+for cache in .dart_tool build macos/Pods macos/Flutter/ephemeral macos/.symlinks macos/Runner.xcodeproj/xcuserdata; do
+  mkdir -p "$FIXTURE/app/$cache"
+  printf 'must not copy\n' > "$FIXTURE/app/$cache/fixture-cache"
+done
+printf 'must not copy\n' > "$FIXTURE/app/.flutter-plugins-dependencies"
 printf '{"name":"fixture","version":"0.1.0","dependencies":{}}\n' > "$FIXTURE/server/package.json"
 printf '{"lockfileVersion":3}\n' > "$FIXTURE/server/package-lock.json"
 printf 'fixture server version one\n' > "$FIXTURE/server/src/index.js"
@@ -40,6 +55,11 @@ printf '\n' >> "$TRACE"
 case "$tool" in
   uname) printf '%s\n' "${PACK_PLATFORM:-Darwin}" ;;
   node)
+    if [[ "${PACK_FAIL:-}" == prepare && "${1:-}" == */prepare-macos-bundle.mjs ]]; then exit 43; fi
+    if [[ "${PACK_FAIL:-}" == stage && "${1:-}" == */stage-macos-build.mjs ]]; then
+      printf '%s\n' "$3" >> "$BUILD_TRACE"
+      exit 44
+    fi
     if [[ "${PACK_NODE_OLD:-0}" == 1 ]]; then
       [[ "${1:-}" == --version ]] && { printf 'v20.0.0\n'; exit 0; }
       exit 1
@@ -100,8 +120,28 @@ case "$tool" in
   xattr) [[ "$1" == -dr && "$2" == com.apple.quarantine ]] ;;
   xcodebuild) [[ "${PACK_FAIL:-}" != xcode ]] || exit 37 ;;
   xcrun) [[ "${PACK_FAIL:-}" != sdk ]] || exit 38 ;;
-  flutter) [[ "${PACK_FAIL:-}" != build ]] || exit 39 ;;
+  flutter)
+    printf '%s\n' "$PWD" >> "$BUILD_TRACE"
+    [[ "$PWD" == */pi-bot-macos-build.*/app && "$PWD" != "$FIXTURE/app" ]]
+    [[ "$HOME" == "$ORIGINAL_HOME" ]]
+    [[ -f lib/main.dart && -f pubspec.yaml && -f macos/Runner.xcodeproj/project.pbxproj ]]
+    for cache in .dart_tool build macos/Pods macos/Flutter/ephemeral macos/.symlinks macos/Runner.xcodeproj/xcuserdata .flutter-plugins-dependencies; do
+      [[ ! -e "$cache" ]]
+    done
+    [[ "${PACK_FAIL:-}" != build ]] || exit 39
+    product="$PWD/build/macos/Build/Products/Release/pi-bot.app"
+    mkdir -p "$product/Contents/MacOS"
+    printf '<plist><dict/></plist>\n' > "$product/Contents/Info.plist"
+    printf 'fixture built executable\n' > "$product/Contents/MacOS/pi-bot"
+    printf 'neutral build product\n' > "$product/Contents/product.txt"
+    debug=''
+    for arg in "$@"; do if [[ "$arg" == --split-debug-info=* ]]; then debug="${arg#--split-debug-info=}"; fi; done
+    [[ "$debug" == "$(dirname "$PWD")/debug-info" ]]
+    mkdir -p "$debug"
+    printf 'fixture symbols\n' > "$debug/app.symbols"
+    ;;
   mv)
+    if [[ "${PACK_FAIL:-}" == build-publish && "$1" == */.pack-build.*/next.app ]]; then exit 45; fi
     if [[ "${PACK_FAIL:-}" == publish-app && "$1" == */payload/pi-bot.app ]]; then exit 40; fi
     if [[ "${PACK_FAIL:-}" == publish-dmg && "$1" == */.pack-macos.*/pi-bot-0.1.0.dmg ]]; then exit 41; fi
     if [[ "${PACK_FAIL:-}" == backup-dmg && "$1" == "$FIXTURE/dist/pi-bot-0.1.0.dmg" ]]; then exit 42; fi
@@ -146,6 +186,15 @@ no_stage() {
   shopt -s nullglob
   stages=("$FIXTURE/dist"/.pack-macos.*)
   [[ ${#stages[@]} -eq 0 ]] || die '暂存目录未清理'
+  stages=("$BUILD"/.pack-build.*)
+  [[ ${#stages[@]} -eq 0 ]] || die '构建复制目录未清理'
+  if [[ -f "$BUILD_TRACE" ]]; then
+    while IFS= read -r location; do
+      [[ ! -e "$(dirname "$location")" ]] || die '中性构建目录未清理'
+    done < "$BUILD_TRACE"
+  fi
+  cmp "$TEST_ROOT/source-pubspec" "$FIXTURE/app/pubspec.yaml" || die '原pubspec被改动'
+  cmp "$TEST_ROOT/source-main" "$FIXTURE/app/lib/main.dart" || die '原源码被改动'
 }
 
 preserved() {
@@ -193,16 +242,19 @@ run_ok --clear-quarantine --no-build
 ok '参数可交换顺序，清隔离属性仅在显式开启时执行'
 
 printf 'fixture server version two\n' > "$FIXTURE/server/src/index.js"
-for failure in copy npm sign signature-verify dmg-create dmg-verify backup-dmg publish-app publish-dmg; do
+for failure in copy npm prepare sign signature-verify dmg-create dmg-verify backup-dmg publish-app publish-dmg; do
   PACK_FAIL="$failure" run_fail --no-build
   preserved
   ok "$failure 失败保留旧 App、旧 DMG 与其他 dist 文件"
 done
 
-for failure in xcode sdk build; do
+for failure in xcode sdk stage build build-publish; do
   PACK_FAIL="$failure" run_fail
   preserved
-  if [[ "$failure" != build ]] && grep -q '^flutter ' "$TRACE"; then die 'Xcode 预检失败仍调用构建'; fi
+  if [[ "$failure" == xcode || "$failure" == sdk || "$failure" == stage ]] && grep -q '^flutter ' "$TRACE"; then die '预检失败仍调用构建'; fi
+  if [[ "$failure" == build-publish ]]; then
+    [[ "$(cat "$BUILD/pi-bot.app/Contents/product.txt")" == 'preferred product' ]] || die '构建回填失败破坏旧构建'
+  fi
   ok "$failure 失败保留旧成品且不绕过构建预检"
 done
 
@@ -235,9 +287,12 @@ ok '拒绝版本路径穿越'
 run_ok
 grep -q '^xcodebuild ' "$TRACE" || die '正常构建未检查 Xcode'
 grep -q '^xcrun ' "$TRACE" || die '正常构建未检查 SDK'
-grep -q '^flutter build macos --release$' "$TRACE" || die '正常构建未调用 Flutter'
+grep -q '^flutter build macos --release --split-debug-info=' "$TRACE" || die '正常构建未分离调试信息'
+[[ "$(cat "$BUILD/pi-bot.app/Contents/product.txt")" == 'neutral build product' ]] || die '中性构建产物未回填'
+[[ -f "$FIXTURE/app/build/debug-info/macos/app.symbols" ]] || die '调试信息未保留在本地build目录'
+[[ -f "$FIXTURE/app/.dart_tool/fixture-cache" ]] || die '原生成缓存被改动'
 cmp "$FIXTURE/server/src/index.js" "$FIXTURE/dist/pi-bot.app/Contents/Resources/server/src/index.js" \
   || die '未发布本轮服务端内容'
 no_stage
-ok '正常构建走 Xcode 与 SDK 预检并发布完整 payload'
+ok '中性构建不改HOME或源码，忽略缓存，回填完整App及调试信息并清理临时目录'
 printf '%s 项命令桩测试通过（真实 macOS 构建需另行验证）。\n' "$PASS"

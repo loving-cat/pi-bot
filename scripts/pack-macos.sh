@@ -62,31 +62,12 @@ done
 VERSION="$(node -e 'const fs = require("node:fs"); const p = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); if (typeof p.version !== "string") process.exit(1); process.stdout.write(p.version)' "$ROOT/server/package.json")"
 [[ "$VERSION" =~ ^[0-9A-Za-z][0-9A-Za-z._+-]*$ ]] || fail "服务端版本不能用作产物文件名：$VERSION"
 DMG="$OUT/${APP_NAME}-${VERSION}.dmg"
-
-if [[ $SKIP_BUILD -eq 0 ]]; then
-  for tool in flutter xcodebuild xcrun; do
-    require_command "$tool"
-  done
-  xcodebuild -version >/dev/null 2>&1 \
-    || fail "构建需要完整 Xcode；请安装并在 xcode-select 中选择其 Developer 目录"
-  xcodebuild -checkFirstLaunchStatus >/dev/null 2>&1 \
-    || fail "Xcode 初始化未完成，请启动 Xcode 并完成许可与组件安装"
-  xcrun --sdk macosx --show-sdk-path >/dev/null 2>&1 \
-    || fail "找不到 macOS SDK，请检查 Xcode 安装与首次启动设置"
-  echo "== flutter build macos --release =="
-  (cd "$ROOT/app" && flutter build macos --release)
-fi
-
-SOURCE_APP="$BUILD/${APP_NAME}.app"
-if [[ ! -d "$SOURCE_APP" && -d "$BUILD/pi_bot.app" ]]; then
-  SOURCE_APP="$BUILD/pi_bot.app"
-fi
-[[ -d "$SOURCE_APP" ]] || fail "找不到构建产物：$BUILD/${APP_NAME}.app（或 pi_bot.app）"
-[[ -f "$SOURCE_APP/Contents/Info.plist" && -d "$SOURCE_APP/Contents/MacOS" ]] \
-  || fail "构建产物不是完整的 macOS App：$SOURCE_APP"
-
-mkdir -p "$OUT"
-STAGE="$(mktemp -d "$OUT/.pack-macos.XXXXXX")"
+STAGE=''
+BUILD_WORK=''
+BUILD_COPY=''
+BUILD_REPLACING=0
+BUILD_INSTALLING=0
+BUILD_PUBLISHED=0
 PUBLISHING=0
 PUBLISHED=0
 APP_INSTALLING=0
@@ -116,10 +97,18 @@ cleanup() {
       fi
     fi
   fi
+  if [[ $BUILD_REPLACING -eq 1 && $BUILD_PUBLISHED -eq 0 ]]; then
+    if [[ $BUILD_INSTALLING -eq 1 ]]; then rm -rf -- "$BUILD/${APP_NAME}.app" || restore_failed=1; fi
+    if [[ -e "$BUILD_COPY/previous.app" || -L "$BUILD_COPY/previous.app" ]]; then
+      mv "$BUILD_COPY/previous.app" "$BUILD/${APP_NAME}.app" || restore_failed=1
+    fi
+  fi
   if [[ $restore_failed -eq 0 ]]; then
-    rm -rf -- "$STAGE"
+    [[ -z "$STAGE" ]] || rm -rf -- "$STAGE"
+    [[ -z "$BUILD_COPY" ]] || rm -rf -- "$BUILD_COPY"
+    [[ -z "$BUILD_WORK" ]] || rm -rf -- "$BUILD_WORK"
   else
-    echo "恢复旧成品失败，备份保留在：$STAGE" >&2
+    echo "恢复旧成品失败，备份保留在：$STAGE $BUILD_COPY $BUILD_WORK" >&2
   fi
   exit "$result"
 }
@@ -128,6 +117,52 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+if [[ $SKIP_BUILD -eq 0 ]]; then
+  for tool in flutter xcodebuild xcrun; do
+    require_command "$tool"
+  done
+  xcodebuild -version >/dev/null 2>&1 \
+    || fail "构建需要完整 Xcode；请安装并在 xcode-select 中选择其 Developer 目录"
+  xcodebuild -checkFirstLaunchStatus >/dev/null 2>&1 \
+    || fail "Xcode 初始化未完成，请启动 Xcode 并完成许可与组件安装"
+  xcrun --sdk macosx --show-sdk-path >/dev/null 2>&1 \
+    || fail "找不到 macOS SDK，请检查 Xcode 安装与首次启动设置"
+  BUILD_WORK="$(mktemp -d /tmp/pi-bot-macos-build.XXXXXX)"
+  node "$ROOT/scripts/stage-macos-build.mjs" "$ROOT/app" "$BUILD_WORK/app"
+  echo "== flutter build macos --release =="
+  (cd "$BUILD_WORK/app" && flutter build macos --release --split-debug-info="$BUILD_WORK/debug-info")
+  NEUTRAL_APP="$BUILD_WORK/app/build/macos/Build/Products/Release/${APP_NAME}.app"
+  if [[ ! -d "$NEUTRAL_APP" && -d "$BUILD_WORK/app/build/macos/Build/Products/Release/pi_bot.app" ]]; then
+    NEUTRAL_APP="$BUILD_WORK/app/build/macos/Build/Products/Release/pi_bot.app"
+  fi
+  [[ -f "$NEUTRAL_APP/Contents/Info.plist" && -d "$NEUTRAL_APP/Contents/MacOS" ]] \
+    || fail "中性目录构建没有生成完整 App"
+  mkdir -p "$BUILD"
+  BUILD_COPY="$(mktemp -d "$BUILD/.pack-build.XXXXXX")"
+  ditto "$NEUTRAL_APP" "$BUILD_COPY/next.app"
+  BUILD_REPLACING=1
+  if [[ -e "$BUILD/${APP_NAME}.app" || -L "$BUILD/${APP_NAME}.app" ]]; then
+    mv "$BUILD/${APP_NAME}.app" "$BUILD_COPY/previous.app"
+  fi
+  BUILD_INSTALLING=1
+  mv "$BUILD_COPY/next.app" "$BUILD/${APP_NAME}.app"
+  BUILD_PUBLISHED=1
+  if [[ -d "$BUILD_WORK/debug-info" ]]; then
+    mkdir -p "$ROOT/app/build/debug-info/macos"
+    ditto "$BUILD_WORK/debug-info" "$ROOT/app/build/debug-info/macos"
+  fi
+fi
+
+SOURCE_APP="$BUILD/${APP_NAME}.app"
+if [[ ! -d "$SOURCE_APP" && -d "$BUILD/pi_bot.app" ]]; then
+  SOURCE_APP="$BUILD/pi_bot.app"
+fi
+[[ -d "$SOURCE_APP" ]] || fail "找不到构建产物：$BUILD/${APP_NAME}.app（或 pi_bot.app）"
+[[ -f "$SOURCE_APP/Contents/Info.plist" && -d "$SOURCE_APP/Contents/MacOS" ]] \
+  || fail "构建产物不是完整的 macOS App：$SOURCE_APP"
+
+mkdir -p "$OUT"
+STAGE="$(mktemp -d "$OUT/.pack-macos.XXXXXX")"
 PAYLOAD="$STAGE/payload"
 STAGED_APP="$PAYLOAD/${APP_NAME}.app"
 STAGED_DMG="$STAGE/${APP_NAME}-${VERSION}.dmg"
@@ -151,6 +186,7 @@ echo "== 安装服务端依赖 =="
 ')
 
 echo "== 签名并校验 App =="
+node "$ROOT/scripts/prepare-macos-bundle.mjs" "$STAGED_APP"
 codesign --force --deep --sign - --entitlements "$ENTITLEMENTS" "$STAGED_APP"
 codesign --verify --deep --strict "$STAGED_APP"
 if [[ $CLEAR_QUARANTINE -eq 1 ]]; then

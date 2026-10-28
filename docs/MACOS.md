@@ -19,12 +19,19 @@ cd ..
 ```
 
 多个 Xcode 并存时，用 `xcode-select` 或 `DEVELOPER_DIR` 选择对应的 Developer 目录。
-脚本会检查 Xcode 初始化和 macOS SDK，再执行 `flutter build macos --release`。
+脚本会检查 Xcode 初始化和 macOS SDK，把应用源码复制到系统临时目录再构建 Release。
+副本排除生成缓存、Pods 和用户工程状态，保留真实 HOME，不修改原源码；构建完成将完整
+App 复制回下述构建路径，并将调试信息保存到 `app/build/debug-info/macos`。临时副本在成功或
+失败时清理；调试信息不进入安装包。此流程不依赖 Git，解压的源码目录也可使用。
 
 - 构建来源：`app/build/macos/Build/Products/Release/pi-bot.app`，兼容 `pi_bot.app`。
 - 发行 App：`dist/pi-bot.app`；服务端位于其 `Contents/Resources/server`。
 - DMG：`dist/pi-bot-<服务端版本>.dmg`，版本取自 `server/package.json`。
 - 服务端目录内执行 `npm install --omit=dev` 并检查声明依赖可解析；包内不附带 Node。
+- 签名前整理前端原生文件的调试符号，仅移除已有系统及应用内回退的本机工具链搜索路径，
+  再检查原生资产文件及架构。本机目录仍残留时停止打包，不静默发布。
+- 上述原生处理使用命令行工具中的 `strip`、`otool`、`install_name_tool` 和 `lipo`；
+  服务端第三方原生依赖只检查路径，不修改符号或加载命令。
 - App 使用 ad-hoc 签名，脚本执行签名与 DMG 完整性校验后才替换旧成品；重复运行保留
   `dist` 中其他文件，失败时保留或恢复旧成品。
 
