@@ -1,0 +1,31 @@
+app/lib/widgets/thinking_slider.dart
+  s_06973911ad2cd6::t_611cb1c63fbd3c 177-179,190,192-193,306-318
+  s_06973911ad2cd6::t_9c6dcb717ed4d8 1-176,180-189,191,194-305,319-424
+app/test/thinking_slider_test.dart
+  s_06973911ad2cd6::t_3546df1c86d586 1-11,17-19,30-32,34-48,55-62,99-104,108-121,143-144,148-156,158-160,162-163,184,188-192,194-204,207-209,211-222,225-231,233-243,249,251-257,266-274
+  s_06973911ad2cd6::t_4da36a45e5ec81 12-16,20-29,33,49-54,63-98,105-107,122-142,145-147,157,161,164-183,185-187,193,205-206,210,223-224,232,244-248,250,258-265
+  s_06973911ad2cd6::t_0ad625e0fccce9 275-299
+app/lib/screens/bots_screen.dart
+  s_06973911ad2cd6::t_9c6dcb717ed4d8 7,13-21,54,364
+  s_06973911ad2cd6::t_4b1b67bfdfa7e2 365-374,401-406
+app/lib/widgets/bot_run_section.dart
+  s_06973911ad2cd6::t_9e1e7a2b64819a 4,10,31-72,201-212
+app/test/room_menu_test.dart
+  s_06973911ad2cd6::t_2e606a30918e1c 1126-1129,1131
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "41500d6a9efef5b7ef96a13e8b18754485cc5c63",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
