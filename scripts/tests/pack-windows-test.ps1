@@ -157,8 +157,15 @@ fs.writeFileSync("node_modules/installed.txt", "1\n");
     param([string[]]$ArgList = @(), [string]$Fail = "")
     Reset-Trace
     if ($Fail) { $env:PACK_FAIL = $Fail } else { Remove-Item Env:PACK_FAIL -ErrorAction SilentlyContinue }
+    # Windows PowerShell turns a native stderr line into a terminating error when
+    # ErrorAction is Stop and stderr is merged. Expected pack failures write to stderr.
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     & $shell -NoProfile -ExecutionPolicy Bypass -File $script @ArgList > $log 2>&1
-    return $LASTEXITCODE
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = $previousPreference
+    if ($null -eq $code) { return 0 }
+    return $code
   }
 
   function Assert-Clean {
