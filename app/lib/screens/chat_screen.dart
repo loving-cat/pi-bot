@@ -9,6 +9,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../app_state.dart';
+import '../chat_input_action.dart';
 import '../chat_scroll_follow.dart';
 import '../clipboard_image.dart';
 import '../models.dart';
@@ -1394,8 +1395,8 @@ class _ComposerState extends State<_Composer> {
                           minLines: 1,
                           maxLines: 6,
                           keyboardType: TextInputType.multiline,
-                          // 手机软键盘上回车键直接变成「发送」
-                          textInputAction: TextInputAction.send,
+                          // 桌面保留原生换行和输入法处理，移动端软键盘显示发送。
+                          textInputAction: chatInputAction,
                           // ★ onSubmitted 也必须挡同一件事。
                           //   桌面端 Enter 走的是上面的 onKeyEvent，但手机/某些 IME
                           //   会直接触发 onSubmitted —— 两条路都要看组词状态。

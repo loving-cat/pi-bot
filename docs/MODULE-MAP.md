@@ -90,6 +90,7 @@
 | `server/supervisor.dart` / `server/launcher.dart` / `server/server_log.dart` | 进程与 PID 管理、启动编排及日志；Windows/POSIX 平台分流 |
 | `model_group_capacity.dart` | 模型卡片草稿、稳定行标识、容量解析与保存协议（纯逻辑） |
 | `chat_scroll_follow.dart` | 聊天追底调度：帧后挂载、有限补跳、用户滚动取消和内容尺寸变化跟随 |
+| `chat_input_action.dart` | 聊天输入的平台动作：桌面保留原生换行，移动软键盘使用发送；按键发送仍由输入组件处理 |
 | `progress_messages.dart` | 回执结果判定、发送人去重和连续回执分组（纯逻辑） |
 | `widgets/progress_notice.dart` / `widgets/conversation_people.dart` | 回执入口与明细、限宽的人员摘要；状态及分组规则来自逻辑层 |
 | `widgets/model_group_editor.dart` | 模型组编辑装配：接口配置、独立模型卡片、思考强度选项拉取、连接测试与保存 |
