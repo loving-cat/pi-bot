@@ -53,9 +53,12 @@ pi-bot-windows/
 
 换成品之前，`scripts/prepare-windows-bundle.mjs` 会让这次发布失败（而不是悄悄发出去），如果暂存目录里还有：
 
-- 本机绝对路径：当前用户目录，以及本次源码目录、Release 目录、临时构建目录（含正斜杠和 JSON 转义形式）
-- 调试符号文件（`.pdb`，包括服务端目录里删不掉的那些）
+- 本机用户目录（文件内容里的 UTF-8 和 UTF-16 都会扫；另外也扫本次源码目录、Release 目录和临时构建目录）
+- 调试符号文件（`.pdb`。打包会先把前端 `.pdb` 挪到 `app/build/debug-info/windows`，扫的是挪完之后的发行目录；服务端里删不掉的 `.pdb` 仍会失败）
 - 本机状态：`.pi`、`_inbox`、`server/.env`、任意 `.log`
+- `NativeAssetsManifest.json` 里列出的 DLL 在包内缺失（服务端目录里的清单不参与这项检查）
+
+报错只说明哪一类问题、有几个文件，不打印本机路径或清单里的原始路径。
 
 `server/.env.example` 会保留。声明的生产依赖必须能从发行目录里解析；`-SkipDeps` 跳过安装和这项检查，
 但路径和符号扫描照旧。
@@ -67,8 +70,15 @@ pi-bot-windows/
 - 没有代码签名，首次运行会弹 SmartScreen 提示，属预期。
 
 和 macOS 一样，命令桩 / Node 单测只覆盖脚本分支，不能代替一次真实的 Flutter Windows 构建。
-Linux 上可以跑 `node scripts/tests/all.mjs`；Windows 上再跑
+Linux 上可以跑 `node scripts/tests/all.mjs`。Windows CI 会跑
+`node scripts/tests/prepare-windows-bundle-test.mjs`（假包目录：每种问题报错，干净包通过）和
 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/tests/pack-windows-test.ps1`。
+
+## 本机更新
+
+升级已经装好的程序时，用同一次构建的完整客户端换掉整个程序目录：`pi_bot.exe`、Flutter 运行库、`data/` 和清单里的原生 DLL 必须来自同一次构建，不要只替换单个 exe 或 DLL。
+
+用户数据目录（`%LOCALAPPDATA%\pi-bot`）保持不动。要沿用已经配对、装好依赖的服务端时，原来的 `server` 目录也原样留下，只替换其余客户端文件。换完后确认 `NativeAssetsManifest.json` 列出的每个 DLL 都在，再从正式入口启动。源码和需要分发的 zip 另外保留。
 
 ---
 

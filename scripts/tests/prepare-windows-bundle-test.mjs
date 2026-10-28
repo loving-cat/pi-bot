@@ -6,7 +6,8 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
-  computePeChecksum, prepareWindowsBundle, rewritePeDebugPaths, verifyProductionDependencies,
+  computePeChecksum, prepareWindowsBundle, rewritePeDebugPaths, scanWindowsBundle,
+  verifyProductionDependencies, windowsNativeAssetFiles,
 } from '../prepare-windows-bundle.mjs';
 import { fileContainsMarkers, markerVariants } from '../scan-release-tree.mjs';
 
@@ -203,7 +204,85 @@ try {
     assert.equal(verifyProductionDependencies(server), 1);
     assert.equal(prepareWindowsBundle(dir, { home: otherHome, verifyDependencies: true }).dependencies, 1);
   });
+  function cleanPackage(name) {
+    const dir = bundle(name);
+    fs.mkdirSync(path.join(dir, 'data/flutter_assets'), { recursive: true });
+    fs.mkdirSync(path.join(dir, 'plugin'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'plugin/fixture.dll'), 'MZ');
+    fs.writeFileSync(path.join(dir, 'data/flutter_assets/NativeAssetsManifest.json'), JSON.stringify({
+      'format-version': [1, 0, 0],
+      'native-assets': { windows_x64: { 'fixture:library': ['absolute', 'plugin/fixture.dll'] } },
+    }));
+    return dir;
+  }
+  function assertRejected(dir, pattern) {
+    let message = '';
+    try { scanWindowsBundle(dir, { home }); }
+    catch (error) { message = error.message; }
+    assert.match(message, pattern);
+    assert.equal(message.includes(home), false);
+    assert.equal(message.includes('plugin/fixture.dll'), false);
+    return message;
+  }
+  test('假包目录：每种问题都报错且不打印本机路径，干净包通过', () => {
+    const utf8 = cleanPackage('utf8');
+    fs.writeFileSync(path.join(utf8, 'note.txt'), `prefix ${home} suffix`);
+    assertRejected(utf8, /1 个文件包含本机路径/);
+    const utf16 = cleanPackage('utf16');
+    fs.writeFileSync(path.join(utf16, 'note.txt'), Buffer.from(home, 'utf16le'));
+    assertRejected(utf16, /1 个文件包含本机路径/);
+    const pdb = cleanPackage('pdb');
+    fs.writeFileSync(path.join(pdb, 'pi_bot.pdb'), 'symbols');
+    assertRejected(pdb, /1 个调试符号文件/);
+    const pi = cleanPackage('state-pi');
+    fs.mkdirSync(path.join(pi, '.pi'));
+    fs.writeFileSync(path.join(pi, '.pi/config.json'), '{}');
+    assertRejected(pi, /本机状态（\.pi）/);
+    const inbox = cleanPackage('state-inbox');
+    fs.mkdirSync(path.join(inbox, '_inbox'));
+    fs.writeFileSync(path.join(inbox, '_inbox/note.txt'), 'x');
+    assertRejected(inbox, /本机状态（_inbox）/);
+    const env = cleanPackage('state-env');
+    fs.mkdirSync(path.join(env, 'server'));
+    fs.writeFileSync(path.join(env, 'server/.env'), 'TOKEN=fixture\n');
+    assertRejected(env, /本机状态（server\/\.env）/);
+    const log = cleanPackage('state-log');
+    fs.writeFileSync(path.join(log, 'server.log'), 'log');
+    assertRejected(log, /本机状态（log）/);
+    const missing = cleanPackage('missing-dll');
+    fs.rmSync(path.join(missing, 'plugin/fixture.dll'));
+    assertRejected(missing, /原生资产缺失/);
+    const clean = cleanPackage('clean');
+    fs.mkdirSync(path.join(clean, 'server/native'), { recursive: true });
+    fs.writeFileSync(path.join(clean, 'server/native/NativeAssetsManifest.json'), JSON.stringify({
+      'format-version': [1, 0, 0],
+      'native-assets': { windows_x64: { 'server:ignored': ['absolute', 'missing.dll'] } },
+    }));
+    const result = scanWindowsBundle(clean, { home });
+    assert.equal(result.nativeAssets, 1);
+    assert.deepEqual(windowsNativeAssetFiles(JSON.parse(fs.readFileSync(
+      path.join(clean, 'data/flutter_assets/NativeAssetsManifest.json'), 'utf8',
+    ))), ['plugin/fixture.dll']);
+  });
+  test('拒绝绝对路径、路径穿越和不是 DLL 的原生资产', () => {
+    const manifest = { 'format-version': [1, 0, 0], 'native-assets': { windows_x64: {} } };
+    for (const file of [`${home}\\fixture.dll`, '../fixture.dll', '/tmp/fixture.dll', 'fixture.exe', 'plugin//fixture.dll']) {
+      manifest['native-assets'].windows_x64 = { fixture: ['absolute', file] };
+      assert.throws(() => windowsNativeAssetFiles(manifest));
+      try { windowsNativeAssetFiles(manifest); } catch (error) {
+        assert.equal(error.message.includes(home), false);
+      }
+    }
+  });
   test('包外链接被拒绝，包内相对链接可以保留', () => {
+    try {
+      const probe = path.join(root, 'symlink-probe');
+      fs.symlinkSync('target', probe);
+      fs.rmSync(probe);
+    } catch (error) {
+      if (error.code === 'EPERM' || error.code === 'EACCES') return;
+      throw error;
+    }
     for (const [name, target] of [['outside', path.join(root, 'outside')], ['absolute', root], ['broken', 'missing']]) {
       const dir = bundle(name);
       fs.symlinkSync(target, path.join(dir, 'link'));

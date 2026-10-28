@@ -147,6 +147,83 @@ function collectPdbs(root) {
   return found;
 }
 
+const WINDOWS_ASSET_TARGETS = new Set(['windows_x64', 'windows_arm64']);
+
+/** 只接受发行目录内的相对 DLL 路径，不把清单里的原始字符串写进错误。 */
+export function windowsNativeAssetFiles(manifest) {
+  if (!Array.isArray(manifest?.['format-version']) || manifest['format-version'][0] !== 1) {
+    throw new Error('原生资产清单版本不受支持');
+  }
+  const assets = manifest['native-assets'];
+  if (!assets || typeof assets !== 'object' || Array.isArray(assets)) throw new Error('原生资产清单格式不正确');
+  const result = [];
+  for (const [target, entries] of Object.entries(assets)) {
+    if (!WINDOWS_ASSET_TARGETS.has(target) || !entries || typeof entries !== 'object' || Array.isArray(entries)) {
+      throw new Error('原生资产包含不支持的目标或格式');
+    }
+    for (const entry of Object.values(entries)) {
+      if (!Array.isArray(entry) || entry.length !== 2 || entry[0] !== 'absolute' || typeof entry[1] !== 'string') {
+        throw new Error('原生资产加载方式不受支持');
+      }
+      const file = entry[1];
+      const parts = file.split(/[\\/]/);
+      if (!file || path.win32.isAbsolute(file) || path.posix.isAbsolute(file) || file.includes('\0') ||
+          parts.some((part) => part === '' || part === '.' || part === '..')) {
+        throw new Error('原生资产路径不在发行包内');
+      }
+      if (!file.toLowerCase().endsWith('.dll')) throw new Error('原生资产不是 DLL');
+      result.push(parts.join('/'));
+    }
+  }
+  return result;
+}
+
+function validateWindowsNativeAssets(bundle, files, serverRoot) {
+  let count = 0;
+  for (const manifestPath of files) {
+    if (path.basename(manifestPath) !== 'NativeAssetsManifest.json') continue;
+    if (realWithin(serverRoot, manifestPath)) continue;
+    let manifest;
+    try { manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')); }
+    catch { throw new Error('原生资产清单无法解析'); }
+    for (const relative of windowsNativeAssetFiles(manifest)) {
+      const target = path.resolve(bundle, ...relative.split('/'));
+      if (!isWithin(bundle, target) || !fs.statSync(target, { throwIfNoEntry: false })?.isFile()) {
+        throw new Error('原生资产缺失');
+      }
+      let resolved;
+      try { resolved = fs.realpathSync(target); }
+      catch { throw new Error('原生资产缺失'); }
+      if (!isWithin(bundle, resolved) || !fs.statSync(resolved).isFile()) throw new Error('原生资产缺失');
+      count++;
+    }
+  }
+  return count;
+}
+
+/**
+ * 只读检查。命中本机目录、调试符号、本机状态或缺失 DLL 时失败，文案不包含具体路径。
+ */
+export function scanWindowsBundle(bundlePath, {
+  home = os.homedir(),
+  markers = [],
+  serverRelative = 'server',
+} = {}) {
+  const bundle = fs.realpathSync(bundlePath);
+  if (!fs.statSync(bundle).isDirectory()) throw new Error('不是 Windows 发行目录');
+  const files = listTreeFiles(bundle);
+  const serverRoot = path.join(bundle, serverRelative);
+  const state = findLocalState(bundle);
+  if (state.length) throw new Error(`发行包仍有本机状态（${localStateSummary(state)}）`);
+  const pdbs = collectPdbs(bundle);
+  if (pdbs.length) throw new Error(`发行包仍有 ${pdbs.length} 个调试符号文件`);
+  const variants = [...new Set([home, ...markers].flatMap((marker) => markerVariants(marker)))];
+  const leaks = files.filter((file) => fileContainsMarkers(file, variants));
+  if (leaks.length) throw new Error(`发行包仍有 ${leaks.length} 个文件包含本机路径`);
+  const nativeAssets = validateWindowsNativeAssets(bundle, files, serverRoot);
+  return { files: files.length, nativeAssets };
+}
+
 export function verifyProductionDependencies(serverDir) {
   const pkgPath = path.join(serverDir, 'package.json');
   if (!fs.statSync(pkgPath, { throwIfNoEntry: false })?.isFile()) throw new Error('发行包缺少服务端 package.json');
@@ -202,15 +279,16 @@ export function prepareWindowsBundle(bundlePath, {
   } else {
     serverPeFiles = files.filter((file) => looksLikePe(file) && realWithin(serverRoot, file)).length;
   }
-  const state = findLocalState(bundle);
-  if (state.length) throw new Error(`发行包仍有本机状态（${localStateSummary(state)}）`);
-  const pdbs = collectPdbs(bundle);
-  if (pdbs.length) throw new Error(`发行包仍有 ${pdbs.length} 个调试符号文件`);
-  const variants = [...new Set([home, ...markers].flatMap((marker) => markerVariants(marker)))];
-  const leaks = files.filter((file) => fs.existsSync(file) && fileContainsMarkers(file, variants));
-  if (leaks.length) throw new Error(`发行包仍有 ${leaks.length} 个文件包含本机路径`);
+  const scanned = scanWindowsBundle(bundle, { home, markers, serverRelative });
   const dependencies = verifyDependencies ? verifyProductionDependencies(serverRoot) : 0;
-  return { files: files.length, removedPdbs, rewrittenDebugPaths, serverPeFiles, dependencies };
+  return {
+    files: scanned.files,
+    removedPdbs,
+    rewrittenDebugPaths,
+    serverPeFiles,
+    nativeAssets: scanned.nativeAssets,
+    dependencies,
+  };
 }
 
 const entryPath = process.argv[1] && fs.existsSync(process.argv[1]) ? fs.realpathSync(process.argv[1]) : null;
