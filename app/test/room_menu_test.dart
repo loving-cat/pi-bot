@@ -1123,14 +1123,12 @@ void main() {
     );
     expect(field.controller?.text, 'grp1/flash');
 
-    // 五个思考等级都在，且当前那个是选中的
-    for (final lv in ['off', 'low', 'medium', 'high', 'max']) {
-      expect(find.widgetWithText(ChoiceChip, lv), findsOneWidget);
+    // 思考等级改成滑条：七个档位的标签都在；
+    // 当前档位（medium=中）同时出现在右上角摘要和刻度标签里，所以它的计数是 2。
+    for (final lv in ['关', '极低', '低', '高', '很高', '最高']) {
+      expect(find.text(lv), findsOneWidget, reason: '档位标签 $lv 要在');
     }
-    final medium = tester.widget<ChoiceChip>(
-      find.widgetWithText(ChoiceChip, 'medium'),
-    );
-    expect(medium.selected, isTrue, reason: '当前等级要选中');
+    expect(find.text('中'), findsNWidgets(2), reason: '当前档位要标出来');
   });
 
   testWidgets('★ 「消息来自 X」：转进来的消息才挂，自己人说的不挂', (tester) async {

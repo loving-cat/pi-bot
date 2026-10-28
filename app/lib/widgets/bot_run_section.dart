@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../app_state.dart';
 import '../models.dart';
 import '../scope.dart';
 import '../theme.dart';
 import 'toast.dart';
 import 'model_picker_field.dart';
+import 'thinking_slider.dart';
 
 /// 「运行参数」—— 面板的「详情」页里那一段：这个会话到底用谁、用什么模型、
 /// 想多久、上下文给多大。
@@ -26,7 +28,48 @@ class BotRunSection extends StatefulWidget {
 }
 
 class _BotRunSectionState extends State<BotRunSection> {
-  static const _levels = ['off', 'low', 'medium', 'high', 'max'];
+  /// pi 的七个档位（顺序即强弱顺序）。具体给哪几档由模型能力决定。
+  static const _allLevels = [
+    'off',
+    'minimal',
+    'low',
+    'medium',
+    'high',
+    'xhigh',
+    'max',
+  ];
+
+  /// 这个 bot 当前模型真正支持的档位（模型组里没声明就退回内置档位，保持兼容）
+  List<String> _levelsFor(AppState state) {
+    final slug = (widget.bot.model ?? '').trim();
+    ModelSpec? spec;
+    if (slug.contains('/')) {
+      final i = slug.indexOf('/');
+      final gid = slug.substring(0, i);
+      final mid = slug.substring(i + 1);
+      for (final g in state.modelGroups) {
+        if (g.id != gid) continue;
+        for (final m in g.models) {
+          if (m.id == mid) spec = m;
+        }
+      }
+    } else if (slug.isNotEmpty) {
+      final hits = [
+        for (final g in state.modelGroups)
+          for (final m in g.models)
+            if (m.id == slug) m,
+      ];
+      if (hits.length == 1) spec = hits.single;
+    }
+    if (spec == null) return _allLevels;
+    if (!spec.reasoning) return const [];
+    final declared = spec.thinkingLevels;
+    if (declared.isEmpty) return _allLevels;
+    return [
+      for (final level in _allLevels)
+        if (declared.contains(level)) level,
+    ];
+  }
 
   late final TextEditingController _model = TextEditingController(
     text: widget.bot.model ?? '',
@@ -155,35 +198,18 @@ class _BotRunSectionState extends State<BotRunSection> {
           ),
         ),
 
-        // 思考等级
-        const Text(
-          '思考等级',
-          style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
-        ),
-        const SizedBox(height: 6),
-        Wrap(
-          spacing: 6,
-          children: [
-            for (final level in _levels)
-              ChoiceChip(
-                label: Text(
-                  level,
-                  style: TextStyle(
-                    fontSize: PB.fsXs,
-                    color: thinking == level ? Colors.white : PB.textSecondary,
-                  ),
-                ),
-                selected: thinking == level,
-                selectedColor: PB.accent,
-                backgroundColor: PB.bgActive,
-                side: BorderSide(color: PB.borderSecondary),
-                onSelected: (_) {
-                  // 点一下立刻生效。**不弹提示** —— chip 自己会变成选中态，
-                  // 用户看得见；底部再弹一条"思考等级：xxx（下一轮生效）"纯属噪音。
-                  _patch({'thinking': level});
-                },
-              ),
-          ],
+        // 思考等级：滑条（从关到 max 一档一档拖过去）
+        //
+        // 为什么不做成一排 chip：七个档位横排会挤成一团，看不出"现在到哪、还能往哪走"。
+        // 滑条更贴合"思考强度是一根刻度尺"的心理模型；顶格（max）时小球会呼吸发光。
+        ThinkingLevelField(
+          levels: _levelsFor(AppScope.of(context)),
+          value: thinking.isEmpty ? null : thinking,
+          enabled: !_saving,
+          onChanged: (level) {
+            // 停到某一档就立刻生效，不弹提示（滑块本身已经给出反馈）
+            _patch({'thinking': level});
+          },
         ),
         const SizedBox(height: 12),
 

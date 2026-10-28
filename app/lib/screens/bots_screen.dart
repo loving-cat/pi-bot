@@ -4,12 +4,21 @@ import '../models.dart';
 import '../scope.dart';
 import '../theme.dart';
 import '../widgets/model_picker_field.dart';
+import '../widgets/thinking_slider.dart';
 import '../widgets/blob_avatar.dart';
 import 'chat_screen.dart';
 
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
-const _thinkingLevels = ['off', 'low', 'medium', 'high', 'max'];
+const _thinkingLevels = [
+  'off',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+];
 
 /// 解析 bot 当前选的模型属于哪个模型组里的哪个模型。
 ///
@@ -42,7 +51,7 @@ ModelSpec? _modelSpecFor(List<ModelGroup> groups, String? slug) {
 /// 前台要展示的思考档位。
 ///
 /// 后台关掉思考 → 返回空 → 整个思考等级区域不展示。
-/// 模型配置里没声明过（旧配置/默认模型）→ 退回内置五档，保持兼容。
+/// 模型配置未声明档位时使用内置七档。
 List<String> _levelsFor(ModelSpec? spec) {
   if (spec == null) return _thinkingLevels;
   if (!spec.reasoning) return const [];
@@ -352,7 +361,17 @@ class _BotRow extends StatelessWidget {
                     const SizedBox(height: 10),
                     ModelPickerField(
                       controller: modelController,
-                      onPicked: (_) => setLocal(() {}),
+                      onPicked: (_) => setLocal(() {
+                        final levels = _levelsFor(
+                          _modelSpecFor(
+                            state.modelGroups,
+                            modelController.text,
+                          ),
+                        );
+                        if (levels.isNotEmpty && !levels.contains(thinking)) {
+                          thinking = levels.first;
+                        }
+                      }),
                     ),
                     // ★ 思考等级只在当前模型开了思考时才展示。
                     //   后台模型组里关掉思考 → 这里整块不出现，
@@ -377,45 +396,14 @@ class _BotRow extends StatelessWidget {
                           ),
                         ];
                       }
-                      // 切了模型/档位被关掉时，别让残留的档位带去后端
-                      if (!levels.contains(thinking)) {
-                        thinking = levels.first;
-                      }
                       return <Widget>[
                         const SizedBox(height: 14),
-                        Text(
-                          '思考等级',
-                          style: const TextStyle(
-                            fontSize: PB.fsXs,
-                            color: PB.textTertiary,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Wrap(
-                          spacing: 6,
-                          children: [
-                            for (final level in levels)
-                              ChoiceChip(
-                                label: Text(
-                                  level,
-                                  style: const TextStyle(fontSize: PB.fsXs),
-                                ),
-                                selected: thinking == level,
-                                onSelected: (_) =>
-                                    setLocal(() => thinking = level),
-                                backgroundColor: PB.bgPane,
-                                selectedColor: PB.accentSoft,
-                                side: const BorderSide(
-                                  color: PB.borderTertiary,
-                                ),
-                                labelStyle: TextStyle(
-                                  color: thinking == level
-                                      ? PB.accent
-                                      : PB.textTertiary,
-                                  fontSize: PB.fsXs,
-                                ),
-                              ),
-                          ],
+                        // 思考等级：滑条（和右侧面板同一套控件）
+                        ThinkingLevelField(
+                          levels: levels,
+                          value: thinking,
+                          onChanged: (level) =>
+                              setLocal(() => thinking = level),
                         ),
                       ];
                     })(),
