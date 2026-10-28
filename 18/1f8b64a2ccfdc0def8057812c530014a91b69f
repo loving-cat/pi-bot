@@ -1,0 +1,16 @@
+app/pubspec.yaml
+  h_53f14b6641484b 4
+server/package.json
+  h_53f14b6641484b 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "181f8b64a2ccfdc0def8057812c530014a91b69f",
+  "prompts": {},
+  "humans": {
+    "h_53f14b6641484b": {
+      "author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
