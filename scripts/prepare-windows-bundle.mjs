@@ -134,6 +134,12 @@ function realWithin(root, file) {
   catch { return false; }
 }
 
+function safeRelative(root, file) {
+  const relative = path.relative(root, file);
+  if (!relative || path.isAbsolute(relative) || relative.startsWith(`..${path.sep}`) || relative === '..') return '[包内文件]';
+  return relative.split(path.sep).join('/');
+}
+
 function collectPdbs(root) {
   const found = [];
   function visit(dir) {
@@ -219,7 +225,10 @@ export function scanWindowsBundle(bundlePath, {
   if (pdbs.length) throw new Error(`发行包仍有 ${pdbs.length} 个调试符号文件`);
   const variants = [...new Set([home, ...markers].flatMap((marker) => markerVariants(marker)))];
   const leaks = files.filter((file) => fileContainsMarkers(file, variants));
-  if (leaks.length) throw new Error(`发行包仍有 ${leaks.length} 个文件包含本机路径`);
+  if (leaks.length) {
+    const names = leaks.map((file) => safeRelative(bundle, file)).join(', ');
+    throw new Error(`发行包仍有 ${leaks.length} 个文件包含本机路径（${names}）`);
+  }
   const nativeAssets = validateWindowsNativeAssets(bundle, files, serverRoot);
   return { files: files.length, nativeAssets };
 }

@@ -3,6 +3,11 @@
 # The file is ASCII-only so Windows PowerShell 5.1 can parse it.
 
 $ErrorActionPreference = "Stop"
+# pwsh 7 can turn a native non-zero exit into a terminating error. Expected pack
+# failures are checked with $LASTEXITCODE instead.
+if (Test-Path variable:PSNativeCommandUseErrorActionPreference) {
+  $PSNativeCommandUseErrorActionPreference = $false
+}
 
 $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $testRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("pi-bot-pack-win-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
@@ -161,8 +166,17 @@ fs.writeFileSync("node_modules/installed.txt", "1\n");
     # ErrorAction is Stop and stderr is merged. Expected pack failures write to stderr.
     $previousPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
-    & $shell -NoProfile -ExecutionPolicy Bypass -File $script @ArgList > $log 2>&1
-    $code = $LASTEXITCODE
+    if (Test-Path variable:PSNativeCommandUseErrorActionPreference) {
+      $PSNativeCommandUseErrorActionPreference = $false
+    }
+    try {
+      & $shell -NoProfile -ExecutionPolicy Bypass -File $script @ArgList > $log 2>&1
+      $code = $LASTEXITCODE
+    } catch {
+      # Windows PowerShell 5.1 surfaces redirected stderr as an ErrorRecord.
+      $code = $LASTEXITCODE
+      if ($null -eq $code -or $code -eq 0) { $code = 1 }
+    }
     $ErrorActionPreference = $previousPreference
     if ($null -eq $code) { return 0 }
     return $code
@@ -262,6 +276,8 @@ fs.writeFileSync("node_modules/installed.txt", "1\n");
   $leak = Join-Path $release "leak.txt"
   Set-Content -LiteralPath $leak -Value $app -Encoding Ascii
   Assert-True ((Invoke-Pack -ArgList @("-NoBuild")) -ne 0) "local path should fail the scan"
+  Assert-True ((Read-Log) -match 'leak\.txt') "scan did not identify the planted file"
+  Assert-True ((Read-Log) -notmatch 'leak\.txt.*[\\/]Users[\\/]') "scan error included a user directory"
   Assert-True ((Read-Norm (Join-Path $dist "server\src\index.js")) -eq "fixture server version two") "scan failure destroyed the package"
   Assert-True (-not (Test-Path -LiteralPath (Join-Path $dist "leak.txt"))) "leaking file was published"
   Assert-Clean

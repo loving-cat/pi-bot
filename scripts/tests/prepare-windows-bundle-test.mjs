@@ -227,7 +227,8 @@ try {
   test('假包目录：每种问题都报错且不打印本机路径，干净包通过', () => {
     const utf8 = cleanPackage('utf8');
     fs.writeFileSync(path.join(utf8, 'note.txt'), `prefix ${home} suffix`);
-    assertRejected(utf8, /1 个文件包含本机路径/);
+    const utf8Message = assertRejected(utf8, /1 个文件包含本机路径/);
+    assert.match(utf8Message, /note\.txt/);
     const utf16 = cleanPackage('utf16');
     fs.writeFileSync(path.join(utf16, 'note.txt'), Buffer.from(home, 'utf16le'));
     assertRejected(utf16, /1 个文件包含本机路径/);
