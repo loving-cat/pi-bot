@@ -1,0 +1,21 @@
+app/pubspec.yaml
+  s_06973911ad2cd6::t_d740ad8def8183 4
+server/package.json
+  s_06973911ad2cd6::t_d740ad8def8183 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f60dd7f75ef47ebf058a8277f3f8212f8c9cbaa3",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
