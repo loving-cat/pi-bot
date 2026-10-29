@@ -9,6 +9,7 @@ import path from 'node:path';
 
 const TESTS = [
   'model-config',
+  'model-dispatch',
   'model-thinking',
   'version',
   'pi-args',

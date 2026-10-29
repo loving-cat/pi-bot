@@ -76,6 +76,12 @@ export class ModelHealth {
     return null;
   }
 
+  /** 只读健康快照；目录展示不触发后台探测。 */
+  peek(slug) {
+    const result = this.results[slug];
+    return result && Date.now() - result.at <= this.ttlMs ? result : null;
+  }
+
   /** 全库有没有**任何**新鲜结论（用来区分「真全挂了」和「全都过期了」） */
   hasFresh() {
     const at = Date.now();
