@@ -1,7 +1,7 @@
 name: pi_bot
 description: "pi-bot 手机端：连自己的 pi agent，群聊、多 Bot、流式输出。"
 publish_to: 'none'
-version: 1.3.2+5
+version: 1.3.3+6
 
 environment:
   sdk: ^3.13.0
