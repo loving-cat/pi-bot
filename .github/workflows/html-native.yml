@@ -1,0 +1,68 @@
+name: Windows HTML native preview
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - '.github/workflows/html-native.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: html-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-preview:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.7'
+          channel: stable
+          cache: true
+      - uses: NuGet/setup-nuget@v2
+      - name: Ensure WebView2 runtime
+        shell: pwsh
+        run: |
+          $client = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          $keys = @("HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\$client", "HKCU:\Software\Microsoft\EdgeUpdate\Clients\$client")
+          $present = $keys | ForEach-Object { (Get-ItemProperty $_ -ErrorAction SilentlyContinue).pv } | Where-Object { $_ -and $_ -ne '0.0.0.0' }
+          if (-not $present) {
+            $installer = Join-Path $env:RUNNER_TEMP 'WebView2Setup.exe'
+            Invoke-WebRequest 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $installer
+            $signature = Get-AuthenticodeSignature $installer
+            if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') { throw 'Invalid runtime installer signature' }
+            $setup = Start-Process $installer -ArgumentList '/silent','/install' -PassThru
+            if (-not $setup.WaitForExit(120000)) { $setup.Kill(); throw 'Runtime setup timed out' }
+            if ($setup.ExitCode -ne 0) { throw "Runtime setup failed: $($setup.ExitCode)" }
+          }
+      - name: Build native synthetic test
+        working-directory: app
+        shell: pwsh
+        run: |
+          $evidence = Join-Path $env:RUNNER_TEMP 'html-preview-results.json'
+          flutter build windows --debug --target tool/html_preview_gallery.dart --dart-define=PI_BOT_HTML_QA=true "--dart-define=PI_BOT_HTML_QA_OUTPUT=$evidence"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify native report and offline behavior
+        working-directory: app
+        shell: pwsh
+        run: |
+          $exe = Resolve-Path 'build/windows/x64/runner/Debug/pi_bot.exe'
+          $test = Start-Process $exe -PassThru
+          if (-not $test.WaitForExit(90000)) { $test.Kill(); throw 'Native preview test timed out' }
+          $file = Join-Path $env:RUNNER_TEMP 'html-preview-results.json'
+          $result = Get-Content $file -Raw | ConvertFrom-Json
+          if ($test.ExitCode -ne 0 -or -not $result.completed -or -not $result.passed -or $result.resourceRequests -ne 0) { throw 'Native preview verification failed' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-html-preview-result
+          path: ${{ runner.temp }}/html-preview-results.json
+          if-no-files-found: warn
+          retention-days: 7
