@@ -114,7 +114,8 @@ const RULES = [
   },
   {
     name: '真实邮箱',
-    re: /\b[A-Za-z0-9._%+-]+@(?!users\.noreply\.github\.com\b|example\.|pi-bot\.local\b|[A-Za-z0-9.-]+\.(?:test|example|invalid)\b)[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b/,
+    // 只放行恰好 noreply@github.com（与 okMail 同一地址）。ALLOW 会跳过整行，所以不能加在那里。
+    re: /\b(?!noreply@github\.com(?![A-Za-z0-9.-]))[A-Za-z0-9._%+-]+@(?!users\.noreply\.github\.com\b|example\.|pi-bot\.local\b|[A-Za-z0-9.-]+\.(?:test|example|invalid)\b)[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b/,
   },
 ];
 
