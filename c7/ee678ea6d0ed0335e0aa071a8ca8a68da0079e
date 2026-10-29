@@ -1,0 +1,50 @@
+server/tests/model-dispatch.mjs
+  s_06973911ad2cd6::t_04e91db3bfdb43 16,21,29,67-83,230-283
+  s_06973911ad2cd6::t_0b33c1bff92d84 63,168,197-214
+  s_06973911ad2cd6::t_4ffec0068b2baa 1-15,17-20,22-28,30-62,64-66,84-167,169-196,215-229,284-303,306-312
+  s_06973911ad2cd6::t_2afd96ae01c12a 304-305
+server/src/model-health.js
+  s_06973911ad2cd6::t_1d911e75a13632 79-84
+server/src/tools.js
+  s_06973911ad2cd6::t_c06436a9cd4f4a 19,99-102
+  s_06973911ad2cd6::t_68e50395f447b7 29,94,103,109,1037,1219,1225,1366-1367
+server/tests/all.mjs
+  s_06973911ad2cd6::t_4ffec0068b2baa 12
+server/src/model-dispatch.js
+  s_06973911ad2cd6::t_c06436a9cd4f4a 3,28,34-69
+  s_06973911ad2cd6::t_68e50395f447b7 1-2,4-27,29-33,70-97
+server/src/model-menu.js
+  s_06973911ad2cd6::t_79ab5f6ce06963 68,71
+  s_06973911ad2cd6::t_c06436a9cd4f4a 27-43,45,60-67,69-70,73,86,104,108,112
+  s_06973911ad2cd6::t_68e50395f447b7 54-55,72,74-75,87-90,105-106
+  s_06973911ad2cd6::t_35134471739443 107
+server/src/pi-runner.js
+  s_06973911ad2cd6::t_68e50395f447b7 57,592-593
+server/src/session-factory.js
+  s_06973911ad2cd6::t_68e50395f447b7 30-31,133
+server/src/http.js
+  s_06973911ad2cd6::t_c06436a9cd4f4a 18,897-906
+  s_06973911ad2cd6::t_04e91db3bfdb43 907-908
+server/src/system-prompt.js
+  s_06973911ad2cd6::t_68e50395f447b7 8,25,29-30
+server/src/store.js
+  s_06973911ad2cd6::t_68e50395f447b7 44,175
+server/tests/fixtures/chief-model-policy-legacy.txt
+  s_06973911ad2cd6::t_4af753de63a3e4 1-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c7ee678ea6d0ed0335e0aa071a8ca8a68da0079e",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
