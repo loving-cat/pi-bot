@@ -1,0 +1,23 @@
+.github/workflows/html-native.yml
+  s_06973911ad2cd6::t_6fb6c7a7a857f5 1-68
+docs/HTML-PREVIEW.md
+  s_06973911ad2cd6::t_0c3eafc737fb17 1-61
+docs/MODULE-MAP.md
+  s_06973911ad2cd6::t_0c3eafc737fb17 42,99-100
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ee85a3960704a583ff1bb3008f244dfacf07bbe1",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
