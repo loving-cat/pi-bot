@@ -13,6 +13,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:pi_bot/models.dart';
 import 'package:pi_bot/widgets/attachment_view.dart';
+import 'package:pi_bot/widgets/html_attachment_preview.dart';
 
 class _NoNetwork extends HttpOverrides {
   @override
@@ -281,5 +282,35 @@ void main() {
       Attachment(id: 'i1', name: 'shot.png', mime: 'image/png', kind: 'image'),
     );
     expect(find.byIcon(LucideIcons.download), findsNothing);
+  });
+
+  testWidgets('HTML进入独立预览，可扩大恢复并正常关闭', (tester) async {
+    await _pumpCard(tester, _file('report.HTM'));
+    await tester.tap(find.text('report.HTM'));
+    await tester.pumpAndSettle();
+    expect(find.byType(HtmlAttachmentPreview), findsOneWidget);
+    final initialSize = tester.getSize(find.byType(HtmlAttachmentPreview));
+    await tester.tap(find.text('放大'));
+    await tester.pumpAndSettle();
+    final expandedSize = tester.getSize(find.byType(HtmlAttachmentPreview));
+    expect(expandedSize.width, greaterThan(initialSize.width));
+    expect(expandedSize.height, greaterThan(initialSize.height));
+    await tester.tap(find.text('恢复'));
+    await tester.pumpAndSettle();
+    expect(tester.getSize(find.byType(HtmlAttachmentPreview)), initialSize);
+    await tester.tap(find.byIcon(LucideIcons.x));
+    await tester.pumpAndSettle();
+    expect(find.byType(HtmlAttachmentPreview), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('HTML超限保留下载出口且不尝试截断预览', (tester) async {
+    await _pumpCard(tester, _file('large.html', size: 1024 * 1024 + 1));
+    await tester.tap(find.text('large.html'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('文件超过 1 MiB'), findsOneWidget);
+    expect(find.byIcon(LucideIcons.download), findsWidgets);
+    expect(find.text('源码'), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 }

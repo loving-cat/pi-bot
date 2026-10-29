@@ -7,11 +7,13 @@ import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../models.dart';
+import '../html_preview_loader.dart';
 import '../open_file.dart';
 import '../save_file.dart';
 import '../theme.dart';
 import 'toast.dart';
 import 'md_text.dart';
+import 'html_attachment_preview.dart';
 
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
@@ -435,8 +437,10 @@ class _FilePreviewState extends State<_FilePreview> {
   Object? _error;
   String? _text;
   bool _loading = true;
+  bool _expanded = false;
 
   bool get _isImage => widget.file.isImage;
+  bool get _isHtml => isHtmlAttachment(widget.file.name, widget.file.mime);
 
   bool get _looksTextual {
     final n = widget.file.name.toLowerCase();
@@ -477,7 +481,7 @@ class _FilePreviewState extends State<_FilePreview> {
 
   Future<void> _load() async {
     // 图片走 Image.network，不用在这儿读字节
-    if (_isImage || !_looksTextual) {
+    if (_isImage || _isHtml || !_looksTextual) {
       setState(() => _loading = false);
       return;
     }
@@ -512,8 +516,12 @@ class _FilePreviewState extends State<_FilePreview> {
   @override
   Widget build(BuildContext context) {
     final screen = MediaQuery.sizeOf(context);
-    final w = (screen.width * 0.78).clamp(320.0, 900.0);
-    final h = (screen.height * 0.82).clamp(300.0, 820.0);
+    final w = _expanded
+        ? (screen.width - 24).clamp(0.0, double.infinity)
+        : (screen.width * 0.78).clamp(320.0, 900.0);
+    final h = _expanded
+        ? (screen.height - 24).clamp(0.0, double.infinity)
+        : (screen.height * 0.82).clamp(300.0, 820.0);
 
     return Center(
       child: Material(
@@ -564,6 +572,11 @@ class _FilePreviewState extends State<_FilePreview> {
               ),
             ),
           ),
+          if (_isHtml)
+            TextButton(
+              onPressed: () => setState(() => _expanded = !_expanded),
+              child: Text(_expanded ? '恢复' : '放大'),
+            ),
           // 下载在 X 左边
           _IconAction(
             icon: LucideIcons.download,
@@ -578,10 +591,16 @@ class _FilePreviewState extends State<_FilePreview> {
             tip: '用系统应用打开',
             color: PB.textSecondary,
             size: 17,
-            onTap: () => launchUrl(
-              Uri.parse(widget.url),
-              mode: LaunchMode.externalApplication,
-            ),
+            onTap: () => _isHtml
+                ? openAttachmentExternally(
+                    context,
+                    file: widget.file,
+                    url: widget.url,
+                  )
+                : launchUrl(
+                    Uri.parse(widget.url),
+                    mode: LaunchMode.externalApplication,
+                  ),
           ),
           _IconAction(
             icon: LucideIcons.x,
@@ -596,6 +615,12 @@ class _FilePreviewState extends State<_FilePreview> {
   }
 
   Widget _body() {
+    if (_isHtml) {
+      return HtmlAttachmentPreview(
+        source: Uri.parse(widget.url),
+        declaredSize: widget.file.size,
+      );
+    }
     if (_loading) {
       return const Center(
         child: SizedBox(
