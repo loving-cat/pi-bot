@@ -4,17 +4,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { containsLocalHome, isWithin, listTreeFiles } from './scan-release-tree.mjs';
+
+export { containsLocalHome };
 
 const MACH_MAGICS = new Set(['feedface', 'cefaedfe', 'feedfacf', 'cffaedfe', 'cafebabe', 'bebafeca', 'cafebabf', 'bfbafeca']);
 const BUNDLE_RPATHS = new Set(['@executable_path/../Frameworks', '@loader_path/Frameworks']);
 
 export function isMachO(bytes) {
   return bytes.length >= 4 && MACH_MAGICS.has(bytes.subarray(0, 4).toString('hex'));
-}
-
-export function isWithin(root, target) {
-  const relative = path.relative(root, target);
-  return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
 }
 
 /** 每个架构分别保留其运行搜索路径；路径内容不用于 shell 拼接。 */
@@ -53,51 +51,12 @@ export function removableRpaths(groups, home) {
   return [...result];
 }
 
-function bundleFiles(app) {
-  const files = [];
-  function visit(dir) {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const target = path.join(dir, entry.name);
-      if (entry.isSymbolicLink()) {
-        if (path.isAbsolute(fs.readlinkSync(target))) throw new Error('应用包包含绝对链接');
-        let resolved;
-        try { resolved = fs.realpathSync(target); } catch { throw new Error('应用包包含失效链接'); }
-        if (!isWithin(app, resolved)) throw new Error('应用包包含指向包外的链接');
-      } else if (entry.isDirectory()) visit(target);
-      else if (entry.isFile()) files.push(target);
-      else throw new Error('应用包包含不支持的文件类型');
-    }
-  }
-  visit(app);
-  return files;
-}
-
 function magic(file) {
   const fd = fs.openSync(file, 'r');
   try {
     const bytes = Buffer.alloc(4);
     const size = fs.readSync(fd, bytes, 0, 4, 0);
     return bytes.subarray(0, size);
-  } finally { fs.closeSync(fd); }
-}
-
-/** 分块扫描 UTF-8 与 UTF-16 路径，不将命中内容写入诊断。 */
-export function containsLocalHome(file, home) {
-  if (!path.isAbsolute(home) || home === path.parse(home).root) throw new Error('本机目录设置无效');
-  const values = [...new Set([home, encodeURI(home)])];
-  const needles = values.flatMap((value) => [Buffer.from(value), Buffer.from(value, 'utf16le')]);
-  const overlap = Math.max(...needles.map((value) => value.length)) - 1;
-  const fd = fs.openSync(file, 'r');
-  const buffer = Buffer.alloc(1024 * 1024);
-  let tail = Buffer.alloc(0);
-  try {
-    for (;;) {
-      const size = fs.readSync(fd, buffer, 0, buffer.length, null);
-      if (!size) return false;
-      const content = Buffer.concat([tail, buffer.subarray(0, size)]);
-      if (needles.some((needle) => content.includes(needle))) return true;
-      tail = content.subarray(Math.max(0, content.length - overlap));
-    }
   } finally { fs.closeSync(fd); }
 }
 
@@ -157,7 +116,7 @@ function validateNativeAssets(app, files, run) {
 export function prepareMacosBundle(appPath, { home = os.homedir(), run = command, checkOnly = false } = {}) {
   const app = fs.realpathSync(appPath);
   if (!fs.statSync(app).isDirectory() || !fs.existsSync(path.join(app, 'Contents/Info.plist'))) throw new Error('不是完整应用包');
-  const files = bundleFiles(app);
+  const files = listTreeFiles(app);
   const server = path.join(app, 'Contents/Resources/server');
   const frontendMachO = files.filter((file) => !isWithin(server, file) && isMachO(magic(file)));
   let removedRpaths = 0;

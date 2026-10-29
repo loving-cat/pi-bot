@@ -244,10 +244,12 @@ flutter test
 flutter analyze
 ```
 
-`scripts/pack-windows.ps1` 生成可分发目录（exe + server + 依赖）：
+`scripts/pack-windows.ps1` 生成可分发目录（exe + server + 依赖）。默认把应用源码复制到
+系统临时目录再构建 Release，产物回填到原来的 Release 路径，临时副本用完即删。
 `-WithNode` 附带 `node.exe`（目标机器无需安装 Node），`-Zip` 同时打包压缩文件，
 `-NoBuild` 复用已有 Release 产物，`-SkipDeps` 不预装服务端依赖。
-打包会先暂存再换成品，失败不会破坏上一版。完整步骤、平台实现与真机验收记录见
+打包会先暂存再换成品；发行目录里若残留本机绝对路径、`.pdb`、`.pi`、`_inbox`、
+`server/.env` 或日志，脚本会失败并保留上一版。完整步骤、平台实现与真机验收记录见
 [docs/WINDOWS.md](docs/WINDOWS.md)；macOS 使用 `./scripts/pack-macos.sh`，
 详见 [构建与验收清单](docs/MACOS.md)。
 

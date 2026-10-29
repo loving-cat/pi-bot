@@ -33,6 +33,8 @@ target_compile_definitions(${BINARY_NAME} PRIVATE "NOMINMAX")
 # 源码里有中文注释，强制按 UTF-8 读，否则 MSVC 会报 C4819（GBK 代码页放不下）
 if (MSVC)
   target_compile_options(${BINARY_NAME} PRIVATE "/utf-8")
+  # 只记录 PDB 文件名，避免把本机绝对路径编进发行二进制。
+  target_link_options(${BINARY_NAME} PRIVATE "/PDBALTPATH:%_PDB%")
 endif()
 
 # Add dependency libraries and include directories. Add any application-specific

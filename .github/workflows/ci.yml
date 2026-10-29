@@ -53,6 +53,17 @@ jobs:
         working-directory: server
         timeout-minutes: 15
         run: node tests/all.mjs
+      - name: Packaging script tests
+        if: runner.os != 'Windows'
+        run: |
+          node scripts/tests/all.mjs
+          bash scripts/tests/pack-macos-test.sh
+      - name: Windows packaging script tests
+        if: runner.os == 'Windows'
+        run: |
+          node scripts/tests/stage-app-build-test.mjs
+          node scripts/tests/prepare-windows-bundle-test.mjs
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/tests/pack-windows-test.ps1
 
   app:
     name: app analyze + test (${{ matrix.os }})

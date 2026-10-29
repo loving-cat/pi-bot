@@ -18,6 +18,8 @@ mkdir -p "$FIXTURE/scripts" "$FIXTURE/server/src" "$FIXTURE/server/tools" "$STUB
 cp "$ROOT/scripts/pack-macos.sh" "$FIXTURE/scripts/pack-macos.sh"
 cp "$ROOT/scripts/prepare-macos-bundle.mjs" "$FIXTURE/scripts/prepare-macos-bundle.mjs"
 cp "$ROOT/scripts/stage-macos-build.mjs" "$FIXTURE/scripts/stage-macos-build.mjs"
+cp "$ROOT/scripts/stage-app-build.mjs" "$FIXTURE/scripts/stage-app-build.mjs"
+cp "$ROOT/scripts/scan-release-tree.mjs" "$FIXTURE/scripts/scan-release-tree.mjs"
 mkdir -p "$FIXTURE/app/macos/Runner"
 printf '<plist><dict/></plist>\n' > "$FIXTURE/app/macos/Runner/Release.entitlements"
 mkdir -p "$FIXTURE/app/lib" "$FIXTURE/app/macos/Runner.xcodeproj"
