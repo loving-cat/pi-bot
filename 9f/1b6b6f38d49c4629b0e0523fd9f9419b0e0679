@@ -1,0 +1,23 @@
+server/tests/model-dispatch.mjs
+  s_06973911ad2cd6::t_6fb6c7a7a857f5 107-108
+  s_06973911ad2cd6::t_a15aaf0edbc8e4 87,100-106
+server/src/model-dispatch.js
+  s_06973911ad2cd6::t_a15aaf0edbc8e4 20
+  s_06973911ad2cd6::t_052fc87171811c 21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9f1b6b6f38d49c4629b0e0523fd9f9419b0e0679",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
