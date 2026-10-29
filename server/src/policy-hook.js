@@ -14,6 +14,7 @@ import { bus } from './bus.js';
 import { loadHooks, applyHooks } from './hooks.js';
 import { config } from './config.js';
 import { isDelegatingLead, leadToolAllowed, readonlyBlockReason, MUTATING_TOOLS } from './role-tools.js';
+import { isExternalMcpTool, externalApprovalSummary, mcpAccessSignature } from './mcp-access.js';
 
 /** 执行命令的工具名 */
 const SHELL_TOOLS = new Set(['bash', 'powershell']);
@@ -23,6 +24,7 @@ const MUTATING = new Set(MUTATING_TOOLS);
 
 /** 把一次调用压成一句人话，给审批卡片看 */
 export function summarizeToolCall(tool, input = {}) {
+  if (isExternalMcpTool(tool)) return externalApprovalSummary(tool);
   const pick = (k) => (typeof input?.[k] === 'string' ? input[k] : '');
   if (SHELL_TOOLS.has(tool) || tool === 'run_background') {
     return pick('command') || pick('cmd') || '(命令)';
@@ -38,11 +40,11 @@ export function summarizeToolCall(tool, input = {}) {
 }
 
 /** 同一次调用（工具 + 入参）的指纹：批准一次只放行同一个动作 */
-export function approvalHash(tool, input) {
+export function approvalHash(tool, input, scope = null) {
   return crypto
     .createHash('sha1')
     .update(`${tool}
-${JSON.stringify(input ?? {})}`)
+${JSON.stringify(input ?? {})}${scope ? `\n${JSON.stringify(scope)}` : ''}`)
     .digest('hex');
 }
 
@@ -102,10 +104,13 @@ export function createPolicyExtension({ roomId, bot }) {
         }
 
         // ---- 第三档：每一次"会动手"的调用都要用户点批准 ----
-        if (policy.dangerous === 'ask' && MUTATING.has(tool)) {
+        if (policy.dangerous === 'ask' && (MUTATING.has(tool) || isExternalMcpTool(tool))) {
+          const capabilityRevision = isExternalMcpTool(tool)
+            ? mcpAccessSignature(currentBot, store.mcpLibrary()) : null;
           // 用户批准过"本次任务" → 这个 bot 在这个会话里有一段时间不用逐条点
-          if (store.hasApprovalGrant({ roomId, botId: bot?.id ?? null })) return undefined;
-          const hash = approvalHash(tool, event?.input);
+          if (store.hasApprovalGrant({ roomId, botId: bot?.id ?? null, capabilityRevision })) return undefined;
+          const scope = capabilityRevision ? { roomId, botId: bot?.id ?? null, capabilityRevision } : null;
+          const hash = approvalHash(tool, event?.input, scope);
           // 批准过的那一次直接放行（而且只用一次）
           if (store.takeApproved(hash)) return undefined;
 
@@ -128,8 +133,9 @@ export function createPolicyExtension({ roomId, bot }) {
             botName: bot?.name ?? '',
             tool,
             summary,
-            input: event?.input ?? null,
+            input: isExternalMcpTool(tool) ? null : event?.input ?? null,
             hash,
+            capabilityRevision,
           });
           const msg = store.appendMessage({
             roomId,

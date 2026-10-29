@@ -24,6 +24,7 @@ import { store } from './store.js';
 import { toMcpServersConfig } from './mcp.js';
 import { log } from './util.js';
 import { isDelegatingLead, isReadonlyPolicy } from './role-tools.js';
+import { isExternalMcpTool, mcpAccessSignature } from './mcp-access.js';
 
 /**
  * 造一个只注册 MCP 服务的扩展。
@@ -46,6 +47,16 @@ export function createMcpExtension({ botId, roomId = null }) {
 
     const names = Object.keys(config);
     if (!names.length) return; // 没选/没启用 → 什么都不做，零开销
+
+    const signature = mcpAccessSignature(store.getBot(botId), store.mcpLibrary());
+    pi.on?.('tool_call', (event) => {
+      if (!isExternalMcpTool(event?.toolName)) return;
+      const currentBot = store.getBot(botId);
+      if (!currentBot || currentBot.enabled === false ||
+          signature !== mcpAccessSignature(currentBot, store.mcpLibrary())) {
+        return { block: true, reason: '应用连接或 Bot 授权已更改，请在新会话中重试。' };
+      }
+    });
 
     for (const [name, serverConfig] of Object.entries(config)) {
       try {

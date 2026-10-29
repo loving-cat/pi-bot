@@ -38,10 +38,11 @@ import {
   MCP_LIMITS,
   MCP_TYPES,
   MCP_EXPOSURES,
-  mcpRejectReason,
-  normalizeMcpServer,
-  testMcpServer,
 } from './mcp.js';
+import { bus } from './bus.js';
+import { createConnections } from './connections.js';
+import { routeConnections } from './connections-http.js';
+import { publicMcpCredentials } from './mcp-credentials.js';
 import { probeLogin } from './site-probe.js';
 import { createSiteRuntime } from './site-runtime.js';
 import { publicSite } from './sites.js';
@@ -164,6 +165,7 @@ export function hostAllowed(hostHeader) {
 }
 
 export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ log }) }) {
+  const connections = createConnections({ store, runner, onChange: () => bus.emit('event', { t: 'connections.changed' }) });
   const uploads = new UploadSessions({
     dir: path.join(config.dataDir, 'uploads', '_partial'),
   });
@@ -314,6 +316,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
             roomId: approval.roomId,
             botId: approval.botId,
             minutes: Number(body?.minutes) || 10,
+            capabilityRevision: approval.capabilityRevision ?? null,
           });
         }
         if (!approval) return send(res, 400, { error: '没有待批准的这一条' });
@@ -585,6 +588,8 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         return send(res, 200, r);
       }
 
+      if (await routeConnections({ req, res, pathname, connections, readBody, send })) return;
+
       // ---------- 本机已装能力（只读扫描，不碰用户的 pi 配置）----------
       // 用户在终端里早就装了一堆 skill / MCP，这里让他一键导入，不用手抄。
       if (pathname === '/api/local-capabilities' && req.method === 'GET') {
@@ -592,7 +597,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
           existingSkills: store.skillLibrary(),
           existingMcp: store.mcpLibrary(),
         });
-        return send(res, 200, found);
+        return send(res, 200, { ...found, mcpServers: found.mcpServers.map(publicMcpCredentials) });
       }
 
       // 一键导入：传 kind + 名字列表。同名的不重复导，返回明细。
@@ -691,23 +696,10 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         return send(res, 200, { ok: true });
       }
 
-      /**
-       * 测一下这个 MCP 服务能不能连上。
-       *
-       * 不分类型写两套逻辑：都是"能不能把 TCP 打通并用得上"。
-       * HTTP 直接打个请求；stdio 真的把命令跑起来看能不能启动。
-       * 不在这里跑完整 MCP 握手（那要拉 SDK，太重），只回答"这条路通不通"。
-       */
+      // 草稿只做协议验证，不保存配置；已保存凭据在服务端合并。
       if (pathname === '/api/mcp/test' && req.method === 'POST') {
         const body = await readBody(req);
-        const saved = body.id ? store.mcpLibrary().find((s) => s.id === body.id) : null;
-        const merged = { ...(saved ?? {}), ...body };
-        const reason = mcpRejectReason(merged);
-        if (reason) return send(res, 200, { ok: false, error: reason });
-        const probe = normalizeMcpServer(merged);
-        if (!probe) return send(res, 200, { ok: false, error: '配置不合法' });
-        const r = await testMcpServer(probe);
-        return send(res, 200, r);
+        return send(res, 200, await connections.testDraft(body));
       }
 
       // ---------- 技能库（全局，所有 bot 共享） ----------
@@ -906,7 +898,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         if (capacityProblem) return send(res, 400, { error: capacityProblem });
         const bot = store.updateBot(botMatch[1], body);
         if (!bot) return send(res, 404, { error: 'bot 不存在' });
-        if (['model', 'thinking', 'contextWindow', 'maxTokens', 'reserveTokens', 'keepRecentTokens']
+        if (['model', 'thinking', 'contextWindow', 'maxTokens', 'reserveTokens', 'keepRecentTokens', 'mcpServers']
           .some((key) => body[key] !== undefined)) runner.reloadSessionForBot(bot.id);
         return send(res, 200, { bot });
       }
