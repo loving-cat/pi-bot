@@ -1111,7 +1111,8 @@ void main() {
     expect(find.text('运行参数'), findsOneWidget, reason: '面板详情里要有运行参数');
     expect(find.text('思考等级'), findsOneWidget);
     expect(find.text('上下文预算'), findsOneWidget);
-    expect(find.text('保存模型'), findsOneWidget);
+    expect(find.text('保存模型'), findsNothing);
+    expect(find.text('选择即应用；手动输入后按回车应用'), findsOneWidget);
     expect(find.text('保存预算'), findsOneWidget);
 
     // 模型输入框里是当前模型
