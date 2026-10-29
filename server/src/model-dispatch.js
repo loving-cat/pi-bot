@@ -17,8 +17,8 @@ const digest = (text) => createHash('sha256').update(text).digest('hex');
 export function effectiveModelPersona(bot = {}) {
   const persona = String(bot.persona ?? '');
   if (bot.role !== 'main') return persona;
-  return persona.replace(/【模型白名单】只能从这 4 个里挑[^\n]*\n(?:[^\n]*\n){5}[^\n]*/g,
-    (block) => digest(block) === LEGACY_POLICY_DIGEST ? CHIEF_MODEL_POLICY : block);
+  return persona.replace(/【模型白名单】只能从这 4 个里挑[^\r\n]*\r?\n(?:[^\r\n]*\r?\n){5}[^\r\n]*/g,
+    (block) => digest(block.replace(/\r\n/g, '\n')) === LEGACY_POLICY_DIGEST ? CHIEF_MODEL_POLICY : block);
 }
 
 /** 给主控的只读目录快照；完整清单仍由 list_models 动态提供。 */

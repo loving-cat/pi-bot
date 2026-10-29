@@ -84,7 +84,7 @@ try {
   await test('默认主控提示不再限制固定型号，旧默认块仅在会话替换', () => {
     assert.ok(MAIN_PERSONA.includes(CHIEF_MODEL_POLICY));
     assert.doesNotMatch(MAIN_PERSONA, /只能从这 4 个里挑/);
-    const legacy = fs.readFileSync(new URL('./fixtures/chief-model-policy-legacy.txt', import.meta.url), 'utf8').trimEnd();
+    const legacy = fs.readFileSync(new URL('./fixtures/chief-model-policy-legacy.txt', import.meta.url), 'utf8').replace(/\r\n/g, '\n').trimEnd();
     const persona = `用户自定义开头\n${legacy}\n用户自定义结尾`;
     const bot = { role: 'main', persona };
     const effective = effectiveModelPersona(bot);
@@ -97,6 +97,15 @@ try {
     assert.equal(effectiveModelPersona({ role: 'main', persona: custom }), custom);
     const changed = persona.replace('写代码/改文件/跑命令的主力', '用户特别指定的范围');
     assert.equal(effectiveModelPersona({ role: 'main', persona: changed }), changed);
+    const windowsPersona = persona.replace(/\n/g, '\r\n');
+    const windowsEffective = effectiveModelPersona({ role: 'main', persona: windowsPersona });
+    assert.ok(windowsEffective.includes(CHIEF_MODEL_POLICY));
+    assert.ok(windowsEffective.startsWith('用户自定义开头\r\n'));
+    assert.ok(windowsEffective.endsWith('\r\n用户自定义结尾'));
+    const windowsCustom = custom.replace(/\n/g, '\r\n');
+    assert.equal(effectiveModelPersona({ role: 'main', persona: windowsCustom }), windowsCustom);
+    const windowsChanged = changed.replace(/\n/g, '\r\n');
+    assert.equal(effectiveModelPersona({ role: 'main', persona: windowsChanged }), windowsChanged);
   });
 
   await test('新增未验证模型不会因旧模型有健康记录被判为失败', async () => {
