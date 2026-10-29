@@ -124,7 +124,7 @@ function Publish-ReleaseTree([string]$Built, [string]$Destination) {
       }
     } catch {
       $keep = $true
-      Write-Host "WARNING: release rollback failed; backup kept at $previous" -ForegroundColor Yellow
+      Write-Host "WARNING: release rollback failed; backup kept" -ForegroundColor Yellow
     }
     throw
   } finally {
@@ -213,7 +213,7 @@ try {
 
   $exePath = Join-Path $release "pi_bot.exe"
   if (-not (Test-Path -LiteralPath $exePath)) {
-    throw "no release build at $release (run without -NoBuild first)"
+    throw "no release build (run without -NoBuild first)"
   }
 
   New-Item -ItemType Directory -Path $outParent -Force | Out-Null
@@ -223,7 +223,7 @@ try {
   $backupDir = Join-Path $outParent (".pack-windows-old-" + $suffix)
   $backupZip = Join-Path $outParent (".pack-windows-old-" + $suffix + ".zip")
 
-  Write-Host "== stage $stageOut =="
+  Write-Host "== stage package =="
   New-Item -ItemType Directory -Path $stageOut -Force | Out-Null
   Copy-Item -Path (Join-Path $release "*") -Destination $stageOut -Recurse -Force
 
@@ -261,7 +261,7 @@ try {
   if ($WithNode) {
     $nodeExe = (Get-Item $nodeCmd.Source).FullName
     Copy-Item -LiteralPath $nodeExe -Destination (Join-Path $stageOut "node.exe") -Force
-    Write-Host "bundled $nodeExe"
+    Write-Host "bundled node.exe"
   } else {
     Write-Host "note: node.exe not bundled - target machine needs Node 22+ on PATH"
   }
@@ -291,7 +291,7 @@ try {
 
   if ($Zip) {
     $stageZip = Join-Path $stageDir ($outName + ".zip")
-    Write-Host "== zip $stageZip =="
+    Write-Host "== zip package =="
     Compress-Archive -Path (Join-Path $stageOut "*") -DestinationPath $stageZip -CompressionLevel Optimal
     if (-not (Test-Path -LiteralPath $stageZip)) { throw "zip was not created" }
   }
@@ -323,7 +323,7 @@ try {
         if (-not (Test-Path -LiteralPath $outDir)) {
           Move-Item -LiteralPath $backupDir -Destination $outDir -Force
           $previousMoved = $false
-          Write-Host "previous package restored: $outDir"
+          Write-Host "previous package restored"
         }
       }
       if ($zipMoved -and (Test-Path -LiteralPath $backupZip)) {
@@ -331,24 +331,24 @@ try {
         if (-not (Test-Path -LiteralPath $zipPath)) {
           Move-Item -LiteralPath $backupZip -Destination $zipPath -Force
           $zipMoved = $false
-          Write-Host "previous zip restored: $zipPath"
+          Write-Host "previous zip restored"
         }
       }
     }
   } catch {
-    Write-Host "WARNING: rollback failed; backup kept at $backupDir $backupZip" -ForegroundColor Yellow
+    Write-Host "WARNING: rollback failed; backup kept" -ForegroundColor Yellow
   }
   exit 1
 } finally {
   Remove-Tree $buildWork
   Remove-Tree $stageDir
   if ($previousMoved -and $backupDir -and (Test-Path -LiteralPath $backupDir)) {
-    Write-Host "note: previous package kept at $backupDir" -ForegroundColor Yellow
+    Write-Host "note: previous package kept" -ForegroundColor Yellow
   }
   if ($zipMoved -and $backupZip -and (Test-Path -LiteralPath $backupZip)) {
-    Write-Host "note: previous zip kept at $backupZip" -ForegroundColor Yellow
+    Write-Host "note: previous zip kept" -ForegroundColor Yellow
   }
 }
 
-if ($Zip) { Write-Host "zip: $zipPath" }
-Write-Host "done: $outDir"
+if ($Zip) { Write-Host "zip: ready" }
+Write-Host "done"

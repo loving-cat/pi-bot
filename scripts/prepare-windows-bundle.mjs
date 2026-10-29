@@ -195,12 +195,12 @@ function validateWindowsNativeAssets(bundle, files, serverRoot) {
     for (const relative of windowsNativeAssetFiles(manifest)) {
       const target = path.resolve(bundle, ...relative.split('/'));
       if (!isWithin(bundle, target) || !fs.statSync(target, { throwIfNoEntry: false })?.isFile()) {
-        throw new Error('原生资产缺失');
+        throw new Error(`原生资产缺失（${safeRelative(bundle, manifestPath)}）`);
       }
       let resolved;
       try { resolved = fs.realpathSync(target); }
-      catch { throw new Error('原生资产缺失'); }
-      if (!isWithin(bundle, resolved) || !fs.statSync(resolved).isFile()) throw new Error('原生资产缺失');
+      catch { throw new Error(`原生资产缺失（${safeRelative(bundle, manifestPath)}）`); }
+      if (!isWithin(bundle, resolved) || !fs.statSync(resolved).isFile()) throw new Error(`原生资产缺失（${safeRelative(bundle, manifestPath)}）`);
       count++;
     }
   }
@@ -222,7 +222,10 @@ export function scanWindowsBundle(bundlePath, {
   const state = findLocalState(bundle);
   if (state.length) throw new Error(`发行包仍有本机状态（${localStateSummary(state)}）`);
   const pdbs = collectPdbs(bundle);
-  if (pdbs.length) throw new Error(`发行包仍有 ${pdbs.length} 个调试符号文件`);
+  if (pdbs.length) {
+    const names = pdbs.map((file) => safeRelative(bundle, file)).join(', ');
+    throw new Error(`发行包仍有 ${pdbs.length} 个调试符号文件（${names}）`);
+  }
   const variants = [...new Set([home, ...markers].flatMap((marker) => markerVariants(marker)))];
   const leaks = files.filter((file) => fileContainsMarkers(file, variants));
   if (leaks.length) {

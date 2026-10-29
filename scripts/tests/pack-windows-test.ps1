@@ -44,6 +44,30 @@ function Reset-Trace {
   Set-Content -LiteralPath $trace -Value "" -Encoding Ascii
 }
 
+function Assert-RealFailure([object]$Code, [string]$Name) {
+  Assert-True (($null -ne $Code) -and ($Code -ne 0)) "$Name did not exit non-zero"
+}
+
+function Assert-LogHidesHome([string]$Name) {
+  $text = Read-Log
+  $homeDir = $script:UserHome
+  if (-not $homeDir) { return }
+  $variants = @($homeDir)
+  if ($homeDir.Contains('\')) {
+    $variants += $homeDir.Replace('\', '/')
+    $variants += $homeDir.Replace('\', '\\')
+  }
+  foreach ($variant in $variants) {
+    if ($variant -and $text.Contains($variant)) { throw "$Name log included the user directory" }
+  }
+}
+
+function Assert-ErrorText([object]$Code, [string]$Fragment, [string]$Name) {
+  Assert-RealFailure $Code $Name
+  Assert-True ((Read-Log).Contains($Fragment)) "$Name missing error text"
+  Assert-LogHidesHome $Name
+}
+
 $shell = "powershell"
 if ($env:OS -ne "Windows_NT") { $shell = "pwsh" }
 
@@ -121,15 +145,15 @@ for (const arg of process.argv) {
   if (arg.startsWith("--split-debug-info=")) debug = arg.slice("--split-debug-info=".length);
 }
 if (!debug || !debug.startsWith(path.dirname(process.cwd()))) process.exit(6);
-if (fail === "no-debug") process.exit(0);
-fs.mkdirSync(debug, { recursive: true });
-fs.writeFileSync(path.join(debug, "app.symbols"), "fixture symbols\n");
 if (fail === "no-exe") process.exit(0);
 const release = path.join("build", "windows", "x64", "runner", "Release");
 fs.mkdirSync(path.join(release, "data"), { recursive: true });
 fs.writeFileSync(path.join(release, "pi_bot.exe"), "fixture exe\n");
 fs.writeFileSync(path.join(release, "pi_bot.pdb"), "fixture pdb\n");
 fs.writeFileSync(path.join(release, "data", "ok.txt"), "ok\n");
+if (fail === "no-debug") process.exit(0);
+fs.mkdirSync(debug, { recursive: true });
+fs.writeFileSync(path.join(debug, "app.symbols"), "fixture symbols\n");
 '@ | Set-Content -LiteralPath (Join-Path $stubs "flutter-stub.cjs") -Encoding Ascii
 
   @'
@@ -138,6 +162,7 @@ if (process.env.PACK_FAIL === "npm") process.exit(31);
 if (process.argv.slice(2).join(" ") !== "install --omit=dev --no-audit --no-fund") process.exit(2);
 fs.mkdirSync("node_modules", { recursive: true });
 fs.writeFileSync("node_modules/installed.txt", "1\n");
+if (process.env.PACK_PLANT === "dotenv") fs.writeFileSync(".env", "TOKEN=fixture\n");
 '@ | Set-Content -LiteralPath (Join-Path $stubs "npm-stub.cjs") -Encoding Ascii
 
   if ($env:OS -eq "Windows_NT") {
@@ -169,16 +194,16 @@ fs.writeFileSync("node_modules/installed.txt", "1\n");
     if (Test-Path variable:PSNativeCommandUseErrorActionPreference) {
       $PSNativeCommandUseErrorActionPreference = $false
     }
+    $code = $null
     try {
       & $shell -NoProfile -ExecutionPolicy Bypass -File $script @ArgList > $log 2>&1
       $code = $LASTEXITCODE
     } catch {
-      # Windows PowerShell 5.1 surfaces redirected stderr as an ErrorRecord.
+      # Redirected stderr can surface as an ErrorRecord. Keep the real exit code.
       $code = $LASTEXITCODE
-      if ($null -eq $code -or $code -eq 0) { $code = 1 }
+    } finally {
+      $ErrorActionPreference = $previousPreference
     }
-    $ErrorActionPreference = $previousPreference
-    if ($null -eq $code) { return 0 }
     return $code
   }
 
@@ -207,7 +232,8 @@ fs.writeFileSync("node_modules/installed.txt", "1\n");
   $pass++
   Write-Host "PASS: help does not build"
 
-  Assert-True ((Invoke-Pack -ArgList @("-NotASwitch")) -ne 0) "unknown switch should fail"
+  $script:UserHome = (& node -e "process.stdout.write(require('os').homedir())")
+  Assert-ErrorText (Invoke-Pack -ArgList @("-NotASwitch")) "unknown parameter" "unknown switch"
   Assert-Clean
   $pass++
   Write-Host "PASS: unknown switch is rejected"
@@ -223,7 +249,7 @@ fs.writeFileSync("node_modules/installed.txt", "1\n");
   }
   $savedPath = $env:PATH
   $env:PATH = "$nodeStub$([System.IO.Path]::PathSeparator)$savedPath"
-  Assert-True ((Invoke-Pack -ArgList @("-NoBuild")) -ne 0) "old node should fail"
+  Assert-ErrorText (Invoke-Pack -ArgList @("-NoBuild")) "Node 22+ is required" "old node"
   $env:PATH = $savedPath
   Assert-True (-not (Test-Path -LiteralPath $dist)) "old node created a package"
   Assert-Clean
@@ -231,7 +257,7 @@ fs.writeFileSync("node_modules/installed.txt", "1\n");
   Write-Host "PASS: Node below 22 is rejected"
 
   Remove-Item -LiteralPath $release -Recurse -Force
-  Assert-True ((Invoke-Pack -ArgList @("-NoBuild")) -ne 0) "missing release should fail"
+  Assert-ErrorText (Invoke-Pack -ArgList @("-NoBuild")) "no release build" "missing release"
   Assert-True (-not (Test-Path -LiteralPath $dist)) "missing release created a package"
   Assert-True ((Read-Norm (Join-Path $fixture "dist\keep.txt")) -eq "preserve this file") "keep file changed"
   Assert-Clean
@@ -265,7 +291,7 @@ fs.writeFileSync("node_modules/installed.txt", "1\n");
   $pass++
   Write-Host "PASS: repack replaces the package and keeps unrelated dist files"
 
-  Assert-True ((Invoke-Pack -ArgList @("-NoBuild", "-Zip") -Fail "npm") -ne 0) "npm failure should fail"
+  Assert-ErrorText (Invoke-Pack -ArgList @("-NoBuild", "-Zip") -Fail "npm") "npm install failed" "npm failure"
   Assert-True ((Read-Norm (Join-Path $dist "server\src\index.js")) -eq "fixture server version two") "npm failure destroyed the package"
   Assert-True ((Read-Norm (Join-Path $fixture "dist\pi-bot-windows.zip")) -eq "old zip") "npm failure destroyed the zip"
   Assert-True ((Read-Norm (Join-Path $fixture "dist\keep.txt")) -eq "preserve this file") "keep file changed"
@@ -273,31 +299,81 @@ fs.writeFileSync("node_modules/installed.txt", "1\n");
   $pass++
   Write-Host "PASS: npm failure keeps the previous package and zip"
 
-  $leak = Join-Path $release "leak.txt"
-  Set-Content -LiteralPath $leak -Value $app -Encoding Ascii
-  Assert-True ((Invoke-Pack -ArgList @("-NoBuild")) -ne 0) "local path should fail the scan"
-  Assert-True ((Read-Log) -match 'leak\.txt') "scan did not identify the planted file"
-  Assert-True ((Read-Log) -notmatch 'leak\.txt.*[\\/]Users[\\/]') "scan error included a user directory"
-  Assert-True ((Read-Norm (Join-Path $dist "server\src\index.js")) -eq "fixture server version two") "scan failure destroyed the package"
-  Assert-True (-not (Test-Path -LiteralPath (Join-Path $dist "leak.txt"))) "leaking file was published"
-  Assert-Clean
-  Remove-Item -LiteralPath $leak -Force
+  function Add-ServerBytes([string]$Relative, [byte[]]$Bytes) {
+    $dest = Join-Path $server "src"
+    foreach ($part in ($Relative -split '[\\/]')) {
+      if ($part) { $dest = Join-Path $dest $part }
+    }
+    New-Item -ItemType Directory -Path (Split-Path -Parent $dest) -Force | Out-Null
+    [System.IO.File]::WriteAllBytes($dest, $Bytes)
+    return $dest
+  }
+  function Assert-ScanKept([object]$Code, [string]$Fragment, [string]$Name) {
+    Assert-ErrorText $Code $Fragment $Name
+    Assert-True ((Read-Norm (Join-Path $dist "server\src\index.js")) -eq "fixture server version two") "$Name destroyed the package"
+    Assert-Clean
+  }
+  $utf8 = Add-ServerBytes "utf8.txt" ([System.Text.Encoding]::UTF8.GetBytes($script:UserHome))
+  Assert-ScanKept (Invoke-Pack -ArgList @("-NoBuild")) "utf8.txt" "utf8 user directory"
+  Remove-Item -LiteralPath $utf8 -Force
   $pass++
-  Write-Host "PASS: staged local path fails and keeps the previous package"
+  Write-Host "PASS: utf8 user directory fails and keeps the previous package"
+
+  $utf16 = Add-ServerBytes "utf16.bin" ([System.Text.Encoding]::Unicode.GetBytes($script:UserHome))
+  Assert-ScanKept (Invoke-Pack -ArgList @("-NoBuild")) "utf16.bin" "utf16 user directory"
+  Remove-Item -LiteralPath $utf16 -Force
+  $pass++
+  Write-Host "PASS: utf16 user directory fails and keeps the previous package"
+
+  $pdb = Add-ServerBytes "symbols.pdb" ([System.Text.Encoding]::ASCII.GetBytes("symbols"))
+  Assert-ScanKept (Invoke-Pack -ArgList @("-NoBuild")) ".pdb" "pdb"
+  Remove-Item -LiteralPath $pdb -Force
+  $pass++
+  Write-Host "PASS: pdb fails and keeps the previous package"
+
+  $piFile = Add-ServerBytes ".pi/config.json" ([System.Text.Encoding]::ASCII.GetBytes("{}"))
+  Assert-ScanKept (Invoke-Pack -ArgList @("-NoBuild")) ".pi" "pi state"
+  Remove-Item -LiteralPath (Split-Path -Parent $piFile) -Recurse -Force
+  $pass++
+  Write-Host "PASS: .pi fails and keeps the previous package"
+
+  $inbox = Add-ServerBytes "_inbox/note.txt" ([System.Text.Encoding]::ASCII.GetBytes("x"))
+  Assert-ScanKept (Invoke-Pack -ArgList @("-NoBuild")) "_inbox" "inbox"
+  Remove-Item -LiteralPath (Split-Path -Parent $inbox) -Recurse -Force
+  $pass++
+  Write-Host "PASS: _inbox fails and keeps the previous package"
+
+  $env:PACK_PLANT = "dotenv"
+  Assert-ScanKept (Invoke-Pack -ArgList @("-NoBuild")) ".env" "server env"
+  Remove-Item Env:PACK_PLANT -ErrorAction SilentlyContinue
+  $pass++
+  Write-Host "PASS: server .env fails and keeps the previous package"
+
+  $logFile = Add-ServerBytes "app.log" ([System.Text.Encoding]::ASCII.GetBytes("log"))
+  Assert-ScanKept (Invoke-Pack -ArgList @("-NoBuild")) "log" "log file"
+  Remove-Item -LiteralPath $logFile -Force
+  $pass++
+  Write-Host "PASS: log fails and keeps the previous package"
+
+  $manifestDir = Join-Path $release "data\flutter_assets"
+  New-Item -ItemType Directory -Path $manifestDir -Force | Out-Null
+  Set-Content -LiteralPath (Join-Path $manifestDir "NativeAssetsManifest.json") -Value '{"format-version":[1,0,0],"native-assets":{"windows_x64":{"fixture:library":["absolute","plugin/missing.dll"]}}}' -Encoding Ascii
+  Assert-ScanKept (Invoke-Pack -ArgList @("-NoBuild")) "NativeAssets" "missing dll"
+  Remove-Item -LiteralPath (Join-Path $release "data") -Recurse -Force
+  $pass++
+  Write-Host "PASS: missing dll fails and keeps the previous package"
 
   $native = Join-Path $server "src\vendor.node"
-  $nativeBytes = [System.Text.Encoding]::ASCII.GetBytes($app)
+  $nativeBytes = [System.Text.Encoding]::UTF8.GetBytes($script:UserHome)
   [System.IO.File]::WriteAllBytes($native, $nativeBytes)
-  Assert-True ((Invoke-Pack -ArgList @("-NoBuild")) -ne 0) "server native local path should fail"
+  Assert-ScanKept (Invoke-Pack -ArgList @("-NoBuild")) "vendor.node" "server native"
   Assert-True ([System.Linq.Enumerable]::SequenceEqual([System.IO.File]::ReadAllBytes($native), $nativeBytes)) "server native file was rewritten"
-  Assert-True ((Read-Norm (Join-Path $dist "server\src\index.js")) -eq "fixture server version two") "native scan failure destroyed the package"
-  Assert-Clean
   Remove-Item -LiteralPath $native -Force
   $pass++
   Write-Host "PASS: server native files are not rewritten and still fail the scan"
 
   Set-Content -LiteralPath (Join-Path $server "package.json") -Value '{"name":"fixture","version":"0.1.0","dependencies":{"fixture-missing-package":"1.0.0"}}' -Encoding Ascii
-  Assert-True ((Invoke-Pack -ArgList @("-NoBuild")) -ne 0) "missing dependency should fail"
+  Assert-ErrorText (Invoke-Pack -ArgList @("-NoBuild")) "release scan failed" "missing dependency"
   Assert-True ((Read-Norm (Join-Path $dist "server\src\index.js")) -eq "fixture server version two") "dependency failure destroyed the package"
   Assert-Clean
   Set-Content -LiteralPath (Join-Path $server "package.json") -Value $packageBefore.Trim() -Encoding Ascii
@@ -345,7 +421,7 @@ fs.writeFileSync("node_modules/installed.txt", "1\n");
 
   Set-Content -LiteralPath (Join-Path $release "pi_bot.exe") -Value "previous exe`n" -Encoding Ascii
   Set-Content -LiteralPath (Join-Path $release "sentinel.txt") -Value "previous release`n" -Encoding Ascii
-  Assert-True ((Invoke-Pack -Fail "build") -ne 0) "flutter failure should fail"
+  Assert-ErrorText (Invoke-Pack -Fail "build") "flutter build failed" "flutter failure"
   Assert-True ((Read-Norm (Join-Path $release "pi_bot.exe")) -eq "previous exe") "flutter failure replaced Release"
   Assert-True ((Read-Norm (Join-Path $release "sentinel.txt")) -eq "previous release") "flutter failure dropped sentinel"
   Assert-True ((Read-Norm (Join-Path $dist "server\src\index.js")) -eq "fixture server version two") "flutter failure destroyed dist"
@@ -353,9 +429,9 @@ fs.writeFileSync("node_modules/installed.txt", "1\n");
   $pass++
   Write-Host "PASS: flutter failure keeps Release and dist"
 
-  Assert-True ((Invoke-Pack -Fail "no-exe") -ne 0) "missing exe should fail"
+  Assert-ErrorText (Invoke-Pack -Fail "no-exe") "did not produce" "missing exe"
   Assert-True ((Read-Norm (Join-Path $release "sentinel.txt")) -eq "previous release") "invalid output replaced Release"
-  Assert-True ((Invoke-Pack -Fail "no-debug") -ne 0) "missing debug info should fail"
+  Assert-ErrorText (Invoke-Pack -Fail "no-debug") "split debug info" "missing debug info"
   Assert-True ((Read-Norm (Join-Path $release "pi_bot.exe")) -eq "previous exe") "missing debug info replaced Release"
   Assert-Clean
   $pass++
@@ -369,6 +445,7 @@ fs.writeFileSync("node_modules/installed.txt", "1\n");
 } finally {
   if ($previousPath) { $env:PATH = $previousPath }
   Remove-Item Env:PACK_FAIL -ErrorAction SilentlyContinue
+  Remove-Item Env:PACK_PLANT -ErrorAction SilentlyContinue
   Remove-Item Env:TRACE -ErrorAction SilentlyContinue
   Remove-Item Env:FIXTURE_APP -ErrorAction SilentlyContinue
   if (Test-Path -LiteralPath $testRoot) {
