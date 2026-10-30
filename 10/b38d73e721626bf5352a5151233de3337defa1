@@ -1,0 +1,43 @@
+app/pubspec.lock
+  s_06973911ad2cd6::t_880199cfbe1e6c 9,17,25,33,41,49,57,65,73,81,89,97,105,113,121,129,137,145,153,161,174,182,190,198,206,214,222,230,238,246,254,262,270,278,296,304,312,320,328,336,344,352,360,368,376,384,392,400,408,416,424,432,440,448,456,464,472,480,488,496,504,512,520,528,536,544,552,560,568,576,584,592,600,608,616,624,632,640,648,656,664,677,685,693,701,709,717,725,733,741,749,757,765,773,781,789,797,805,813,821,829,837,845,853,861,869,877
+app/windows/CMakeLists.txt
+  s_06973911ad2cd6::t_fae53728cdf5ef 60-73
+.github/workflows/ci.yml
+  s_06973911ad2cd6::t_59497fccceea68 71-72,81,84-85,96-98,101,107-112
+docs/MACOS.md
+  s_06973911ad2cd6::t_3361d50abb1305 27-29
+docs/WINDOWS.md
+  s_06973911ad2cd6::t_349d0eb77e8952 26-28,34,37-39
+scripts/pack-macos.sh
+  s_3d806bc80c06f5::t_463b1abe1f099b 121,133-136,138-140
+scripts/pack-windows.ps1
+  s_3d806bc80c06f5::t_58129dcc0210ba 11,188-190,192,196-197,200-206,208,210
+scripts/tests/pack-macos-test.sh
+  s_3d806bc80c06f5::t_01a2639e7f53e1 27,31,132-143,210,304-305
+scripts/tests/pack-windows-test.ps1
+  s_3d806bc80c06f5::t_3b70a2953dd649 85,106,109,139-147,149-151,228,430-431
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "10b38d73e721626bf5352a5151233de3337defa1",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    },
+    "s_3d806bc80c06f5": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a18a97-cc8a-7a31-87dc-68642baaee32",
+        "model": "unknown"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
