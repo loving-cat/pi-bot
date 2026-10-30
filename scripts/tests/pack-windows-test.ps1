@@ -16,6 +16,8 @@ $fixture = Join-Path $testRoot "repo"
 $stubs = Join-Path $testRoot "stubs"
 $trace = Join-Path $testRoot "trace.txt"
 $log = Join-Path $testRoot "run.log"
+$nugetDir = Join-Path $testRoot "nuget"
+$customRoot = $null
 $pass = 0
 
 function Assert-True([bool]$Condition, [string]$Message) {
@@ -187,10 +189,21 @@ if (process.env.PACK_PLANT === "dotenv") fs.writeFileSync(".env", "TOKEN=fixture
     & chmod +x $flutterSh $npmSh
   }
 
+  # Fake NuGet CLI: the pack only checks that it resolves on PATH and never runs it.
+  New-Item -ItemType Directory -Path $nugetDir -Force | Out-Null
+  if ($env:OS -eq "Windows_NT") {
+    Set-Content -LiteralPath (Join-Path $nugetDir "nuget.exe") -Value "fixture nuget" -Encoding Ascii
+  } else {
+    $nugetSh = Join-Path $nugetDir "nuget"
+    "#!/bin/sh`nexit 0`n" | Set-Content -LiteralPath $nugetSh -Encoding Ascii
+    & chmod +x $nugetSh
+  }
+
   $env:TRACE = $trace
   $env:FIXTURE_APP = $app
   $previousPath = $env:PATH
-  $env:PATH = "$stubs$([System.IO.Path]::PathSeparator)$previousPath"
+  $sep = [System.IO.Path]::PathSeparator
+  $env:PATH = "$stubs$sep$nugetDir$sep$previousPath"
   $dist = Join-Path $fixture "dist\pi-bot-windows"
   $debugInfo = Join-Path $app "build\debug-info\windows"
 
@@ -240,6 +253,8 @@ if (process.env.PACK_PLANT === "dotenv") fs.writeFileSync(".env", "TOKEN=fixture
 
   Assert-True ((Invoke-Pack -ArgList @("-Help")) -eq 0) "help should succeed"
   Assert-True ((Read-Log).Contains("-NoBuild")) "help text missing"
+  Assert-True ((Read-Log).Contains("-BuildRoot")) "help text missing -BuildRoot"
+  Assert-True ((Read-Log).Contains("nuget.exe")) "help text missing nuget note"
   Assert-True ((Read-Trace).Trim().Length -eq 0) "help invoked flutter"
   $pass++
   Write-Host "PASS: help does not build"
@@ -429,9 +444,81 @@ if (process.env.PACK_PLANT === "dotenv") fs.writeFileSync(".env", "TOKEN=fixture
   Assert-True ((Read-Trace).Contains("build windows --release")) "flutter release args missing"
   Assert-True ((Read-Trace).Contains("pub get --enforce-lockfile --no-example")) "locked dependency resolution missing"
   Assert-True ((Read-Trace).Contains("build windows --release --no-pub")) "build can resolve dependencies again"
+  if ($env:OS -eq "Windows_NT") {
+    $defaultBase = (Split-Path -Qualifier $fixture) + "\.pi-bot-build\pi-bot-windows-build-"
+    Assert-True ((Read-Trace).Contains($defaultBase)) "default build root is not on the checkout drive"
+  }
   Assert-Clean
   $pass++
   Write-Host "PASS: clean temp build restores Release, saves debug info, and strips dist pdb"
+
+  Assert-ErrorText (Invoke-Pack -ArgList @("-BuildRoot", "relative\build")) "must be an absolute path" "relative build root"
+  Assert-True ((Read-Trace).Trim().Length -eq 0) "relative build root invoked flutter"
+  Assert-Clean
+  $pass++
+  Write-Host "PASS: relative -BuildRoot is rejected"
+
+  $profileRoot = Join-Path $script:UserHome ("pi-bot-build-test-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
+  Assert-ErrorText (Invoke-Pack -ArgList @("-BuildRoot", $profileRoot)) "outside the user profile" "profile build root"
+  Assert-True ((Read-Trace).Trim().Length -eq 0) "profile build root invoked flutter"
+  Assert-True (-not (Test-Path -LiteralPath $profileRoot)) "profile build root was created"
+  Assert-Clean
+  $pass++
+  Write-Host "PASS: -BuildRoot inside the user profile is rejected without printing it"
+
+  $savedPath = $env:PATH
+  $nodeDir = Split-Path -Parent (Get-Command node -CommandType Application | Select-Object -First 1).Source
+  $bareParts = @($stubs, $nodeDir, $PSHOME)
+  if ($env:OS -eq "Windows_NT") { $bareParts += (Join-Path $env:SystemRoot "System32") } else { $bareParts += @("/usr/bin", "/bin") }
+  $env:PATH = ($bareParts -join [System.IO.Path]::PathSeparator)
+  $nugetName = "nuget"
+  if ($env:OS -eq "Windows_NT") { $nugetName = "nuget.exe" }
+  if (Get-Command $nugetName -CommandType Application -ErrorAction SilentlyContinue) {
+    $env:PATH = $savedPath
+    Write-Host "SKIP: a NuGet CLI sits beside node or the system tools; cannot hide it"
+  } else {
+    $code = Invoke-Pack
+    $env:PATH = $savedPath
+    Assert-ErrorText $code "nuget.exe is not on PATH" "missing nuget"
+    Assert-True ((Read-Trace).Trim().Length -eq 0) "missing nuget still invoked flutter"
+    Assert-Clean
+    $pass++
+    Write-Host "PASS: missing nuget stops before Flutter and does not download it"
+  }
+
+  $customName = ".pi-bot-build-test-" + [guid]::NewGuid().ToString("N").Substring(0, 8)
+  if ($env:OS -eq "Windows_NT") {
+    $customRoot = (Split-Path -Qualifier $testRoot) + "\" + $customName
+  } else {
+    $customRoot = Join-Path ([System.IO.Path]::GetTempPath()) $customName
+  }
+  $foreign = Join-Path $customRoot "pi-bot-windows-build-foreign"
+  New-Item -ItemType Directory -Path $foreign -Force | Out-Null
+  Set-Content -LiteralPath (Join-Path $foreign "keep.txt") -Value "not ours`n" -Encoding Ascii
+  Assert-True ((Invoke-Pack -ArgList @("-BuildRoot", $customRoot)) -eq 0) "custom build root should succeed: $(Read-Log)"
+  Assert-True ((Read-Trace).Contains((Join-Path $customRoot "pi-bot-windows-build-"))) "custom build root was not used"
+  Assert-True ((Read-Norm (Join-Path $foreign "keep.txt")) -eq "not ours") "another folder in the build root was touched"
+  $runs = @(Get-ChildItem -LiteralPath $customRoot -Force | Where-Object { $_.Name -ne "pi-bot-windows-build-foreign" })
+  Assert-True ($runs.Count -eq 0) "build run folder or lock was left in the build root"
+  Assert-Clean
+  $pass++
+  Write-Host "PASS: -BuildRoot builds in its own marked folder and leaves other folders alone"
+
+  $lockFile = Join-Path $customRoot ".pack-windows.lock"
+  $held = [System.IO.File]::Open($lockFile, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+  try {
+    $code = Invoke-Pack -ArgList @("-BuildRoot", $customRoot)
+  } finally {
+    $held.Dispose()
+  }
+  Assert-ErrorText $code "build root is busy" "held lock"
+  Assert-True ((Read-Trace).Trim().Length -eq 0) "busy build root still invoked flutter"
+  Assert-True ((Read-Norm (Join-Path $foreign "keep.txt")) -eq "not ours") "busy run touched another folder"
+  Assert-True (Test-Path -LiteralPath $lockFile) "busy run removed the lock held by another pack"
+  Remove-Item -LiteralPath $lockFile -Force
+  Assert-Clean
+  $pass++
+  Write-Host "PASS: a held build root lock stops a second pack"
 
   Set-Content -LiteralPath (Join-Path $release "pi_bot.exe") -Value "previous exe`n" -Encoding Ascii
   Set-Content -LiteralPath (Join-Path $release "sentinel.txt") -Value "previous release`n" -Encoding Ascii
@@ -462,6 +549,9 @@ if (process.env.PACK_PLANT === "dotenv") fs.writeFileSync(".env", "TOKEN=fixture
   Remove-Item Env:PACK_PLANT -ErrorAction SilentlyContinue
   Remove-Item Env:TRACE -ErrorAction SilentlyContinue
   Remove-Item Env:FIXTURE_APP -ErrorAction SilentlyContinue
+  if ($customRoot -and (Test-Path -LiteralPath $customRoot)) {
+    Remove-Item -LiteralPath $customRoot -Recurse -Force -ErrorAction SilentlyContinue
+  }
   if (Test-Path -LiteralPath $testRoot) {
     Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
   }

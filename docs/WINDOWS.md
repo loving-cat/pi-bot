@@ -7,7 +7,8 @@
 
 ## 构建与打包
 
-环境：Flutter 3.47+（桌面端已启用）、Visual Studio 2022（含 C++ 桌面负载）、Node 22+、npm。
+环境：Flutter 3.47+（桌面端已启用）、Visual Studio 2022（含 C++ 桌面负载）、Node 22+、npm，
+以及在 PATH 上的 `nuget.exe`（NuGet CLI，见下文）。
 脚本必须在 Windows 上跑；`pack-windows.ps1` 保持纯 ASCII，供 Windows PowerShell 5.1 解析。
 不需要 Git，解压后的源码目录也可以打包。
 
@@ -18,17 +19,32 @@ flutter config --enable-windows-desktop
 .\scripts\pack-windows.ps1 -WithNode -Zip  # 把本机 node.exe 一起打进去
 .\scripts\pack-windows.ps1 -NoBuild        # 复用已有 Release 产物
 .\scripts\pack-windows.ps1 -SkipDeps       # 不预装依赖（首启动时 npm install）
+.\scripts\pack-windows.ps1 -BuildRoot E:\builds  # 指定中立构建根目录
 .\scripts\pack-windows.ps1 -Help
 ```
 
-默认构建不会在原源码目录里跑 Flutter。脚本把 `app/` 复制到系统临时目录，排除
+默认构建不会在原源码目录里跑 Flutter。脚本把 `app/` 复制到中立构建根目录下本次运行专用的子目录，排除
 `.dart_tool`、`build`、`.git`、`ephemeral`、`.vs`、`*.user`、`*.suo` 等生成缓存和用户工程状态，
 固定使用 `https://pub.dev` 严格解析已提交的 `pubspec.lock`，再执行
 `flutter build windows --release --no-pub --split-debug-info=...`。锁文件不匹配或被改动时停止。
 成功后把 Release 目录换回
 `app/build/windows/x64/runner/Release`，调试信息放到 `app/build/debug-info/windows`
-（含分离出的 Dart 符号，以及从构建结果复制的 `.pdb`）。临时副本无论成功还是失败都会删掉，
+（含分离出的 Dart 符号，以及从构建结果复制的 `.pdb`）。构建副本无论成功还是失败都会删掉，
 原源码和上一份 Release 不会被半截构建改坏。
+
+**构建根目录**：默认是源码所在盘符根下的 `.pi-bot-build`（例如源码在 `E:` 盘就是 `E:\.pi-bot-build`），
+可用 `-BuildRoot <绝对路径>` 改。系统临时目录在用户目录里，构建产物会带上本机用户路径，发布扫描会拦下，
+所以不再用它。规则：
+
+- `-BuildRoot` 必须是绝对路径（带盘符或 UNC），相对路径直接报错；
+- 不能落在用户目录（`USERPROFILE`）或源码目录里面，报错时不打印具体路径；
+- 每次运行在根目录下新建 `pi-bot-windows-build-<rand>/`，写入标记文件 `.pi-bot-build-run`，
+  结束时只删除标记和本次一致的那个子目录，根目录里的其他东西不碰；默认根目录若是本次新建且已空，会顺手删掉；
+- 运行期间持有根目录下 `.pack-windows.lock` 的独占锁，同一根目录上的第二个打包会报「build root is busy」并直接退出。
+
+**NuGet**：部分 Windows 插件在 CMake 阶段需要 NuGet CLI，其中有的插件找不到时会自己从网上下载 `nuget.exe`。
+打包脚本不允许这种隐式下载：非 `-NoBuild` 构建开始前会检查 PATH 上是否有 `nuget.exe`，没有就停止并提示，
+不会替你下载或安装。请自行安装 NuGet CLI 并把它所在目录加入 PATH；`-NoBuild` 不需要它。
 
 `-NoBuild` 不检查 Flutter、不复制源码，只要求上述 Release 目录里已经有 `pi_bot.exe`。
 此选项不验证重用产物的依赖锁版本。
@@ -59,7 +75,7 @@ pi-bot-windows/
 
 换成品之前，`scripts/prepare-windows-bundle.mjs` 会让这次发布失败（而不是悄悄发出去），如果暂存目录里还有：
 
-- 本机用户目录（文件内容里的 UTF-8 和 UTF-16 都会扫；另外也扫本次源码目录、Release 目录和临时构建目录）
+- 本机用户目录（文件内容里的 UTF-8 和 UTF-16 都会扫；另外也扫本次源码目录、Release 目录和本次构建目录）
 - 调试符号文件（`.pdb`。打包会先把前端 `.pdb` 挪到 `app/build/debug-info/windows`，扫的是挪完之后的发行目录；服务端里删不掉的 `.pdb` 仍会失败）
 - 本机状态：`.pi`、`_inbox`、`server/.env`、任意 `.log`
 - `NativeAssetsManifest.json` 里列出的 DLL 在包内缺失（服务端目录里的清单不参与这项检查）

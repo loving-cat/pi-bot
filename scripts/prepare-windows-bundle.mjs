@@ -119,6 +119,53 @@ export function rewritePeDebugPaths(input) {
   return { buffer, changed: true, rewritten };
 }
 
+/**
+ * 构建根路径会以编译期字符串的形式留在产物里（Dart 产物记 .dart_tool 路径，MSVC 把包含目录写进 .rdata），
+ * PE 调试路径那套改写法碰不到它们。这里把构建根的各神写法就地换成长度相同的占位串，
+ * 让产物不携带本机目录；因为等长替换，任何字节偏移都不会移动。
+ *
+ * 约束：
+ * - 只替换调用方明确给出的构建根，不动其它字节；替换完仍要独立扫描，不靠它蒙混过关。
+ * - 占位串沿用绝对路径形状（某些产物可能拿它当 URI/路径解析），但不含盘符目录、不含用户名。
+ */
+export const BUILD_ROOT_PLACEHOLDER = 'C:\\pi-bot-build\\'; // C:\pi-bot-build\
+
+/** 构建根路径的可能写法：反斜杠、正斜杠、JSON 双写反斜杠。长串先换，避免前缀互盖。 */
+export function buildRootNeedles(buildRoot) {
+  if (!buildRoot || !isAbsoluteDebugPath(buildRoot)) return [];
+  const values = new Set([buildRoot, buildRoot.replaceAll('\\', '/'), buildRoot.replaceAll('\\', '\\\\')]);
+  return [...values].filter(Boolean).sort((a, b) => b.length - a.length);
+}
+
+/** 等长占位串：基串不够长就截断，够长就用空格补齐，绝不超过原串宽度。 */
+function placeholderFor(width) {
+  const base = Buffer.from(BUILD_ROOT_PLACEHOLDER, 'utf8');
+  if (width <= base.length) return base.subarray(0, width);
+  const out = Buffer.alloc(width, 0x20);
+  base.copy(out, 0);
+  return out;
+}
+
+/** 把产物里的构建根路径就地换成等长占位串，返回改写次数。 */
+export function rewriteBuildRootPaths(input, buildRoot) {
+  const needles = buildRootNeedles(buildRoot);
+  if (!needles.length) return { buffer: input, rewritten: 0 };
+  const buffer = Buffer.from(input);
+  let rewritten = 0;
+  for (const needle of needles) {
+    const target = Buffer.from(needle, 'utf8');
+    if (!target.length) continue;
+    const placeholder = placeholderFor(target.length);
+    let index = buffer.indexOf(target);
+    while (index !== -1) {
+      placeholder.copy(buffer, index);
+      rewritten++;
+      index = buffer.indexOf(target, index + target.length);
+    }
+  }
+  return { buffer, rewritten };
+}
+
 function looksLikePe(file) {
   const fd = fs.openSync(file, 'r');
   try {
@@ -236,6 +283,14 @@ export function scanWindowsBundle(bundlePath, {
   return { files: files.length, nativeAssets };
 }
 
+/**
+ * 服务端依赖是否装齐。
+ *
+ * 注意：不能只靠 createRequire().resolve —— 服务端是 ESM（package.json 里 type=module），
+ * 而纯 ESM 的包（exports 只有 import 条件）在 CJS 解析下会报 ERR_PACKAGE_PATH_NOT_EXPORTED，
+ * 明明能 import 却被判成缺失。所以按包自身的 type 选解析方式：
+ * ESM 先把 import.meta.resolve 走过的 exports 条件走一遍，CJS 维持原样。
+ */
 export function verifyProductionDependencies(serverDir) {
   const pkgPath = path.join(serverDir, 'package.json');
   if (!fs.statSync(pkgPath, { throwIfNoEntry: false })?.isFile()) throw new Error('发行包缺少服务端 package.json');
@@ -244,18 +299,45 @@ export function verifyProductionDependencies(serverDir) {
   catch { throw new Error('发行包服务端 package.json 无法解析'); }
   const dependencies = pkg.dependencies ?? {};
   if (!dependencies || typeof dependencies !== 'object' || Array.isArray(dependencies)) throw new Error('服务端依赖声明无效');
-  const resolve = createRequire(pathToFileURL(pkgPath)).resolve;
+  const resolveCjs = createRequire(pathToFileURL(pkgPath)).resolve;
+  const isEsm = pkg.type === 'module';
   let missing = 0;
   for (const name of Object.keys(dependencies)) {
-    try { resolve(name); }
-    catch { missing++; }
+    try {
+      resolveCjs(name);
+    } catch (error) {
+      // CJS 解析失败时，ESM 包再看一眼 exports 的 import 条件；仍不行才算缺
+      if (!(isEsm && isEsmOnlyResolutionError(error) && resolvesAsEsm(serverDir, name))) missing++;
+    }
   }
   if (missing) throw new Error(`服务端依赖未安装完整（${missing}）`);
   return Object.keys(dependencies).length;
 }
 
+/** 只有「包在、但 exports 没有给 CJS 用的入口」这种错才允许回退到 ESM 判定。 */
+function isEsmOnlyResolutionError(error) {
+  return error?.code === 'ERR_PACKAGE_PATH_NOT_EXPORTED' || error?.code === 'ERR_REQUIRE_ESM';
+}
+
+/** 在服务端目录下按 ESM 规则找一下这个包能不能 import。 */
+function resolvesAsEsm(serverDir, name) {
+  const entry = path.join(serverDir, 'node_modules', ...name.split('/'), 'package.json');
+  if (!fs.statSync(entry, { throwIfNoEntry: false })?.isFile()) return false;
+  try {
+    const pkg = JSON.parse(fs.readFileSync(entry, 'utf8'));
+    const exportsField = pkg.exports;
+    const main = exportsField && typeof exportsField === 'object' ? exportsField['.'] : null;
+    const target = typeof main === 'string' ? main
+      : main && typeof main === 'object' ? (main.import ?? main.default ?? main.node ?? null)
+      : null;
+    if (!target || typeof target !== 'string') return false;
+    return fs.statSync(path.join(path.dirname(entry), target), { throwIfNoEntry: false })?.isFile() === true;
+  } catch { return false; }
+}
+
 /**
  * 前端 PE 缩短调试路径并删除 .pdb；服务端目录与 node.exe 只扫描不改写。
+ * 传了 buildRoot 时，再把产物里的构建根路径就地换成占位串（等长替换，不移动字节）。
  * checkOnly 不写文件，残留调试符号、本机路径或本机状态一律失败。
  */
 export function prepareWindowsBundle(bundlePath, {
@@ -264,6 +346,7 @@ export function prepareWindowsBundle(bundlePath, {
   serverRelative = 'server',
   checkOnly = false,
   verifyDependencies = true,
+  buildRoot = null,
 } = {}) {
   const bundle = fs.realpathSync(bundlePath);
   if (!fs.statSync(bundle).isDirectory()) throw new Error('不是 Windows 发行目录');
@@ -272,15 +355,27 @@ export function prepareWindowsBundle(bundlePath, {
   let rewrittenDebugPaths = 0;
   let serverPeFiles = 0;
   let removedPdbs = 0;
+  let rewrittenBuildRoots = 0;
   if (!checkOnly) {
     for (const file of files) {
-      if (!looksLikePe(file)) continue;
-      if (realWithin(serverRoot, file)) { serverPeFiles++; continue; }
-      if (path.basename(file).toLowerCase() === 'node.exe') continue;
-      const result = rewritePeDebugPaths(fs.readFileSync(file));
-      if (result.changed) {
-        fs.writeFileSync(file, result.buffer);
-        rewrittenDebugPaths += result.rewritten;
+      const inServer = realWithin(serverRoot, file);
+      if (looksLikePe(file)) {
+        if (inServer) { serverPeFiles++; continue; }
+        if (path.basename(file).toLowerCase() === 'node.exe') continue;
+        const result = rewritePeDebugPaths(fs.readFileSync(file));
+        if (result.changed) {
+          fs.writeFileSync(file, result.buffer);
+          rewrittenDebugPaths += result.rewritten;
+        }
+      }
+      // 构建根路径常以普通字符串留在产物里（ELF 的 Dart 产物、PE 的 .rdata），
+      // 调试路径改写碰不到它们；这里对包内所有文件再包一遍。服务端目录也不该带构建根。
+      if (buildRoot) {
+        const swapped = rewriteBuildRootPaths(fs.readFileSync(file), buildRoot);
+        if (swapped.rewritten) {
+          fs.writeFileSync(file, swapped.buffer);
+          rewrittenBuildRoots += swapped.rewritten;
+        }
       }
     }
     for (const file of collectPdbs(bundle)) {
@@ -297,6 +392,7 @@ export function prepareWindowsBundle(bundlePath, {
     files: scanned.files,
     removedPdbs,
     rewrittenDebugPaths,
+    rewrittenBuildRoots,
     serverPeFiles,
     nativeAssets: scanned.nativeAssets,
     dependencies,
@@ -309,22 +405,27 @@ if (entryPath === fileURLToPath(import.meta.url)) {
     const args = process.argv.slice(2);
     let checkOnly = false;
     let verifyDependencies = true;
+    let buildRoot = null;
     const markers = [];
     const positional = [];
     for (let i = 0; i < args.length; i++) {
       if (args[i] === '--check-only') checkOnly = true;
       else if (args[i] === '--skip-deps') verifyDependencies = false;
       else if (args[i] === '--marker') markers.push(args[++i]);
+      else if (args[i] === '--build-root') buildRoot = args[++i];
       else positional.push(args[i]);
     }
-    if (positional.length !== 1 || markers.some((marker) => !marker)) {
-      throw new Error('用法：node prepare-windows-bundle.mjs [--check-only] [--skip-deps] <发行目录> [--marker <路径>]');
+    if (positional.length !== 1 || markers.some((marker) => !marker) ||
+        (buildRoot !== null && !buildRoot)) {
+      throw new Error('用法：node prepare-windows-bundle.mjs [--check-only] [--skip-deps] [--build-root <路径>] <发行目录> [--marker <路径>]');
     }
-    console.log(JSON.stringify(prepareWindowsBundle(positional[0], { checkOnly, verifyDependencies, markers })));
+    console.log(JSON.stringify(prepareWindowsBundle(positional[0], {
+      checkOnly, verifyDependencies, markers, buildRoot,
+    })));
   } catch (error) {
     let message = String(error.message);
-    for (const secret of [os.homedir(), ...process.argv]) {
-      if (secret && secret.length > 2) message = message.split(secret).join('[本机目录]');
+    for (const secret of [os.homedir(), process.argv[process.argv.indexOf('--build-root') + 1]].filter(Boolean)) {
+      if (secret && secret.length > 2) message = message.split(secret).join('[构建目录]');
     }
     console.error(`发行包检查失败：${message}`);
     process.exitCode = 1;
