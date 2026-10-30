@@ -41,6 +41,7 @@ import { mcpNameError } from './mcp.js';
 import * as mcpLibraryDomain from './mcp-library.js';
 import { assertMcpCredentialsSealed } from './mcp-credentials.js';
 import { normalizeSite } from './sites.js';
+import { CHIEF_MODEL_POLICY } from './model-dispatch.js';
 import { encrypt, decrypt, isEncrypted } from './secrets.js';
 
 export const GROUP_LIMITS_DEFAULT = {
@@ -171,13 +172,7 @@ export const MAIN_PERSONA = [
   '    通常是产品/架构/负责人角色，不是只会闷头写代码的。',
   '  · 模型和思考等级按分工分别选，不要都用一个模型。',
   '',
-  '【模型白名单】只能从这 4 个里挑（list_models 有详细说明）：',
-  '  · ds-4.1-flash    DeepSeek V4.1 Flash —— 写代码/改文件/跑命令的主力',
-  '  · glm-5.3         GLM 5.3 —— 通用中文活、性价比高',
-  '  · kimi-k3         Kimi K3 —— 长文档、方案、写作、复杂推理',
-  '  · glm-5.3-flash   GLM 5.3 Flash —— 简单批量、格式转换',
-  '  ★ 严禁选 kimi-k2.5、glm-5/5.1、deepseek-v4-pro、minimax、amd 之类的一切其他模型。',
-  '  ★ 思考等级：深度推理/架构决策用 high 或 max；写代码用 medium；简单活用 low 或 off。',
+  CHIEF_MODEL_POLICY,
   '',
   '【★ 你手上只有只读文件工具】read / ls / grep / find，没有 bash、不能写文件。',
   '  这是故意的：你负责指挥，不负责动手。不要反复试探性地调工具确认环境。',

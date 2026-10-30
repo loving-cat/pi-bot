@@ -54,6 +54,7 @@ import { disposeAll, disposeMatching, evictIdle } from './session-pool.js';
 import { createWatchdog, stallCleanup } from './watchdog.js';
 import { createEscalator } from './escalation.js';
 import { modelLabel, resolveModel, syncModelGroups } from './model-registry.js';
+import { modelChangeAffectsSession } from './model-dispatch.js';
 import { buildAppendSystemPrompt } from './system-prompt.js';
 import { selectSkillsFor, skillsPromptLines } from './skills.js';
 import { selectLessonsFor, lessonsPromptLines } from './lessons.js';
@@ -588,8 +589,8 @@ export class PiRunner {
       ?? this.resolveModel(defaultMenuSlug(this.health)) ?? null;
     this.routerModel = this.model;
     this.initNote = this.model ? null : '没有可用模型，请先配置模型组';
-    invalidateSessions(this.sessions, (_key, entry) => !groupId || !entry.bot?.model
-      || entry.session?.model?.provider === groupId || entry.bot.model.startsWith(`${groupId}/`));
+    invalidateSessions(this.sessions, (_key, entry) =>
+      modelChangeAffectsSession(entry, groupId, store.getBot(entry.bot?.id) ?? entry.bot));
     bus.emit('event', { t: 'models.changed' });
     return this.availableModels?.length ?? 0;
   }

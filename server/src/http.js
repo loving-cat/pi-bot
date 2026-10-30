@@ -15,6 +15,7 @@ import {
   availableThinkingLevels,
 } from './model-thinking.js';
 import { capacityError } from './model-capacity.js';
+import { resolveBotModelSelection } from './model-dispatch.js';
 import { store } from './store.js';
 import { metaFor, pathFor, saveBuffer, saveMovedFile } from './attachments.js';
 import { lanAddresses } from './pairing.js';
@@ -893,7 +894,18 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         const body = await readBody(req);
         const previous = store.getBot(botMatch[1]);
         if (!previous) return send(res, 404, { error: 'bot 不存在' });
-        const model = runner.resolveModel?.(body.model ?? previous.model) ?? runner.model ?? {};
+        let selected;
+        if (Object.hasOwn(body, 'model')) {
+          const checked = resolveBotModelSelection(body.model, {
+            entries: modelGroups.menuEntries(), groups: modelGroups.list(),
+            availableModels: runner.availableModels ?? [], resolveModel: (slug) => runner.resolveModel?.(slug),
+          });
+          if (checked.error) return send(res, 400, { error: checked.error });
+          body.model = checked.model;
+          selected = checked.resolved ?? runner.model;
+        }
+        const model = Object.hasOwn(body, 'model') ? selected ?? {}
+          : runner.resolveModel?.(previous.model) ?? runner.model ?? {};
         const capacityProblem = capacityError({ ...previous, ...body }, model, { allowNull: true });
         if (capacityProblem) return send(res, 400, { error: capacityProblem });
         const bot = store.updateBot(botMatch[1], body);

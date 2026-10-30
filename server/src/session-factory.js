@@ -27,6 +27,8 @@ import { buildChiefTools, buildCommonTools } from './tools.js';
 import { createPolicyExtension } from './policy-hook.js';
 import { createMcpExtension, mcpSectionForPrompt } from './mcp-hook.js';
 import { log } from './util.js';
+import { menuEntries } from './model-menu.js';
+import { modelCatalogSection } from './model-dispatch.js';
 
 /**
  * 这个 bot 用哪个模型、哪个思考档位。
@@ -128,6 +130,7 @@ export function createSessionBuilder({
         // MCP 清单只给主控：它要知道有哪些能力可以派给成员。
         // 成员自己不拿这份清单 —— 它们要的是已经挂载的工具，不是能力目录。
         mcpLines: isChief ? mcpSectionForPrompt() : '',
+        modelLines: isChief ? modelCatalogSection(menuEntries(), health) : '',
       }),
       ...resourceOptions,
       ...(isDeptLead || isReadonlyPolicy(policy) ? { noExtensions: true, noMcp: true } : {}),
