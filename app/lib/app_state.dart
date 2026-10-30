@@ -59,6 +59,7 @@ class AppState extends ChangeNotifier {
   /// 但**机制完全不同**：技能只是提示词，MCP 会真起进程/连服务。
   List<McpServer> mcpServers = const [];
   bool mcpLoaded = false;
+  int connectionsRevision = 0;
   bool skillsLoaded = false;
 
   /// 经验库（从执行里学到的“下次别这样”）。只有 active 的会进主控提示词。
@@ -691,6 +692,13 @@ class AppState extends ChangeNotifier {
   }
 
   // ---------------------------------------------------------------- MCP 服务库
+
+  /// 同步已加载的公共连接库，不触发连接中心再次刷新。
+  void applyMcpServers(List<McpServer> servers) {
+    mcpServers = List<McpServer>.of(servers);
+    mcpLoaded = true;
+    _notify();
+  }
 
   /// 拉 MCP 服务库
   Future<void> loadMcpServers() async {
@@ -1585,6 +1593,19 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// 应用已确认保存的 Bot；调用方负责核对响应所属的服务端。
+  void applyBotUpdate(Bot bot) {
+    if (_disposed) return;
+    _upsertBot(bot);
+    connectionsRevision++;
+    _notify();
+  }
+
+  void _upsertBot(Bot bot) {
+    final index = bots.indexWhere((item) => item.id == bot.id);
+    bots = index < 0 ? [...bots, bot] : ([...bots]..[index] = bot);
+  }
+
   // ---------------------------------------------------------------- WS
 
   void connect() {
@@ -1616,6 +1637,7 @@ class AppState extends ChangeNotifier {
     }
     switch (ev['t'] as String?) {
       case 'hello':
+        connectionsRevision++;
         link = LinkState.online;
         unawaited(Native.startService());
         _attempt = 0;
@@ -1653,6 +1675,20 @@ class AppState extends ChangeNotifier {
         // 复盘是在服务端后台跑的：不接这个事件，界面就要等用户切标签页
         // 才能看到新候选（更糟的是操作一条已经被删的经验 →“经验不存在”）。
         applyLessons((ev['lessons'] as List?) ?? const []);
+        break;
+
+      case 'mcp.updated':
+        mcpServers = ((ev['servers'] as List?) ?? const [])
+            .whereType<Map>()
+            .map((e) => McpServer.fromJson(e.cast<String, dynamic>()))
+            .toList();
+        mcpLoaded = true;
+        connectionsRevision++;
+        break;
+
+      case 'mcp.changed':
+      case 'connections.changed':
+        connectionsRevision++;
         break;
 
       case 'msg.new':
@@ -1827,16 +1863,13 @@ class AppState extends ChangeNotifier {
 
       case 'bot.updated':
       case 'bot.created':
+        connectionsRevision++;
         final bot = Bot.fromJson((ev['bot'] as Map).cast<String, dynamic>());
-        final idx = bots.indexWhere((b) => b.id == bot.id);
-        if (idx >= 0) {
-          bots = [...bots]..[idx] = bot;
-        } else {
-          bots = [...bots, bot];
-        }
+        _upsertBot(bot);
         break;
 
       case 'bot.deleted':
+        connectionsRevision++;
         final botId = ev['botId'] as String?;
         if (botId != null) bots = bots.where((b) => b.id != botId).toList();
         break;

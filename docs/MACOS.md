@@ -24,6 +24,9 @@ cd ..
 App 复制回下述构建路径，并将调试信息保存到 `app/build/debug-info/macos`。临时副本在成功或
 失败时清理；调试信息不进入安装包。此流程不依赖 Git，解压的源码目录也可使用。
 
+正常构建固定使用 `https://pub.dev`，先严格解析已提交的 `pubspec.lock`，再以 `--no-pub`
+构建；锁文件不匹配或被改动时停止打包。`--no-build` 复用现有产物，不验证其依赖锁版本。
+
 - 构建来源：`app/build/macos/Build/Products/Release/pi-bot.app`，兼容 `pi_bot.app`。
 - 发行 App：`dist/pi-bot.app`；服务端位于其 `Contents/Resources/server`。
 - DMG：`dist/pi-bot-<服务端版本>.dmg`，版本取自 `server/package.json`。

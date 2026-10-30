@@ -57,6 +57,20 @@ add_subdirectory("runner")
 # them to the application.
 include(flutter/generated_plugins.cmake)
 
+# 仅为仍引用实验协程头的插件启用 MSVC 临时兼容宏。
+if(MSVC)
+  foreach(legacy_coroutine_plugin IN ITEMS
+    flutter_inappwebview_windows_plugin
+    permission_handler_windows_plugin
+  )
+    if(TARGET ${legacy_coroutine_plugin})
+      target_compile_definitions(${legacy_coroutine_plugin} PRIVATE
+        _SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS
+      )
+    endif()
+  endforeach()
+endif()
+
 
 # === Installation ===
 # Support files are copied into place next to the executable, so that it can

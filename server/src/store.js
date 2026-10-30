@@ -37,13 +37,11 @@ import {
   normalizeLesson,
   lessonRejectReason,
 } from './lessons.js';
-import {
-  normalizeMcpList,
-  normalizeMcpServer,
-  mcpRejectReason,
-  mcpNameError,
-} from './mcp.js';
+import { mcpNameError } from './mcp.js';
+import * as mcpLibraryDomain from './mcp-library.js';
+import { assertMcpCredentialsSealed } from './mcp-credentials.js';
 import { normalizeSite } from './sites.js';
+import { CHIEF_MODEL_POLICY } from './model-dispatch.js';
 import { encrypt, decrypt, isEncrypted } from './secrets.js';
 
 export const GROUP_LIMITS_DEFAULT = {
@@ -174,13 +172,7 @@ export const MAIN_PERSONA = [
   '    通常是产品/架构/负责人角色，不是只会闷头写代码的。',
   '  · 模型和思考等级按分工分别选，不要都用一个模型。',
   '',
-  '【模型白名单】只能从这 4 个里挑（list_models 有详细说明）：',
-  '  · ds-4.1-flash    DeepSeek V4.1 Flash —— 写代码/改文件/跑命令的主力',
-  '  · glm-5.3         GLM 5.3 —— 通用中文活、性价比高',
-  '  · kimi-k3         Kimi K3 —— 长文档、方案、写作、复杂推理',
-  '  · glm-5.3-flash   GLM 5.3 Flash —— 简单批量、格式转换',
-  '  ★ 严禁选 kimi-k2.5、glm-5/5.1、deepseek-v4-pro、minimax、amd 之类的一切其他模型。',
-  '  ★ 思考等级：深度推理/架构决策用 high 或 max；写代码用 medium；简单活用 low 或 off。',
+  CHIEF_MODEL_POLICY,
   '',
   '【★ 你手上只有只读文件工具】read / ls / grep / find，没有 bash、不能写文件。',
   '  这是故意的：你负责指挥，不负责动手。不要反复试探性地调工具确认环境。',
@@ -227,15 +219,13 @@ function normalizeBotMcpNames(list) {
 }
 
 export class Store {
-  /**
-   * 站点口令的加密密钥。由 server-main 在启动时注入（loadOrCreateKey）。
-   * 没注入时退化为"不加密"——单测里不需要真密钥，但生产必须注入。
-   */
+  /** 站点与连接凭据的加密密钥；连接凭据没有密钥时拒绝保存。 */
   secretsKey = null;
 
   /** 注入加密密钥（启动时调一次） */
   useSecretsKey(key) {
     this.secretsKey = key ?? null;
+    mcpLibraryDomain.migrateMcpCredentials(this);
     // 借这次机会把历史明文口令迁成密文（只做一次，幂等）
     this.#migrateSitePasswords();
     return this;
@@ -333,6 +323,7 @@ export class Store {
 
   saveNow() {
     try {
+      assertMcpCredentialsSealed(this.state.mcpServers ?? []);
       writeJsonAtomic(STATE_FILE, this.state);
     } catch (err) {
       log('⚠️  写 state.json 失败（进程继续跑）：', err?.message || err);
@@ -915,54 +906,32 @@ export class Store {
    * 所以这里只存配置，真正连不连、连哪几个由建会话时决定。
    */
   mcpLibrary() {
-    return normalizeMcpList(this.state.mcpServers ?? []);
+    return mcpLibraryDomain.mcpLibrary(this);
+  }
+
+  /** 按连接 ID 读取执行配置，凭据仅在服务端解密。 */
+  mcpRuntimeServer(id) {
+    return mcpLibraryDomain.mcpRuntimeServer(this, id);
+  }
+
+  /** 将测试草稿与已保存凭据合并，不修改存储。 */
+  mcpProbeDraft(raw = {}) {
+    return mcpLibraryDomain.mcpProbeDraft(this, raw);
   }
 
   /** 加一个 MCP 服务 */
   addMcpServer(raw = {}) {
-    const list = this.mcpLibrary();
-    const reason = mcpRejectReason(raw);
-    if (reason) return { error: reason };
-    const server = normalizeMcpServer({ ...raw, updatedAt: Date.now() });
-    if (!server) return { error: 'MCP 服务内容不合法' };
-    if (list.some((s) => s.name.toLowerCase() === server.name.toLowerCase())) {
-      return { error: `已经有同名服务「${server.name}」` };
-    }
-    list.push(server);
-    this.state.mcpServers = normalizeMcpList(list);
-    this.scheduleSave();
-    bus.emit('event', { t: 'mcp.updated', servers: this.mcpLibrary() });
-    return { server };
+    return mcpLibraryDomain.addMcpServer(this, raw, (event) => bus.emit('event', event));
   }
 
   /** 改一个 MCP 服务 */
   updateMcpServer(id, patch = {}) {
-    const list = this.mcpLibrary();
-    const idx = list.findIndex((s) => s.id === id);
-    if (idx < 0) return { error: 'MCP 服务不存在' };
-    const reason = mcpRejectReason({ ...list[idx], ...patch });
-    if (reason) return { error: reason };
-    const merged = normalizeMcpServer({ ...list[idx], ...patch, id, updatedAt: Date.now() });
-    if (!merged) return { error: 'MCP 服务内容不合法' };
-    if (list.some((s, i) => i !== idx && s.name.toLowerCase() === merged.name.toLowerCase())) {
-      return { error: `已经有同名服务「${merged.name}」` };
-    }
-    list[idx] = merged;
-    this.state.mcpServers = list;
-    this.scheduleSave();
-    bus.emit('event', { t: 'mcp.updated', servers: list });
-    return { server: merged };
+    return mcpLibraryDomain.updateMcpServer(this, id, patch, (event) => bus.emit('event', event));
   }
 
   /** 删一个 MCP 服务 */
   removeMcpServer(id) {
-    const list = this.mcpLibrary();
-    const next = list.filter((s) => s.id !== id);
-    if (next.length === list.length) return { error: 'MCP 服务不存在' };
-    this.state.mcpServers = next;
-    this.scheduleSave();
-    bus.emit('event', { t: 'mcp.updated', servers: next });
-    return { ok: true };
+    return mcpLibraryDomain.removeMcpServer(this, id, (event) => bus.emit('event', event));
   }
 
   /**
@@ -979,6 +948,8 @@ export class Store {
     const byName = new Map(this.mcpLibrary().map((s) => [s.name.toLowerCase(), s]));
     return names
       .map((n) => byName.get(String(n ?? '').toLowerCase()))
+      .filter(Boolean)
+      .map((server) => server.enabled ? this.mcpRuntimeServer(server.id) : server)
       .filter(Boolean);
   }
 
@@ -1255,6 +1226,7 @@ export class Store {
     summary = '',
     input = null,
     hash,
+    capabilityRevision = null,
   } = {}) {
     const dup = this.findPendingApproval({ roomId, botId, hash });
     if (dup) return dup;
@@ -1268,6 +1240,7 @@ export class Store {
       summary: String(summary ?? '').slice(0, 500),
       input: input ?? null,
       hash,
+      capabilityRevision,
       status: 'pending',
       createdAt: now(),
       updatedAt: now(),
@@ -1295,26 +1268,26 @@ export class Store {
    * 开一个"临时放行窗口"：用户批准后，这个 bot 在这个会话里接下来的操作
    * 不再逐条弹卡片（默认 10 分钟）。避免它连着跑三条命令就要点三次。
    */
-  grantApproval({ roomId, botId, minutes = 10 } = {}) {
+  grantApproval({ roomId, botId, minutes = 10, capabilityRevision = null } = {}) {
     if (!roomId || !botId) return null;
     const until = now() + Math.max(1, Math.min(120, Number(minutes) || 10)) * 60_000;
     const list = this.state.approvalGrants ?? [];
-    const existing = list.find((g) => g.roomId === roomId && g.botId === botId);
+    const existing = list.find((g) => g.roomId === roomId && g.botId === botId && (g.capabilityRevision ?? null) === capabilityRevision);
     if (existing) {
       existing.until = Math.max(existing.until, until);
     } else {
-      list.push({ roomId, botId, until });
+      list.push({ roomId, botId, until, capabilityRevision });
     }
     this.state.approvalGrants = list;
     this.scheduleSave();
-    return { roomId, botId, until };
+    return { roomId, botId, until, capabilityRevision };
   }
 
-  hasApprovalGrant({ roomId, botId } = {}) {
+  hasApprovalGrant({ roomId, botId, capabilityRevision = null } = {}) {
     const at = now();
     const list = (this.state.approvalGrants ?? []).filter((g) => g.until > at);
     this.state.approvalGrants = list;
-    return list.some((g) => g.roomId === roomId && g.botId === botId);
+    return list.some((g) => g.roomId === roomId && g.botId === botId && (g.capabilityRevision ?? null) === capabilityRevision);
   }
 
   /** 清掉放行窗口：给了谁就只清谁，都不给就全清 */

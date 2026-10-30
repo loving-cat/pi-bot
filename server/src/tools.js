@@ -16,7 +16,7 @@ import path from 'node:path';
 import { bus } from './bus.js';
 import { config } from './config.js';
 import { store } from './store.js';
-import { menuText, resolveMenu, menuEntries } from './model-menu.js';
+import { menuText, resolveMenu, menuEntries, matchMenuEntry } from './model-menu.js';
 import { extractText } from './extract.js';
 import { webSearch, webFetch } from './web.js';
 import { shells } from './shells.js';
@@ -26,6 +26,7 @@ import { log, now, isBusyError, planDispatchRetry } from './util.js';
 import { CODING_BASELINE_TITLE, CODING_BASELINE_HOWTO, isCodingRole } from './coding-baseline.js';
 import { scanLocalCapabilities } from './local-capabilities.js';
 import { siteDrafts, describeDraftForConfirm, draftConfirmOptions } from './site-draft.js';
+import { departmentModelConflicts } from './model-dispatch.js';
 
 /** 同一个 bot 连着私信多个人时，多久以内的引用气泡合并成一个（ms） */
 export const REF_MERGE_MS = 180_000;
@@ -90,18 +91,22 @@ function insideWorkspace(input) {
   return full;
 }
 
-/** 模型白名单：只能选 kimi k3 / glm 5.3 / deepseek v4.1 flash 这一小撮 */
+/** 只接受启用目录中可解析且没有明确失败结论的模型。 */
 function checkModel(runner, slug, health) {
   if (!slug) return { ok: true };
   const picked = resolveMenu(slug, health);
   if (!picked) {
-    return { ok: false, suggestions: ['只能从白名单里选：', ...menuText(health).split('\n')] };
+    const match = matchMenuEntry(slug);
+    if (match.reason === 'ambiguous') return { ok: false, suggestions: [
+      '名称对应多个模型，请选择完整标识：', ...match.candidates.slice(0, 10),
+    ] };
+    return { ok: false, suggestions: ['请从当前启用的模型组中选择：', ...menuText(health).split('\n')] };
   }
   if (!picked.alive) {
     return { ok: false, suggestions: [`${picked.entry.alias} 当前的线路实测不可用（${picked.slug}）`] };
   }
   if (!runner.resolveModel(picked.slug)) {
-    return { ok: false, suggestions: [`${picked.slug} 在本机 models.json 里不存在`] };
+    return { ok: false, suggestions: [`${picked.slug} 尚未注册成功，请检查模型组配置`] };
   }
   return { ok: true, resolved: picked.slug };
 }
@@ -838,7 +843,8 @@ export function buildChiefTools({ runner, health, roomId, botId }) {
         }
         if (found.mcpServers.length) {
           lines.push('', '本机已配的 MCP：');
-          for (const s of found.mcpServers) {
+          for (const raw of found.mcpServers) {
+            const s = publicMcpTarget(raw);
             lines.push(
               `- ${s.name}${s.imported ? '（已在库里）' : ''}（${s.type}）：${s.command ?? s.url}`,
             );
@@ -1028,7 +1034,7 @@ export function buildChiefTools({ runner, health, roomId, botId }) {
             '给用户看的一句话简介，8-16 字，说清它负责什么（如「接口设计与实现」「需求拆解与验收」）。' +
             '★ 这是直接展示在用户界面上的，不要写成系统提示词那种语气，不要提模型/工具/规则',
         }),
-        model: Type.Optional(Type.String({ description: 'ds-4.1-flash / glm-5.3 / kimi-k3 / glm-5.3-flash' })),
+        model: Type.Optional(Type.String({ description: '从当前 list_models 选择的完整模型标识；省略时继承默认模型' })),
         thinking: Type.Optional(Type.String({ description: THINKING_LEVELS.join(' / ') })),
         skills: Type.Optional(
           Type.Array(
@@ -1210,13 +1216,13 @@ export function buildChiefTools({ runner, health, roomId, botId }) {
       description:
         '可用模型来自用户自己配的模型组（App 的「模型」页里配）。' +
         '只能从这里选，写别名或完整 slug 都行。' +
-        '★=实测可用，✗=探活没过（仍可选，但可能报错）。一轮只调一次。',
+        '★=实测可用，?=未验证但可选择，✗=实测不可用。创建新团队前查看当前菜单。',
       parameters: Type.Object({}),
       execute: async () =>
         ok(
           '可选模型（只能从这里选）：\n' +
             menuText(health) +
-            '\n\n挑的时候看用途那一列；没把握就用列表第一个。',
+            '\n\n按任务、上下文容量、用户指定和已知健康状态选择；不要仅按列表顺序，也不要把未验证当作不可用。',
           { menu: menuEntries().map((m) => m.alias) },
         ),
     }),
@@ -1357,6 +1363,8 @@ export function buildChiefTools({ runner, health, roomId, botId }) {
           );
         }
 
+        const conflicts = departmentModelConflicts(resolved, store.listBots(), runner.modelLabel?.());
+        if (conflicts.length) return fail(`成员配置存在冲突，什么都没建：\n${conflicts.join('\n')}`);
         const created = [];
         for (const m of resolved) {
           const dup = store.listBots().find((b) => b.name === m.name);
@@ -1613,3 +1621,4 @@ export function buildChiefTools({ runner, health, roomId, botId }) {
     }),
   ];
 }
+import { publicMcpTarget } from './mcp-credentials.js';

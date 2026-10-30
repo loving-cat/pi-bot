@@ -1,5 +1,5 @@
-import { childEnv, explicitChildEnv } from './child-env.js';
-import { publicFetch } from './net-guard.js';
+import { explicitChildEnv } from './child-env.js';
+import { probeMcpServer } from './mcp-probe.js';
 
 /**
  * MCP 服务库（MCP server library）—— 纯函数，无 IO。
@@ -175,11 +175,22 @@ export function mcpRejectReason(raw = {}) {
       return '这是网址，不是命令 —— 要连远端服务请把类型切成 HTTP';
     }
     if (command.includes('\n')) return '启动命令只能写一行（参数请填到参数列表里）';
+    if ((Array.isArray(raw.args) ? raw.args : []).some((arg) => /^--?(?:access[-_]?token|refresh[-_]?token|token|api[-_]?key|secret|password|passwd|authorization)(?:=|$)/i.test(String(arg)))) {
+      return '请把凭据放在环境变量中，不要写入命令参数';
+    }
   } else {
     const url = str(raw?.url, MCP_LIMITS.url);
     if (!url) return 'HTTP 服务要填 URL';
     if (!/^https?:\/\//i.test(url)) {
       return 'URL 要以 http:// 或 https:// 开头';
+    }
+    try {
+      const target = new URL(url);
+      if (target.username || target.password || [...target.searchParams.keys()].some((key) => /^(?:access[-_]?token|refresh[-_]?token|token|api[-_]?key|key|secret|password|passwd|authorization|signature|sig)$/i.test(key))) {
+        return '请把凭据放在请求头中，不要写入服务地址';
+      }
+    } catch {
+      return '服务地址格式不正确';
     }
     // 明文 http 会把凭据暴露在网络上，除了本机回环都要求 https
     const isLoopback = /^http:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?(\/|$)/i.test(url);
@@ -293,138 +304,7 @@ export function mcpPromptLines(servers = []) {
   return lines.join('\n');
 }
 
-/**
- * 测一个服务通不通 —— 只回答"这条路能不能走通"，不跑完整 MCP 握手。
- *
- * 为什么不跑完整握手：那要拉 SDK、走 initialize、list tools，
- * 一个测连按钮等十几秒，用户会以为卡死了。这里只要证明
- * 「命令能起来 / URL 能回话」，剩下的交给真正建会话时去连。
- *
- * @param {object} server 已规范化的服务配置
- * @returns {Promise<{ok:boolean, ms:number, via?:string, detail?:string, error?:string}>}
- */
+/** 完成 MCP 初始化和工具发现，返回可用性及脱敏错误。 */
 export async function testMcpServer(server = {}) {
-  const t0 = Date.now();
-  const timeoutMs = Math.min((server.timeout || 60) * 1000, 15_000);
-
-  if (server.type === 'http') {
-    if (!server.url) return { ok: false, ms: 0, error: '没填 URL' };
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(new Error('超时')), timeoutMs);
-    try {
-      const { res } = await publicFetch(server.url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', ...(server.headers ?? {}) },
-        // MCP 的最小合法探测：一个 initialize 请求
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'initialize',
-          params: {
-            protocolVersion: '2024-11-05',
-            capabilities: {},
-            clientInfo: { name: 'pi-bot', version: '1.0' },
-          },
-        }),
-        signal: ac.signal,
-      }, { scope: 'user-config' });
-      const ms = Date.now() - t0;
-      // 401/403 说明地址是对的，只是凭据没配好 —— 这跟"连不上"是两件事
-      if (res.status === 401 || res.status === 403) {
-        return {
-          ok: false, ms,
-          error: `连上了，但认证没过（HTTP ${res.status}）—— 检查请求头里的凭据`,
-        };
-      }
-      if (!res.ok) {
-        return { ok: false, ms, error: `服务回了 HTTP ${res.status}` };
-      }
-      const text = await res.text();
-      let detail = '';
-      try {
-        const json = JSON.parse(text);
-        if (json?.result?.serverInfo?.name) {
-          detail = `服务名：${json.result.serverInfo.name}`;
-        }
-      } catch {
-        // 不是 JSON 也可能正常（有些网关返回 SSE），能连上就算通过
-      }
-      return { ok: true, ms, via: 'initialize', detail };
-    } catch (err) {
-      const ms = Date.now() - t0;
-      const msg = String(err?.message ?? err);
-      if (/^(拒绝访问|重定向|域名解析失败)/.test(msg)) return { ok: false, ms, error: msg };
-      return {
-        ok: false, ms,
-        error: /超时/.test(msg)
-          ? `连接超时（${Math.round(timeoutMs / 1000)} 秒）—— 地址通不通？要不要代理？`
-          : `连不上：${msg}`,
-      };
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
-  // stdio：真的把命令跑起来，给它 3 秒证明自己能起
-  if (!server.command) return { ok: false, ms: 0, error: '没填启动命令' };
-  const { spawnCommand, killProcessTree } = await import('./spawn-command.js');
-  return await new Promise((resolve) => {
-    let settled = false;
-    const done = (r) => {
-      if (settled) return;
-      settled = true;
-      resolve(r);
-    };
-    let child;
-    try {
-      child = spawnCommand(server.command, server.args ?? [], {
-        cwd: server.cwd || undefined,
-        env: childEnv(process.env, server.env ?? {}),
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
-    } catch (err) {
-      return done({ ok: false, ms: Date.now() - t0, error: `命令起不来：${err?.message ?? err}` });
-    }
-
-    let stderr = '';
-    child.stderr?.on('data', (b) => { stderr += String(b).slice(0, 500); });
-
-    const timer = setTimeout(() => {
-      // 3 秒还没退出 = 它活着，就是在等 MCP 握手 —— 这就算通。
-      // 必须杀整棵树：Windows 上 cmd.exe 底下还挂着真正的服务进程。
-      killProcessTree(child);
-      done({
-        ok: true,
-        ms: Date.now() - t0,
-        via: 'spawn',
-        detail: '进程已启动并保持运行（正常，MCP 服务就是这么等的）',
-      });
-    }, 3000);
-
-    child.on('error', (err) => {
-      clearTimeout(timer);
-      const msg = String(err?.message ?? err);
-      // Node 各版本对"找不到命令"的文案不一样（ENOENT / "Executable not found
-      // in $PATH"），Windows 上 .cmd 还可能报 EINVAL —— 都归成同一句人话。
-      const missing =
-        /ENOENT|not found|EINVAL|no such file/i.test(msg);
-      done({
-        ok: false,
-        ms: Date.now() - t0,
-        error: missing
-          ? `找不到命令「${server.command}」—— 装了吗？在不在 PATH 里？`
-          : `起不来：${msg}`,
-      });
-    });
-    child.on('exit', (code) => {
-      clearTimeout(timer);
-      if (settled) return;
-      // 3 秒内就退出了 = 起不来（正常的 MCP 服务会一直等着）
-      done({
-        ok: false,
-        ms: Date.now() - t0,
-        error: `命令启动后立刻退出（code=${code}）${stderr ? `：${stderr.trim().slice(0, 200)}` : ''}`,
-      });
-    });
-  });
+  return probeMcpServer(server);
 }

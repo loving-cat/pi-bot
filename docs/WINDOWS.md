@@ -23,13 +23,19 @@ flutter config --enable-windows-desktop
 
 默认构建不会在原源码目录里跑 Flutter。脚本把 `app/` 复制到系统临时目录，排除
 `.dart_tool`、`build`、`.git`、`ephemeral`、`.vs`、`*.user`、`*.suo` 等生成缓存和用户工程状态，
-再执行 `flutter build windows --release --split-debug-info=...`。成功后把 Release 目录换回
+固定使用 `https://pub.dev` 严格解析已提交的 `pubspec.lock`，再执行
+`flutter build windows --release --no-pub --split-debug-info=...`。锁文件不匹配或被改动时停止。
+成功后把 Release 目录换回
 `app/build/windows/x64/runner/Release`，调试信息放到 `app/build/debug-info/windows`
 （含分离出的 Dart 符号，以及从构建结果复制的 `.pdb`）。临时副本无论成功还是失败都会删掉，
 原源码和上一份 Release 不会被半截构建改坏。
 
 `-NoBuild` 不检查 Flutter、不复制源码，只要求上述 Release 目录里已经有 `pi_bot.exe`。
+此选项不验证重用产物的依赖锁版本。
 只改了服务端时可以复用；改了 Flutter 或 `app/windows` 之后要重新构建。
+
+仍使用实验协程头的两个插件在 MSVC 下启用目标级兼容宏，避免新版编译器的弃用错误。
+该兼容措施只作用于相关插件；后续插件升级到标准协程后应移除。
 
 Runner 在 MSVC 上使用 `/PDBALTPATH:%_PDB%`，让主程序只记录 PDB 文件名。打包时还会把前端
 PE 的 CodeView 绝对路径收成文件名，并删掉发行目录里的前端 `.pdb`。`node.exe` 和服务端目录

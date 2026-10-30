@@ -5,6 +5,7 @@
  * 而且是**最容易改坏**的地方（改一句话就改变所有 bot 的行为）。
  */
 import { CODING_BASELINE_TITLE } from './coding-baseline.js';
+import { effectiveModelPersona } from './model-dispatch.js';
 
 /**
  * 拼一个 bot 的 appendSystemPrompt。
@@ -21,11 +22,12 @@ import { CODING_BASELINE_TITLE } from './coding-baseline.js';
  */
 export function buildAppendSystemPrompt(
   bot = {},
-  { userName = '', policy = null, mcpLines = '' } = {},
+  { userName = '', policy = null, mcpLines = '', modelLines = '' } = {},
 ) {
   const skills = Array.isArray(bot.skills) ? bot.skills.filter((s) => s?.title) : [];
   return [
-    ...(bot.persona ? [bot.persona] : []),
+    ...(bot.persona ? [effectiveModelPersona(bot)] : []),
+    ...(bot.role === 'main' && modelLines ? [modelLines] : []),
     // ★ 你是谁 / 用户是谁。
     //   不写这个的话，bot 只能从人设里猜用户身份，或者干脆不称呼 ——
     //   而在群里它还需要知道"哪条是那个真人发的"（其余都是同事）。

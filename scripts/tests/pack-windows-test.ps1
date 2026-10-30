@@ -82,6 +82,7 @@ try {
   $app = Join-Path $fixture "app"
   foreach ($rel in @(
     "pubspec.yaml",
+    "pubspec.lock",
     "lib\main.dart",
     "windows\CMakeLists.txt",
     "windows\runner\main.cpp",
@@ -102,8 +103,10 @@ try {
   }
   $sourceMain = Join-Path $app "lib\main.dart"
   $sourcePubspec = Join-Path $app "pubspec.yaml"
+  $sourceLock = Join-Path $app "pubspec.lock"
   $mainBefore = Get-Content -LiteralPath $sourceMain -Raw
   $pubspecBefore = Get-Content -LiteralPath $sourcePubspec -Raw
+  $lockBefore = Get-Content -LiteralPath $sourceLock -Raw
 
   $server = Join-Path $fixture "server"
   New-Item -ItemType Directory -Path (Join-Path $server "src") -Force | Out-Null
@@ -132,12 +135,20 @@ const path = require("path");
 const trace = process.env.TRACE;
 fs.appendFileSync(trace, process.cwd() + "\n" + process.argv.slice(2).join(" ") + "\n---\n");
 const fail = process.env.PACK_FAIL || "";
-if (fail === "build") process.exit(39);
-if (process.argv[2] !== "build" || process.argv[3] !== "windows") process.exit(2);
 if (process.cwd() === process.env.FIXTURE_APP) process.exit(3);
-for (const cache of [".dart_tool", "build", ".vs", "windows/flutter/ephemeral", "windows/runner/Runner.vcxproj.user"]) {
-  if (fs.existsSync(cache)) process.exit(4);
+if (process.env.PUB_HOSTED_URL !== "https://pub.dev" || !fs.existsSync("pubspec.lock")) process.exit(7);
+if (process.argv[2] === "pub") {
+  if (process.argv.slice(2).join(" ") !== "pub get --enforce-lockfile --no-example") process.exit(8);
+  for (const cache of [".dart_tool", "build", ".vs", "windows/flutter/ephemeral", "windows/runner/Runner.vcxproj.user"]) {
+    if (fs.existsSync(cache)) process.exit(4);
+  }
+  fs.mkdirSync(".dart_tool");
+  fs.writeFileSync(".dart_tool/lock-ready", "locked\n");
+  process.exit(0);
 }
+if (fail === "build") process.exit(39);
+if (process.argv[2] !== "build" || process.argv[3] !== "windows" || !process.argv.includes("--no-pub")) process.exit(2);
+if (!fs.existsSync(".dart_tool/lock-ready")) process.exit(9);
 if (!fs.existsSync("lib/main.dart") || !fs.existsSync("windows/CMakeLists.txt") || !fs.existsSync("pubspec.yaml")) process.exit(5);
 fs.appendFileSync("pubspec.yaml", "# stub\n");
 let debug = "";
@@ -214,6 +225,7 @@ if (process.env.PACK_PLANT === "dotenv") fs.writeFileSync(".env", "TOKEN=fixture
     Assert-True ($builds.Count -eq 0) "release swap directory was left behind"
     Assert-True ((Get-Content -LiteralPath $sourceMain -Raw) -eq $mainBefore) "app source changed"
     Assert-True ((Get-Content -LiteralPath $sourcePubspec -Raw) -eq $pubspecBefore) "pubspec changed"
+    Assert-True ((Get-Content -LiteralPath $sourceLock -Raw) -eq $lockBefore) "pubspec.lock changed"
     Assert-True ((Read-Norm (Join-Path $app ".dart_tool\marker")) -eq "keep-cache") "cache marker changed"
     if (Test-Path -LiteralPath $trace) {
       foreach ($line in (Get-Content -LiteralPath $trace)) {
@@ -415,6 +427,8 @@ if (process.env.PACK_PLANT === "dotenv") fs.writeFileSync(".env", "TOKEN=fixture
   Assert-True ((Read-Norm (Join-Path $dist "server\src\index.js")) -eq "fixture server version two") "build pack dropped server changes"
   Assert-True ((Read-Trace).Contains("--split-debug-info=")) "build did not split debug info"
   Assert-True ((Read-Trace).Contains("build windows --release")) "flutter release args missing"
+  Assert-True ((Read-Trace).Contains("pub get --enforce-lockfile --no-example")) "locked dependency resolution missing"
+  Assert-True ((Read-Trace).Contains("build windows --release --no-pub")) "build can resolve dependencies again"
   Assert-Clean
   $pass++
   Write-Host "PASS: clean temp build restores Release, saves debug info, and strips dist pdb"

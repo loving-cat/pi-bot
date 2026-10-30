@@ -15,6 +15,10 @@ class ModelPickerField extends StatelessWidget {
     required this.controller,
     this.label = '模型（留空用默认）',
     this.onPicked,
+    this.onCommitted,
+    this.enabled = true,
+    this.helperText,
+    this.canCommit,
   });
 
   final TextEditingController controller;
@@ -23,26 +27,40 @@ class ModelPickerField extends StatelessWidget {
   /// 选完/手改后通知调用方重建 —— 思考等级区域要跟着模型变。
   final ValueChanged<String>? onPicked;
 
+  /// 列表确认或手动输入提交时触发，不随每个输入字符保存。
+  final ValueChanged<String>? onCommitted;
+  final bool enabled;
+  final String? helperText;
+
+  /// 对话框返回时确认选择仍属于原调用对象。
+  final bool Function()? canCommit;
+
   @override
   Widget build(BuildContext context) {
     return TextField(
       controller: controller,
+      enabled: enabled,
       decoration: InputDecoration(
         labelText: label,
         hintText: 'provider/model-id',
+        helperText: helperText,
+        helperMaxLines: 2,
         suffixIcon: IconButton(
           tooltip: '从列表里选',
           icon: const Icon(LucideIcons.list, size: 18),
-          onPressed: () => _pick(context),
+          onPressed: enabled ? () => _pick(context) : null,
         ),
       ),
       onChanged: onPicked,
+      onSubmitted: (value) {
+        if (canCommit?.call() != false) onCommitted?.call(value);
+      },
     );
   }
 
   Future<void> _pick(BuildContext context) async {
     final state = AppScope.read(context);
-    final groups = state.modelGroups;
+    final groups = state.modelGroups.where((group) => group.enabled).toList();
 
     final picked = await showDialog<String>(
       context: context,
@@ -58,8 +76,7 @@ class ModelPickerField extends StatelessWidget {
               children: [
                 if (groups.isEmpty)
                   const Text(
-                    '你还没配模型组。\n去「设置 → 模型组」加一个 baseUrl + key，\n'
-                    '之后这里的模型就能直接选了。',
+                    '还没有可用的模型组。\n请到「设置 → 模型组」添加或启用模型组。',
                     style: TextStyle(
                       fontSize: PB.fsXs,
                       color: PB.textQuaternary,
@@ -116,10 +133,12 @@ class ModelPickerField extends StatelessWidget {
         ],
       ),
     );
+    if (!context.mounted || canCommit?.call() == false) return;
     if (picked != null && picked.isNotEmpty) {
       controller.text = picked;
       // 选完要让调用方重建：思考等级区域跟着模型走
       onPicked?.call(picked);
+      onCommitted?.call(picked);
     }
   }
 }

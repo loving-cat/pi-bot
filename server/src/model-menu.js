@@ -24,18 +24,25 @@ export function menuSlugs() {
   return [...new Set(menuEntries().flatMap((m) => m.slugs))];
 }
 
+/** 完整标识优先；别名和裸后缀必须唯一，歧义不按目录顺序猜测。 */
+export function matchMenuEntry(input, entries = menuEntries()) {
+  const text = String(input ?? '').trim();
+  if (!text) return { entry: null, reason: 'missing', candidates: [] };
+  const key = text.toLowerCase();
+  const tiers = [
+    entries.filter((entry) => entry.slugs.includes(text)),
+    entries.filter((entry) => entry.slugs.some((slug) => slug.toLowerCase() === key)),
+    entries.filter((entry) => entry.alias.toLowerCase() === key),
+    entries.filter((entry) => entry.slugs.some((slug) => slug.toLowerCase().endsWith(`/${key}`))),
+  ];
+  const matches = tiers.find((items) => items.length) ?? [];
+  return { entry: matches.length === 1 ? matches[0] : null,
+    reason: matches.length > 1 ? 'ambiguous' : matches.length ? null : 'missing',
+    candidates: [...new Set(matches.flatMap((entry) => entry.slugs))] };
+}
+
 export function findMenuEntry(input, entries = menuEntries()) {
-  if (!input) return null;
-  const key = String(input).trim().toLowerCase();
-  return (
-    entries.find((m) => m.alias.toLowerCase() === key) ??
-    entries.find((m) => m.slugs.some((s) => s.toLowerCase() === key)) ??
-    // 也允许直接用 `<组id>/<模型id>` 或唯一后缀指定
-    entries.find((m) =>
-      m.slugs.some((s) => s.toLowerCase().endsWith(`/${key}`)),
-    ) ??
-    null
-  );
+  return matchMenuEntry(input, entries).entry;
 }
 
 /**
@@ -44,23 +51,28 @@ export function findMenuEntry(input, entries = menuEntries()) {
  * 判定 alive：
  *   · 存在新鲜结论且可用 → true；
  *   · 存在新鲜结论但均不可用 → false；
- *   · 无新鲜结论（过期或从未探活）→ 有历史可用结论时视为可用，等待后台重探。
- * @returns {{entry:object, slug:string, alive:boolean}|null}
+ *   · 无新鲜结论（过期或从未探活）→ 标为未验证，允许选择。
+ * @returns {{entry:object, slug:string, alive:boolean, status:string}|null}
  */
 export function resolveMenu(input, health, entries) {
   const entry = findMenuEntry(input, entries);
   if (!entry) return null;
-  const alive = entry.slugs.filter((s) => health?.isKnownGood(s));
-  // 这一族现在有没有新鲜结论？有新鲜结论且都不是好的 → 真的不能用（照旧判死）
-  const fresh = health?.hasFreshFor?.(entry.slugs);
-  const staleGood = entry.slugs.filter((s) => health?.wasGood?.(s));
-  // 没有新鲜结论：有历史可用结论（或全库都没结论）就先乐观放行，后台重探完会给真结论
-  const optimistic =
-      !alive.length &&
-      fresh !== true &&
-      (staleGood.length > 0 || health?.hasFresh?.() === false);
-  const slug = alive[0] ?? staleGood[0] ?? entry.slugs[0];
-  return { entry, slug, alive: alive.length > 0 || !health || optimistic };
+  const text = String(input).trim();
+  const preferred = entry.slugs.find((slug) => slug === text)
+    ?? entry.slugs.find((slug) => slug.toLowerCase() === text.toLowerCase());
+  return resolveEntry(entry, health, preferred);
+}
+
+function resolveEntry(entry, health, preferred = null) {
+  const slugs = preferred ? [preferred] : entry.slugs;
+  const record = typeof health?.peek === 'function' ? (slug) => health.peek(slug) : null;
+  const verified = slugs.filter((slug) => record ? record(slug)?.ok === true : health?.isKnownGood?.(slug));
+  const unknown = slugs.filter((slug) => !verified.includes(slug) &&
+    (record ? record(slug) == null : health?.isKnownDead?.(slug) !== true && health?.hasFreshFor?.([slug]) !== true));
+  const staleGood = unknown.filter((slug) => health?.wasGood?.(slug));
+  const slug = verified[0] ?? staleGood[0] ?? unknown[0] ?? slugs[0];
+  const status = verified.length ? 'verified' : unknown.length ? 'unverified' : 'unavailable';
+  return { entry, slug, alive: status !== 'unavailable', status };
 }
 
 /**
@@ -71,9 +83,11 @@ export function renderMenu(entries, health) {
   if (!entries.length) return EMPTY_MENU_HINT;
   return entries
     .map((entry) => {
-      const r = resolveMenu(entry.alias, health, entries);
-      const mark = r?.alive ? '★' : '✗';
-      return `${mark} ${entry.alias.padEnd(14)} → ${(r?.slug ?? '?').padEnd(44)} ${entry.use}`;
+      const r = resolveEntry(entry, health);
+      const mark = r?.status === 'verified' ? '★' : r?.status === 'unverified' ? '?' : '✗';
+      const status = r?.status === 'verified' ? '实测可用' : r?.status === 'unverified' ? '未验证，可选择' : '实测不可用';
+      const capacity = Number.isFinite(entry.contextWindow) ? `；上下文 ${entry.contextWindow}` : '';
+      return `${mark} ${entry.alias.padEnd(14)} → ${(r?.slug ?? '?').padEnd(44)} ${entry.use}（${status}${capacity}）`;
     })
     .join('\n');
 }
@@ -87,11 +101,15 @@ export function menuText(health) {
 export function defaultMenuSlug(health) {
   const entries = menuEntries();
   for (const entry of entries) {
-    const r = resolveMenu(entry.alias, health, entries);
+    const r = resolveEntry(entry, health);
+    if (r?.status === 'verified') return r.slug;
+  }
+  for (const entry of entries) {
+    const r = resolveEntry(entry, health);
     if (r?.alive) return r.slug;
   }
   const first = entries[0];
-  return first ? (resolveMenu(first.alias, health, entries)?.slug ?? null) : null;
+  return first ? (resolveEntry(first, health)?.slug ?? null) : null;
 }
 
 export function logMenu(health) {
