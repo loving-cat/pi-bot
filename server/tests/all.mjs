@@ -66,6 +66,8 @@ const TESTS = [
   'secrets-regress',
   'local-csrf',
   'mcp-credential-target',
+  'render-html',
+  'memory-policy',
 ];
 
 let failed = 0;
