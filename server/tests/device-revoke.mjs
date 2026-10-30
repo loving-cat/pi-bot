@@ -53,7 +53,8 @@ function openWs(token) {
 }
 
 async function call(pathname, { method = 'GET' } = {}) {
-  const res = await fetch(`http://127.0.0.1:${port}${pathname}`, { method });
+  const headers = method !== 'GET' ? { 'x-pi-bot-client': 'test' } : {};
+  const res = await fetch(`http://127.0.0.1:${port}${pathname}`, { method, headers });
   return { status: res.status, body: await res.json().catch(() => null) };
 }
 

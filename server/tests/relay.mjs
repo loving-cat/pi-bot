@@ -27,6 +27,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ---------- 假 host：模拟电脑上的 pi-bot 服务端 ----------
 const host = http.createServer((req, res) => {
+  if (req.url.startsWith('/headers')) {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify({ client: req.headers['x-pi-bot-client'] ?? null, cookie: req.headers.cookie ?? null }));
+  }
   if (req.url.startsWith('/health')) {
     res.writeHead(200, { 'content-type': 'application/json' });
     return res.end(JSON.stringify({ ok: true, who: 'host' }));
@@ -97,6 +101,16 @@ await test('★ HTTP 转发：POST 带 body，原样到达', async () => {
   assert.equal(r.status, 200);
   const body = await r.json();
   assert.equal(body.echo, payload);
+});
+
+await test('★ 客户端标记头 x-pi-bot-client 会被转发，其它杂头不转', async () => {
+  const r = await fetch(`${base}/${code}/headers`, {
+    headers: { 'x-pi-bot-client': 'app', cookie: 'fake=1' },
+  });
+  assert.equal(r.status, 200);
+  const body = await r.json();
+  assert.equal(body.client, 'app');
+  assert.equal(body.cookie, null);
 });
 
 await test('★ WebSocket 桥接：来回收发', async () => {

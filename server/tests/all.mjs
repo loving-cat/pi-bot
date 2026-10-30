@@ -64,6 +64,8 @@ const TESTS = [
   'relay-openstream',
   'ssrf-regress',
   'secrets-regress',
+  'local-csrf',
+  'mcp-credential-target',
 ];
 
 let failed = 0;

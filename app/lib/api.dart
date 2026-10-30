@@ -27,8 +27,14 @@ class Api {
   final String baseUrl;
   String? token;
 
+  /// 客户端标记头：服务端要求所有改状态的请求（POST/PUT/PATCH/DELETE，含上传）都带它。
+  /// 浏览器跨站发自定义头必须先过 CORS 预检，服务端从不放行，所以恶意网页伪造不了。
+  static const clientHeader = 'x-pi-bot-client';
+  static const clientHeaderValue = 'app';
+
   Map<String, String> get _headers => {
     'content-type': 'application/json; charset=utf-8',
+    clientHeader: clientHeaderValue,
     if (token != null && token!.isNotEmpty) 'authorization': 'Bearer $token',
   };
 
@@ -132,6 +138,7 @@ class Api {
             if (token != null && token!.isNotEmpty)
               'authorization': 'Bearer $token',
             'content-type': 'application/octet-stream',
+            clientHeader: clientHeaderValue,
           },
           body: bytes,
         )
@@ -163,6 +170,7 @@ class Api {
               if (token != null && token!.isNotEmpty)
                 'authorization': 'Bearer $token',
               'content-type': 'application/octet-stream',
+              clientHeader: clientHeaderValue,
             },
             body: bytes.sublist(offset, end),
           )
@@ -191,7 +199,10 @@ class Api {
     final res = await http
         .post(
           Uri.parse('$baseUrl/api/pair'),
-          headers: const {'content-type': 'application/json; charset=utf-8'},
+          headers: const {
+            'content-type': 'application/json; charset=utf-8',
+            clientHeader: clientHeaderValue,
+          },
           body: jsonEncode({'code': code, 'deviceName': deviceName}),
         )
         .timeout(const Duration(seconds: 20));

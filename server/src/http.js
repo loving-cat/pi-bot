@@ -113,6 +113,53 @@ export const LOCAL_DEVICE = {
   isLocal: true,
 };
 
+/**
+ * 桌面端 / 手机 App 在所有改状态的请求上都带这个头。
+ * 浏览器跨站发自定义头必须先过 CORS 预检，而本服务从不放行预检，
+ * 所以恶意网页伪造不了它（text/plain 表单、no-cors fetch 都带不上）。
+ */
+export const CLIENT_HEADER = 'x-pi-bot-client';
+const STATE_CHANGING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+/** content-type 的媒体类型（; 前面那段）必须严格是 application/json，参数（charset 等）不管。 */
+export function isJsonContentType(value) {
+  const media = String(value ?? '').split(';')[0].trim().toLowerCase();
+  return media === 'application/json';
+}
+
+/**
+ * Origin 是否就是本服务自己（同协议族、同 host、同端口）。
+ * 和 ws.js 的握手校验同一个思路：浏览器页面只有同源才算自己人。
+ */
+export function isSameOrigin(req) {
+  const origin = req.headers?.origin;
+  if (!origin) return false;
+  let o;
+  try {
+    o = new URL(origin);
+  } catch {
+    return false; // 包括 Origin: null（沙箱 iframe、file://）
+  }
+  if (o.protocol !== 'http:' && o.protocol !== 'https:') return false;
+  const host = String(req.headers?.host ?? '').trim().toLowerCase();
+  return Boolean(host) && o.host.toLowerCase() === host && hostAllowed(o.host);
+}
+
+/**
+ * 本机免 token 只给原生客户端（不带 Origin）和本服务自己的页面（同源 Origin）。
+ * 其它网页即使跑在本机浏览器里、请求来自回环地址，也一律要 token。
+ */
+export function localTrustAllowed(req) {
+  if (!isLoopback(req)) return false;
+  if (!req.headers?.origin) return true;
+  return isSameOrigin(req);
+}
+
+/** 浏览器明确声明是跨站发起的请求：不管带不带 token 都不处理。 */
+export function isCrossSiteFetch(req) {
+  return String(req.headers?.['sec-fetch-site'] ?? '').trim().toLowerCase() === 'cross-site';
+}
+
 function authenticate(req, url) {
   const token = extractToken(req, url);
   if (token) {
@@ -123,8 +170,8 @@ function authenticate(req, url) {
     if (device) store.touchDevice(token);
     return device;
   }
-  // 没带 token：本机直接放行
-  if (isLoopback(req)) return { ...LOCAL_DEVICE, lastSeenAt: Date.now() };
+  // 没带 token：本机原生客户端 / 同源页面才放行（跨站网页不行）
+  if (localTrustAllowed(req)) return { ...LOCAL_DEVICE, lastSeenAt: Date.now() };
   return null;
 }
 
@@ -180,6 +227,11 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
       return send(res, 403, { error: 'bad host' });
     }
 
+    // ★ 浏览器标了 cross-site 的请求一律拒：本服务没有任何需要被别的网站调用的接口。
+    if (isCrossSiteFetch(req)) {
+      return send(res, 403, { error: 'cross-site request rejected' });
+    }
+
     if (req.method === 'OPTIONS') return send(res, 204, {});
 
     try {
@@ -226,13 +278,19 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
 
       if (!device) return send(res, 401, { error: 'unauthorized' });
 
+      // ★ 改状态的请求（含上传、删除）必须带客户端自定义头：跨站网页带不上它。
+      if (STATE_CHANGING_METHODS.has(req.method) && !String(req.headers[CLIENT_HEADER] ?? '').trim()) {
+        return send(res, 403, { error: `缺少 ${CLIENT_HEADER} 请求头` });
+      }
+
       // ★ 状态变更请求必须声明 JSON：浏览器跨域发 text/plain 不会触发预检，
-      //   光靠 CORS 挡不住"只求副作用不求回显"的攻击。上传接口例外。
+      //   光靠 CORS 挡不住"只求副作用不求回显"的攻击。
+      //   只认媒体类型本身：text/plain; charset=application/json 这种不算。
+      //   上传接口例外（传的是原始字节），但它同样要过上面的自定义头校验。
       const isUploadRoute =
         pathname === '/api/uploads' || pathname.startsWith('/api/uploads/');
       if (!isUploadRoute && ['POST', 'PATCH', 'PUT'].includes(req.method)) {
-        const ct = String(req.headers['content-type'] ?? '').toLowerCase();
-        if (!ct.includes('application/json')) {
+        if (!isJsonContentType(req.headers['content-type'])) {
           return send(res, 415, { error: 'content-type 必须是 application/json' });
         }
       }

@@ -71,10 +71,40 @@ export function openMcpCredentials(record, key) {
   return credentialPairs(record?.[pairField(record)], pairField(record));
 }
 
-/** 合并当前类型的凭据；清除指令先执行，非空新值随后覆盖同名键。 */
-export function mergeMcpCredentials(record, patch, key, type) {
+function urlOrigin(value) {
+  const text = String(value ?? '').trim();
+  try {
+    return new URL(text).origin.toLowerCase();
+  } catch {
+    return text;
+  }
+}
+
+const textOf = (value) => String(value ?? '').trim();
+const argsOf = (value) => JSON.stringify(Array.isArray(value) ? value.map(textOf) : []);
+
+/**
+ * 连接目标是否变了：类型、地址的 origin（协议+主机+端口）、命令、参数、工作目录。
+ * 目标变了就不能沿用旧凭据，否则把地址改成别处就能把已存的密钥带过去。
+ */
+export function mcpTargetChanged(previous, next) {
+  if (!previous || !next) return false;
+  const type = next.type ?? 'stdio';
+  if ((previous.type ?? type) !== type) return true;
+  if (type === 'http') return urlOrigin(previous.url) !== urlOrigin(next.url);
+  return textOf(previous.command) !== textOf(next.command)
+    || argsOf(previous.args) !== argsOf(next.args)
+    || textOf(previous.cwd) !== textOf(next.cwd);
+}
+
+/**
+ * 合并当前类型的凭据；清除指令先执行，非空新值随后覆盖同名键。
+ * 传入 next（规范化后的新配置）时，目标一变就丢弃旧凭据，只保留本次新填的。
+ */
+export function mergeMcpCredentials(record, patch, key, type, next = null) {
   const oldType = record?.type ?? type;
-  const base = patch?.clearCredentials === true || oldType !== type
+  const targetChanged = Boolean(record && next && mcpTargetChanged(record, next));
+  const base = patch?.clearCredentials === true || oldType !== type || targetChanged
     ? {}
     : openMcpCredentials(record ?? {}, key);
   const field = type === 'http' ? 'headers' : 'env';
