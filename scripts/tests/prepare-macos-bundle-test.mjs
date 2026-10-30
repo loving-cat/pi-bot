@@ -12,7 +12,8 @@ import {
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-bot-bundle-test-'));
 const home = path.join(root, 'fixture-home');
-const toolchain = path.join(home, 'SDK.app/Contents/Developer/Toolchains/Default.xctoolchain/usr/lib/swift/macosx');
+// rpath entries from otool are always POSIX-style, even when this test runs on Windows.
+const toolchain = path.posix.join(home.split(path.sep).join('/'), 'SDK.app/Contents/Developer/Toolchains/Default.xctoolchain/usr/lib/swift/macosx');
 let passed = 0;
 function test(name, fn) { fn(); passed++; console.log(`✓ ${name}`); }
 const macho = Buffer.from('cffaedfe00000000', 'hex');
@@ -139,7 +140,9 @@ try {
   test('服务端文件残留本机目录也拒绝发布', () => {
     const app = fixture();
     const file = path.join(app, 'Contents/Resources/server/config.json');
-    fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, JSON.stringify({ fixture: home }));
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    // Write the raw directory bytes: JSON.stringify would double Windows backslashes.
+    fs.writeFileSync(file, `{"fixture": "${home}"}`);
     assert.throws(() => prepareMacosBundle(app, { home, run: stub }), /1 个文件包含本机目录/);
   });
   test('只读检查不会 strip 或修改 rpath', () => {

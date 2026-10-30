@@ -5,11 +5,16 @@
 #   .\scripts\pack-windows.ps1 -WithNode -Zip  # bundle node.exe
 #   .\scripts\pack-windows.ps1 -NoBuild        # reuse the existing Release build
 #   .\scripts\pack-windows.ps1 -SkipDeps       # do not preinstall server deps
+#   .\scripts\pack-windows.ps1 -BuildRoot E:\builds  # pick the neutral build root
 #   .\scripts\pack-windows.ps1 -Help           # this text
 #
-# The build copies app sources into a temp directory, excluding caches and user
+# The build copies app sources into a neutral build root, excluding caches and user
 # project state, enforces pubspec.lock, then builds with --no-pub. Output is copied
-# back to the Release folder. The temp copy is removed on success or failure.
+# back to the Release folder. The build root defaults to .pi-bot-build at the root
+# of the checkout's drive; -BuildRoot overrides it. It must be an absolute path
+# outside the user profile and outside the checkout. Each run builds in its own
+# marked folder, holds a lock on the build root, and removes only that folder.
+# The build needs nuget.exe on PATH; this script never downloads it.
 # -NoBuild skips Flutter. Packaging does not need Git and does not edit sources.
 #
 # The staged package is rejected when it still contains local absolute paths,
@@ -24,6 +29,7 @@ param(
   [switch]$SkipDeps,
   [switch]$NoBuild,
   [switch]$Zip,
+  [string]$BuildRoot = "",
   [switch]$Help
 )
 
@@ -46,6 +52,38 @@ function Remove-Tree([string]$Path) {
   if ($Path -and (Test-Path -LiteralPath $Path)) {
     Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue
   }
+}
+
+function Get-FullPath([string]$Path) {
+  $resolved = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
+  return [System.IO.Path]::GetFullPath($resolved)
+}
+
+function Test-PathUnder([string]$Child, [string]$Parent) {
+  if (-not $Child -or -not $Parent) { return $false }
+  $sep = [string][System.IO.Path]::DirectorySeparatorChar
+  $c = $Child.TrimEnd('\', '/') + $sep
+  $p = $Parent.TrimEnd('\', '/') + $sep
+  $mode = [System.StringComparison]::Ordinal
+  if ($env:OS -eq "Windows_NT") { $mode = [System.StringComparison]::OrdinalIgnoreCase }
+  return $c.StartsWith($p, $mode)
+}
+
+$BuildMarkerName = ".pi-bot-build-run"
+
+# Delete a build folder only when it carries this run's marker.
+function Remove-BuildRun([string]$Path, [string]$RunId) {
+  if (-not $Path -or -not $RunId -or -not (Test-Path -LiteralPath $Path)) { return }
+  $marker = Join-Path $Path $BuildMarkerName
+  $owned = $false
+  if (Test-Path -LiteralPath $marker -PathType Leaf) {
+    $owned = (([System.IO.File]::ReadAllText($marker)).Trim() -eq $RunId)
+  }
+  if (-not $owned) {
+    Write-Host "WARNING: build folder has no matching marker; it was kept" -ForegroundColor Yellow
+    return
+  }
+  Remove-Tree $Path
 }
 
 function Publish-DebugInfo([string]$DebugDir, [string]$Built, [string]$Destination) {
@@ -135,7 +173,10 @@ function Publish-ReleaseTree([string]$Built, [string]$Destination) {
 if ($args.Count -gt 0) { Fail "unknown parameter" }
 
 if ($Help) {
-  Get-Content -Path $PSCommandPath | Select-Object -First 20
+  foreach ($line in (Get-Content -Path $PSCommandPath)) {
+    if (-not $line.StartsWith("#")) { break }
+    Write-Output $line
+  }
   exit 0
 }
 
@@ -146,6 +187,32 @@ $outParent = Split-Path -Parent $outDir
 $outName = Split-Path -Leaf $outDir
 $zipPath = "$outDir.zip"
 $stageScript = Join-Path $PSScriptRoot "stage-app-build.mjs"
+$buildBase = $null
+if (-not $NoBuild) {
+  if ($BuildRoot) {
+    $absolute = $false
+    if ($env:OS -eq "Windows_NT") { $absolute = ($BuildRoot -match '^[A-Za-z]:[\\/]' -or $BuildRoot -match '^[\\/]{2}[^\\/]') }
+    else { $absolute = $BuildRoot.StartsWith("/") }
+    if (-not $absolute) { Fail "-BuildRoot must be an absolute path" }
+    $buildBase = Get-FullPath $BuildRoot
+  } else {
+    $qualifier = ""
+    try { $qualifier = Split-Path -Qualifier $root -ErrorAction Stop } catch { $qualifier = "" }
+    if ($qualifier) {
+      $buildBase = $qualifier + [System.IO.Path]::DirectorySeparatorChar + ".pi-bot-build"
+    } else {
+      $buildBase = Join-Path ([System.IO.Path]::GetTempPath()) ".pi-bot-build"
+    }
+  }
+  $profileDir = $env:USERPROFILE
+  if (-not $profileDir) { $profileDir = $HOME }
+  if ($profileDir -and (Test-PathUnder $buildBase (Get-FullPath $profileDir))) {
+    Fail "build root must be outside the user profile (pass -BuildRoot)"
+  }
+  if (Test-PathUnder $buildBase (Get-FullPath $root)) {
+    Fail "build root must be outside the source checkout (pass -BuildRoot)"
+  }
+}
 $prepareScript = Join-Path $PSScriptRoot "prepare-windows-bundle.mjs"
 
 $nodeCmd = Get-Command node -ErrorAction SilentlyContinue
@@ -170,6 +237,10 @@ if (-not $version) { Fail "cannot read version from server/package.json" }
 Write-Host "server version: $version (node $nodeVersion)"
 
 $buildWork = $null
+$runId = $null
+$buildLock = $null
+$lockPath = $null
+$createdBase = $false
 $stageDir = $null
 $backupDir = $null
 $backupZip = $null
@@ -180,9 +251,31 @@ $stageReady = $false
 try {
   if (-not $NoBuild) {
     if (-not (Get-Command flutter -ErrorAction SilentlyContinue)) { throw "flutter is not on PATH" }
-    $buildWork = Join-Path ([System.IO.Path]::GetTempPath()) ("pi-bot-windows-build-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
+    # Some Windows plugins fetch nuget.exe from the network when it is missing.
+    # Require a preinstalled copy instead of letting the build download one.
+    $nugetName = "nuget"
+    if ($env:OS -eq "Windows_NT") { $nugetName = "nuget.exe" }
+    if (-not (Get-Command $nugetName -CommandType Application -ErrorAction SilentlyContinue)) {
+      throw "nuget.exe is not on PATH; install the NuGet CLI yourself (see docs/WINDOWS.md). This script never downloads it"
+    }
     try {
-      New-Item -ItemType Directory -Path $buildWork -Force | Out-Null
+      if (-not (Test-Path -LiteralPath $buildBase)) {
+        New-Item -ItemType Directory -Path $buildBase -Force | Out-Null
+        $createdBase = $true
+      }
+      $lockPath = Join-Path $buildBase ".pack-windows.lock"
+      try {
+        $buildLock = [System.IO.File]::Open($lockPath, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+      } catch {
+        throw "build root is busy: another pack holds its lock"
+      }
+      $newId = [guid]::NewGuid().ToString("N")
+      $runDir = Join-Path $buildBase ("pi-bot-windows-build-" + $newId.Substring(0, 8))
+      if (Test-Path -LiteralPath $runDir) { throw "build folder name collision; retry" }
+      New-Item -ItemType Directory -Path $runDir | Out-Null
+      $buildWork = $runDir
+      $runId = $newId
+      [System.IO.File]::WriteAllText((Join-Path $buildWork $BuildMarkerName), $runId)
       $appSource = Join-Under $root @("app")
       $appCopy = Join-Under $buildWork @("app")
       $sourceLock = Join-Path $appSource "pubspec.lock"
@@ -219,7 +312,17 @@ try {
       Publish-DebugInfo $debugDir $built (Join-Under $root @("app", "build", "debug-info", "windows"))
       Publish-ReleaseTree $built $release
     } finally {
-      Remove-Tree $buildWork
+      Remove-BuildRun $buildWork $runId
+      if ($buildLock) {
+        $buildLock.Dispose()
+        $buildLock = $null
+        Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
+      }
+      if ($createdBase -and (Test-Path -LiteralPath $buildBase)) {
+        if (@(Get-ChildItem -LiteralPath $buildBase -Force).Count -eq 0) {
+          Remove-Item -LiteralPath $buildBase -Force -ErrorAction SilentlyContinue
+        }
+      }
     }
   }
 
@@ -352,7 +455,8 @@ try {
   }
   exit 1
 } finally {
-  Remove-Tree $buildWork
+  Remove-BuildRun $buildWork $runId
+  if ($buildLock) { $buildLock.Dispose() }
   Remove-Tree $stageDir
   if ($previousMoved -and $backupDir -and (Test-Path -LiteralPath $backupDir)) {
     Write-Host "note: previous package kept" -ForegroundColor Yellow
