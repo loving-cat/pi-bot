@@ -1593,6 +1593,19 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// 应用已确认保存的 Bot；调用方负责核对响应所属的服务端。
+  void applyBotUpdate(Bot bot) {
+    if (_disposed) return;
+    _upsertBot(bot);
+    connectionsRevision++;
+    _notify();
+  }
+
+  void _upsertBot(Bot bot) {
+    final index = bots.indexWhere((item) => item.id == bot.id);
+    bots = index < 0 ? [...bots, bot] : ([...bots]..[index] = bot);
+  }
+
   // ---------------------------------------------------------------- WS
 
   void connect() {
@@ -1852,12 +1865,7 @@ class AppState extends ChangeNotifier {
       case 'bot.created':
         connectionsRevision++;
         final bot = Bot.fromJson((ev['bot'] as Map).cast<String, dynamic>());
-        final idx = bots.indexWhere((b) => b.id == bot.id);
-        if (idx >= 0) {
-          bots = [...bots]..[idx] = bot;
-        } else {
-          bots = [...bots, bot];
-        }
+        _upsertBot(bot);
         break;
 
       case 'bot.deleted':
