@@ -80,6 +80,7 @@ function call(port, pathname, { method = 'GET', token = '', host = null, body = 
           host: host ?? `127.0.0.1:${port}`,
           ...(token ? { authorization: `Bearer ${token}` } : {}),
           ...(body ? { 'content-type': 'application/json' } : {}),
+          ...(method !== 'GET' ? { 'x-pi-bot-client': 'test' } : {}),
         },
       },
       (res) => {

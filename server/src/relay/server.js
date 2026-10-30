@@ -364,10 +364,13 @@ function json(res, status, body) {
   res.end(payload);
 }
 
-/** 转发时只带必要头：鉴权与内容类型 */
+/**
+ * 转发时只带必要头：鉴权、内容类型，以及客户端标记头 x-pi-bot-client
+ * （电脑侧服务端要求所有改状态的请求都带它，少了会 403）。
+ */
 function pickHeaders(url, headers = {}) {
   const out = {};
-  for (const key of ['authorization', 'content-type', 'accept']) {
+  for (const key of ['authorization', 'content-type', 'accept', 'x-pi-bot-client']) {
     if (headers[key]) out[key] = headers[key];
   }
   // token 也可能在 query 里（附件 URL 就是这么用的）

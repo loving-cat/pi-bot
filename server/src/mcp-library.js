@@ -63,7 +63,8 @@ function draft(store, patch, existing) {
   if (reason) return { error: reason };
   const server = normalizeMcpServer(merged);
   if (!server) return { error: 'MCP 服务内容不合法' };
-  const pairs = mergeMcpCredentials(existing, patch, store.secretsKey, server.type);
+  // 目标（类型/地址 origin/命令/参数/工作目录）改了就不沿用旧凭据，防止把已存密钥带去别处
+  const pairs = mergeMcpCredentials(existing, patch, store.secretsKey, server.type, server);
   if (Object.keys(pairs).length) server[server.type === 'http' ? 'headers' : 'env'] = pairs;
   return { server, pairs };
 }

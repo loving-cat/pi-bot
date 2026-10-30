@@ -64,7 +64,7 @@ await test('WS：恶意 Host（DNS rebinding）被拒', async () => {
 });
 
 async function upload(mime, content, name) {
-  const r = await call(`/api/uploads?name=${name}`, { method: 'POST', body: content, headers: { 'content-type': mime } });
+  const r = await call(`/api/uploads?name=${name}`, { method: 'POST', body: content, headers: { 'content-type': mime, 'x-pi-bot-client': 'test' } });
   assert.equal(r.status, 200, `上传失败 ${r.status} ${r.text}`);
   return JSON.parse(r.text).attachment.url;
 }
