@@ -6,7 +6,8 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
-  computePeChecksum, prepareWindowsBundle, rewritePeDebugPaths, scanWindowsBundle,
+  BUILD_ROOT_PLACEHOLDER, buildRootNeedles, computePeChecksum, prepareWindowsBundle,
+  rewriteBuildRootPaths, rewritePeDebugPaths, scanWindowsBundle,
   verifyProductionDependencies, windowsNativeAssetFiles,
 } from '../prepare-windows-bundle.mjs';
 import { fileContainsMarkers, markerVariants } from '../scan-release-tree.mjs';
@@ -204,6 +205,39 @@ try {
     assert.equal(verifyProductionDependencies(server), 1);
     assert.equal(prepareWindowsBundle(dir, { home: otherHome, verifyDependencies: true }).dependencies, 1);
   });
+  // ★ ESM-only 的包（exports 只有 import 条件）在 CJS 解析下会报 not exported，
+  //   但它明明是装好的；不能把它当成缺失。
+  test('★ ESM-only 依赖不会被误报为缺失', () => {
+    const dir = bundle('esm-only');
+    const server = path.join(dir, 'server');
+    const pkgDir = path.join(server, 'node_modules/esm-only-pkg');
+    fs.mkdirSync(path.join(pkgDir, 'dist'), { recursive: true });
+    fs.writeFileSync(path.join(server, 'package.json'),
+      '{"type":"module","dependencies":{"esm-only-pkg":"1.0.0"}}\n');
+    fs.writeFileSync(path.join(pkgDir, 'package.json'),
+      '{"name":"esm-only-pkg","main":"./dist/index.js","exports":{".":{"import":"./dist/index.js"}}}\n');
+    fs.writeFileSync(path.join(pkgDir, 'dist/index.js'), 'export const x = 1;\n');
+    assert.equal(verifyProductionDependencies(server), 1);
+  });
+  test('★ ESM 回退不能放水：包真不在时仍报缺失', () => {
+    const dir = bundle('esm-only-missing');
+    const server = path.join(dir, 'server');
+    fs.mkdirSync(server, { recursive: true });
+    fs.writeFileSync(path.join(server, 'package.json'),
+      '{"type":"module","dependencies":{"not-installed-pkg":"1.0.0"}}\n');
+    assert.throws(() => verifyProductionDependencies(server), /未安装完整（1）/);
+  });
+  test('★ ESM 回退不能放水：exports 指向的入口文件不存在仍报缺失', () => {
+    const dir = bundle('esm-only-broken');
+    const server = path.join(dir, 'server');
+    const pkgDir = path.join(server, 'node_modules/broken-esm-pkg');
+    fs.mkdirSync(pkgDir, { recursive: true });
+    fs.writeFileSync(path.join(server, 'package.json'),
+      '{"type":"module","dependencies":{"broken-esm-pkg":"1.0.0"}}\n');
+    fs.writeFileSync(path.join(pkgDir, 'package.json'),
+      '{"name":"broken-esm-pkg","exports":{".":{"import":"./dist/index.js"}}}\n');
+    assert.throws(() => verifyProductionDependencies(server), /未安装完整（1）/);
+  });
   function cleanPackage(name) {
     const dir = bundle(name);
     fs.mkdirSync(path.join(dir, 'data/flutter_assets'), { recursive: true });
@@ -311,6 +345,82 @@ try {
     const result = JSON.parse(execFileSync(process.execPath, [alias, '--skip-deps', '--check-only', dir], { encoding: 'utf8' }));
     assert.equal(result.removedPdbs, 0);
     assert.equal(result.files >= 1, true);
+  });
+
+  // ★ 构建根路径会以编译期字符串留在 app.so / 插件 dll 里，调试路径改写碰不到它们。
+  const BUILD_ROOT = 'D:\\.pi-bot-build\\pi-bot-windows-build-abc12345';
+  test('构建根占位串本身不含盘符目录与用户名', () => {
+    assert.equal(BUILD_ROOT_PLACEHOLDER.includes('Users'), false);
+    assert.equal(BUILD_ROOT_PLACEHOLDER.includes('.pi-bot'), false);
+  });
+  test('构建根的三种写法都收得到，长的先换', () => {
+    const needles = buildRootNeedles(BUILD_ROOT);
+    assert.equal(needles.length, 3);
+    assert.equal(needles[0].includes('\\\\'), true, 'JSON 双写反斜杠应最长并排第一');
+    assert.equal(needles.some((n) => n.includes('/')), true);
+    assert.deepEqual(buildRootNeedles(''), []);
+    assert.deepEqual(buildRootNeedles('relative\\path'), []);
+  });
+  test('★ 等长替换：字节数不变，后续字节不位移', () => {
+    const sample = Buffer.from(`head ${BUILD_ROOT}\\app\\build tail`, 'utf8');
+    const { buffer, rewritten } = rewriteBuildRootPaths(sample, BUILD_ROOT);
+    assert.equal(rewritten, 1);
+    assert.equal(buffer.length, sample.length, '长度必须一致');
+    assert.equal(buffer.includes(Buffer.from(BUILD_ROOT)), false);
+    assert.equal(buffer.subarray(0, 5).toString('utf8'), 'head ');
+    assert.equal(buffer.subarray(buffer.length - 5).toString('utf8'), ' tail');
+  });
+  test('正斜杠写法的构建根也能换掉', () => {
+    const forward = BUILD_ROOT.replaceAll('\\', '/');
+    const sample = Buffer.from(`file:///${forward}/app/.dart_tool/x`, 'utf8');
+    const { buffer, rewritten } = rewriteBuildRootPaths(sample, BUILD_ROOT);
+    assert.equal(rewritten, 1);
+    assert.equal(buffer.includes(Buffer.from(forward)), false);
+    assert.equal(buffer.length, sample.length);
+  });
+  test('多次出现全部换掉', () => {
+    const sample = Buffer.from(`${BUILD_ROOT} a ${BUILD_ROOT} b ${BUILD_ROOT}`, 'utf8');
+    const { buffer, rewritten } = rewriteBuildRootPaths(sample, BUILD_ROOT);
+    assert.equal(rewritten, 3);
+    assert.equal(buffer.includes(Buffer.from(BUILD_ROOT)), false);
+    assert.equal(buffer.length, sample.length);
+  });
+  test('没传构建根时一个字节都不动', () => {
+    const sample = Buffer.from(`x ${BUILD_ROOT} y`, 'utf8');
+    const { buffer, rewritten } = rewriteBuildRootPaths(sample, null);
+    assert.equal(rewritten, 0);
+    assert.deepEqual(buffer, sample);
+  });
+  test('★ 真实用户路径不受构建根改写影响，扫描依旧拦截', () => {
+    const dir = bundle('build-root-user-path');
+    fs.writeFileSync(path.join(dir, 'data.so.bin'), `${home}\\secret\\state`, 'utf8');
+    assert.throws(
+      () => prepareWindowsBundle(dir, { ...opts, home, buildRoot: BUILD_ROOT }),
+      /包含本机路径/,
+    );
+  });
+  test('★ 构建根地址本身传成 marker 时，改写后不再命中', () => {
+    const dir = bundle('build-root-clean');
+    const so = path.join(dir, 'data', 'app.so');
+    fs.mkdirSync(path.dirname(so), { recursive: true });
+    const forward = BUILD_ROOT.replaceAll('\\', '/');
+    fs.writeFileSync(so, Buffer.from(`\x7fELF....file:///${forward}/app/.dart_tool\0`, 'latin1'));
+    const result = prepareWindowsBundle(dir, {
+      ...opts, markers: [BUILD_ROOT], buildRoot: BUILD_ROOT,
+    });
+    assert.equal(result.rewrittenBuildRoots >= 1, true, '应该改写至少一处');
+    assert.equal(fs.readFileSync(so).includes(Buffer.from(forward)), false);
+  });
+  test('不传 buildRoot 时同一个包会被拦住（证明改写是必要的，不是放宽规则）', () => {
+    const dir = bundle('build-root-control');
+    const so = path.join(dir, 'data', 'app.so');
+    fs.mkdirSync(path.dirname(so), { recursive: true });
+    const forward = BUILD_ROOT.replaceAll('\\', '/');
+    fs.writeFileSync(so, Buffer.from(`\x7fELF....file:///${forward}/app/.dart_tool\0`, 'latin1'));
+    assert.throws(
+      () => prepareWindowsBundle(dir, { ...opts, markers: [BUILD_ROOT] }),
+      /包含本机路径/,
+    );
   });
   console.log(`\n${passed}/${passed} 通过`);
 } finally { fs.rmSync(root, { recursive: true, force: true }); }

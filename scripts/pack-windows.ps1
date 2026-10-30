@@ -398,6 +398,9 @@ try {
   $prepareArgs = @($prepareScript)
   if ($SkipDeps) { $prepareArgs += "--skip-deps" }
   $prepareArgs += $stageOut
+  # The build root path stays inside app.so / plugin dlls as compiled-in strings;
+  # hand it to prepare so it can swap them for a neutral placeholder of equal length.
+  if ($buildWork) { $prepareArgs += @("--build-root", $buildWork) }
   foreach ($marker in @($root, (Join-Under $root @("app")), $release, $buildWork)) {
     if ($marker) { $prepareArgs += @("--marker", $marker) }
   }
