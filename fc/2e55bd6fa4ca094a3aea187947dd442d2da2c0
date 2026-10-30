@@ -1,0 +1,94 @@
+app/lib/connections_draft.dart
+  s_06973911ad2cd6::t_b28dbbdae50a61 1-46
+server/src/http.js
+  s_06973911ad2cd6::t_c06436a9cd4f4a 42-45,168,319,591-592,600,699,702,901
+app/lib/api.dart
+  s_06973911ad2cd6::t_5a449a3dadc349 116-125
+server/src/mcp.js
+  s_06973911ad2cd6::t_8c218f6d9d06b2 1-2,178-180,187-194,307,309
+server/src/mcp-library.js
+  s_06973911ad2cd6::t_1d03a2fa9b4752 1-134
+app/lib/widgets/connections_section.dart
+  s_06973911ad2cd6::t_7f53c8c7fa3e00 1-367
+app/lib/widgets/connections_detail.dart
+  s_06973911ad2cd6::t_0c7f45c857572e 1-278
+server/src/connections-http.js
+  s_06973911ad2cd6::t_c5ff064db43f49 1-16
+server/src/connections.js
+  s_06973911ad2cd6::t_e8864fe13c9555 1-119
+app/lib/widgets/connections_import.dart
+  s_06973911ad2cd6::t_f3a592b1d2925e 1-119
+app/lib/connections_controller.dart
+  s_06973911ad2cd6::t_793a7ee1fc4b14 1-253
+app/lib/connections_models.dart
+  s_06973911ad2cd6::t_b9876692ca802a 1-144
+app/lib/screens/bots_screen.dart
+  s_06973911ad2cd6::t_97fb3ba3fa0992 424
+server/src/mcp-probe-cleanup.js
+  s_06973911ad2cd6::t_924c53e12908c0 1-125
+server/src/mcp-credentials.js
+  s_06973911ad2cd6::t_44f0ca2a888249 1-168
+server/src/mcp-hook.js
+  s_06973911ad2cd6::t_0827fa74cf984c 27,51-60
+app/lib/screens/settings_screen.dart
+  s_06973911ad2cd6::t_f141af7325c293 86,596
+server/src/policy-hook.js
+  s_06973911ad2cd6::t_0e18246dda27dd 17,27,43,47,107-109,111-113,136,138
+server/src/mcp-probe-stdio.js
+  s_06973911ad2cd6::t_579ac75a75bb00 1-94
+app/lib/connections_filters.dart
+  s_06973911ad2cd6::t_34bd44558f9a58 1-67
+server/src/mcp-probe-protocol.js
+  s_06973911ad2cd6::t_2b353e671151e9 1-66
+server/src/mcp-probe-http.js
+  s_06973911ad2cd6::t_cce8938b7d4871 1-191
+app/lib/widgets/mcp_section.dart
+  s_06973911ad2cd6::t_ee0b573bd4f85e 3,5-6,10
+app/lib/widgets/connections_cards.dart
+  s_06973911ad2cd6::t_d40a28fb537f98 1-208
+server/src/mcp-access.js
+  s_06973911ad2cd6::t_13221008587d1e 1-18
+app/lib/widgets/connections_editor.dart
+  s_06973911ad2cd6::t_42ad2a6202e45d 1-388
+docs/MODULE-MAP.md
+  s_06973911ad2cd6::t_1d7c2a847912be 44-47,90-91
+app/lib/models.dart
+  s_06973911ad2cd6::t_066655fd20a201 586-587,614-616,643-645
+server/src/store.js
+  s_06973911ad2cd6::t_68e50395f447b7 40-42,227,233,331,914-924,929,934,939,956-957,1234,1248,1276,1280,1284,1291
+  s_06973911ad2cd6::t_5df8d76c59d7b1 1288
+  s_06973911ad2cd6::t_88ef1b676de0c5 1295
+server/src/mcp-probe.js
+  s_06973911ad2cd6::t_fd69013b46bb81 1-122
+app/lib/app_state.dart
+  s_06973911ad2cd6::t_8d1a451d1d6da0 62,696-702,1627,1667-1680,1853
+  s_06973911ad2cd6::t_5e1289e23a9f43 1864
+server/package.json
+  s_06973911ad2cd6::t_f4a7f41ca0683c 26
+server/src/tools.js
+  s_427eec247080ae::t_22a31d1468def1 841-842,1617
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fc2e55bd6fa4ca094a3aea187947dd442d2da2c0",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    },
+    "s_427eec247080ae": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a186e3-d71d-70c0-934d-6f1c5f2b9483",
+        "model": "unknown"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
