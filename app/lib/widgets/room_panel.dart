@@ -51,8 +51,17 @@ class RoomPanel extends StatefulWidget {
 }
 
 class _RoomPanelState extends State<RoomPanel> {
-  /// 0 = 详情，1 = 资料库，2 = 成员（只有群才有）
-  int _tab = 0;
+  /// 0 = 详情，1 = 资料库，2 = 成员（只有群才有），3 = 记忆。
+  ///
+  /// ★ 真正的值存在 AppState 里并落盘 —— 面板会随会话切换重新挂载，
+  ///   放本地的话用户点开「资料库」、切个会话回来就又跳回「详情」了。
+  int get _tab => AppScope.read(context).panelTab;
+
+  void _selectTab(int i) {
+    // 面板重挂载后要立刻用新 tab 渲染，所以这里同时 setState + 落盘
+    setState(() {});
+    AppScope.read(context).savePanelTab(i);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -64,6 +73,10 @@ class _RoomPanelState extends State<RoomPanel> {
     );
     final isGroup = room.isGroup;
     final ctxInfo = state.contextFor(room.id);
+    // 越界兜底：tab 数是按会话变的（只有群才有「成员」），
+    // 在群里停在「成员」、切到私聊时要夹回合法范围，否则 switch 会落到 default。
+    final tabCount = isGroup ? 4 : 3;
+    final tab = _tab.clamp(0, tabCount - 1);
 
     return Align(
       alignment: Alignment.centerRight,
@@ -81,10 +94,10 @@ class _RoomPanelState extends State<RoomPanel> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               _header(context, room),
-              _tabs(isGroup),
+              _tabs(isGroup, tab),
               Container(height: 1, color: PB.borderTertiary),
               Expanded(
-                child: switch (_tab) {
+                child: switch (tab) {
                   0 => _detail(room, ctxInfo),
                   1 => _Library(room: room),
                   2 when isGroup => _members(context, room),
@@ -100,67 +113,69 @@ class _RoomPanelState extends State<RoomPanel> {
 
   Widget _header(BuildContext context, Room room) {
     final lead = room.leadName;
-    return AvatarHoverScope(child: Padding(
-      padding: const EdgeInsets.fromLTRB(18, 18, 10, 14),
-      child: Column(
-        children: [
-          Align(
-            alignment: Alignment.centerRight,
-            child: IconButton(
-              tooltip: '关闭',
-              // 宽屏是布局里的一栏 —— 关它要走 AppState；
-              // 窄屏是路由 —— 关它是 pop。两个都做，哪条路都成立。
-              onPressed: () {
-                final st = AppScope.read(context);
-                if (st.panelOpen) {
-                  st.closePanel();
-                } else {
-                  Navigator.of(context).maybePop();
-                }
-              },
-              icon: const Icon(LucideIcons.x, size: 18),
-            ),
-          ),
-          if (room.isGroup)
-            GroupBlobAvatar(seeds: room.botIds, size: 64, animate: false)
-          else
-            BlobAvatar(
-              seed: room.botIds.isNotEmpty ? room.botIds.first : room.id,
-              color: PB.colorFor(
-                room.botIds.isNotEmpty ? room.botIds.first : room.id,
+    return AvatarHoverScope(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 18, 10, 14),
+        child: Column(
+          children: [
+            Align(
+              alignment: Alignment.centerRight,
+              child: IconButton(
+                tooltip: '关闭',
+                // 宽屏是布局里的一栏 —— 关它要走 AppState；
+                // 窄屏是路由 —— 关它是 pop。两个都做，哪条路都成立。
+                onPressed: () {
+                  final st = AppScope.read(context);
+                  if (st.panelOpen) {
+                    st.closePanel();
+                  } else {
+                    Navigator.of(context).maybePop();
+                  }
+                },
+                icon: const Icon(LucideIcons.x, size: 18),
               ),
-              size: 64,
-              animate: false,
             ),
-          const SizedBox(height: 12),
-          Text(
-            room.isGroup ? room.name : (lead ?? room.name),
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontSize: PB.fsLg,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          if (room.topic.isNotEmpty) ...[
-            const SizedBox(height: 6),
+            if (room.isGroup)
+              GroupBlobAvatar(seeds: room.botIds, size: 64, animate: false)
+            else
+              BlobAvatar(
+                seed: room.botIds.isNotEmpty ? room.botIds.first : room.id,
+                color: PB.colorFor(
+                  room.botIds.isNotEmpty ? room.botIds.first : room.id,
+                ),
+                size: 64,
+                animate: false,
+              ),
+            const SizedBox(height: 12),
             Text(
-              room.topic,
+              room.isGroup ? room.name : (lead ?? room.name),
               textAlign: TextAlign.center,
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
               style: const TextStyle(
-                fontSize: PB.fsXs,
-                color: PB.textQuaternary,
-                height: 1.5,
+                fontSize: PB.fsLg,
+                fontWeight: FontWeight.w600,
               ),
             ),
+            if (room.topic.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(
+                room.topic,
+                textAlign: TextAlign.center,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: PB.fsXs,
+                  color: PB.textQuaternary,
+                  height: 1.5,
+                ),
+              ),
+            ],
           ],
-        ],
+        ),
       ),
-    ));
+    );
   }
 
-  Widget _tabs(bool isGroup) {
+  Widget _tabs(bool isGroup, int active) {
     final tabs = <String>['详情', '资料库', if (isGroup) '成员', '记忆'];
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 18),
@@ -171,21 +186,21 @@ class _RoomPanelState extends State<RoomPanel> {
               padding: const EdgeInsets.only(right: 8),
               child: InkWell(
                 borderRadius: BorderRadius.circular(PB.rFull),
-                onTap: () => setState(() => _tab = i),
+                onTap: () => _selectTab(i),
                 child: Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 14,
                     vertical: 6,
                   ),
                   decoration: BoxDecoration(
-                    color: _tab == i ? PB.bgActive : Colors.transparent,
+                    color: active == i ? PB.bgActive : Colors.transparent,
                     borderRadius: BorderRadius.circular(PB.rFull),
                   ),
                   child: Text(
                     tabs[i],
                     style: TextStyle(
                       fontSize: PB.fsXs,
-                      color: _tab == i ? PB.textPrimary : PB.textTertiary,
+                      color: active == i ? PB.textPrimary : PB.textTertiary,
                     ),
                   ),
                 ),
@@ -222,8 +237,7 @@ class _RoomPanelState extends State<RoomPanel> {
           // ★ 就地改运行参数（用户：“不是应该在胶囊点击后的右侧侧边栏 有一个
           //   可以调模型 上下文窗口 思考等级之类的吗？”）。
           //   谁说了算：私聊是对方，群聊是负责人 —— 就是替这个会话拍板的那个 bot。
-          if (_primaryBot(room) case final bot?)
-            BotRunSection(bot: bot),
+          if (_primaryBot(room) case final bot?) BotRunSection(bot: bot),
         ],
       ),
     );
@@ -273,8 +287,9 @@ class _RoomPanelState extends State<RoomPanel> {
   Widget _members(BuildContext context, Room room) {
     final state = AppScope.of(context);
     // 花名册里还没进来的
-    final outsiders =
-        state.bots.where((b) => !room.botIds.contains(b.id)).toList();
+    final outsiders = state.bots
+        .where((b) => !room.botIds.contains(b.id))
+        .toList();
     return ListView(
       padding: const EdgeInsets.fromLTRB(10, 8, 10, 24),
       children: [
@@ -488,43 +503,51 @@ class _MemberRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final b = bot;
     if (b == null) return const SizedBox.shrink();
-    return AvatarHoverScope(child: Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        children: [
-          BlobAvatar(
-            seed: b.id,
-            color: PB.colorFor(b.id),
-            size: 30,
-            animate: false,
-            followPointer: false,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              b.name,
-              style: const TextStyle(fontSize: PB.fsSm, color: PB.textPrimary),
+    return AvatarHoverScope(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: Row(
+          children: [
+            BlobAvatar(
+              seed: b.id,
+              color: PB.colorFor(b.id),
+              size: 30,
+              animate: false,
+              followPointer: false,
             ),
-          ),
-          if (isLead)
-            const Padding(
-              padding: EdgeInsets.only(right: 8),
+            const SizedBox(width: 10),
+            Expanded(
               child: Text(
-                '负责人',
-                style: TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
+                b.name,
+                style: const TextStyle(
+                  fontSize: PB.fsSm,
+                  color: PB.textPrimary,
+                ),
               ),
             ),
-          if (canRemove)
-            TextButton(
-              onPressed: onRemove,
-              child: const Text(
-                '移除',
-                style: TextStyle(fontSize: PB.fsXs, color: PB.danger),
+            if (isLead)
+              const Padding(
+                padding: EdgeInsets.only(right: 8),
+                child: Text(
+                  '负责人',
+                  style: TextStyle(
+                    fontSize: PB.fsXxs,
+                    color: PB.textQuaternary,
+                  ),
+                ),
               ),
-            ),
-        ],
+            if (canRemove)
+              TextButton(
+                onPressed: onRemove,
+                child: const Text(
+                  '移除',
+                  style: TextStyle(fontSize: PB.fsXs, color: PB.danger),
+                ),
+              ),
+          ],
+        ),
       ),
-    ));
+    );
   }
 }
 
@@ -562,9 +585,7 @@ class _AddMemberButtonState extends State<_AddMemberButton> {
             color: enabled && _hover ? PB.bgHover : Colors.transparent,
             borderRadius: BorderRadius.circular(10),
             border: Border.all(
-              color: enabled && _hover
-                  ? PB.borderSecondary
-                  : PB.borderTertiary,
+              color: enabled && _hover ? PB.borderSecondary : PB.borderTertiary,
             ),
           ),
           child: Row(
@@ -662,12 +683,15 @@ class _Library extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 4),
       child: InkWell(
         borderRadius: BorderRadius.circular(PB.rLg),
-        // 图片直接看图，其他弹站内预览（都是消息里那套，行为一致）
+        // 图片直接看图；能进展示栏的送右侧；
+        // 剩下的（HTML 沙箱预览/纯文本）才弹站内预览。
+        //
+        // 注意：资料库在展示栏**左边**那一栏里，所以这里送展示栏不会自我循环。
         onTap: url == null
             ? null
             : () => a.isImage
                   ? showImageViewer(context, url, a.name)
-                  : showFilePreview(context, file: a, url: url),
+                  : openAttachmentByBestRoute(context, a, url),
         child: Container(
           padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
           decoration: BoxDecoration(
@@ -825,8 +849,11 @@ class _MemoryTabState extends State<_MemoryTab> {
                 padding: const EdgeInsets.fromLTRB(18, 14, 10, 10),
                 child: Row(
                   children: [
-                    const Icon(LucideIcons.fileText,
-                        size: 15, color: PB.textTertiary),
+                    const Icon(
+                      LucideIcons.fileText,
+                      size: 15,
+                      color: PB.textTertiary,
+                    ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
@@ -893,7 +920,9 @@ class _MemoryTabState extends State<_MemoryTab> {
                     child: Container(
                       padding: const EdgeInsets.fromLTRB(6, 4, 10, 4),
                       decoration: BoxDecoration(
-                        color: b.id == _botId ? PB.bgActive : Colors.transparent,
+                        color: b.id == _botId
+                            ? PB.bgActive
+                            : Colors.transparent,
                         borderRadius: BorderRadius.circular(PB.rFull),
                         border: Border.all(
                           color: b.id == _botId
@@ -930,8 +959,11 @@ class _MemoryTabState extends State<_MemoryTab> {
           ],
           Row(
             children: [
-              const Icon(LucideIcons.fileText,
-                  size: 15, color: PB.textTertiary),
+              const Icon(
+                LucideIcons.fileText,
+                size: 15,
+                color: PB.textTertiary,
+              ),
               const SizedBox(width: 8),
               const Expanded(
                 child: Text(
@@ -980,13 +1012,17 @@ class _MemoryTabState extends State<_MemoryTab> {
                   const Text(
                     '还没有记忆摘要',
                     style: TextStyle(
-                        fontSize: PB.fsSm, color: PB.textSecondary),
+                      fontSize: PB.fsSm,
+                      color: PB.textSecondary,
+                    ),
                   ),
                   const SizedBox(height: 6),
                   const Text(
                     '整理之后，这里会显示它记住的关键结论、偏好和待办。',
                     style: TextStyle(
-                        fontSize: PB.fsXs, color: PB.textQuaternary),
+                      fontSize: PB.fsXs,
+                      color: PB.textQuaternary,
+                    ),
                   ),
                   const SizedBox(height: 12),
                   InkWell(
@@ -994,7 +1030,9 @@ class _MemoryTabState extends State<_MemoryTab> {
                     borderRadius: BorderRadius.circular(PB.rXl),
                     child: Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 8),
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
                       decoration: BoxDecoration(
                         color: PB.bgElevated,
                         borderRadius: BorderRadius.circular(PB.rFull),
@@ -1003,7 +1041,9 @@ class _MemoryTabState extends State<_MemoryTab> {
                       child: Text(
                         _generating ? '正在整理…' : '生成记忆摘要',
                         style: const TextStyle(
-                            fontSize: PB.fsXs, color: PB.textSecondary),
+                          fontSize: PB.fsXs,
+                          color: PB.textSecondary,
+                        ),
                       ),
                     ),
                   ),
@@ -1038,9 +1078,7 @@ class _MemoryTabState extends State<_MemoryTab> {
                       children: [
                         Expanded(
                           child: Text(
-                            m.stale
-                                ? '有新消息，摘要可能已过期'
-                                : '更新于 ${_ago(m.at)}',
+                            m.stale ? '有新消息，摘要可能已过期' : '更新于 ${_ago(m.at)}',
                             style: TextStyle(
                               fontSize: PB.fsXxs,
                               color: m.stale
@@ -1052,7 +1090,9 @@ class _MemoryTabState extends State<_MemoryTab> {
                         const Text(
                           '查看完整摘要 →',
                           style: TextStyle(
-                              fontSize: PB.fsXxs, color: PB.accentBright),
+                            fontSize: PB.fsXxs,
+                            color: PB.accentBright,
+                          ),
                         ),
                       ],
                     ),

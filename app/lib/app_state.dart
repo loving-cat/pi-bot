@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'api.dart';
+import 'browser_pane_state.dart';
 import 'models.dart';
 import 'native.dart';
 import 'notify.dart';
@@ -40,6 +41,13 @@ class AppState extends ChangeNotifier {
   static const _kDevice = 'device_name';
   // 用户点了"以后再说"的那个版本：同一个版本不再反复弹，出了更新的版本才再问
   static const _kSkippedUpdate = 'skipped_update_version';
+  // ★ 布局偏好：右侧面板停在哪个 tab、三栏各多宽。
+  //   不持久化的话，拖完宽度重开就回到初始值、切到「资料库」重开又跳回「详情」——
+  //   用户每次都要重新摆一遍。
+  static const _kPanelTab = 'room_panel_tab';
+  static const _kLeftWidth = 'layout_left_width';
+  static const _kRightWidth = 'layout_right_width';
+  static const _kBrowserWidth = 'layout_browser_width';
 
   String? serverUrl;
   String? token;
@@ -112,6 +120,95 @@ class AppState extends ChangeNotifier {
   /// 放 AppState 里是因为它**跨了两个层**：胶囊在 ChatScreen 里，
   /// 而面板本身是 HomeShell 布局里的一栏 —— 需要一个共同的地方放这个开关。
   bool panelOpen = false;
+
+  /// 右侧面板停在哪个 tab（0 详情 / 1 资料库 / 2 成员 / 3 记忆）。持久化。
+  int panelTab = 0;
+
+  /// 三栏宽度偏好（持久化）。真正的 clamp 在布局里按可用宽度做。
+  double layoutLeftWidth = 320;
+  double layoutRightWidth = 340;
+  double layoutBrowserWidth = 520;
+
+  /// 记下并落盘（高频拖动时只在松手后调）
+  Future<void> savePanelTab(int tab) async {
+    panelTab = tab;
+    _notify();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_kPanelTab, tab);
+  }
+
+  Future<void> saveLayoutWidths({
+    double? left,
+    double? right,
+    double? browser,
+  }) async {
+    if (left != null) layoutLeftWidth = left;
+    if (right != null) layoutRightWidth = right;
+    if (browser != null) layoutBrowserWidth = browser;
+    _notify();
+    final prefs = await SharedPreferences.getInstance();
+    if (left != null) await prefs.setDouble(_kLeftWidth, left);
+    if (right != null) await prefs.setDouble(_kRightWidth, right);
+    if (browser != null) await prefs.setDouble(_kBrowserWidth, browser);
+  }
+
+  /// 最右列的内置浏览器。
+  ///
+  /// 入口散在多处（Markdown 里点链接、以后可能还有别的），
+  /// 而栏本身是 HomeShell 布局里的一列 —— 同样需要一个共同的地方。
+  final BrowserPaneState browser = BrowserPaneState();
+
+  /// 点链接一律走内置浏览器（用户定的：「全部走内置」）。
+  void openInBrowser(String url) {
+    browser.openUrl(url);
+    _notify();
+  }
+
+  /// 关闭展示栏。
+  ///
+  /// ★ 必须经过 AppState：展示栏是 HomeShell 布局里的一列，
+  ///   而 HomeShell 只依赖 AppScope.of（即 AppState.notifyListeners）。
+  ///   BrowserPaneState 自己的 notifyListeners 没有布局层在听 ——
+  ///   直接在按钮里调 browser.close() 会出现「点了 X 没反应」。
+  ///   和 togglePanel / closePanel 保持同一套写法。
+  void closeBrowserPane() {
+    if (!browser.open) return;
+    browser.close();
+    _notify();
+  }
+
+  /// 把附件送到右侧展示栏（表格 / PDF / Word 由服务端渲染成 HTML）。
+  ///
+  /// 服务端只对能渲染的格式出页面，其余返回 415 —— 那种情况栏里会显示
+  /// 一句「不能转成网页查看」，并保留「下载 / 用系统应用打开」两个出口。
+  void showAttachmentInPane(Attachment file) {
+    final base = fileUrl(file.id);
+    if (base == null) return;
+    // ★ PDF 不走 /html：直接把原文件交给 webview，用它自带的 PDF 阅读器
+    //   渲染真版式（抽文字再拼 HTML 会把表格/字号/图全丢掉）。
+    //   其余可渲染格式（表格 / Word）走服务端渲染成的 HTML。
+    final isPdf =
+        file.name.toLowerCase().endsWith('.pdf') ||
+        file.mime.toLowerCase() == 'application/pdf';
+    // ★ 不能直接 `$base/html`：base 末尾带着 `?token=...`，
+    //   拼出来会变成 `/api/files/xx?token=yy/html` —— 路径坏了，渲染必失败。
+    //   必须把 /html 插在**查询串前面**。
+    browser.showFile(
+      name: file.name,
+      htmlUrl: isPdf ? base : (fileUrlWithSuffix(file.id, '/html') ?? base),
+      nativeViewer: isPdf,
+    );
+    _notify();
+  }
+
+  /// 在附件 URL 的**路径尾部**加后缀，保留 query（token 在那儿）。
+  String? fileUrlWithSuffix(String id, String suffix) {
+    final base = fileUrl(id);
+    if (base == null) return null;
+    final uri = Uri.tryParse(base);
+    if (uri == null) return null;
+    return uri.replace(path: '${uri.path}$suffix').toString();
+  }
 
   void togglePanel() {
     panelOpen = !panelOpen;
@@ -225,6 +322,10 @@ class AppState extends ChangeNotifier {
     serverEntryPath = prefs.getString(_kEntry) ?? '';
     serverNodePath = prefs.getString(_kNode) ?? '';
     skippedUpdateVersion = prefs.getString(_kSkippedUpdate) ?? '';
+    panelTab = prefs.getInt(_kPanelTab) ?? 0;
+    layoutLeftWidth = prefs.getDouble(_kLeftWidth) ?? 320;
+    layoutRightWidth = prefs.getDouble(_kRightWidth) ?? 340;
+    layoutBrowserWidth = prefs.getDouble(_kBrowserWidth) ?? 520;
     if (paired) {
       api = Api(serverUrl!, token ?? '');
       unawaited(refresh());
@@ -2052,6 +2153,7 @@ class AppState extends ChangeNotifier {
     _serverWatch?.cancel();
     _serverWatch = null;
     disconnect();
+    browser.dispose();
     streamTick.dispose();
     super.dispose();
   }

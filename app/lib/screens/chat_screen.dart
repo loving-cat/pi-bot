@@ -351,8 +351,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   ///   单个文件夹最多收 200 个文件：再多说明拖错东西了（比如整个主目录），
   ///   全部上传只会把服务端和上下文都撑爆。
   static const _skipDirs = {
-    'node_modules', '.git', '__pycache__', '.venv', 'venv',
-    'dist', 'build', '.dart_tool', '.idea', '.vscode', 'target',
+    'node_modules',
+    '.git',
+    '__pycache__',
+    '.venv',
+    'venv',
+    'dist',
+    'build',
+    '.dart_tool',
+    '.idea',
+    '.vscode',
+    'target',
   };
   static const _maxFolderFiles = 200;
 
@@ -391,8 +400,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final files = <File>[];
     final dirs = <Directory>[];
     for (final c in children) {
-      if (c is File) files.add(c);
-      else if (c is Directory) dirs.add(c);
+      if (c is File)
+        files.add(c);
+      else if (c is Directory)
+        dirs.add(c);
     }
     for (final f in files) {
       if (out.length >= _maxFolderFiles) return;
@@ -464,17 +475,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // 焦点兜底（见 _keepComposerFocused）—— 放在帧后，别在 build 里抢焦点
     WidgetsBinding.instance.addPostFrameCallback((_) => _keepComposerFocused());
 
-    // 消息列的左右留白：窗口越宽留白越大（内容列最多 1180），
-    // 这样一个 2000px 的窗口里气泡也不会贴着两边。
-    final sidePad = math.max(
-      12.0,
-      (MediaQuery.sizeOf(context).width - 1180) / 2,
-    );
-    // ★ 群里左边要**减掉头像列**（34+8=42）。
-    //   头像列是内容的一部分；如果两边留白一样大，群里的气泡会整体右移 42px ——
-    //   肉眼看就是"群聊的列比私聊窄了一截"。
-    //   减掉之后，气泡的左右边缘在私聊和群聊里落在同一个位置。
-    final leftPad = room.isGroup ? math.max(12.0, sidePad - 42) : sidePad;
+    // 消息列的左右留白：**在聊天栏内部**居中，而不是拿窗口宽度算。
+    //
+    // ★ 这里改成看"这一栏有多宽"：右侧开着面板/浏览器栏时窗口很宽，
+    //   但聊天栏可能只有几百像素 —— 按窗口算会算出巨大的留白，
+    //   把内容挤成一条窄缝（用户看到的就是"中间像手机一样，不拉伸"）。
+    //   真实宽度由下面的 LayoutBuilder 拿到（见 _chatColumnWidth）。
 
     return Scaffold(
       backgroundColor: PB.bgPane,
@@ -689,134 +695,177 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                               child: NotificationListener<Notification>(
                                 onNotification:
                                     _scrollFollow.handleNotification,
-                                child: ListView.builder(
-                                  controller: _scroll,
-                                  // ★ 居中限宽：窗口拉宽时左右留白跟着长（内容列最多 1180），
-                                  //   气泡就不会被吸附到窗口两边。
-                                  //   左边用 leftPad：群里减掉头像列那 42px，
-                                  //   这样气泡的左右边缘在私聊/群聊里落在同一位置。
-                                  padding: EdgeInsets.fromLTRB(
-                                    leftPad,
-                                    20,
-                                    sidePad,
-                                    20,
-                                  ),
-                                  itemCount: display.length,
-                                  itemBuilder: (ctx, i) {
-                                    final msg = display[i];
-
-                                    if (msg.isProgress) {
-                                      final run = progressGroups[i];
-                                      if (run == null) {
-                                        return const SizedBox.shrink();
-                                      }
-                                      return _Appear(
-                                        key: ValueKey('progress-${msg.id}'),
-                                        child: ProgressNotice(messages: run),
-                                      );
-                                    }
-
-                                    final prev = i > 0 ? display[i - 1] : null;
-                                    final newAuthor =
-                                        prev == null ||
-                                        prev.authorId != msg.authorId ||
-                                        prev.authorType != msg.authorType ||
-                                        (msg.createdAt - prev.createdAt) >
-                                            5 * 60 * 1000;
-                                    // 同一个人连着发好几条时，头像挂在**最后一条**上 ——
-                                    // 这样整串气泡都在头像的右上方，头像在底部托着。
-                                    // （挂在第一条的话，头像会卡在整串中间，很怪。）
-                                    final next = i + 1 < display.length
-                                        ? display[i + 1]
-                                        : null;
-                                    final endOfRun =
-                                        next == null ||
-                                        next.authorId != msg.authorId ||
-                                        next.authorType != msg.authorType ||
-                                        (next.createdAt - msg.createdAt) >
-                                            5 * 60 * 1000;
-                                    // ★ 这条是**外面的人说的**（不在这个会话的名单里）——
-                                    //   比如负责人把某个成员的报告转进群里。
-                                    //   挂一条「消息来自 X」，点开是**只读**的窥视：
-                                    //   看那个 bot 的私聊里到底说了什么，让链路可见。
-                                    //   注意：主控不算「外面的人」—— 它在哪儿说话都是派活。
-                                    final authorBot =
-                                        msg.authorType == 'bot' &&
-                                            msg.authorId != null
-                                        ? state.botById(msg.authorId)
-                                        : null;
-                                    final relayed = isRelayedAuthor(
-                                      author: authorBot,
-                                      room: room,
+                                // ★ 用 **聊天栏自己的宽度** 算留白和气泡上限。
+                                //   窗口 2000px 但这一栏只有 500px 时，
+                                //   必须按 500 算 —— 否则气泡被撑出栏外、留白也大得离谱。
+                                child: LayoutBuilder(
+                                  builder: (ctx, box) {
+                                    final colW = box.maxWidth;
+                                    // 内容列最多 kChatContentMax；多出来的宽度两边均分
+                                    final extra = math.max(
+                                      0.0,
+                                      colW - kChatContentMax,
                                     );
-                                    final relayedBot = relayed
-                                        ? authorBot
-                                        : null;
-                                    final relayedRoom = relayedBot == null
-                                        ? null
-                                        : state.rooms
-                                              .where(
-                                                (r) =>
-                                                    !r.isGroup &&
-                                                    r.botIds.contains(
-                                                      relayedBot.id,
-                                                    ),
-                                              )
-                                              .firstOrNull;
-                                    // 不居中：整行铺满，bot 贴左、我贴右
-                                    return _Appear(
-                                      key: ValueKey(msg.id),
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.stretch,
-                                        children: [
-                                          if (relayedBot != null)
-                                            _RelayedFrom(
-                                              bot: relayedBot,
-                                              // 点开那个 bot 的私聊（只读）——
-                                              // 找不到私聊房间就不给点（只显示是谁说的）
-                                              onTap: relayedRoom == null
-                                                  ? null
-                                                  : () => showChatPeek(
-                                                      context,
-                                                      refs: [
-                                                        MsgRef(
-                                                          botId: relayedBot.id,
-                                                          roomId:
-                                                              relayedRoom.id,
-                                                        ),
-                                                      ],
-                                                    ),
-                                            ),
-                                          _MessageRow(
-                                            msg: msg,
-                                            showAuthor: newAuthor,
-                                            showAvatar: endOfRun,
-                                            bot: state.botById(msg.authorId),
-                                            isGroup: room.isGroup,
-                                            mentions: room.botNames,
-                                            // @ 的名字 → 那个 bot（chip 的颜色、悬停卡的内容都靠它）
-                                            mentionOf: (name) {
-                                              final b = state.botByName(name);
-                                              return b == null
-                                                  ? null
-                                                  : MentionInfo(
-                                                      seed: b.id,
-                                                      subtitle: b.tagline,
-                                                      emoji: b.emoji,
+                                    final pad = math.max(
+                                      kChatSidePad,
+                                      extra / 2,
+                                    );
+                                    final leftPadForGroup = room.isGroup
+                                        ? math.max(12.0, pad - 42)
+                                        : pad;
+                                    return Scrollbar(
+                                      // ★ 常显 + 不渐变：快速滑动时默认滚动条会「滚动时出现、
+                                      //   停了就淡出」，一快一慢看着像滑块在抽搐/被抽走。
+                                      //   固定可见、宽度不变就不会有这种视觉跳动。
+                                      thumbVisibility: true,
+                                      controller: _scroll,
+                                      thickness: 6,
+                                      radius: const Radius.circular(3),
+                                      child: ListView.builder(
+                                        controller: _scroll,
+                                        padding: EdgeInsets.fromLTRB(
+                                          leftPadForGroup,
+                                          20,
+                                          pad,
+                                          20,
+                                        ),
+                                        itemCount: display.length,
+                                        itemBuilder: (ctx, i) {
+                                          final msg = display[i];
+
+                                          if (msg.isProgress) {
+                                            final run = progressGroups[i];
+                                            if (run == null) {
+                                              return const SizedBox.shrink();
+                                            }
+                                            return _Appear(
+                                              key: ValueKey(
+                                                'progress-${msg.id}',
+                                              ),
+                                              child: ProgressNotice(
+                                                messages: run,
+                                              ),
+                                            );
+                                          }
+
+                                          final prev = i > 0
+                                              ? display[i - 1]
+                                              : null;
+                                          final newAuthor =
+                                              prev == null ||
+                                              prev.authorId != msg.authorId ||
+                                              prev.authorType !=
+                                                  msg.authorType ||
+                                              (msg.createdAt - prev.createdAt) >
+                                                  5 * 60 * 1000;
+                                          // 同一个人连着发好几条时，头像挂在**最后一条**上 ——
+                                          // 这样整串气泡都在头像的右上方，头像在底部托着。
+                                          // （挂在第一条的话，头像会卡在整串中间，很怪。）
+                                          final next = i + 1 < display.length
+                                              ? display[i + 1]
+                                              : null;
+                                          final endOfRun =
+                                              next == null ||
+                                              next.authorId != msg.authorId ||
+                                              next.authorType !=
+                                                  msg.authorType ||
+                                              (next.createdAt - msg.createdAt) >
+                                                  5 * 60 * 1000;
+                                          // ★ 这条是**外面的人说的**（不在这个会话的名单里）——
+                                          //   比如负责人把某个成员的报告转进群里。
+                                          //   挂一条「消息来自 X」，点开是**只读**的窥视：
+                                          //   看那个 bot 的私聊里到底说了什么，让链路可见。
+                                          //   注意：主控不算「外面的人」—— 它在哪儿说话都是派活。
+                                          final authorBot =
+                                              msg.authorType == 'bot' &&
+                                                  msg.authorId != null
+                                              ? state.botById(msg.authorId)
+                                              : null;
+                                          final relayed = isRelayedAuthor(
+                                            author: authorBot,
+                                            room: room,
+                                          );
+                                          final relayedBot = relayed
+                                              ? authorBot
+                                              : null;
+                                          final relayedRoom = relayedBot == null
+                                              ? null
+                                              : state.rooms
+                                                    .where(
+                                                      (r) =>
+                                                          !r.isGroup &&
+                                                          r.botIds.contains(
+                                                            relayedBot.id,
+                                                          ),
+                                                    )
+                                                    .firstOrNull;
+                                          // 不居中：整行铺满，bot 贴左、我贴右
+                                          return _Appear(
+                                            key: ValueKey(msg.id),
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.stretch,
+                                              children: [
+                                                if (relayedBot != null)
+                                                  _RelayedFrom(
+                                                    bot: relayedBot,
+                                                    // 点开那个 bot 的私聊（只读）——
+                                                    // 找不到私聊房间就不给点（只显示是谁说的）
+                                                    onTap: relayedRoom == null
+                                                        ? null
+                                                        : () => showChatPeek(
+                                                            context,
+                                                            refs: [
+                                                              MsgRef(
+                                                                botId:
+                                                                    relayedBot
+                                                                        .id,
+                                                                roomId:
+                                                                    relayedRoom
+                                                                        .id,
+                                                              ),
+                                                            ],
+                                                          ),
+                                                  ),
+                                                _MessageRow(
+                                                  msg: msg,
+                                                  // 气泡上限按**这一栏**的宽度算，不按窗口
+                                                  columnWidth: colW,
+                                                  showAuthor: newAuthor,
+                                                  showAvatar: endOfRun,
+                                                  bot: state.botById(
+                                                    msg.authorId,
+                                                  ),
+                                                  isGroup: room.isGroup,
+                                                  mentions: room.botNames,
+                                                  // @ 的名字 → 那个 bot（chip 的颜色、悬停卡的内容都靠它）
+                                                  mentionOf: (name) {
+                                                    final b = state.botByName(
+                                                      name,
                                                     );
-                                            },
-                                            isLead:
-                                                room.isGroup &&
-                                                msg.authorId != null &&
-                                                msg.authorId == room.leadBotId,
-                                            onLongPress: () =>
-                                                showMessageActions(
-                                                  context,
-                                                  msg,
+                                                    return b == null
+                                                        ? null
+                                                        : MentionInfo(
+                                                            seed: b.id,
+                                                            subtitle: b.tagline,
+                                                            emoji: b.emoji,
+                                                          );
+                                                  },
+                                                  isLead:
+                                                      room.isGroup &&
+                                                      msg.authorId != null &&
+                                                      msg.authorId ==
+                                                          room.leadBotId,
+                                                  onLongPress: () =>
+                                                      showMessageActions(
+                                                        context,
+                                                        msg,
+                                                      ),
                                                 ),
-                                          ),
-                                        ],
+                                              ],
+                                            ),
+                                          );
+                                        },
                                       ),
                                     );
                                   },
@@ -1373,58 +1422,58 @@ class _ComposerState extends State<_Composer> {
                       child: Shortcuts(
                         shortcuts: desktopEditingShortcuts(),
                         child: Actions(
-                        actions: <Type, Action<Intent>>{
-                          ...desktopEditingActions(controller),
-                          // ★ ⌘V / Ctrl+V：先看剪贴板里有没有**图**（截图），有就当附件；
-                          //   没有就走原来的文本粘贴。Flutter 自带的粘贴只认文本，
-                          //   截图粘进来会静默什么都不发生。
-                          PasteTextIntent: CallbackAction<PasteTextIntent>(
-                            onInvoke: (_) {
-                              unawaited(_paste());
-                              return null;
-                            },
-                          ),
-                        },
-                        child: TextField(
-                          controller: controller,
-                          focusNode: widget.focus,
-                          // ★ 进会话就聚焦输入框 —— 用户不用先点一下才能打字。
-                          //   ChatScreen 按房间 id 加了 key，切到任意 bot 都会重建一次，
-                          //   autofocus 跟着再触发一次，行为一致。
-                          autofocus: true,
-                          minLines: 1,
-                          maxLines: 6,
-                          keyboardType: TextInputType.multiline,
-                          // 桌面保留原生换行和输入法处理，移动端软键盘显示发送。
-                          textInputAction: chatInputAction,
-                          // ★ onSubmitted 也必须挡同一件事。
-                          //   桌面端 Enter 走的是上面的 onKeyEvent，但手机/某些 IME
-                          //   会直接触发 onSubmitted —— 两条路都要看组词状态。
-                          onSubmitted: (_) {
-                            if (_isComposing()) return;
-                            onSend();
-                          },
-                          style: const TextStyle(
-                            fontSize: PB.fsBase,
-                            height: 1.4,
-                          ),
-                          decoration: InputDecoration(
-                            hintText: '说点什么',
-                            hintStyle: const TextStyle(
-                              color: PB.textQuaternary,
-                              fontSize: PB.fsBase,
+                          actions: <Type, Action<Intent>>{
+                            ...desktopEditingActions(controller),
+                            // ★ ⌘V / Ctrl+V：先看剪贴板里有没有**图**（截图），有就当附件；
+                            //   没有就走原来的文本粘贴。Flutter 自带的粘贴只认文本，
+                            //   截图粘进来会静默什么都不发生。
+                            PasteTextIntent: CallbackAction<PasteTextIntent>(
+                              onInvoke: (_) {
+                                unawaited(_paste());
+                                return null;
+                              },
                             ),
-                            border: InputBorder.none,
-                            enabledBorder: InputBorder.none,
-                            focusedBorder: InputBorder.none,
-                            filled: false,
-                            isDense: true,
-                            contentPadding: const EdgeInsets.symmetric(
-                              vertical: 13,
+                          },
+                          child: TextField(
+                            controller: controller,
+                            focusNode: widget.focus,
+                            // ★ 进会话就聚焦输入框 —— 用户不用先点一下才能打字。
+                            //   ChatScreen 按房间 id 加了 key，切到任意 bot 都会重建一次，
+                            //   autofocus 跟着再触发一次，行为一致。
+                            autofocus: true,
+                            minLines: 1,
+                            maxLines: 6,
+                            keyboardType: TextInputType.multiline,
+                            // 桌面保留原生换行和输入法处理，移动端软键盘显示发送。
+                            textInputAction: chatInputAction,
+                            // ★ onSubmitted 也必须挡同一件事。
+                            //   桌面端 Enter 走的是上面的 onKeyEvent，但手机/某些 IME
+                            //   会直接触发 onSubmitted —— 两条路都要看组词状态。
+                            onSubmitted: (_) {
+                              if (_isComposing()) return;
+                              onSend();
+                            },
+                            style: const TextStyle(
+                              fontSize: PB.fsBase,
+                              height: 1.4,
+                            ),
+                            decoration: InputDecoration(
+                              hintText: '说点什么',
+                              hintStyle: const TextStyle(
+                                color: PB.textQuaternary,
+                                fontSize: PB.fsBase,
+                              ),
+                              border: InputBorder.none,
+                              enabledBorder: InputBorder.none,
+                              focusedBorder: InputBorder.none,
+                              filled: false,
+                              isDense: true,
+                              contentPadding: const EdgeInsets.symmetric(
+                                vertical: 13,
+                              ),
                             ),
                           ),
                         ),
-                      ),
                       ),
                     ),
                   ),
@@ -1686,10 +1735,18 @@ class _MessageRow extends StatelessWidget {
     this.mentions = const [],
     this.isLead = false,
     this.mentionOf,
+    this.columnWidth,
   });
 
   final Msg msg;
   final bool showAuthor;
+
+  /// 消息列的实际可用宽度（聊天栏被展开成多宽，不是整个窗口多宽）。
+  ///
+  /// 为什么不用 MediaQuery：右侧开着面板 + 浏览器栏时，窗口 2000px
+  /// 而聊天栏可能只有 500px —— 按窗口算气泡会被撑到比聊天栏还宽。
+  /// 传 null 时退回 MediaQuery（单页、窄屏那些地方没人传）。
+  final double? columnWidth;
 
   /// 这条是不是**最后一条**排队中的消息？
   ///
@@ -1730,8 +1787,7 @@ class _MessageRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // 引用行（bot 私信了别的 bot）不画气泡，只渲染一个可点的小浮动条。
-    if (msg.isRef)
-      return MsgRefChip(refs: msg.refs, senderBotId: msg.authorId);
+    if (msg.isRef) return MsgRefChip(refs: msg.refs, senderBotId: msg.authorId);
     // 上下文压缩：在对话中间留一条小横条 ——
     // 不然用户看到的是"bot 刚才那几轮说的话不见了"，不知道发生了什么。
     if (msg.isCompact) return CompactNotice(msg: msg);
@@ -1743,10 +1799,9 @@ class _MessageRow extends StatelessWidget {
     if (msg.isApproval) {
       return ApprovalCard(
         msg: msg,
-        onDecide: (approve) => AppScope.read(context).decideApproval(
-          msg.approvalId ?? '',
-          approve: approve,
-        ),
+        onDecide: (approve) =>
+            AppScope.read(context)
+                .decideApproval(msg.approvalId ?? '', approve: approve),
       );
     }
 
@@ -1780,8 +1835,13 @@ class _MessageRow extends StatelessWidget {
     //   · 群里主控（总经理）也不标：它是"你这边的人"，标出来只是噪音。
     //     头像还留着 —— 一眼能看出"这条是它说的"。
     final showName = isGroup && showAuthor && bot?.isMain != true;
-    // 气泡最宽：屏幕的 82%，桌面端最多 760，避免一行铺到大半个屏
-    final maxBubble = math.min(MediaQuery.sizeOf(context).width * 0.82, 760.0);
+    // 气泡最宽：**消息列**的 82%，桌面端最多 760。
+    //
+    // ★ 必须用列宽而不是窗口宽：窗口拉得很宽、但聊天栏被左右两侧挤窄时，
+    //   按窗口算会把气泡撑出聊天栏（用户看到的就是「中间像手机一样不拉伸」的反面：
+    //   栏变窄了气泡却还那么大，直接把行撑爆）。
+    final available = columnWidth ?? MediaQuery.sizeOf(context).width;
+    final maxBubble = math.min(available * 0.82, 760.0);
 
     if (isUser) {
       return Padding(
@@ -1805,10 +1865,7 @@ class _MessageRow extends StatelessWidget {
                         urlFor: (id) => AppScope.read(context).fileUrl(id),
                         onLongPress: onLongPress,
                         alignEnd: true,
-                        maxWidth: math.min(
-                          MediaQuery.sizeOf(context).width * 0.74,
-                          560,
-                        ),
+                        maxWidth: math.min(available * 0.74, 560),
                       ),
                     ),
                   if (msg.text.trim().isNotEmpty)
@@ -1816,10 +1873,7 @@ class _MessageRow extends StatelessWidget {
                       onLongPress: onLongPress,
                       child: Container(
                         constraints: BoxConstraints(
-                          maxWidth: math.min(
-                            MediaQuery.sizeOf(context).width * 0.74,
-                            560,
-                          ),
+                          maxWidth: math.min(available * 0.74, 560),
                         ),
                         padding: const EdgeInsets.fromLTRB(15, 13, 15, 13),
                         decoration: BoxDecoration(
@@ -1842,6 +1896,8 @@ class _MessageRow extends StatelessWidget {
                           msg.text,
                           selectable: true,
                           onMentionTap: (name) => openBotDm(context, name),
+                          onLinkTap: (url) =>
+                              AppScope.read(context).openInBrowser(url),
                           mentionOf: mentionOf,
                           style: const TextStyle(
                             fontSize: PB.fsBase,
@@ -2003,6 +2059,8 @@ class _MessageRow extends StatelessWidget {
                                 selectable: !streaming,
                                 onMentionTap: (name) =>
                                     openBotDm(context, name),
+                                onLinkTap: (url) =>
+                                    AppScope.read(context).openInBrowser(url),
                                 mentionOf: mentionOf,
                                 mentions: mentions,
                                 style: const TextStyle(
