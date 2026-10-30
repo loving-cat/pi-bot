@@ -8,18 +8,6 @@ import 'html_preview_platform_policy.dart';
 
 const htmlPreviewSourceLimit = 1024 * 1024;
 const htmlPreviewShellLimit = 2 * 1024 * 1024;
-const offlineHtmlQaEnabled = bool.fromEnvironment('PI_BOT_HTML_QA');
-const offlineHtmlQaChecks = <String>[
-  'search',
-  'filter',
-  'counter',
-  'fold',
-  'dataImage',
-  'rtcUnavailable',
-  'bridgeUnavailable',
-  'fetchBlocked',
-  'imageBlocked',
-];
 const offlineHtmlDiagnosticLocks = <String>[
   'RTCPeerConnection',
   'webkitRTCPeerConnection',
@@ -369,9 +357,6 @@ for(const item of report.scripts){const slot=byId(item.id);if(!slot)continue;con
 parent.postMessage({nonce:'$nonce',state:'ready'},'*');
 }catch(_){document.body.textContent='无法启用此报告的隔离预览，请切换源码或下载。';const stage=['globals','captures','dom','events','freeze','content'].includes(window.__piOfflineGuardStage)?window.__piOfflineGuardStage:'unknown';const lock=${jsonEncode(offlineHtmlDiagnosticLocks)}.includes(window.__piOfflineGuardFailure)?window.__piOfflineGuardFailure:'';parent.postMessage({nonce:'$nonce',state:'error',stage,lock},'*');}})();</script></body></html>''';
   final encoded = base64Encode(utf8.encode(child));
-  final qaListener = offlineHtmlQaEnabled
-      ? "window.addEventListener('message',event=>{if(event.source!==frame.contentWindow||event.data?.type!=='pi-html-fixture')return;const checks={};for(const key of ${jsonEncode(offlineHtmlQaChecks)})checks[key]=event.data.checks?.[key]===true;document.title='PI_BOT_HTML_QA:'+JSON.stringify(checks);});"
-      : '';
   final shell =
       '''<!doctype html><html><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="$_shellPolicy">
@@ -379,7 +364,7 @@ parent.postMessage({nonce:'$nonce',state:'ready'},'*');
 <meta name="referrer" content="no-referrer">
 <style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#fff}iframe{display:block;border:0;width:100%;height:100%}</style>
 </head><body><iframe id="pi-bot-html-frame" title="HTML 报告" sandbox="allow-scripts" referrerpolicy="no-referrer" allow="camera 'none'; microphone 'none'; geolocation 'none'; clipboard-read 'none'; clipboard-write 'none'; display-capture 'none'; usb 'none'; serial 'none'; hid 'none'; bluetooth 'none'; payment 'none'"></iframe>
-<script>(()=>{const frame=document.getElementById('pi-bot-html-frame');$qaListener window.addEventListener('message',event=>{if(event.source!==frame.contentWindow||event.data?.nonce!=='$nonce')return;if(event.data.state==='ready')document.body.dataset.previewReady='true';else if(event.data.state==='error'){document.body.dataset.previewError='true';if(['globals','captures','dom','events','freeze','content'].includes(event.data.stage))document.body.dataset.previewErrorStage=event.data.stage;if(${jsonEncode(offlineHtmlDiagnosticLocks)}.includes(event.data.lock))document.body.dataset.previewErrorLock=event.data.lock;}});const bytes=Uint8Array.from(atob('$encoded'),c=>c.charCodeAt(0));frame.srcdoc=new TextDecoder('utf-8',{fatal:true}).decode(bytes);})();</script>
+<script>(()=>{const frame=document.getElementById('pi-bot-html-frame');window.addEventListener('message',event=>{if(event.source!==frame.contentWindow||event.data?.nonce!=='$nonce')return;if(event.data.state==='ready')document.body.dataset.previewReady='true';else if(event.data.state==='error'){document.body.dataset.previewError='true';if(['globals','captures','dom','events','freeze','content'].includes(event.data.stage))document.body.dataset.previewErrorStage=event.data.stage;if(${jsonEncode(offlineHtmlDiagnosticLocks)}.includes(event.data.lock))document.body.dataset.previewErrorLock=event.data.lock;}});const bytes=Uint8Array.from(atob('$encoded'),c=>c.charCodeAt(0));frame.srcdoc=new TextDecoder('utf-8',{fatal:true}).decode(bytes);})();</script>
 </body></html>''';
   if (utf8.encode(shell).length > htmlPreviewShellLimit) {
     throw const FormatException('HTML 展开后超过预览大小限制');

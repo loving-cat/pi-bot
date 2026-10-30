@@ -290,24 +290,6 @@ class _OfflineHtmlViewState extends State<OfflineHtmlView> {
         _diagnose('load-stopped', session.generation);
         unawaited(_checkReady(session));
       },
-      onTitleChanged: (_, title) {
-        if (!offlineHtmlQaEnabled ||
-            !_current(session) ||
-            widget.onDiagnostic == null ||
-            title == null ||
-            !title.startsWith('PI_BOT_HTML_QA:') ||
-            title.length > 2000)
-          return;
-        try {
-          final data = jsonDecode(title.substring('PI_BOT_HTML_QA:'.length));
-          if (data is Map) {
-            _diagnose(
-              'qa-result:${jsonEncode({for (final key in offlineHtmlQaChecks) key: data[key] == true})}',
-              session.generation,
-            );
-          }
-        } catch (_) {}
-      },
       onReceivedError: (_, request, _) {
         if (request.isForMainFrame == true) {
           _fail('网页未能加载，可以切换源码或下载文件。', session.generation);
