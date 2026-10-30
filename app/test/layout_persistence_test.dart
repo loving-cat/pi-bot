@@ -28,6 +28,19 @@ Room dmRoom() => Room(id: 'r-dm', name: '私聊', kind: 'dm', botIds: const ['b1
 class _State extends AppState {
   @override
   Future<void> refresh() async {}
+
+  /// ★ 不要让 bootstrap 真的起本机服务端。
+  ///
+  /// 默认真实实现会 bootLocalServer → connectLocal → 连 WebSocket，
+  /// 而测试环境没有服务端：那个连接在 bootstrap 的 try/catch 返回**之后**
+  /// 才异步 reject，变成未捕获异步异常，macOS 上直接把用例判失败
+  /// （Windows 上偶发通过，所以本地一直没暴露）。
+  /// 这两步都置空，bootstrap 仍会照常把盘上的偏好读进字段。
+  @override
+  Future<void> bootLocalServer({bool manual = false}) async {}
+
+  @override
+  Future<void> connectLocal({String? url}) async {}
 }
 
 void main() {
@@ -118,11 +131,12 @@ void main() {
       expect(prefs.getDouble('layout_right_width'), 420);
       expect(prefs.getDouble('layout_browser_width'), 640);
 
-      // 新建一个实例从盘上读
+      // 新建一个实例、走 bootstrap 把盘上的偏好读进字段。
+      // 服务端启动与连接已在 _State 里置空，所以这里只验持久化本身。
       final again = _State();
       addTearDown(again.dispose);
       await again.bootstrap();
-      expect(again.layoutLeftWidth, 400);
+      expect(again.layoutLeftWidth, 400, reason: 'bootstrap 应该把宽度读回来');
       expect(again.layoutRightWidth, 420);
       expect(again.layoutBrowserWidth, 640);
     });
@@ -141,7 +155,7 @@ void main() {
       final state = _State();
       addTearDown(state.dispose);
       await state.bootstrap();
-      expect(state.layoutLeftWidth, 320);
+      expect(state.layoutLeftWidth, 320, reason: '盘上没存过就用默认值');
       expect(state.layoutRightWidth, 340);
       expect(state.layoutBrowserWidth, 520);
       expect(state.panelTab, 0);
