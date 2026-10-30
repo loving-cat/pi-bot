@@ -583,6 +583,8 @@ class McpServer {
     this.cwd = '',
     this.url = '',
     Map<String, String>? headers,
+    this.credentialKeys = const [],
+    this.hasCredentials = false,
   })  : args = args ?? [],
         env = env ?? const {},
         headers = headers ?? const {};
@@ -608,6 +610,9 @@ class McpServer {
   // http
   String url;
   Map<String, String> headers;
+
+  final List<String> credentialKeys;
+  final bool hasCredentials;
 
   bool get isHttp => type == 'http';
 
@@ -635,6 +640,9 @@ class McpServer {
       for (final e in ((json['headers'] as Map?) ?? const {}).entries)
         '${e.key}': '${e.value}',
     },
+    credentialKeys: ((json['credentialKeys'] as List?) ?? const [])
+        .whereType<String>().toList(),
+    hasCredentials: json['hasCredentials'] == true,
   );
 }
 

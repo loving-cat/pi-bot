@@ -113,6 +113,16 @@ class Api {
     return _decode(res);
   }
 
+  Future<Map<String, dynamic>> put(
+    String path,
+    Map<String, dynamic> body,
+  ) async {
+    final res = await http
+        .put(_uri(path), headers: _headers, body: jsonEncode(body))
+        .timeout(const Duration(seconds: 20));
+    return _decode(res);
+  }
+
   /// 上传附件（图片/文档），返回服务端附件元信息
   Future<Map<String, dynamic>> upload(List<int> bytes, String name) async {
     final res = await http

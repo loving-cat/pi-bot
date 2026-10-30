@@ -41,6 +41,10 @@
 | `model-thinking.js` | 思考强度：`reasoning` / 七档 `thinkingLevelMap` / 上游 `thinkingFormat`，含预设与校验（纯逻辑） |
 | `mcp.js` | MCP 服务库：规范化、校验、转 pi 配置、测连接（纯逻辑 + 一个 probe） |
 | `mcp-hook.js` | 把用户配的 MCP 按 bot 选择注册进会话；给主控的能力清单 |
+| `mcp-credentials.js` / `mcp-library.js` | MCP 凭据加密、公共摘要、配置编辑与历史迁移；store 仅委派 |
+| `mcp-probe*.js` | 真实 MCP 初始化与工具发现、有界 HTTP/SSE、stdio 及进程树清理 |
+| `connections.js` / `connections-http.js` | 应用目录、验证结果与过期、并发限制及 Bot 分配路由 |
+| `mcp-access.js` | 外部工具分类、配置授权快照及审批摘要（纯逻辑） |
 | `local-capabilities.js` | 只读扫描本机 pi 已装的 skill / MCP，供一键导入 |
 | `spawn-command.js` | 跨平台启动用户填的命令：Windows 上按 PATHEXT 解析 `.cmd/.bat`、cmd.exe 参数转义、探测进程收尾 |
 | `site-draft.js` | 站点接入草稿：抓 → 存草稿 → 用户确认 → 才入库（草稿只在内存） |
@@ -83,6 +87,8 @@
 | `update_info.dart` | 更新响应解析 + 要不要提示的规则（纯逻辑，有测试） |
 | `widgets/update_prompt.dart` | 更新提示弹窗、带进度下载、下载完成提示 |
 | `widgets/skills_library.dart` | 技能库面板：搜索/增删改/启停/导入 SKILL.md |
+| `connections_models.dart` / `connections_filters.dart` / `connections_controller.dart` | 应用连接模型、搜索与状态判定、请求和会话切换防护 |
+| `widgets/connections_*.dart` | 应用连接目录、卡片、编辑、导入及工具与 Bot 分配详情；说明见 `docs/APP-CONNECTIONS.md` |
 | `server/options.dart` | 启动配置、端口与数据目录的环境变量映射、启动结果 |
 | `server/locate.dart` | 服务端/Node/npm 定位；支持 macOS App Resources、Windows 的 nvm-windows / fnm / Volta / Scoop、PATH 与用户覆盖；版本目录按数值降序 |
 | `server/health.dart` | 有大小上限的健康响应读取与服务身份格式校验（纯逻辑） |

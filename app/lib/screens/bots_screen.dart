@@ -421,7 +421,7 @@ class _BotRow extends StatelessWidget {
                           ),
                           SizedBox(height: 6),
                           Text(
-                            '还没有启用的 MCP 服务。去「设置 → MCP」加一个并打开开关，'
+                            '还没有启用的 MCP 服务。去「设置 → 应用连接」加一个并打开开关，'
                             '这里就能给这个人挂上额外能力。',
                             style: TextStyle(
                               fontSize: PB.fsXxs,

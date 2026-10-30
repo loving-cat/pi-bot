@@ -838,7 +838,8 @@ export function buildChiefTools({ runner, health, roomId, botId }) {
         }
         if (found.mcpServers.length) {
           lines.push('', '本机已配的 MCP：');
-          for (const s of found.mcpServers) {
+          for (const raw of found.mcpServers) {
+            const s = publicMcpTarget(raw);
             lines.push(
               `- ${s.name}${s.imported ? '（已在库里）' : ''}（${s.type}）：${s.command ?? s.url}`,
             );
@@ -1613,3 +1614,4 @@ export function buildChiefTools({ runner, health, roomId, botId }) {
     }),
   ];
 }
+import { publicMcpTarget } from './mcp-credentials.js';

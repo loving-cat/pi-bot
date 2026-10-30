@@ -83,7 +83,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       body: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 680),
+          constraints: BoxConstraints(maxWidth: _tab == 3 ? 980 : 680),
           child: Column(
             children: [
               _SettingsTabs(
@@ -593,7 +593,7 @@ class _SettingsTabs extends StatelessWidget {
     (icon: LucideIcons.smartphone, label: '连接'),
     (icon: LucideIcons.server, label: '服务端'),
     (icon: LucideIcons.sparkles, label: '技能'),
-    (icon: LucideIcons.plug, label: 'MCP'),
+    (icon: LucideIcons.plug, label: '应用连接'),
     (icon: LucideIcons.network, label: '系统'),
     (icon: LucideIcons.slidersHorizontal, label: '高级'),
   ];
