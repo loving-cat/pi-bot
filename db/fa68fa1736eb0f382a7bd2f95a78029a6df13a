@@ -1,0 +1,40 @@
+app/lib/widgets/model_picker_field.dart
+  s_06973911ad2cd6::t_afdcba41b4c243 21,35-37,55-57,136
+  s_06973911ad2cd6::t_5666ecee019d5e 47
+  s_06973911ad2cd6::t_899c69bb76b8dd 18-20,30-34,42,46,51,141
+  s_06973911ad2cd6::t_3dbea8cda4b2fa 63,79
+app/lib/app_state.dart
+  s_06973911ad2cd6::t_8d1a451d1d6da0 1596-1608,1868
+app/lib/model_selection_save.dart
+  s_06973911ad2cd6::t_3dbea8cda4b2fa 13,25-28,30,32,38,51,76,78-80,82-85,87
+  s_06973911ad2cd6::t_899c69bb76b8dd 1-4,23-24,29,31,33-37,39-50,52-55,57-58,60-72,74-75,77,81,86,88-108
+  s_06973911ad2cd6::t_2810f87232e4b8 5-12,14-22
+  s_06973911ad2cd6::t_0d25553f73558c 56,59,73
+app/lib/widgets/bot_run_section.dart
+  s_06973911ad2cd6::t_5666ecee019d5e 1-2,8,88-89,91-103,107,111-122,129-134,139,141-148,159,164,215-216,246,262-266,268-270,272,277-279,290,308,361
+  s_06973911ad2cd6::t_5c414196de9ea4 7,90
+  s_06973911ad2cd6::t_3dbea8cda4b2fa 123-124,137-138,140,282
+  s_06973911ad2cd6::t_2810f87232e4b8 125-128
+  s_06973911ad2cd6::t_afdcba41b4c243 104-106,108-110,135-136,203-206,224-228,241-244,251-254,267,273-276,280-281,283-289,291-298,324-328
+app/lib/bot_model_selection.dart
+  s_06973911ad2cd6::t_5c414196de9ea4 1-22,25-27,29-31
+  s_06973911ad2cd6::t_3dbea8cda4b2fa 23-24,28
+app/test/room_menu_test.dart
+  s_06973911ad2cd6::t_5666ecee019d5e 1114-1115
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dbfa68fa1736eb0f382a7bd2f95a78029a6df13a",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
