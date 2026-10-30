@@ -8,7 +8,7 @@
 #   .\scripts\pack-windows.ps1 -Help           # this text
 #
 # The build copies app sources into a temp directory, excluding caches and user
-# project state, then runs flutter build windows --release. Output is copied
+# project state, enforces pubspec.lock, then builds with --no-pub. Output is copied
 # back to the Release folder. The temp copy is removed on success or failure.
 # -NoBuild skips Flutter. Packaging does not need Git and does not edit sources.
 #
@@ -185,17 +185,29 @@ try {
       New-Item -ItemType Directory -Path $buildWork -Force | Out-Null
       $appSource = Join-Under $root @("app")
       $appCopy = Join-Under $buildWork @("app")
+      $sourceLock = Join-Path $appSource "pubspec.lock"
+      if (-not (Test-Path -LiteralPath $sourceLock -PathType Leaf)) { throw "missing app/pubspec.lock" }
+      $lockHash = (Get-FileHash -LiteralPath $sourceLock -Algorithm SHA256).Hash
       Write-Host "== stage app source outside the checkout =="
-      & node $stageScript $appSource $appCopy --require pubspec.yaml --require lib/main.dart --require windows/CMakeLists.txt
+      & node $stageScript $appSource $appCopy --require pubspec.yaml --require pubspec.lock --require lib/main.dart --require windows/CMakeLists.txt
       if ($LASTEXITCODE -ne 0) { throw "staging app source failed ($LASTEXITCODE)" }
 
       $debugDir = Join-Under $buildWork @("debug-info")
-      Write-Host "== flutter build windows --release =="
+      $copyLock = Join-Path $appCopy "pubspec.lock"
+      $previousPubHostedUrl = $env:PUB_HOSTED_URL
       Push-Location $appCopy
       try {
-        & flutter build windows --release "--split-debug-info=$debugDir"
+        $env:PUB_HOSTED_URL = "https://pub.dev"
+        Write-Host "== flutter pub get --enforce-lockfile =="
+        & flutter pub get --enforce-lockfile --no-example
+        if ($LASTEXITCODE -ne 0) { throw "locked dependency resolution failed ($LASTEXITCODE)" }
+        if ((Get-FileHash -LiteralPath $copyLock -Algorithm SHA256).Hash -ne $lockHash) { throw "dependency resolution changed pubspec.lock" }
+        Write-Host "== flutter build windows --release =="
+        & flutter build windows --release --no-pub "--split-debug-info=$debugDir"
         if ($LASTEXITCODE -ne 0) { throw "flutter build failed ($LASTEXITCODE)" }
+        if ((Get-FileHash -LiteralPath $copyLock -Algorithm SHA256).Hash -ne $lockHash) { throw "build changed pubspec.lock" }
       } finally {
+        $env:PUB_HOSTED_URL = $previousPubHostedUrl
         Pop-Location
       }
 

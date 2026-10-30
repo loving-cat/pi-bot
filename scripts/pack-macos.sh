@@ -118,6 +118,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 if [[ $SKIP_BUILD -eq 0 ]]; then
+  [[ -f "$ROOT/app/pubspec.lock" ]] || fail "缺少 app/pubspec.lock，不能进行锁定构建"
   for tool in flutter xcodebuild xcrun; do
     require_command "$tool"
   done
@@ -129,8 +130,14 @@ if [[ $SKIP_BUILD -eq 0 ]]; then
     || fail "找不到 macOS SDK，请检查 Xcode 安装与首次启动设置"
   BUILD_WORK="$(mktemp -d /tmp/pi-bot-macos-build.XXXXXX)"
   node "$ROOT/scripts/stage-macos-build.mjs" "$ROOT/app" "$BUILD_WORK/app"
+  echo "== flutter pub get --enforce-lockfile =="
+  (cd "$BUILD_WORK/app" && PUB_HOSTED_URL=https://pub.dev flutter pub get --enforce-lockfile --no-example)
+  cmp -s "$ROOT/app/pubspec.lock" "$BUILD_WORK/app/pubspec.lock" \
+    || fail "依赖解析改动了 pubspec.lock，已停止打包"
   echo "== flutter build macos --release =="
-  (cd "$BUILD_WORK/app" && flutter build macos --release --split-debug-info="$BUILD_WORK/debug-info")
+  (cd "$BUILD_WORK/app" && PUB_HOSTED_URL=https://pub.dev flutter build macos --release --no-pub --split-debug-info="$BUILD_WORK/debug-info")
+  cmp -s "$ROOT/app/pubspec.lock" "$BUILD_WORK/app/pubspec.lock" \
+    || fail "构建改动了 pubspec.lock，已停止打包"
   NEUTRAL_APP="$BUILD_WORK/app/build/macos/Build/Products/Release/${APP_NAME}.app"
   if [[ ! -d "$NEUTRAL_APP" && -d "$BUILD_WORK/app/build/macos/Build/Products/Release/pi_bot.app" ]]; then
     NEUTRAL_APP="$BUILD_WORK/app/build/macos/Build/Products/Release/pi_bot.app"

@@ -24,9 +24,11 @@ mkdir -p "$FIXTURE/app/macos/Runner"
 printf '<plist><dict/></plist>\n' > "$FIXTURE/app/macos/Runner/Release.entitlements"
 mkdir -p "$FIXTURE/app/lib" "$FIXTURE/app/macos/Runner.xcodeproj"
 printf 'name: fixture\nversion: 0.1.0+1\n' > "$FIXTURE/app/pubspec.yaml"
+printf 'packages: {}\n' > "$FIXTURE/app/pubspec.lock"
 printf 'void main() {}\n' > "$FIXTURE/app/lib/main.dart"
 printf 'fixture project\n' > "$FIXTURE/app/macos/Runner.xcodeproj/project.pbxproj"
 cp "$FIXTURE/app/pubspec.yaml" "$TEST_ROOT/source-pubspec"
+cp "$FIXTURE/app/pubspec.lock" "$TEST_ROOT/source-lock"
 cp "$FIXTURE/app/lib/main.dart" "$TEST_ROOT/source-main"
 for cache in .dart_tool build macos/Pods macos/Flutter/ephemeral macos/.symlinks macos/Runner.xcodeproj/xcuserdata; do
   mkdir -p "$FIXTURE/app/$cache"
@@ -127,9 +129,18 @@ case "$tool" in
     [[ "$PWD" == */pi-bot-macos-build.*/app && "$PWD" != "$FIXTURE/app" ]]
     [[ "$HOME" == "$ORIGINAL_HOME" ]]
     [[ -f lib/main.dart && -f pubspec.yaml && -f macos/Runner.xcodeproj/project.pbxproj ]]
-    for cache in .dart_tool build macos/Pods macos/Flutter/ephemeral macos/.symlinks macos/Runner.xcodeproj/xcuserdata .flutter-plugins-dependencies; do
-      [[ ! -e "$cache" ]]
-    done
+    [[ "$PUB_HOSTED_URL" == https://pub.dev && -f pubspec.lock ]]
+    if [[ "$1" == pub ]]; then
+      [[ "$*" == 'pub get --enforce-lockfile --no-example' ]]
+      for cache in .dart_tool build macos/Pods macos/Flutter/ephemeral macos/.symlinks macos/Runner.xcodeproj/xcuserdata .flutter-plugins-dependencies; do
+        [[ ! -e "$cache" ]]
+      done
+      mkdir -p .dart_tool
+      printf 'locked\n' > .dart_tool/lock-ready
+      exit 0
+    fi
+    [[ "$*" == 'build macos --release --no-pub --split-debug-info='* ]]
+    [[ -f .dart_tool/lock-ready ]]
     [[ "${PACK_FAIL:-}" != build ]] || exit 39
     product="$PWD/build/macos/Build/Products/Release/pi-bot.app"
     mkdir -p "$product/Contents/MacOS"
@@ -196,6 +207,7 @@ no_stage() {
     done < "$BUILD_TRACE"
   fi
   cmp "$TEST_ROOT/source-pubspec" "$FIXTURE/app/pubspec.yaml" || die '原pubspec被改动'
+  cmp "$TEST_ROOT/source-lock" "$FIXTURE/app/pubspec.lock" || die '原锁文件被改动'
   cmp "$TEST_ROOT/source-main" "$FIXTURE/app/lib/main.dart" || die '原源码被改动'
 }
 
@@ -289,7 +301,8 @@ ok '拒绝版本路径穿越'
 run_ok
 grep -q '^xcodebuild ' "$TRACE" || die '正常构建未检查 Xcode'
 grep -q '^xcrun ' "$TRACE" || die '正常构建未检查 SDK'
-grep -q '^flutter build macos --release --split-debug-info=' "$TRACE" || die '正常构建未分离调试信息'
+grep -q '^flutter pub get --enforce-lockfile --no-example' "$TRACE" || die '构建未严格解析锁文件'
+grep -q '^flutter build macos --release --no-pub --split-debug-info=' "$TRACE" || die '正常构建未禁用依赖重解或未分离调试信息'
 [[ "$(cat "$BUILD/pi-bot.app/Contents/product.txt")" == 'neutral build product' ]] || die '中性构建产物未回填'
 [[ -f "$FIXTURE/app/build/debug-info/macos/app.symbols" ]] || die '调试信息未保留在本地build目录'
 [[ -f "$FIXTURE/app/.dart_tool/fixture-cache" ]] || die '原生成缓存被改动'
