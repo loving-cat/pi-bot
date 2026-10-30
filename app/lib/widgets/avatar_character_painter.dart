@@ -192,13 +192,19 @@ class AvatarCharacterPainter extends CustomPainter {
 class _Palette {
   _Palette(Color requested) {
     final hsl = HSLColor.fromColor(requested);
+    // ★ 饱和度上限从 0.90 放到 1.0：
+    //   旧值会把最鲜艳的蓝色砍掉 6%，再加上亮度上限 0.68，
+    //   整体观感偏灰、在暗色底上不够“跳”。取色对齐 GrokBot 后
+    //   上限放到满，只保留下限（防止近灰色被误拉亮）。
+    //   亮度区间也从 [0.40,0.68] 收到 [0.42,0.62]：
+    //   太亮会发白，太暗会和深色背景糊在一起。
     final base = hsl
         .withSaturation(
           hsl.saturation > 0.15
-              ? hsl.saturation.clamp(0.40, 0.90)
+              ? hsl.saturation.clamp(0.55, 1.0)
               : hsl.saturation,
         )
-        .withLightness(hsl.lightness.clamp(0.40, 0.68))
+        .withLightness(hsl.lightness.clamp(0.42, 0.62))
         .toColor();
     sidePaint = Paint()
       ..color = Color.lerp(base, const Color(0xFF182129), 0.25)!;

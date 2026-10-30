@@ -68,6 +68,8 @@
 | `relay/frames.js` | 中转帧编解码（base64 + deflateRaw 无损压缩，纯函数） |
 | `relay/server.js` | 云侧中转：按 code 把 HTTP/WS 转给电脑侧（可选，默认不启动） |
 | `relay/agent.js` | 电脑侧外连客户端（可选，`npm run relay-agent`） |
+| `render-html.js` | 把附件渲染成可嵌入展示栏的 HTML：xlsx/csv 表格、docx（图片不内联，换占位）；PDF 不在此列，交给 webview 内核阅读器 |
+| `memory-policy.js` | 记忆摘要的自动触发策略：首次满 10 轮，之后按重要度（决策/口径/纠错/待办/路径）提前触发，琐事攒得更久；纯函数 |
 | `web.js` | 搜索与抓网页 |
 | `util.js` | id/时间/原子写/日志/错误分类 |
 
@@ -115,6 +117,9 @@
 | `theme.dart` | 颜色/字号/圆角；新增图标需核对当前依赖字体的实际字形 |
 | `clipboard_image.dart` / `clipboard_image_macos.dart` | 剪贴板图片平台分流；Windows PowerShell、macOS PNG/TIFF 读取与临时文件清理 |
 | `window_state.dart` | 窗口位置/大小记忆：编码、解析、夹回可见区（纯函数） |
+| `browser_pane_state.dart` | 右侧通用展示栏状态：开关/历史/网页与文件两种模式；多栏争抢宽度时按「最久没动」收纳 |
+| `browser_platform_policy.dart` | 展示栏的导航与 webview 策略（放开 cookies/localStorage 以便登录，但禁 file:/JS bridge）；与附件预览沙箱是两套配置 |
+| `widgets/browser_pane.dart` | 展示栏界面：地址栏 + 前进后退 + webview；PDF 交内核阅读器渲染真版式 |
 | `app_log.dart` | 界面层错误落盘（app.log）、打开日志目录 |
 
 界面约定：
@@ -122,8 +127,10 @@
 - 面板类组件拆成 `widgets/xxx_sheet.dart`：组件只做展示与回调，
   "打开面板"的装配写成同文件的 `showXxxSheet(context, state, room)`；
   页面里只留一行调用。
-- 新增图标前确认它在基础字体里（`list / checkCircle2 / fileText / target / boxes / pin …`），
-  否则真机是空白而组件测试发现不了。
+- 新增图标一律用 `LucideIcons.*`（不用 Material 的 `Icons.*`）。MaterialIcons 字体
+  已被 tree-shake 到 ~2.7KB，混用有"真机空白、组件测试发现不了"的风险；
+  确已存在且能渲染的旧 `Icons.*` 不必回改。详见 `docs/PITFALLS.md` 第 7 条。
+- 加完图标要 `flutter clean` 后再 release 构建并验真机。
 
 ## 已知偏大的文件（下次优先拆）
 

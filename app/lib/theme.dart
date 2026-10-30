@@ -12,6 +12,14 @@ import 'package:flutter/material.dart';
 /// 不然会出现"宽屏下点了跳转却 push 出一个整页聊天"。
 const double kTwoPaneMinWidth = 760;
 
+/// 聊天内容列的左右最小留白（px）。
+const double kChatSidePad = 12;
+
+/// 聊天内容列的最大宽度。窗口／栏再宽也不让内容铺满 ——
+/// 一行 200 个字很难读，居中留白比撑满好看。
+/// 注意：这是**内容列**上限，不是气泡上限；气泡另外再缩到 82%。
+const double kChatContentMax = 1180;
+
 /// 窗口最小尺寸（逻辑像素）。
 /// main.dart 建窗口和 WindowResizeOverlay 自己算缩放都要用同一个数 ——
 /// 两边写两份的话，拖到最小尺寸时窗口会抖（一边卡住一边还在缩）。
@@ -158,16 +166,24 @@ class PB {
     'sans-serif',
   ];
 
+  /// Bot 头像调色板。
+  ///
+  /// 取色标准对齐 GrokBot（实测 S 88~97% / L 50~62%）：
+  /// 暗色底上，饱和度不够的实体会发灰、和背景糊在一起。
+  /// 这里除灰色外的每一档都拉到 S ≥ 83%，亮度集中在 42~68% 之间。
+  ///
+  /// 灰色（gray）是**故意保留低饱和**的：它承担“中性/未分类”的语义，
+  /// 拉高了反而和其他颜色抢注意力。
   static const palette = <Color>[
-    Color(0xFF238CFA), // blue
-    Color(0xFF19C781), // green
-    Color(0xFFF13E9F), // pink
-    Color(0xFF9563F4), // violet
-    Color(0xFF858B91), // slate
-    Color(0xFF1BB8A6), // teal
-    Color(0xFFE36190), // rose
-    Color(0xFFB88955), // ochre
-    Color(0xFFA2784D), // brown
+    Color(0xFF1E86FC), // blue   S97 L55
+    Color(0xFF12C878), // green  S83 L43
+    Color(0xFFFB3A9C), // pink   S96 L61
+    Color(0xFF9B5CFF), // violet S100 L68
+    Color(0xFF8C939B), // gray   S7  L58（刻意低饱和）
+    Color(0xFF10C4AE), // teal   S85 L42
+    Color(0xFFF94A80), // rose   S94 L63
+    Color(0xFFF0901A), // amber  S88 L52
+    Color(0xFFB87540), // brown  S48 L49
   ];
 
   static Color colorFor(String id) {

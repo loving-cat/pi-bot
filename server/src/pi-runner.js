@@ -29,6 +29,7 @@ import { invalidateSessions, retireStaleSession, reserveSession } from './sessio
 import { deliverDirectInput } from './direct-message-delivery.js';
 import { MergeQueue, MERGE_QUIET_MS } from './merge-messages.js';
 import { buildMemoryDigest, memoryConversation } from './memory-digest.js';
+import { countTurns, shouldAutoSummarize } from './memory-policy.js';
 
 /**
  * 多久之内又来一条，算"连发"（于是开始攒）。
@@ -1541,6 +1542,48 @@ export class PiRunner {
   }
 
   /**
+   * 按策略判断要不要自动总结一次记忆。**不阻塞**调用方。
+   *
+   * 触发规则见 memory-policy.js：
+   *   · 首次满 10 轮就总结；
+   *   · 之后看新增消息里有没有"关键内容"（决策/口径变更/纠正/未完成事项），
+   *     命中就立刻总结，没命中就慢慢攒（攒越久门槛越高）。
+   *
+   * 为什么放在 runner 而不是 http：自动触发不该依赖有没有人打开界面。
+   */
+  maybeAutoSummarize(roomId, botId) {
+    if (this.memoryAutoDisabled) return;
+    try {
+      const all = store.listMessages(roomId, { limit: 400 });
+      const conversation = memoryConversation(all);
+      if (!conversation.length) return;
+      const totalTurns = countTurns(conversation);
+      const summary = store.memorySummaryFor(roomId, botId);
+      // 上次总结之后的新消息：靠 lastCount（上次处理到第几条）切出来。
+      // 老记录没有 lastCount 就从 0 算，宁可多算也不漏。
+      const processed = Number(summary?.lastCount ?? 0);
+      const newMessages = conversation.slice(processed);
+      const verdict = shouldAutoSummarize({
+        summary,
+        totalTurns,
+        newMessages,
+        now: Date.now(),
+      });
+      if (!verdict.due) return;
+      log(
+        `🧾 自动记忆总结（${verdict.reason}）：轮数 ${totalTurns}，` +
+          `新增 ${newMessages.length} 条，重要度 ${verdict.score}`,
+      );
+      // 后台跑，不 await —— 别让总结卡住用户的下一条消息
+      this.summarizeMemory(roomId, botId).catch((err) =>
+        log(`自动记忆总结失败：${err?.message ?? err}`),
+      );
+    } catch (err) {
+      log(`自动记忆总结判断失败：${err?.message ?? err}`);
+    }
+  }
+
+  /**
    * 记忆摘要：把这个私聊最近的对话整理成"它记住了什么"。
    *
    * 存在 store 里（roomId:botId → {text, lastId, count, at}），有缓存；
@@ -1609,7 +1652,10 @@ export class PiRunner {
       return store.setMemorySummary(roomId, botId, {
         text,
         lastId,
-        count: conversation.length,
+        // count = 到目前为止的总轮数（不是消息条数）——自动触发策略按它算增量
+        count: countTurns(conversation),
+        turns: countTurns(conversation),
+        lastCount: conversation.length,
         at: Date.now(),
       });
     } catch (err) {
@@ -2180,6 +2226,9 @@ export class PiRunner {
       // 每轮结束报一次上下文占用 —— 放在 finally 里，成功/出错都会报，
       // 否则出错那轮的数字会一直停在旧值上。
       emitContext(roomId, bot.id, entry.session);
+      // ★ 每一轮跑完都问一次“该不该自动总结记忆”（策略在 memory-policy.js）。
+      //   放 finally：不管这轮成功还是出错，对话都已经推进了。
+      this.maybeAutoSummarize(roomId, bot.id);
     }
   }
 

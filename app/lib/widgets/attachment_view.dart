@@ -9,6 +9,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../models.dart';
 import '../html_preview_loader.dart';
 import '../open_file.dart';
+import '../scope.dart';
 import '../save_file.dart';
 import '../theme.dart';
 import 'toast.dart';
@@ -93,7 +94,7 @@ class AttachmentList extends StatelessWidget {
           for (var i = 0; i < files.length; i++)
             Padding(
               padding: EdgeInsets.only(bottom: i == files.length - 1 ? 0 : 4),
-              child: _FileChip(
+              child: FileChip(
                 file: files[i],
                 url: urlFor(files[i].id),
                 fullWidth: true,
@@ -190,8 +191,9 @@ class _Thumb extends StatelessWidget {
 /// 两件事要分开：
 ///   · **点卡片本体** = 站内预览（不再一上来就丢给系统外部应用 —— 那等于把你踢出 App）
 ///   · **右边的下载按钮** = 直接存下来（不用点进去再找）
-class _FileChip extends StatelessWidget {
-  const _FileChip({
+class FileChip extends StatelessWidget {
+  const FileChip({
+    super.key,
     required this.file,
     required this.url,
     this.fullWidth = false,
@@ -203,7 +205,20 @@ class _FileChip extends StatelessWidget {
   /// true = 在附件块里占满一行（等宽对齐，不随文件名长短参差）
   final bool fullWidth;
 
-  static IconData _iconFor(String name) {
+  /// 能不能在右侧展示栏里直接看。
+  ///
+  /// 和 server/src/render-html.js 的白名单保持一致，另外 PDF 是**内核自己渲染**
+  /// （走原文件，不走 /html）。与 [isHtmlAttachment] 不同：HTML 附件仍在
+  /// 旧弹窗里看（那是沙箱预览），不抢展示栏。
+  static bool canShowInPane(String name) {
+    final lower = name.toLowerCase();
+    return const [
+      '.xlsx', '.xls', '.xlsm', '.ods', '.csv', '.tsv', '.pdf', '.docx',
+    ].any(lower.endsWith);
+  }
+
+
+  static IconData iconFor(String name) {
     final lower = name.toLowerCase();
     if (lower.endsWith('.pdf')) return LucideIcons.fileText;
     if (lower.endsWith('.xlsx') ||
@@ -244,14 +259,14 @@ class _FileChip extends StatelessWidget {
     final openArea = InkWell(
       onTap: url == null
           ? null
-          : () => showFilePreview(context, file: file, url: url),
+          : () => openAttachmentByBestRoute(context, file, url),
       borderRadius: BorderRadius.circular(PB.rXl),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
         child: Row(
           mainAxisSize: fullWidth ? MainAxisSize.max : MainAxisSize.min,
           children: [
-            Icon(_iconFor(file.name), size: 18, color: PB.textSecondary),
+            Icon(FileChip.iconFor(file.name), size: 18, color: PB.textSecondary),
             const SizedBox(width: 8),
             if (fullWidth)
               Expanded(child: nameCol)
@@ -279,6 +294,15 @@ class _FileChip extends StatelessWidget {
             Expanded(child: openArea)
           else
             Flexible(child: openArea),
+          // 「在展示栏打开」：表格 / PDF / Word 由服务端渲染成 HTML，
+          // 直接在右侧栏里看，不用先下载再找软件打开。
+          if (!kIsWeb && canShowInPane(file.name) && url != null)
+            _IconAction(
+              icon: LucideIcons.panelRight,
+              tip: '在右侧展示栏打开',
+              color: dim,
+              onTap: () => AppScope.read(context).showAttachmentInPane(file),
+            ),
           // 「用系统程序打开」：只在桌面端出现 —— 手机上交给系统的分享/打开
           // 机制是另一件事，先不给（给了也点不了）。价值在于：**看原样**，
           // 而不是这里抽出来的文字（PDF 的版式、xlsx 的公式都在原文件里）。
@@ -396,6 +420,24 @@ Future<void> downloadAttachment(
   } catch (err) {
     say('下载失败：$err');
   }
+}
+
+/// 点了之后该去哪：能进展示栏的优先送右侧，其余走旧弹窗。
+///
+/// 用户要的就是「点文件直接在右边看」，而不是先弹个窗说"这类文件画不出来"。
+/// 图片不在此列（它有自己的全屏查看器）。
+void openAttachmentByBestRoute(
+  BuildContext context,
+  Attachment file,
+  String? url,
+) {
+  if (url == null) return;
+  final paneAvailable = !kIsWeb && FileChip.canShowInPane(file.name) && !file.isImage;
+  if (paneAvailable) {
+    AppScope.read(context).showAttachmentInPane(file);
+    return;
+  }
+  showFilePreview(context, file: file, url: url);
 }
 
 /// 站内预览：点文件卡弹出来的那个悬浮窗。
@@ -555,7 +597,7 @@ class _FilePreviewState extends State<_FilePreview> {
       child: Row(
         children: [
           Icon(
-            _FileChip._iconFor(widget.file.name),
+            FileChip.iconFor(widget.file.name),
             size: 15,
             color: PB.textSecondary,
           ),
@@ -681,7 +723,7 @@ class _FilePreviewState extends State<_FilePreview> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            _FileChip._iconFor(widget.file.name),
+            FileChip.iconFor(widget.file.name),
             size: 40,
             color: PB.textQuaternary,
           ),

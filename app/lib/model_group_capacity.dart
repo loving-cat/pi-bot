@@ -94,6 +94,51 @@ class ModelThinkingInput {
   };
 }
 
+/// 默认的七个思考档位（与服务端下发的顺序一致）。
+const kThinkingLevels = <String>[
+  'off',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+];
+
+/// 上游枚举值白名单（服务端 THINKING_UPSTREAM_VALUES）。
+const kThinkingUpstreamValues = <String>[
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+  'auto',
+];
+
+/// 一键开启思考时的默认映射：档位名直接当上游值用（`max → max`）。
+///
+/// 为什么要这个：让用户为七个档位逐个挑下拉框既难用也不好看，而绝大多数模型的
+/// 上游枚举就叫 low/medium/high/max，同名映射开箱即用。
+///
+/// 不满足的两类档位自动留空，不瞎填：
+///   · `off` —— 语义是「这一档不额外传思考参数」，不该映射成 anything；
+///   · 上游白名单里没有的档位 —— 填了也会静默失效，不如留着让用户自己决定。
+///
+/// 返回的 Map 不含空串键值，所以「全留空」时是空表，`toJson` 不会下发空映射。
+Map<String, String> defaultThinkingLevelMap({
+  List<String> levels = kThinkingLevels,
+  List<String> upstreamValues = kThinkingUpstreamValues,
+}) {
+  final out = <String, String>{};
+  for (final level in levels) {
+    if (level == 'off') continue;
+    if (!upstreamValues.contains(level)) continue;
+    out[level] = level;
+  }
+  return out;
+}
+
 /// 单张模型卡片的草稿。rowId 仅供界面保持身份，修改模型 ID 不会改变本行容量。
 class ModelCardDraft {
   const ModelCardDraft({

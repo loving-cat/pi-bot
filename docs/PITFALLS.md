@@ -71,6 +71,16 @@ mammoth.convertToMarkdown({ path: file }, {
 ```
 再加一层正则兜底清掉残留的 data URI。
 
+**适用范围（两类用法都要守）**：
+| 用途 | 落点 | 做法 |
+|---|---|---|
+| 抽纯文本给模型看 | `extract.js` | `convertImage` 置空 src |
+| **渲染成 HTML 给人看** | `render-html.js` 的 `cleanDocxHtml` | 同样置空 src，再把残留 data URI 换成 `[图片]`、删掉空 src 的 `<img>` |
+
+后者还要额外守一条：**页面体积**。一张 50KB 的图内联成 base64 就是 ~67KB 文本，
+正文会被撑到几十屏之后。实测 `cleanDocxHtml` 会把 5 万字符的图压成 16 字符占位。
+要看原图就给「用系统浏览器打开 / 下载」的出口，别把图塞进 HTML。
+
 ---
 
 ## 6. `pdf-parse` 新版 API 完全不同
@@ -86,6 +96,15 @@ v2 是 `new PDFParse({ data: buffer })` + `await parser.getText()`，没有 `pdf
 **根因**：release 构建会把 MaterialIcons 从 1.6MB tree-shake 到几 KB。**新增图标后如果没清缓存，Windows 构建会直接复用上一次 tree-shake 出来的字体**，新图标的字形不在里面。
 
 **修法**：`flutter clean` 后重建（字体变成 8288 字节就对了）。**以后加图标记得 clean**。
+
+**规则（2026-10 更新）**：
+- 新代码**只用 `LucideIcons.*`**，不用 `Icons.*`（Material）。项目 UI 统一 Lucide，
+  MaterialIcons 字体长期被 tree-shake 到约 2.7KB（几乎是空壳），混用就有"真机空白、
+  组件测试发现不了"的风险。
+- 已经存在的 `Icons.*` 不用专门去改（`settings_screen` / `app_logo` 等处还在用，
+  它们能正常渲染说明字形被保留住了）；**新增的一律用 Lucide**。
+- 加完图标跑一次 `flutter clean && flutter build windows --release` 再验真机，
+  别只在热重载里看。
 
 ---
 
@@ -784,3 +803,48 @@ DNS rebinding 防护只认本机名和局域网 IP，带对 token 的请求也�
 
 **回归测试**：`server/tests/server-mode.mjs`（真起服务端子进程，覆盖 HTTP / WS / Host 白名单），
 `app/test/local_server_token_test.dart`（真实服务端 + 真实 AppState）。
+
+---
+
+## 46. 本机的 `PUB_HOSTED_URL` 会把 `pubspec.lock` 全染成镜像地址
+
+**症状**：`flutter clean` 之后跑 `flutter pub get`（在 `app/` 里），接着 `pack-windows.ps1`
+直接失败：
+
+```
+ERROR: locked dependency resolution failed (65)
+```
+
+`git diff app/pubspec.lock` 能看到 100 多处改动，全是同一行：
+`url: "https://pub.dev"` → `url: "https://pub.flutter-io.cn"`。
+
+**根因**：`pub get` 会把**当前生效的 hosted URL** 写进锁文件。本机如果设了
+`PUB_HOSTED_URL=https://pub.flutter-io.cn`（国内镜像），锁文件就被整体改写。
+而 `pack-windows.ps1` 在构建前会比对 `pubspec.lock` 的 SHA256
+（脚本里 `flutter pub get --enforce-lockfile` 那段），锁文件被改过就直接停 ——
+这是为了防「锁定依赖被悄悄升级」，副作用是本机镜像也会触发它。
+
+**为什么会漏**：打包脚本自己会 `$env:PUB_HOSTED_URL = "https://pub.dev"`（构建期临时覆盖，
+结束后还原），所以**走脚本是安全的**。踩坑的是中间那一步手工操作 ——
+`flutter clean` 之后顺手在 `app/` 里跑了个 `flutter pub get` 补依赖，
+那一次没带覆盖、用了本机镜像，锁文件当场被改写。构建脚本再比对 SHA 就炸了。
+
+（`FLUTTER_STORAGE_BASE_URL` 脚本没管，但它只影响 artifact 下载源，不写进锁文件。）
+
+**修法**：
+```bash
+# clean 之后要手动补依赖时，强制走公网（和打包脚本保持一致）
+PUB_HOSTED_URL=https://pub.dev flutter pub get
+
+# 万一已经被污染，直接还原（锁文件本来就是提交进仓库的）
+git checkout -- app/pubspec.lock
+```
+
+**别做的事**：把污染后的锁文件提交上去 —— 那会让所有走 pub.dev 的机器（含 CI）
+解析到镜像地址，等于把发布链路绑死在某台机器的本地配置上。
+
+**自查**：
+```bash
+git status --porcelain app/pubspec.lock   # 应该没有输出
+grep -c "pub.flutter-io.cn" app/pubspec.lock   # 应该是 0
+```

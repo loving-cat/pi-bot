@@ -175,13 +175,11 @@ class ModelCardsEditor extends StatelessWidget {
     //   又回退到已存的开状态，于是开关点了没反应、关了又弹回来。
     final current = row.thinking.touched ? row.thinking : row.retainedThinking;
     final isOn = current.reasoning == true;
-    final levels = thinkingLevels.isEmpty
-        ? const ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
-        : thinkingLevels;
+    final levels = thinkingLevels.isEmpty ? kThinkingLevels : thinkingLevels;
     // 上游值只能从白名单里选：手打一个上游不认识的词不会报错，
     // 只会让这一档静默失效（比如给 off 填 on）。
     final upstream = thinkingUpstreamValues.isEmpty
-        ? const ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'auto']
+        ? kThinkingUpstreamValues
         : thinkingUpstreamValues;
     void change(ModelThinkingInput Function(ModelThinkingInput) update) =>
         onChanged(
@@ -193,10 +191,18 @@ class ModelCardsEditor extends StatelessWidget {
           ),
         );
 
+    // 已映射的档位（按界面顺序），用来画一行紧凑的摘要
+    final mapped = [
+      for (final level in levels)
+        if ((current.levels[level] ?? '').isNotEmpty) level,
+    ];
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // 开关：绿色 = 开，灰色 = 关。不靠文字猜状态。
+        // 开启时直接把七个档位按同名全部映射好（max → max），
+        // 用户不用逐个选；要改个别档位再展开下面的「微调」。
         InkWell(
           key: ValueKey('model-reasoning-toggle-${row.rowId}'),
           onTap: enabled
@@ -204,7 +210,14 @@ class ModelCardsEditor extends StatelessWidget {
                   (input) => input.copyWith(
                     reasoning: !isOn,
                     format: isOn ? '' : input.format,
-                    levels: isOn ? const {} : input.levels,
+                    levels: isOn
+                        ? const {}
+                        : (input.levels.isEmpty
+                            ? defaultThinkingLevelMap(
+                                levels: levels,
+                                upstreamValues: upstream,
+                              )
+                            : input.levels),
                   ),
                 )
               : null,
@@ -306,56 +319,37 @@ class ModelCardsEditor extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          for (final level in levels)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: Row(
-                children: [
-                  SizedBox(
-                    width: 96,
-                    child: Text(
-                      level,
-                      style: const TextStyle(
-                        fontSize: PB.fsXxs,
-                        color: PB.textTertiary,
-                      ),
-                    ),
-                  ),
-                  Expanded(
-                    child: DropdownButtonFormField<String>(
-                      key: ValueKey('model-thinking-${row.rowId}-$level'),
-                      initialValue: current.levels[level] ?? '',
-                      isDense: true,
-                      decoration: const InputDecoration(isDense: true),
-                      items: [
-                        const DropdownMenuItem(
-                          value: '',
-                          child: Text('不传（这一档不生效）'),
-                        ),
-                        for (final value in {
-                          ...upstream,
-                          // 已存的值即使不在白名单也要能显示，避免静默丢失
-                          if ((current.levels[level] ?? '').isNotEmpty)
-                            current.levels[level]!,
-                        })
-                          DropdownMenuItem(value: value, child: Text(value)),
-                      ],
-                      onChanged: enabled
-                          ? (value) => change(
-                              (input) => input.copyWith(
-                                levels: {...input.levels, level: value ?? ''},
-                              ),
-                            )
-                          : null,
-                    ),
-                  ),
-                ],
+          const SizedBox(height: 10),
+          // ★ 档位不再摆七个下拉框：开启时已经按同名映射全开好了，
+          //   这里只给一行结果，要改个别档位再点「微调」。
+          _LevelSummary(
+            rowId: row.rowId,
+            levels: levels,
+            current: current,
+            enabled: enabled,
+            onReset: () => change(
+              (input) => input.copyWith(
+                levels: defaultThinkingLevelMap(
+                  levels: levels,
+                  upstreamValues: upstream,
+                ),
               ),
             ),
+          ),
+          const SizedBox(height: 6),
+          _LevelTuner(
+            rowId: row.rowId,
+            levels: levels,
+            upstream: upstream,
+            current: current,
+            enabled: enabled,
+            change: change,
+          ),
+          const SizedBox(height: 6),
           Text(
-            '前台只会展示映射过的档位。'
-            '所以想让 bot 能选 high，就得给 high 选一个上游值。',
+            mapped.isEmpty
+                ? '当前没有任何档位映射，前台不会展示思考档位。'
+                : '前台只会展示映射过的 ${mapped.length} 个档位；要增减就展开微调。',
             style: const TextStyle(
               fontSize: PB.fsXxs,
               color: PB.textQuaternary,
@@ -387,6 +381,212 @@ class ModelCardsEditor extends StatelessWidget {
       hintText: hint,
     ),
     onChanged: change,
+  );
+}
+
+/// 思考档位的一行摘要：把全部档位的映射结果压成一行，
+/// 让用户一眼看出「开到了哪」、哪档没映射，而不是对着七个下拉框发楞。
+class _LevelSummary extends StatelessWidget {
+  const _LevelSummary({
+    required this.rowId,
+    required this.levels,
+    required this.current,
+    required this.enabled,
+    required this.onReset,
+  });
+
+  final int rowId;
+  final List<String> levels;
+  final ModelThinkingInput current;
+  final bool enabled;
+  final VoidCallback onReset;
+
+  @override
+  Widget build(BuildContext context) =>
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(
+            width: 96,
+            child: Text(
+              '档位映射',
+              style: TextStyle(fontSize: PB.fsXxs, color: PB.textTertiary),
+            ),
+          ),
+          Expanded(
+            child: Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                for (final level in levels)
+                  _LevelChip(
+                    key: ValueKey('model-thinking-chip-$rowId-$level'),
+                    level: level,
+                    value: current.levels[level] ?? '',
+                  ),
+                // 一键回到同名映射：用户改乱了能一步还原
+                InkWell(
+                  key: ValueKey('model-thinking-reset-$rowId'),
+                  onTap: enabled ? onReset : null,
+                  borderRadius: BorderRadius.circular(PB.rSm),
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                    child: Text(
+                      '恢复同名',
+                      style: TextStyle(
+                        fontSize: PB.fsXxs,
+                        color: PB.textTertiary,
+                        decoration: TextDecoration.underline,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+}
+
+/// 单个档位的紧凑胶囊：映射了就高亮，没映射就是淡的「未启用」。
+class _LevelChip extends StatelessWidget {
+  const _LevelChip({super.key, required this.level, required this.value});
+
+  final String level;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final on = value.isNotEmpty;
+    // 同名映射（max → max）不必重复写两遍，只显档位名就好
+    final same = on && value == level;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: on ? PB.success.withValues(alpha: 0.12) : Colors.transparent,
+        borderRadius: BorderRadius.circular(PB.rSm),
+        border: Border.all(
+          color: on ? PB.success.withValues(alpha: 0.35) : PB.borderTertiary,
+        ),
+      ),
+      child: Text(
+        on && !same ? '$level→$value' : level,
+        style: TextStyle(
+          fontSize: PB.fsXxs,
+          fontFamily: PB.monoFamily,
+          fontWeight: on ? FontWeight.w600 : FontWeight.w400,
+          color: on ? PB.success : PB.textQuaternary,
+        ),
+      ),
+    );
+  }
+}
+
+/// 逐档微调：默认收起。绝大多数人不需要碰，展开再给七个下拉框。
+class _LevelTuner extends StatefulWidget {
+  const _LevelTuner({
+    required this.rowId,
+    required this.levels,
+    required this.upstream,
+    required this.current,
+    required this.enabled,
+    required this.change,
+  });
+
+  final int rowId;
+  final List<String> levels;
+  final List<String> upstream;
+  final ModelThinkingInput current;
+  final bool enabled;
+  final void Function(ModelThinkingInput Function(ModelThinkingInput)) change;
+
+  @override
+  State<_LevelTuner> createState() => _LevelTunerState();
+}
+
+class _LevelTunerState extends State<_LevelTuner> {
+  bool _open = false;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      InkWell(
+        key: ValueKey('model-thinking-tune-${widget.rowId}'),
+        onTap: () => setState(() => _open = !_open),
+        borderRadius: BorderRadius.circular(PB.rSm),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                _open ? Icons.expand_less : Icons.expand_more,
+                size: 14,
+                color: PB.textTertiary,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                _open ? '收起微调' : '微调单个档位',
+                style: const TextStyle(
+                  fontSize: PB.fsXxs,
+                  color: PB.textTertiary,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      if (_open)
+        for (final level in widget.levels)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6, left: 18),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 78,
+                  child: Text(
+                    level,
+                    style: const TextStyle(
+                      fontSize: PB.fsXxs,
+                      fontFamily: PB.monoFamily,
+                      color: PB.textTertiary,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    key: ValueKey('model-thinking-${widget.rowId}-$level'),
+                    initialValue: widget.current.levels[level] ?? '',
+                    isDense: true,
+                    decoration: const InputDecoration(isDense: true),
+                    items: [
+                      const DropdownMenuItem(
+                        value: '',
+                        child: Text('不传（这一档不生效）'),
+                      ),
+                      for (final value in {
+                        ...widget.upstream,
+                        // 已存的值即使不在白名单也要能显示，避免静默丢失
+                        if ((widget.current.levels[level] ?? '').isNotEmpty)
+                          widget.current.levels[level]!,
+                      })
+                        DropdownMenuItem(value: value, child: Text(value)),
+                    ],
+                    onChanged: widget.enabled
+                        ? (value) => widget.change(
+                            (input) => input.copyWith(
+                              levels: {...input.levels, level: value ?? ''},
+                            ),
+                          )
+                        : null,
+                  ),
+                ),
+              ],
+            ),
+          ),
+    ],
   );
 }
 

@@ -27,6 +27,7 @@ class MdText extends StatefulWidget {
     this.compact = false,
     this.mentions = const [],
     this.onMentionTap,
+    this.onLinkTap,
     this.mentionOf,
   });
 
@@ -42,6 +43,12 @@ class MdText extends StatefulWidget {
   /// 点 @提及 时回调（参数是去掉 @ 和 emoji 的纯名字）。
   /// 传了就把提及变成可点链接（跳到那个 bot 的私聊），不传则只是高亮。
   final void Function(String name)? onMentionTap;
+
+  /// 点普通链接时回调（参数是原始 url）。
+  ///
+  /// 不传就维持原行为：交给系统浏览器。传了的话由调用方决定去哪 ——
+  /// 首页把它接到右侧内置浏览器栏（用户定的：链接全部走内置）。
+  final void Function(String url)? onLinkTap;
 
   /// 把 @ 的名字映射成 chip 要用的信息（种子 + 一句话简介）。
   /// 传了的话，鼠标悬在 @ 上会浮出一张小卡。
@@ -63,6 +70,13 @@ class _MdTextState extends State<MdText> {
   }
 
   TapGestureRecognizerHandle _recognizer(String url) {
+    final handler = widget.onLinkTap;
+    if (handler != null) {
+      return _links.putIfAbsent(
+        'link:$url',
+        () => TapGestureRecognizerHandle.custom(() => handler(url)),
+      );
+    }
     return _links.putIfAbsent(url, () => TapGestureRecognizerHandle(url));
   }
 

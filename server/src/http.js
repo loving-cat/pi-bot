@@ -18,6 +18,7 @@ import { capacityError } from './model-capacity.js';
 import { resolveBotModelSelection } from './model-dispatch.js';
 import { store } from './store.js';
 import { metaFor, pathFor, saveBuffer, saveMovedFile } from './attachments.js';
+import { canRenderAsHtml, renderFileAsHtml } from './render-html.js';
 import { lanAddresses } from './pairing.js';
 import { timingSafeEqual, log } from './util.js';
 import { shells } from './shells.js';
@@ -183,7 +184,17 @@ function authenticate(req, url) {
  * （DNS rebinding），连 CORS 都挡不住。
  */
 // 只有这些类型允许内联展示（图片预览），其余一律下载，杜绝 html/svg/js 内联执行
-const INLINE_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+// 能直接“在浏览器里看”的 MIME。
+//
+// ★ PDF 加在这里是有意的：WebView2 / WKWebView 都是 Chromium/WebKit 内核，
+//   自带 PDF 阅读器，直接给 application/pdf（inline）就能拿到**真版式**,
+//   不用我们抽文字。之前把它当二进制下载，所以只能看到“打不开”。
+//   注意：只影响浏览器栏（/api/files/:id），下载走的是同一份 headers，
+//   inline 不会阻止用户另存，只是默认行为不同。
+const INLINE_MIMES = new Set([
+  'image/png', 'image/jpeg', 'image/gif', 'image/webp',
+  'application/pdf',
+]);
 
 export function fileResponseHeaders(meta) {
   const mime = String(meta.mime || '').toLowerCase().split(';')[0].trim();
@@ -933,6 +944,36 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         res.writeHead(200, fileResponseHeaders(meta));
         fs.createReadStream(file).pipe(res);
         return undefined;
+      }
+
+      // 把附件渲染成可嵌入浏览器栏的 HTML（表格 / PDF / Word）。
+      // 返回 text/html，直接给 webview 用；不能渲染的格式明确报 415。
+      const renderMatch = pathname.match(/^\/api\/files\/([a-zA-Z0-9_-]+)\/html$/);
+      if (renderMatch && req.method === 'GET') {
+        const meta = metaFor(renderMatch[1]);
+        const file = pathFor(renderMatch[1]);
+        if (!meta || !file) return send(res, 404, { error: '文件不存在' });
+        if (!canRenderAsHtml(file)) {
+          return send(res, 415, {
+            error: `${path.extname(file) || '该格式'} 不能转成网页查看，请下载后用系统应用打开`,
+          });
+        }
+        try {
+          const out = await renderFileAsHtml(file, { displayName: meta.name });
+          res.writeHead(200, {
+            'content-type': 'text/html; charset=utf-8',
+            // 内容可能含用户数据，不让中间层/浏览器缓存
+            'cache-control': 'no-store',
+            // 我们自己的页面，但仍限制脚本与外部资源（防御性）
+            'content-security-policy':
+              "default-src 'none'; img-src data:; style-src 'unsafe-inline'",
+            'x-content-type-options': 'nosniff',
+          });
+          res.end(out.html);
+          return undefined;
+        } catch (err) {
+          return send(res, 500, { error: `渲染失败：${err?.message || err}` });
+        }
       }
 
       // ---------- Bot ----------
