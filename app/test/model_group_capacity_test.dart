@@ -267,6 +267,45 @@ void main() {
         expect(off.toJson()['reasoning'], isFalse);
       });
 
+      // ★ 开启思考时默认就把档位按同名映射全开，用户不用逐个选下拉框
+      test('一键开启：默认按同名映射全开，max→max', () {
+        final map = defaultThinkingLevelMap();
+        expect(map['max'], 'max');
+        expect(map['high'], 'high');
+        expect(map['minimal'], 'minimal');
+        expect(map['xhigh'], 'xhigh');
+        // off 语义是「这一档不额外传参数」，不该被映射成任何上游值
+        expect(map.containsKey('off'), isFalse);
+      });
+
+      test('一键开启：上游白名单过滤掉不认识的档位', () {
+        final map = defaultThinkingLevelMap(
+          levels: const ['off', 'low', 'high', 'custom'],
+          upstreamValues: const ['low', 'high'],
+        );
+        expect(map, {'low': 'low', 'high': 'high'});
+      });
+
+      test('一键开启：结果能直接提交成 thinkingLevelMap', () {
+        final result = buildModelCardModels([
+          ModelCardDraft(
+            rowId: 0,
+            id: 'model-a',
+            thinking: ModelThinkingInput(
+              reasoning: true,
+              format: 'deepseek',
+              levels: defaultThinkingLevelMap(),
+            ),
+          ),
+        ]);
+        final model = result.models[0];
+        expect(model['reasoning'], isTrue);
+        final map = model['thinkingLevelMap'] as Map<String, String>;
+        expect(map.length, 6); // 七个档位除 off 之外全部映射
+        expect(map['max'], 'max');
+        expect(map.containsKey('off'), isFalse);
+      });
+
       test('开启思考后上报开关、上游格式与档位映射', () {
         final result = buildModelCardModels([
           const ModelCardDraft(
