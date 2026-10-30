@@ -10,6 +10,14 @@ import 'package:pi_bot/models.dart';
 import 'package:pi_bot/server/locate.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// 等服务端子进程就绪的上限。
+///
+/// 本地拉起一般 1~3 秒；CI 的 windows-latest 冷启动能到十几秒。
+/// 这里给到 60 秒，并且允许用环境变量覆盖（排查时想让它快点失败就调小）。
+final Duration serverStartTimeout = Duration(
+  seconds: int.tryParse(Platform.environment['PI_BOT_TEST_SERVER_TIMEOUT'] ?? '') ?? 60,
+);
+
 /// 起一个带 HTTP + WS 的服务端子进程；返回端口和关闭函数。
 /// 找不到 node 或服务端依赖没装（server/node_modules 不存在）时返回 null，用例跳过。
 ///
@@ -53,7 +61,11 @@ server.listen(0, '127.0.0.1', () => process.stdout.write('PORT ' + server.addres
       }
     }),
   );
-  final p = await port.future.timeout(const Duration(seconds: 20));
+  // ★ 这个超时留宽一点：CI 的 windows-latest 上首次拉起 node 子进程并加载
+  //   src/http.js 的整条依赖链，比本地慢得多。20 秒曾经把「能起来但慢」
+  //   误判成失败（三个用例连着超时，每个正好 20.000s）。
+  //   CI 上就是这么偶发红的，本地几乎复现不了。
+  final p = await port.future.timeout(serverStartTimeout);
   return (
     port: p,
     stop: () async {
@@ -72,7 +84,7 @@ server.listen(0, '127.0.0.1', () => process.stdout.write('PORT ' + server.addres
 }
 
 Future<void> _waitFor(bool Function() ok, String what) async {
-  final deadline = DateTime.now().add(const Duration(seconds: 15));
+  final deadline = DateTime.now().add(serverStartTimeout);
   while (DateTime.now().isBefore(deadline)) {
     if (ok()) return;
     await Future<void>.delayed(const Duration(milliseconds: 100));

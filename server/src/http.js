@@ -18,7 +18,6 @@ import { capacityError } from './model-capacity.js';
 import { resolveBotModelSelection } from './model-dispatch.js';
 import { store } from './store.js';
 import { metaFor, pathFor, saveBuffer, saveMovedFile } from './attachments.js';
-import { canRenderAsHtml, renderFileAsHtml } from './render-html.js';
 import { lanAddresses } from './pairing.js';
 import { timingSafeEqual, log } from './util.js';
 import { shells } from './shells.js';
@@ -953,6 +952,11 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         const meta = metaFor(renderMatch[1]);
         const file = pathFor(renderMatch[1]);
         if (!meta || !file) return send(res, 404, { error: '文件不存在' });
+        // ★ 按需加载：render-html 会拉起 xlsx / mammoth / pdf-parse 三个重库。
+        //   顶层静态 import 会让**每一次服务端启动**都付这笔钱 —— 启动变慢，
+        //   app 的集成测试（真起 node 子进程）在 CI 冷机器上就会被判超时。
+        //   只有真的要渲染附件时才 import。
+        const { canRenderAsHtml, renderFileAsHtml } = await import('./render-html.js');
         if (!canRenderAsHtml(file)) {
           return send(res, 415, {
             error: `${path.extname(file) || '该格式'} 不能转成网页查看，请下载后用系统应用打开`,
