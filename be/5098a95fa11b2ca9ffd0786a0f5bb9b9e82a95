@@ -1,0 +1,23 @@
+app/lib/html_preview_document.dart
+  s_06973911ad2cd6::t_02d12bd0333b35 367
+docs/APP-CONNECTIONS.md
+  s_06973911ad2cd6::t_3738fd849ae362 1-60
+docs/HTML-PREVIEW.md
+  s_06973911ad2cd6::t_3be87d8c29b3f9 1-51
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "be5098a95fa11b2ca9ffd0786a0f5bb9b9e82a95",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
