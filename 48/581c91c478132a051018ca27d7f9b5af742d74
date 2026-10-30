@@ -1,0 +1,19 @@
+server/src/model-dispatch.js
+  s_06973911ad2cd6::t_2cf4cf8e99b673 20-21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "48581c91c478132a051018ca27d7f9b5af742d74",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "unknown"
+      },
+      "human_author": "xiaoli <alex@alexdeMacBook-Pro.local>"
+    }
+  }
+}
