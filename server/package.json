@@ -1,6 +1,6 @@
 {
   "name": "pi-bot-server",
-  "version": "1.3.3",
+  "version": "1.3.4",
   "private": true,
   "type": "module",
   "description": "pi-bot server: 手机 App 背后的 pi agent 常驻服务",
