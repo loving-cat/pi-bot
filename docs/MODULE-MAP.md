@@ -39,6 +39,7 @@
 | `model-*.js` | 模型接线：注册（registry）/模型组（groups）/探活（health）/菜单（menu） |
 | `model-capacity.js` | 同 ID 模型元数据合并、容量优先级与正整数/最大输出校验（纯逻辑） |
 | `model-thinking.js` | 思考强度：`reasoning` / 七档 `thinkingLevelMap` / 上游 `thinkingFormat`，含预设与校验（纯逻辑） |
+| `model-dispatch.js` | 主控模型目录、默认规则兼容、目录变化的会话刷新及团队成员模型冲突预检 |
 | `mcp.js` | MCP 服务库：规范化、校验、转 pi 配置、测连接（纯逻辑 + 一个 probe） |
 | `mcp-hook.js` | 把用户配的 MCP 按 bot 选择注册进会话；给主控的能力清单 |
 | `mcp-credentials.js` / `mcp-library.js` | MCP 凭据加密、公共摘要、配置编辑与历史迁移；store 仅委派 |
@@ -95,6 +96,8 @@
 | `server/spawn_posix.dart` | POSIX 独立进程组启动脚本，日志直写文件并释放辅助进程 |
 | `server/supervisor.dart` / `server/launcher.dart` / `server/server_log.dart` | 进程与 PID 管理、启动编排及日志；Windows/POSIX 平台分流 |
 | `model_group_capacity.dart` | 模型卡片草稿、稳定行标识、容量解析与保存协议（纯逻辑） |
+| `model_selection_save.dart` / `bot_model_selection.dart` | 模型即时保存的串行队列、最后选择优先、响应未知处理与服务端标识同步 |
+| `html_preview_*.dart` / `widgets/html_attachment_preview.dart` / `widgets/offline_html_view.dart` | 有界HTML读取、隔离文档、平台策略与预览界面；说明及验收入口见 `docs/HTML-PREVIEW.md` |
 | `chat_scroll_follow.dart` | 聊天追底调度：帧后挂载、有限补跳、用户滚动取消和内容尺寸变化跟随 |
 | `chat_input_action.dart` | 聊天输入的平台动作：桌面保留原生换行，移动软键盘使用发送；按键发送仍由输入组件处理 |
 | `progress_messages.dart` | 回执结果判定、发送人去重和连续回执分组（纯逻辑） |
