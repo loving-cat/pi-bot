@@ -277,7 +277,10 @@ class _PairScreenState extends State<PairScreen> {
                         ),
                         const SizedBox(height: 12),
                         const _Step(index: '1', text: '电脑上启动服务端（终端会直接打印地址和配对码）'),
-                        const _Code('cd D:\\pi-bot\\server\nnode src/index.js'),
+                        // ★ 示例用中性路径，不要写开发机的绝对路径：
+                        //   这个字符串会被编进 app.so，等于把本机目录随发行包发出去，
+                        //   打包扫描会拦（真实拦截过一次）。
+                        const _Code('cd <你解压的目录>/server\nnode src/index.js'),
                         const _Step(
                           index: '2',
                           text: '把它打印的地址和配对码填到上面（就在这一页）',

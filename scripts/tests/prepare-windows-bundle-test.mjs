@@ -353,13 +353,28 @@ try {
     assert.equal(BUILD_ROOT_PLACEHOLDER.includes('Users'), false);
     assert.equal(BUILD_ROOT_PLACEHOLDER.includes('.pi-bot'), false);
   });
-  test('构建根的三种写法都收得到，长的先换', () => {
+  test('构建根的各种写法都收得到，长的先换', () => {
     const needles = buildRootNeedles(BUILD_ROOT);
-    assert.equal(needles.length, 3);
-    assert.equal(needles[0].includes('\\\\'), true, 'JSON 双写反斜杠应最长并排第一');
+    // ★ 6 个：本次运行目录的三种写法 + 基目录的三种写法。
+    //   Dart 产物里编译进去的是**基目录**（不带运行 id），只换精确路径会漏。
+    assert.equal(needles.length, 6);
+    assert.equal(needles[0].includes('\\\\'), true, '最长的（JSON 双写）应排第一');
     assert.equal(needles.some((n) => n.includes('/')), true);
     assert.deepEqual(buildRootNeedles(''), []);
     assert.deepEqual(buildRootNeedles('relative\\path'), []);
+  });
+  test('★ 回归：app.so 里的 file:/// URI 用的是基目录，不带运行 id', () => {
+    // 真实踩到的形态：pack 传的是 …/.pi-bot-build/pi-bot-windows-build-<id>，
+    // 而 app.so 里是 file:///D:/.pi-bot-build/ —— 必须能换掉基目录那一层。
+    const sample = Buffer.from(
+      'x file:///D:/.pi-bot-build/pi-bot-windows-build-abc12345/app/.dart_tool/flutter y',
+      'utf8',
+    );
+    const { buffer, rewritten } = rewriteBuildRootPaths(sample, BUILD_ROOT);
+    assert.equal(buffer.length, sample.length, '等长替换');
+    assert.equal(buffer.includes(Buffer.from('D:/.pi-bot-build')), false, '基目录必须被换掉');
+    assert.equal(buffer.includes(Buffer.from('abc12345')), false, '运行 id 也必须被换掉');
+    assert.ok(rewritten >= 1);
   });
   test('★ 等长替换：字节数不变，后续字节不位移', () => {
     const sample = Buffer.from(`head ${BUILD_ROOT}\\app\\build tail`, 'utf8');

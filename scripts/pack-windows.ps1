@@ -401,7 +401,11 @@ try {
   # The build root path stays inside app.so / plugin dlls as compiled-in strings;
   # hand it to prepare so it can swap them for a neutral placeholder of equal length.
   if ($buildWork) { $prepareArgs += @("--build-root", $buildWork) }
-  foreach ($marker in @($root, (Join-Under $root @("app")), $release, $buildWork)) {
+  # $buildWork is only the rewrite TARGET, never a "must not appear" marker.
+  # The two roles are opposites: after a successful rewrite the neutral placeholder
+  # sits exactly where the build path was. Reusing it as a leak marker makes every
+  # run fail even though the rewrite worked, which reads like the rewrite did nothing.
+  foreach ($marker in @($root, (Join-Under $root @("app")), $release)) {
     if ($marker) { $prepareArgs += @("--marker", $marker) }
   }
   & node @prepareArgs

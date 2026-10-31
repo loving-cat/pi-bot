@@ -134,6 +134,16 @@ export const BUILD_ROOT_PLACEHOLDER = 'C:\\pi-bot-build\\'; // C:\pi-bot-build\
 export function buildRootNeedles(buildRoot) {
   if (!buildRoot || !isAbsoluteDebugPath(buildRoot)) return [];
   const values = new Set([buildRoot, buildRoot.replaceAll('\\', '/'), buildRoot.replaceAll('\\', '\\\\')]);
+  // ★ Dart 产物（app.so）里编译进去的是**构建根本身**，不是本次运行目录。
+  //   pack 传进来的是 …/.pi-bot-build/pi-bot-windows-build-<id>，而 app.so 里是
+  //   file:///D:/.pi-bot-build/ —— 只换精确路径会漏掉，残留扫描就把包拦下。
+  //   所以把基目录（去掉最后一段运行目录）也作为候选。
+  const parent = path.dirname(buildRoot);
+  if (parent && parent !== buildRoot && isAbsoluteDebugPath(parent)) {
+    values.add(parent);
+    values.add(parent.replaceAll('\\', '/'));
+    values.add(parent.replaceAll('\\', '\\\\'));
+  }
   return [...values].filter(Boolean).sort((a, b) => b.length - a.length);
 }
 
