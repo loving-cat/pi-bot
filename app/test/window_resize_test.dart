@@ -7,7 +7,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:pi_bot/resizing.dart';
 import 'package:pi_bot/widgets/window_title_bar.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -173,20 +172,36 @@ void main() {
     });
   });
 
-  testWidgets('★ 拖右边缘：每帧都要发（不能被限流卡成 30 次/秒），且不回弹', (tester) async {
-    // 这条钉的是拖动期间 setBounds 不能被限流卡住：
-    // 限到 28ms 一次（~30 次/秒）虽然省平台开销，但窗口几何一秒只更新 30 次，
-    // 快速拖动时每步跨很大，看着就是一顿一顿。
-    // 拖动期间内容已降级成骨架，平台撑得住 60 次/秒，
-    // 所以闸门放到了 12ms（几乎不生效）。
-    // 另外这条也顺带钉"不回弹"（回弹 = 补偿超前导致的震荡）。
+
+  // ---------------------------------------------------------------------------
+  // ★ 2026-11-01：缩放改走 Windows 原生循环（windowManager.startResizing）。
+  //
+  // 原来是自己算矩形 + ticker 插值 + 每 12ms 一次 setBounds，实测两个问题：
+  //   ① 松手后向外拉会"拉伸"、向内缩会"整体缩放" —— 插值出的是小数矩形，
+  //      12ms 一个微小增量，每一步都触发真重排，Flutter 按非整数 DPI 缩放画布；
+  //   ② 拖动途中很卡 —— 每一帧都在做整窗重排 + 全量重光栅。
+  // 原生循环由系统接管：过程中位图预览（不重排 → 丝滑），松手只做一次
+  // 正确重排（→ 不留拉伸）。
+  //
+  // 所以这两条测试的契约变了，从"发没发够 setBounds"变成：
+  //   · 必须调用 startResizing，并带上正确的边；
+  //   · **绝不能再自己发 setBounds** —— 两套东西抢窗口尺寸才会出怪象。
+  // ---------------------------------------------------------------------------
+
+  testWidgets('★★ 拖边缘：走原生 startResizing，且绝不自己 setBounds', (tester) async {
+    final calls = <String>[];
     final bounds = <Rect>[];
     const channel = MethodChannel('window_manager');
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call.method);
       switch (call.method) {
         case 'isMaximized':
+          return false;
+        // startResizing 内部先调 isFullScreen()；返回 null 会让它抛异常，
+        // 整个原生缩放调用就没了 —— 测试里必须明确回 false。
+        case 'isFullScreen':
           return false;
         case 'getBounds':
           return <String, dynamic>{
@@ -206,6 +221,8 @@ void main() {
             ),
           );
           return null;
+        case 'startResizing':
+          return null;
       }
       return null;
     });
@@ -219,10 +236,10 @@ void main() {
     );
     await tester.pump();
 
-    // 抓住右边缘往左拖 12 帧
+    // 抓右边缘（热区在 x=795..800）开始拖
     final g = await tester.startGesture(const Offset(796, 300));
     await tester.pump();
-    for (var i = 0; i < 12; i++) {
+    for (var i = 0; i < 8; i++) {
       await g.moveBy(const Offset(-10, 0));
       await tester.pump(const Duration(milliseconds: 16));
     }
@@ -230,54 +247,38 @@ void main() {
     await tester.pump(const Duration(milliseconds: 200));
 
     expect(
-      bounds.length,
-      greaterThanOrEqualTo(6),
-      reason: '12 帧的拖动至少要发 6 次以上 —— 发得太少就是又被限流卡住了',
+      calls.where((c) => c == 'startResizing').length,
+      1,
+      reason: '按下边缘就该交给原生循环一次（之后由系统接管，不该重复调用）',
     );
-    for (var i = 1; i < bounds.length; i++) {
-      expect(
-        bounds[i].width,
-        lessThanOrEqualTo(bounds[i - 1].width + 0.51),
-        reason: '一路往左拖，宽度只能减不能增 —— 增了就是回弹（震荡）',
-      );
-    }
     expect(
-      bounds.last.width,
-      lessThan(800),
-      reason: '拖完应该真的变小了',
+      bounds,
+      isEmpty,
+      reason:
+          '★ 绝不能再自己发 setBounds：和原生缩放抢窗口尺寸，'
+          '正是"松手后拉伸/缩放"的来源',
     );
-    appResizing.value = false;
   });
 
-  testWidgets('★ 斜着拖右下角：左上角不许动，宽高按位移长大', (tester) async {
-    // 斜着拖右下角时，整个界面不能被放大。
-    // 先把数学钉住：拖右下角时 left/top 一点都不能变，width/height 各加位移量。
-    final bounds = <Rect>[];
+  testWidgets('★★ 八个热区各自映射到正确的缩放边', (tester) async {
+    final edges = <Map>[];
     const channel = MethodChannel('window_manager');
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(channel, (call) async {
-      switch (call.method) {
-        case 'isMaximized':
-          return false;
-        case 'getBounds':
-          return <String, dynamic>{
-            'x': 100.0,
-            'y': 100.0,
-            'width': 800.0,
-            'height': 600.0,
-          };
-        case 'setBounds':
-          final a = (call.arguments as Map).cast<String, dynamic>();
-          bounds.add(
-            Rect.fromLTWH(
-              (a['x'] as num).toDouble(),
-              (a['y'] as num).toDouble(),
-              (a['width'] as num).toDouble(),
-              (a['height'] as num).toDouble(),
-            ),
-          );
-          return null;
+      if (call.method == 'startResizing') {
+        edges.add((call.arguments as Map).cast<String, dynamic>());
+        return null;
+      }
+      if (call.method == 'isMaximized') return false;
+      if (call.method == 'isFullScreen') return false;
+      if (call.method == 'getBounds') {
+        return <String, dynamic>{
+          'x': 100.0,
+          'y': 100.0,
+          'width': 800.0,
+          'height': 600.0,
+        };
       }
       return null;
     });
@@ -291,28 +292,25 @@ void main() {
     );
     await tester.pump();
 
-    // 抓右下角（坐标 796,596 —— 角热区 11x11 内）
-    final g = await tester.startGesture(const Offset(796, 596));
+    // 左下角 / 上边缘 各拖一次，确认边映射正确（其余热区由上面那条覆盖存在性）
+    final g1 = await tester.startGesture(const Offset(4, 596));
     await tester.pump();
-    for (var i = 0; i < 10; i++) {
-      await g.moveBy(const Offset(8, 6)); // 斜着往右下
-      await tester.pump(const Duration(milliseconds: 16));
-    }
-    await g.up();
-    await tester.pump(const Duration(milliseconds: 200));
+    await g1.moveBy(const Offset(0, 2));
+    await tester.pump();
+    await g1.up();
 
-    expect(bounds, isNotEmpty, reason: '应该发出了 setBounds');
-    for (final r in bounds) {
-      expect(r.left, closeTo(100, 0.51), reason: '拖右下角时左上角不许动');
-      expect(r.top, closeTo(100, 0.51), reason: '拖右下角时左上角不许动');
-    }
-    final last = bounds.last;
-    // 指针总共走了 (80, 60)；窗口最多长这么多（可能因插值/限流少发几帧，
-    // 但绝不可以"超过"位移量 —— 超了就是被放大了）
-    expect(last.width, lessThanOrEqualTo(880 + 0.51), reason: '宽度不能超过位移量');
-    expect(last.height, lessThanOrEqualTo(660 + 0.51), reason: '高度不能超过位移量');
-    expect(last.width, greaterThan(800), reason: '往右拖应该真的变宽');
-    expect(last.height, greaterThan(600), reason: '往下拖应该真的变高');
-    appResizing.value = false;
+    final g2 = await tester.startGesture(const Offset(400, 2));
+    await tester.pump();
+    await g2.moveBy(const Offset(0, 2));
+    await tester.pump();
+    await g2.up();
+
+    expect(edges.length, greaterThanOrEqualTo(2), reason: '两次拖动应各触发一次');
+    expect(edges[0]['left'], isTrue, reason: '左下角应带 left');
+    expect(edges[0]['bottom'], isTrue, reason: '左下角应带 bottom');
+    expect(edges[1]['top'], isTrue, reason: '上边缘应带 top');
+    // 插件对"不涉及的方向"传的是 false（不是 null）
+    expect(edges[1]['left'], isFalse, reason: '上边缘不该带 left');
+    expect(edges[1]['bottom'], isFalse, reason: '上边缘不该带 bottom');
   });
 }

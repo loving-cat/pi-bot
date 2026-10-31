@@ -4,13 +4,10 @@ import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 
-import '../resizing.dart';
 import 'app_logo.dart';
 
 import 'package:lucide_icons_flutter/lucide_icons.dart';
-import 'package:screen_retriever/screen_retriever.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../theme.dart';
@@ -376,66 +373,15 @@ class WindowResizeOverlay extends StatefulWidget {
 }
 
 class _WindowResizeOverlayState extends State<WindowResizeOverlay>
-    with WindowListener, SingleTickerProviderStateMixin {
+    with WindowListener {
   bool _maximized = false;
 
-  // 拖动过程中的基准：起点矩形 + 起点鼠标位置 + 抓的是哪条边
-  Rect? _startBounds;
-  Offset? _startPointer;
-  ResizeEdge? _edge;
-
-  /// 上一次这里设进去的矩形 —— 拿它的左上角当"窗口现在在哪"。
-  /// 拖上边/左边时要靠它把窗口自身的位移补偿掉（见 screenDelta）。
-  Rect? _lastBounds;
-
-  /// 当前显示器的**可用区域**（逻辑坐标，已排除任务栏）。
-  /// 拖动开始时取一次；拖动中用它把窗口夹住，避免跨屏触发 DPI 重缩放。
-  Rect? _workArea;
-
-  // ---- 平滑 ----
-  //
-  // 指针事件来得比"窗口真的改完尺寸"快得多。每个事件都硬发一次 setBounds，
-  // 就会"上一发还没落地又发下一发"地堆起来 —— 看着就是一跳一跳、波动很大、
-  // 不丝滑。
-  //
-  // 改成：指针只更新**目标**，由 Ticker 按帧率朝目标插值着走。
-  // 窗口像被牵引过去，而不是每帧硬跳到新位置。
-  Ticker? _ticker;
-  Rect? _target;
-  Rect? _current;
-  bool _sending = false;
-
-  /// 每帧朝目标靠多少：越大越跟手，越小越飘
-  static const _follow = 0.55;
-
-  /// 差这么小就直接吸附（否则永远差半个像素、Ticker 停不下来）
-  static const _snap = 0.75;
-
-  /// 两次 setBounds 之间至少隔这么久。
-  ///
-  /// ★ 这是"拖动卡"的关键一条：Ticker 跑 60fps，如果每帧都发一次 setBounds，
-  ///   就等于每秒主动发起 60 次整窗重排 + 全量重光栅（Windows 的尺寸
-  ///   变化没有增量路径，每次都整窗重来）。窗口越大越卡。
-  ///   而这里永远发的是**最新位置**（合并，不排队），限流不会造成落后。
-  /// 限流放宽到 12ms（≈每帧一发）。
-  ///
-  /// 28ms（~30 次/秒）能把整窗重排省掉一半，但那是**内容没降级**时候的账 ——
-  /// 拖动期间内容已经冻成骨架，每帧开销小，平台完全撑得住 60 次/秒。
-  /// 而 30 次/秒的代价是"窗口几何一秒只更新 30 次"，快速拖动时每步跨很大，
-  /// 看着就是一顿一顿、不丝滑。
-  /// 所以：**留着限流当保险（防止平台真的顶不住时堆积），但把闸门放到几乎不生效**。
-  static const _minSendGap = Duration(milliseconds: 12);
-
-  /// 上一次发送的**帧时间戳**（不是墙钟时间）。
-  ///
-  /// 为什么用帧时钟：限流的本质是"别让一帧里发多次"，而帧时钟正是这件事的标尺；
-  /// 墙钟（DateTime.now）在单测里还会骗人 —— `pump(16ms)` 推进的是假时钟，
-  /// 墙钟只走了几毫秒，于是 12 帧全被拒掉。
-  Duration? _lastSendAt;
+  // 缩放已经整个交给 Windows 原生循环（见 _beginDrag），这里不再自己算矩形、
+  // 不再插值、不再逐帧 setBounds —— 那套东西既是"卡"的来源，也是
+  // "松手后画面被拉伸/缩放"的来源（小数矩形 + 12ms 一个微小增量 = 每一步都真重排）。
 
   @override
   void initState() {
-    _ticker = createTicker(_onTick);
     super.initState();
     if (!WindowResizeOverlay.isSupported) return;
     windowManager.addListener(this);
@@ -453,86 +399,8 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
 
   @override
   void dispose() {
-    _resizeQuiet?.cancel();
-    _ticker?.dispose();
     if (WindowResizeOverlay.isSupported) windowManager.removeListener(this);
     super.dispose();
-  }
-
-  /// 每帧朝目标插值一步
-  void _onTick(Duration _) {
-    final target = _target;
-    final cur = _current;
-    if (target == null || cur == null) {
-      _ticker?.stop();
-      return;
-    }
-    // ★ 大幅度/快速拖动时**直接跳过去**，不要插值慢慢追。
-    //   插值的代价是"窗口永远落后指针一点"，拖得快的时候这个落后会越拉越大，
-    //   然后一帧跳一大截 —— 看着就是一顿一顿的（和"闪"混在一起）。
-    //   小幅度微调用插值（丝滑），大幅度直接跟手。
-    final far =
-        (target.left - cur.left).abs() > 80 ||
-        (target.top - cur.top).abs() > 80 ||
-        (target.right - cur.right).abs() > 80 ||
-        (target.bottom - cur.bottom).abs() > 80;
-    if (far) {
-      _current = target;
-      _send(target);
-      _ticker?.stop();
-      return;
-    }
-    double mix(double a, double b) => a + (b - a) * _follow;
-    var next = Rect.fromLTRB(
-      mix(cur.left, target.left),
-      mix(cur.top, target.top),
-      mix(cur.right, target.right),
-      mix(cur.bottom, target.bottom),
-    );
-    final close =
-        (next.left - target.left).abs() < _snap &&
-        (next.top - target.top).abs() < _snap &&
-        (next.right - target.right).abs() < _snap &&
-        (next.bottom - target.bottom).abs() < _snap;
-    if (close) next = target; // 吸附上去
-    _current = next;
-    _send(next);
-    if (close) _ticker?.stop();
-  }
-
-  /// 发一发 setBounds。
-  /// 上一发还没落地就跳过 —— 堆起来只会抖，不会更快。
-  void _send(Rect r) {
-    if (_sending) return;
-    final now = SchedulerBinding.instance.currentFrameTimeStamp;
-    final last = _lastSendAt;
-    if (last != null && now - last < _minSendGap) {
-      // 还太密 —— 这一帧不发。Ticker 还在跑，_current/_target 一直在更新，
-      // 下一次 tick 会带着**最新的**位置发出去（所以不会积压、不会落后）
-      return;
-    }
-    _lastSendAt = now;
-    // 尺寸几乎没变就别发 —— 每次 setBounds 都是一次平台往返 + 一次整窗重建，
-    // 亚像素级别的抖动不值得那个代价（在窗口缩放这种高频路径上尤其）
-    final prev = _lastBounds;
-    if (prev != null &&
-        (r.left - prev.left).abs() < 0.5 &&
-        (r.top - prev.top).abs() < 0.5 &&
-        (r.width - prev.width).abs() < 0.5 &&
-        (r.height - prev.height).abs() < 0.5) {
-      return;
-    }
-    _sending = true;
-    // ★ 补偿量必须跟着"**真的发出去**的那个矩形"走，不能跟着目标走。
-    //   插值意味着窗口要几帧才走到目标；如果拿目标去补偿，补偿就超前了 ——
-    //   窗口飞过头 → 下一帧误差反向 → **震荡**。
-    //   跳过发送时不更新（那一次窗口根本没动）。
-    _lastBounds = r;
-    unawaited(
-      windowManager.setBounds(r).whenComplete(() {
-        _sending = false;
-      }),
-    );
   }
 
   @override
@@ -638,117 +506,30 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
   /// （拉伸时光栅化容易超过 16ms 的帧预算，拖起来就是"不丝滑"）。
   /// 改成自己算：每个 pointer 事件算一次矩形交给 setBounds，节奏跟着 Flutter
   /// 的帧走，不跟系统消息队列赛跑。
-  /// 降级渲染的"静默期"定时器。
+  /// 把拖动交给 **Windows 原生缩放循环**。
   ///
-  /// ★ 这个状态不能由 Ticker 驱动（"Ticker 停下来就恢复渲染"）：插值在拖动
-  ///   过程中会不停收敛（命中吸附就 stop）—— 每收敛一次骨架就恢复成内容、
-  ///   再一动又变骨架，**内容 ↔ 骨架 反复闪**，快速大幅度拖动时会一直闪。
-  ///   所以必须由**手势**驱动：拖动开始置位，每次拖动续期，
-  ///   松手（或 220ms 没有新的拖动事件）之后才恢复。
-  Timer? _resizeQuiet;
-
-  void _markResizing() {
-    if (!appResizing.value) appResizing.value = true;
-    _resizeQuiet?.cancel();
-    _resizeQuiet = Timer(const Duration(milliseconds: 220), () {
-      if (mounted) appResizing.value = false;
-    });
-  }
-
-  /// 读当前显示器的可用区（拿不到就返回 null —— 那就退回"不夹"的老行为）
-  Future<Rect?> _readWorkArea() async {
-    try {
-      // ★ 取"窗口所在的那块屏"，不是主屏。只取主屏的话，窗口在副屏时，
-      //   夹到主屏范围会把窗口**推回主屏**，出现部分窗口看不到的情况。
-      final displays = await ScreenRetriever.instance.getAllDisplays();
-      final c = _startBounds?.center;
-      Display? pick;
-      if (c != null) {
-        for (final d in displays) {
-          final pos = d.visiblePosition;
-          final size = d.visibleSize ?? d.size;
-          if (pos == null) continue;
-          if (Rect.fromLTWH(pos.dx, pos.dy, size.width, size.height)
-              .contains(c)) {
-            pick = d;
-            break;
-          }
-        }
-      }
-      // 窗口中心不在任何"可用区"里（比如正压在任务栏上、或副屏坐标口径对不上）
-      // → 退回主屏
-      pick ??= displays.isNotEmpty ? displays.first : null;
-      pick ??= await ScreenRetriever.instance.getPrimaryDisplay();
-      final pos = pick.visiblePosition;
-      final size = pick.visibleSize ?? pick.size;
-      if (pos == null || size.width <= 0 || size.height <= 0) return null;
-      return Rect.fromLTWH(pos.dx, pos.dy, size.width, size.height);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  /// 松手：清掉间隔闸（让最后落点立刻生效）+ 结束降级渲染
-  void _endDrag() {
-    _lastSendAt = null;
-    _resizeQuiet?.cancel();
-    _resizeQuiet = Timer(const Duration(milliseconds: 140), () {
-      if (mounted) appResizing.value = false;
-    });
-  }
-
+  /// ★ 为什么改用原生（2026-11-01 改）：
+  ///   之前是自己算矩形 + ticker 插值 + 每 12ms 一次 setBounds。实测两个问题：
+  ///     ① 松手后拉伸/缩放 —— 插值出的是**小数**矩形，12ms 一个微小增量，
+  ///        Windows 每个尺寸都要真重排，Flutter 按非整数 DPI 缩放画布，
+  ///        看着就是"整块被拉伸"；
+  ///     ② 拖动途中很卡 —— 每一帧都在做整窗重排 + 全量重光栅。
+  ///   原生 `startResizing` 走 WM_NCLBUTTONDOWN(HTLEFT…)，系统自己接管：
+  ///   过程中用位图预览（不重排，所以丝滑），松手后只做**一次**正确重排
+  ///   （所以不会留下拉伸）。这正是 Windows 上任何正常窗口的手感。
+  ///
+  /// ★ 代价与取舍：原生循环里 Flutter 收不到"正在缩放"的信号，
+  ///   `appResizing` 骨架降级用不上。但原生预览本身就是位图，不需要我们再降级。
+  ///   反过来，**不要**在原生缩放的同时继续 setBounds —— 两套东西抢窗口尺寸
+  ///   会互相打架（那才是真正会出怪象的写法）。
   Future<void> _beginDrag(ResizeEdge edge, DragStartDetails d) async {
-    _edge = edge;
-    _startPointer = d.globalPosition;
-    _lastBounds = null;
-    _lastSendAt = null;
-    _markResizing();
+    if (!mounted) return;
     try {
-      _startBounds = await windowManager.getBounds();
-      _lastBounds = _startBounds;
-      // 插值的起点/目标都设成当前值，免得第一帧从 (0,0) 飞过去
-      _current = _startBounds;
-      _target = _startBounds;
-      _workArea = await _readWorkArea();
+      // 让系统接管缩放：一次调用，之后全部由 Windows 处理到松手为止。
+      await windowManager.startResizing(edge);
     } catch (_) {
-      _startBounds = null; // 拿不到就不拖，别乱跳
+      // 平台没实现（如单测环境）就什么都不做 —— 宁可不能拖，也不要乱改尺寸
     }
-  }
-
-  void _dragTo(DragUpdateDetails d) {
-    final start = _startBounds;
-    final from = _startPointer;
-    final edge = _edge;
-    if (start == null || from == null || edge == null) return;
-    var next = resizeBy(
-      start: start,
-      // 用补偿过的位移：窗口自己移动了多少要加回去，否则拖上/左边会抽搐
-      delta: screenDelta(
-        viewDelta: d.globalPosition - from,
-        startBounds: start,
-        lastBounds: _lastBounds ?? start,
-      ),
-      edge: edge,
-      minSize: kWindowMinSize,
-    );
-    // ★ 夹在当前屏内：不跨屏就不会触发系统的 DPI 重缩放。
-    final area = _workArea;
-    // 窗口中心必须落在选中的那块屏里才夹 —— 万一口径对不上（多屏 + 不同
-    // 缩放比时 screen_retriever 的坐标是按各自缩放比折算的），宁可不夹，
-    // 也不能把窗口挪到别的地方去。
-    if (area != null && area.contains(next.center)) {
-      next = clampToWorkArea(
-        rect: next,
-        workArea: area,
-        minSize: kWindowMinSize,
-      );
-    }
-    // ★ 只更新**目标**，不直接 setBounds。
-    //   由 Ticker 每帧朝目标插值着走 —— 这样窗口是被"牵引"过去的，
-    //   而不是每来一个指针事件就硬跳一次（那才是"波动很大"的来源）。
-    _target = next;
-    _markResizing(); // 降级渲染（每次拖动都续期，不会来回闪）
-    if (_ticker?.isActive != true) _ticker?.start();
   }
 
   Widget _zone({
@@ -770,12 +551,12 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
       height: height,
       child: MouseRegion(
         cursor: cursor,
+        // 只要 onPanStart 就够：系统的缩放循环会自己跑完整个拖动，
+        // 包括跟踪鼠标、画预览、松手后重排。不能再挂 onPanUpdate
+        // （那会变成“一边原生缩放、一边自己 setBounds”，两套抢尺寸）。
         child: GestureDetector(
           behavior: HitTestBehavior.translucent,
           onPanStart: (d) => _beginDrag(edge, d),
-          onPanUpdate: _dragTo,
-          onPanEnd: (_) => _endDrag(),
-          onPanCancel: _endDrag,
         ),
       ),
     );

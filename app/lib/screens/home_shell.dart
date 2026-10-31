@@ -6,7 +6,6 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../browser_pane_state.dart';
 import '../models.dart';
 import '../scope.dart';
-import '../resizing.dart';
 import '../theme.dart';
 import '../widgets/browser_pane.dart';
 import '../widgets/room_panel.dart';
@@ -168,10 +167,7 @@ class _HomeShellState extends State<HomeShell> {
     final leftW = _leftWidth.clamp(_leftMin, leftCeil);
 
     // 右侧预算：扣掉左栏、聊天区最小、分隔条
-    final rightBudget = math.max(
-      0.0,
-      total - leftW - _chatMin - separators(),
-    );
+    final rightBudget = math.max(0.0, total - leftW - _chatMin - separators());
     var browserW = 0.0;
     var rightW = 0.0;
     if (showBrowser || showPanel) {
@@ -244,169 +240,133 @@ class _HomeShellState extends State<HomeShell> {
               // 顶部拖拽条不在这儿了 —— 它是**全局**的（main.dart 根布局里），
               // 这样 push 出来的页面也自动在它下面，不用各自避让窗口按钮。
               Expanded(
-                child: ValueListenableBuilder<bool>(
-                  valueListenable: appResizing,
-                  builder: (context, resizing, child) {
-                    // 拖动期间直接给色块：不做布局也不做光栅。
-                    // 这是试验，也是（如果结论是"内容太重"的话）正式方案。
-                    // 拖动期间只画**骨架**：三栏的底色 + 分隔线，
-                    // 不画任何内容（消息、头像、面板）。
-                    // 量过：掉帧从 16 帧/700ms 降到 0-1 帧 —— 用户感觉到的"卡"
-                    // 就是那些偶发的 20-26ms 帧。
-                    // 之所以保留骨架而不是整窗留白：窗口在拖的时候还能看出结构，
-                    // 不会像"程序卡死了"。
-                    if (resizing) {
-                      return Row(
-                        children: [
-                          Container(width: leftW, color: PB.bgApp),
-                          // 骨架里的分隔条宽度必须和真实渲染一致（_handleWidth），
-                          // 否则拖动中/拖动后两个形态的宽度对不上，松手会跳一下。
-                          Container(width: _handleWidth, color: PB.bgApp),
-                          const Expanded(child: SizedBox()),
-                          if (showPanel) ...[
-                            Container(width: _handleWidth, color: PB.bgApp),
-                            Container(width: rightW, color: PB.bgPane),
-                          ],
-                          if (showBrowser) ...[
-                            Container(width: _handleWidth, color: PB.bgApp),
-                            Container(width: browserW, color: PB.bgPane),
-                          ],
-                        ],
-                      );
-                    }
-                    return child!;
-                  },
-                  child: Row(
-                    children: [
-                      // ★ 包一层 RepaintBoundary：这两栏的宽度是**固定**的，
-                      //   窗口缩放时它们只是平移、形状不变 —— 于是光栅结果可以复用。
-                      //   不包的话，每一帧整棵树（三个栏）都要重光栅一遍，
-                      //   开着右侧面板时尤其明显，拖动会非常卡。
-                      RepaintBoundary(
-                        child: SizedBox(
-                          width: leftW,
-                          child: RoomsScreen(
-                            embedded: true,
-                            selectedId: selected?.id,
-                            onSelect: (room) =>
-                                setState(() => _selectedId = room.id),
-                          ),
+                child: Row(
+                  children: [
+                    // ★ 包一层 RepaintBoundary：这两栏的宽度是**固定**的，
+                    //   窗口缩放时它们只是平移、形状不变 —— 于是光栅结果可以复用。
+                    //   不包的话，每一帧整棵树（三个栏）都要重光栅一遍，
+                    //   开着右侧面板时尤其明显，拖动会非常卡。
+                    RepaintBoundary(
+                      child: SizedBox(
+                        width: leftW,
+                        child: RoomsScreen(
+                          embedded: true,
+                          selectedId: selected?.id,
+                          onSelect: (room) =>
+                              setState(() => _selectedId = room.id),
                         ),
                       ),
+                    ),
+                    _DragHandle(
+                      width: _handleWidth,
+                      onDrag: (dx) => setState(() {
+                        final total = MediaQuery.sizeOf(context).width;
+                        // 左栏能长到多宽：扣掉聊天区最小和右侧两栏占位
+                        final maxByChat =
+                            total - _chatMin - rightW - browserW - separators();
+                        // ★ clamp 的上下界必须 min ≤ max，否则 Dart 直接抛
+                        //   ArgumentError（"Invalid argument(s): Invalid clamp range"）——
+                        //   窗口窄 + 面板开着时 maxByChat 会小于 _leftMin，那时候
+                        //   一拖就崩。这里先夹出合法的上界。
+                        final hi = maxByChat < _leftMin
+                            ? _leftMin
+                            : (maxByChat < _leftMax ? maxByChat : _leftMax);
+                        _leftWidth = (_leftWidth + dx).clamp(_leftMin, hi);
+                      }),
+                    ),
+                    Expanded(
+                      child: selected == null
+                          ? const _NoSelection()
+                          : ChatScreen(
+                              key: ValueKey(selected.id),
+                              room: selected,
+                              embedded: true,
+                            ),
+                    ),
+                    // ★ 右侧详情面板是**布局里的一栏**（点聊天顶部胶囊开关），
+                    //   和左边那栏同级：没有遮罩、不盖住聊天，聊天区自己让出宽度。
+                    // ★ 面板要**滑出来**，不是咣当一下出现。
+                    //   做法：动画容器宽度 0 → 340，里面的内容固定 340 宽、
+                    //   用 ClipRect 裁掉超出部分 —— 这样内容不会在动画过程中被挤变形，
+                    //   而是像抽屉一样平移进场。
+                    //   关的时候反过来（宽度收回 0），同样平滑。
+                    // 只在**开着**时才挂载：进场有滑入动画，关闭立即消失。
+                    // 关闭不做退场动画是有意的 —— 关东西就该干脆；
+                    // 而且挂载着（哪怕宽度是 0）会让面板里的内容一直在树里，
+                    // 白占内存、也让"关掉了没"变得说不清。
+                    if (showPanel && selected != null)
                       _DragHandle(
                         width: _handleWidth,
+                        // 往左拖 = 面板变宽
                         onDrag: (dx) => setState(() {
-                          final total = MediaQuery.sizeOf(context).width;
-                          // 左栏能长到多宽：扣掉聊天区最小和右侧两栏占位
-                          final maxByChat = total -
-                              _chatMin -
-                              rightW -
-                              browserW -
-                              separators();
-                          // ★ clamp 的上下界必须 min ≤ max，否则 Dart 直接抛
-                          //   ArgumentError（"Invalid argument(s): Invalid clamp range"）——
-                          //   窗口窄 + 面板开着时 maxByChat 会小于 _leftMin，那时候
-                          //   一拖就崩。这里先夹出合法的上界。
-                          final hi = maxByChat < _leftMin
-                              ? _leftMin
-                              : (maxByChat < _leftMax ? maxByChat : _leftMax);
-                          _leftWidth = (_leftWidth + dx).clamp(_leftMin, hi);
+                          _rightWidth = (_rightWidth - dx).clamp(
+                            _rightMin,
+                            _rightMax,
+                          );
                         }),
+                        onDragEnd: () =>
+                            state.saveLayoutWidths(right: _rightWidth),
                       ),
-                      Expanded(
-                        child: selected == null
-                            ? const _NoSelection()
-                            : ChatScreen(
-                                key: ValueKey(selected.id),
-                                room: selected,
-                                embedded: true,
-                              ),
+                    if (showPanel && selected != null)
+                      TweenAnimationBuilder<double>(
+                        duration: const Duration(milliseconds: 240),
+                        curve: Curves.easeOutCubic,
+                        tween: Tween(begin: 0.0, end: 1.0),
+                        builder: (context, t, child) => SizedBox(
+                          width: rightW * t,
+                          child: ClipRect(
+                            child: OverflowBox(
+                              alignment: Alignment.centerLeft,
+                              minWidth: _rightWidth,
+                              maxWidth: _rightWidth,
+                              child: child,
+                            ),
+                          ),
+                        ),
+                        child: RepaintBoundary(
+                          child: RoomPanel(room: selected),
+                        ),
                       ),
-                      // ★ 右侧详情面板是**布局里的一栏**（点聊天顶部胶囊开关），
-                      //   和左边那栏同级：没有遮罩、不盖住聊天，聊天区自己让出宽度。
-                      // ★ 面板要**滑出来**，不是咣当一下出现。
-                      //   做法：动画容器宽度 0 → 340，里面的内容固定 340 宽、
-                      //   用 ClipRect 裁掉超出部分 —— 这样内容不会在动画过程中被挤变形，
-                      //   而是像抽屉一样平移进场。
-                      //   关的时候反过来（宽度收回 0），同样平滑。
-                      // 只在**开着**时才挂载：进场有滑入动画，关闭立即消失。
-                      // 关闭不做退场动画是有意的 —— 关东西就该干脆；
-                      // 而且挂载着（哪怕宽度是 0）会让面板里的内容一直在树里，
-                      // 白占内存、也让"关掉了没"变得说不清。
-                      if (showPanel && selected != null)
-                        _DragHandle(
-                          width: _handleWidth,
-                          // 往左拖 = 面板变宽
-                          onDrag: (dx) => setState(() {
-                            _rightWidth = (_rightWidth - dx).clamp(
-                              _rightMin,
-                              _rightMax,
-                            );
-                          }),
-                          onDragEnd: () =>
-                              state.saveLayoutWidths(right: _rightWidth),
-                        ),
-                      if (showPanel && selected != null)
-                        TweenAnimationBuilder<double>(
-                          duration: const Duration(milliseconds: 240),
-                          curve: Curves.easeOutCubic,
-                          tween: Tween(begin: 0.0, end: 1.0),
-                          builder: (context, t, child) => SizedBox(
-                            width: rightW * t,
-                            child: ClipRect(
-                              child: OverflowBox(
-                                alignment: Alignment.centerLeft,
-                                minWidth: _rightWidth,
-                                maxWidth: _rightWidth,
-                                child: child,
-                              ),
-                            ),
-                          ),
-                          child: RepaintBoundary(
-                            child: RoomPanel(room: selected),
-                          ),
-                        ),
-                      // ★ 第四栏：内置浏览器，永远在最右边。
-                      //   Bot 信息栏永远在它左边 —— 两栏各占一列、互不覆盖。
-                      //   浏览器栏不依赖「选中会话」，所以没选会话也能开着。
-                      if (showBrowser && state.browser.open)
-                        _DragHandle(
-                          width: _handleWidth,
-                          // 拖手柄是浏览器栏的左缘：往左拖 = 浏览器变宽
-                          onDrag: (dx) => setState(() {
-                            _browserWidth = (_browserWidth - dx).clamp(
-                              _browserMin,
-                              _browserMax,
-                            );
-                          }),
-                          onDragEnd: () =>
-                              state.saveLayoutWidths(browser: _browserWidth),
-                        ),
-                      if (showBrowser && state.browser.open)
-                        TweenAnimationBuilder<double>(
-                          duration: const Duration(milliseconds: 240),
-                          curve: Curves.easeOutCubic,
-                          tween: Tween(begin: 0.0, end: 1.0),
-                          builder: (context, t, child) => SizedBox(
-                            width: browserW * t,
-                            child: ClipRect(
-                              child: OverflowBox(
-                                alignment: Alignment.centerLeft,
-                                minWidth: _browserWidth,
-                                maxWidth: _browserWidth,
-                                child: child,
-                              ),
-                            ),
-                          ),
-                          child: RepaintBoundary(
-                            child: BrowserPane(
-                              state: state.browser,
-                              width: _browserWidth,
+                    // ★ 第四栏：内置浏览器，永远在最右边。
+                    //   Bot 信息栏永远在它左边 —— 两栏各占一列、互不覆盖。
+                    //   浏览器栏不依赖「选中会话」，所以没选会话也能开着。
+                    if (showBrowser && state.browser.open)
+                      _DragHandle(
+                        width: _handleWidth,
+                        // 拖手柄是浏览器栏的左缘：往左拖 = 浏览器变宽
+                        onDrag: (dx) => setState(() {
+                          _browserWidth = (_browserWidth - dx).clamp(
+                            _browserMin,
+                            _browserMax,
+                          );
+                        }),
+                        onDragEnd: () =>
+                            state.saveLayoutWidths(browser: _browserWidth),
+                      ),
+                    if (showBrowser && state.browser.open)
+                      TweenAnimationBuilder<double>(
+                        duration: const Duration(milliseconds: 240),
+                        curve: Curves.easeOutCubic,
+                        tween: Tween(begin: 0.0, end: 1.0),
+                        builder: (context, t, child) => SizedBox(
+                          width: browserW * t,
+                          child: ClipRect(
+                            child: OverflowBox(
+                              alignment: Alignment.centerLeft,
+                              minWidth: _browserWidth,
+                              maxWidth: _browserWidth,
+                              child: child,
                             ),
                           ),
                         ),
-                    ],
-                  ),
+                        child: RepaintBoundary(
+                          child: BrowserPane(
+                            state: state.browser,
+                            width: _browserWidth,
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
               ),
             ],

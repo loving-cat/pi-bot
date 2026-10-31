@@ -10,7 +10,6 @@ import 'app_log.dart';
 import 'app_state.dart';
 import 'models.dart';
 import 'frame_log.dart';
-import 'resizing.dart';
 import 'widgets/avatar_life.dart';
 import 'notify.dart';
 import 'scope.dart';
@@ -38,12 +37,6 @@ Future<void> main() async {
 
   // 帧耗时采样（只有带了 PI_BOT_FRAME_LOG 环境变量才工作，平时零开销）
   FrameLog.start();
-
-  // 【试验用】强制进入"拖动降级渲染"状态，好和正常状态做 A/B 对比
-  //   $env:PI_BOT_FORCE_RESIZE='1'
-  if (Platform.environment['PI_BOT_FORCE_RESIZE'] == '1') {
-    appResizing.value = true;
-  }
 
   // 桌面端：无边框窗口，控制按钮由 App 自己画在右上角
   if (WindowTitleBar.isSupported) {
