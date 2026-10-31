@@ -17,6 +17,7 @@ import {
 import { capacityError } from './model-capacity.js';
 import { resolveBotModelSelection } from './model-dispatch.js';
 import { store } from './store.js';
+import { policyChange } from './policy-version.js';
 import { metaFor, pathFor, saveBuffer, saveMovedFile } from './attachments.js';
 import { lanAddresses } from './pairing.js';
 import { timingSafeEqual, log } from './util.js';
@@ -1045,16 +1046,24 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
       }
       // ---------- 部门规矩（危险动作 / 交付要附证据）----------
       if (pathname === '/api/policy' && req.method === 'GET') {
-        return send(res, 200, { policy: store.policy() });
+        // 带上版本号：App 可以把它展示出来，也方便排查"这条活按哪套规矩跑的"
+        return send(res, 200, { policy: store.policy(), policyVersion: store.policyVersion() });
       }
       if (pathname === '/api/policy' && req.method === 'PATCH') {
         const body = await readBody(req);
         const policy = store.updatePolicy(body);
+        // ★ 规矩变了 → 通知仍在跑的活，但**不中断**。
+        //   只在授权相关字段真的变了才通知（改 requireProof 之类不扰人）。
+        const change = policyChange(store.policy(), policy);
+        const notified = change.isChange
+          ? store.notifyPolicyChanged({ version: change.to, changed: change.changed })
+          : 0;
         log(
           `⚙️  部门规矩改为：危险动作 ${policy.dangerous === 'deny' ? '只读（不给改文件/跑命令的工具）' : '允许'} / ` +
-            `交付${policy.requireProof ? '必须附证据' : '不强求证据'}`,
+            `交付${policy.requireProof ? '必须附证据' : '不强求证据'}` +
+            (notified ? `；已通知 ${notified} 条在跑的活（不中断）` : ''),
         );
-        return send(res, 200, { policy });
+        return send(res, 200, { policy, policyChange: change, notified });
       }
       if (pathname === '/api/group-limits' && req.method === 'PATCH') {
         const body = await readBody(req);

@@ -68,6 +68,7 @@ const TESTS = [
   'mcp-credential-target',
   'render-html',
   'memory-policy',
+  'policy-version',
 ];
 
 let failed = 0;

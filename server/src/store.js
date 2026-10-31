@@ -43,6 +43,7 @@ import { assertMcpCredentialsSealed } from './mcp-credentials.js';
 import { normalizeSite } from './sites.js';
 import { CHIEF_MODEL_POLICY } from './model-dispatch.js';
 import { encrypt, decrypt, isEncrypted } from './secrets.js';
+import { policyVersion as computePolicyVersion, policyChange, planPolicyChangeNotices, describePolicyChange } from './policy-version.js';
 
 export const GROUP_LIMITS_DEFAULT = {
   /** 部门老大每次发言最多跑几轮 */
@@ -958,12 +959,26 @@ export class Store {
     return normalizePolicy(this.state.policy ?? {}, POLICY_DEFAULT);
   }
 
+  /**
+   * 当前规矩的版本号。
+   *
+   * 派活时要把它记在活上 —— 这样规矩变了以后才能回答
+   * "这条活当初是按哪一套授权出去的"，进而只通知受影响的活。
+   */
+  policyVersion() {
+    return computePolicyVersion(this.policy());
+  }
+
   /** 改部门规矩。改完会广播，正在跑的会话下一轮就会拿到新的工具集 */
   updatePolicy(patch = {}) {
-    const next = normalizePolicy(patch, this.policy());
+    const prev = this.policy();
+    const next = normalizePolicy(patch, prev);
     this.state.policy = next;
     this.scheduleSave();
-    bus.emit('event', { t: 'policy.updated', policy: next });
+    // ★ 先算变更再说广播：调用方（例如派活侧）要拿这个结论去决定
+    //   "哪些在飞的活该收到"规矩变了"的通知"，不能等事件发出去再回头查旧值。
+    const change = policyChange(prev, next);
+    bus.emit('event', { t: 'policy.updated', policy: next, change });
     return next;
   }
 
@@ -1418,6 +1433,7 @@ export class Store {
     createdBy = null,
     sourceMessageId = null,
     status = 'open',
+    policyVersion = null,
   } = {}) {
     const clean = String(title ?? '').trim().slice(0, 200);
     if (!clean) return null;
@@ -1432,6 +1448,13 @@ export class Store {
       ownerName: ownerBotId ? (this.getBot(ownerBotId)?.name ?? null) : null,
       createdBy,
       sourceMessageId,
+      /**
+       * 这条活**受理时**依据的规矩版本。
+       *
+       * 老数据没有这个字段（null）—— 那就不去猜它当初按什么规矩跑的，
+       * 规矩变了也不通知它，免得对着一条老活编一句"你的规矩变了"。
+       */
+      policyVersion: policyVersion ? String(policyVersion) : null,
       createdAt: now(),
       updatedAt: now(),
       unreadAt: 0,
@@ -1513,8 +1536,55 @@ export class Store {
       createdBy: 'dispatch',
       sourceMessageId,
       status: 'doing',
+      // ★ 受理时就钉住当时的规矩版本：规矩变了以后，靠它判断
+      //   这条活是不是"按旧规矩在跑"，而不用去回溯当时的状态。
+      policyVersion: this.policyVersion(),
     });
     return task?.id ?? null;
+  }
+
+  /**
+   * 还在跑的活（已受理、未收尾）。规矩变更时按它挑要通知的对象。
+   *
+   * 只取 `doing` 和 `open`：`done` 的活已经结束了，通知它没有意义。
+   */
+  activeTasks() {
+    const list = Array.isArray(this.state.tasks) ? this.state.tasks : [];
+    return list.filter((t) => t?.status === 'doing' || t?.status === 'open');
+  }
+
+  /**
+   * 给仍在跑的活下发一条"规矩变了"的系统提示。
+   *
+   * 刻意**不中断**正在做的事：规矩变更只说明"以后要这么办"，
+   * 半路掐断会留下半成品。由此变成的通知只写进它所在房间，人能看到、
+   * 下一轮由它自己决定怎么调整。返回实际通知了几条。
+   */
+  notifyPolicyChanged({ version = '', changed = [] } = {}) {
+    const { notify } = planPolicyChangeNotices(this.activeTasks(), version);
+    if (!notify.length) return 0;
+    const fields = describePolicyChange(changed);
+    let sent = 0;
+    for (const task of notify) {
+      if (!task.roomId) continue;
+      // 把活的版本推进到当前：同一条活不因同一次变更被反复通知
+      task.policyVersion = version;
+      task.updatedAt = now();
+      this.appendMessage({
+        roomId: task.roomId,
+        authorType: 'system',
+        authorName: '规矩提示',
+        text:
+          `部门规矩已更新（${fields}）。` +
+          `手上这条活（${task.title}）**不中断**：按新规矩把它做完，` +
+          '如果新规矩不允许继续动手，说一句就停，不要硬做。',
+        status: 'done',
+        meta: { via: 'policy_changed', taskId: task.id, changed },
+      });
+      sent++;
+    }
+    this.scheduleSave();
+    return sent;
   }
 
   /**
