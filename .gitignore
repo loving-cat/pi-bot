@@ -57,6 +57,9 @@ probe.txt
 *.apk
 *.zip
 
+# graphify 知识图谱产物（本地生成，不进仓库）
+graphify-out/
+
 # 单元测试/本地跑起来产生的数据目录
 /data/
 
