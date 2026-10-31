@@ -282,6 +282,9 @@ flutter analyze
 | `PI_BOT_GROUP_BUSY_WAIT_MS` | 120000 | 要派的活碰上成员正忙，最多等它多久 |
 | `PI_BOT_HEARTBEAT_MS` / `PI_BOT_STALL_MS` | 15000 / 360000 | 心跳间隔 / 多久没动静算断了 |
 | `PI_BOT_MAX_SESSIONS` | 40 | 驻留会话上限（LRU） |
+| `PI_BOT_MAX_CONCURRENT_RUNS` | 0 | 同时**开跑**的轮数上限（0 = 不限）。与 `MAX_SESSIONS` 是两件事：那个管驻留多少份上下文，这个管同时几路在真跑 |
+| `PI_BOT_RUN_SLOT_RESERVE` | 1 | 给人额外保留的槽位（用户直接发起/打断的轮次用得上，不被机器挤掉） |
+| `PI_BOT_RUN_SLOT_WAIT_MS` | 0 | 等槽位的硬超时，0 = 一直等。设了以后排队超时会如实回报并在群里留痕 |
 | `PI_BOT_RUN_TIMEOUT_MS` | 600000 | 单轮硬超时 |
 
 ## 安全

@@ -69,6 +69,7 @@ const TESTS = [
   'render-html',
   'memory-policy',
   'policy-version',
+  'run-slots',
 ];
 
 let failed = 0;

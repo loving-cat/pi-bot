@@ -150,6 +150,24 @@ export const config = {
    */
   /** 同时驻留的 agent 会话上限（每个 房间×bot 一个，各自占内存），超出按 LRU 释放 */
   maxSessions: Number(process.env.PI_BOT_MAX_SESSIONS || 40),
+  /**
+   * 同时**开跑**的 agent 轮次数上限。
+   *
+   * 与 maxSessions 是两件事：那个管"驻留多少份上下文"，这个管"同时有几路在真跑"。
+   * 一个部门 @all 会同时开 N 路模型请求，N 大时宿主机被吃满、所有请求互相拖慢。
+   *
+   * **默认 0 = 不限**，行为和以前完全一致；想保护宿主机就填个数。
+   */
+  maxConcurrentRuns: Number(process.env.PI_BOT_MAX_CONCURRENT_RUNS || 0),
+  /** 给人额外保留的槽位（人发起的轮次用得上，不被机器挤掉） */
+  runSlotReserve: Number(process.env.PI_BOT_RUN_SLOT_RESERVE ?? 1),
+  /**
+   * 等槽位的硬超时（毫秒）。0 = 一直等。
+   *
+   * 不为 0 是为了让"排到天荒地老"变成一句看得见的结论：
+   * 超时就如实回报并在群里留痕，而不是让用户干等。
+   */
+  runSlotWaitMs: Number(process.env.PI_BOT_RUN_SLOT_WAIT_MS || 0),
   /** 主控只有只读文件工具 —— 它是调度者，不是干活的人 */
   chiefTools: (process.env.PI_BOT_CHIEF_TOOLS || 'read,ls,grep,find').split(',').map((s) => s.trim()).filter(Boolean),
   /** 多人部门负责人的只读内置工具；执行工具不参与此配置。 */

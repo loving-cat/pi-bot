@@ -30,6 +30,7 @@ import { deliverDirectInput } from './direct-message-delivery.js';
 import { MergeQueue, MERGE_QUIET_MS } from './merge-messages.js';
 import { buildMemoryDigest, memoryConversation } from './memory-digest.js';
 import { countTurns, shouldAutoSummarize } from './memory-policy.js';
+import { PRIORITY, RunSlots } from './run-slots.js';
 
 /**
  * 多久之内又来一条，算"连发"（于是开始攒）。
@@ -194,6 +195,17 @@ export class PiRunner {
     this.lastUserSendAt = new Map();
 
     /**
+     * 全局运行槽位：限制同时开跑的轮数，给人留保底位。
+     *
+     * 不配就是不限（capacity=0），行为和以前一模一样 ——
+     * 默认不改变现有行为，想限制就在设置里填并发上限。
+     */
+    this.runSlots = new RunSlots({
+      capacity: config.maxConcurrentRuns,
+      reserve: config.runSlotReserve,
+    });
+
+    /**
      * 连发消息的合并队列（只在它空闲时用）。
      *
      * 到期后走的仍然是原来那条投递路径（deliverDirectInput），
@@ -264,6 +276,8 @@ export class PiRunner {
     await this.run(roomId, leadBot.id, prompt, {
       groupTurn: true,
       attachments: files,
+      // 用户刚说话，这是回应他的人 → 人的保底槽
+      human: true,
     });
   }
 
@@ -669,6 +683,29 @@ export class PiRunner {
   #evictSessions() {
     const released = evictIdle(this.sessions, config.maxSessions);
     if (released) log(`会话 LRU 释放 ${released} 个（当前 ${this.sessions.size}）`);
+  }
+
+  /**
+   * 申请一个全局运行槽位。
+   *
+   * 上限来自 `config.maxConcurrentRuns`（0 = 不限，保持旧行为）。
+   * 人发起的轮次用保底槽且优先，所以"人在等"永远不会被"机器在忙"挡住。
+   *
+   * 返回 null 表示本轮**不需要**槽位（不限并发且没开保底位），
+   * 调用方不要把它当成失败。
+   */
+  async #acquireRunSlot({ roomId, botId, human, signal }) {
+    const slots = this.runSlots;
+    if (!slots || slots.unlimited) return null;
+    const name = `${store.getRoom(roomId)?.name ?? roomId} / ${store.getBot(botId)?.name ?? botId}`;
+    const ticket = await slots.acquire({
+      priority: human ? PRIORITY.human : PRIORITY.normal,
+      name,
+      // 0 = 不设超时（一直等）；配了才硬超时
+      timeoutMs: config.runSlotWaitMs,
+      signal,
+    });
+    return ticket;
   }
 
   isBusy(roomId, botId) {
@@ -1125,6 +1162,9 @@ export class PiRunner {
             let res = await this.run(roomId, bot.id, prompt, {
               groupTurn: true,
               attachments,
+              // ★ 用户直接叫的人才能用保底槽（与打断特权同一个判据：fromId 为空）。
+              //   同事之间 @ 算常规派活，不占用给人留的那一位。
+              human: !item.fromId && isUserInitiatedRound({ openerBotId }),
             });
             let attempt = 1;
             let lastError = res.ok ? '' : String(res.error ?? '未知原因');
@@ -1516,7 +1556,8 @@ export class PiRunner {
       const deliveryEpoch = this.directDeliveryEpochs.get(roomId) ?? 0;
       deliverDirectInput({
         prepare: () => this.#buildInput(clean, files),
-        run: ({ promptText }) => this.run(roomId, botId, promptText, { skipUserMessage: true, attachments: files }),
+        // DM 里的每一轮都是用户直接说话 → 走人的保底槽
+        run: ({ promptText }) => this.run(roomId, botId, promptText, { skipUserMessage: true, attachments: files, human: true }),
         getEntry: () => this.sessions.get(this.#key(roomId, botId)),
         isCancelled: () => this.aborting.has(roomId)
           || (this.directDeliveryEpochs.get(roomId) ?? 0) !== deliveryEpoch,
@@ -1740,6 +1781,11 @@ export class PiRunner {
       skipUserMessage = false,
       attachments = [],
       groupTurn = false,
+      /**
+       * 这一轮是**人**发起的（用户直接说话 / 打断）还是一次常规派活。
+       * 人发起的可以使用保底槽位，永远不被机器挤掉。
+       */
+      human = false,
     } = {},
   ) {
     const started = Date.now();
@@ -1773,6 +1819,7 @@ export class PiRunner {
     const checkCancelled = () => {
       if (cancelled()) throw turnController.signal.reason ?? Object.assign(new Error('已终止'), { name: 'AbortError' });
     };
+
     entry.lastUsed = Date.now();
     // ★ 先看上下文：到阈值就压缩成摘要，再开始这一轮。
     //   （别等 pi 的 98% 触发线 —— 压完没余量，群聊长任务会陷入压缩循环）
@@ -1976,6 +2023,32 @@ export class PiRunner {
 
     let timeoutHandle = null;
     try {
+      // 槽位：超时就如实回报并在群里留痕，不静默干等
+      const slotTicket = await this.#acquireRunSlot({
+        roomId, botId, human, signal: turnController.signal,
+      });
+      entry.slotTicket = slotTicket;
+      if (slotTicket && !slotTicket.ok) {
+        log(
+          `【${room.name}】${store.getBot(botId)?.name ?? botId} 没拿到运行槽位`
+            + `（${slotTicket.reason === 'timeout' ? '排队超时' : '已取消'}，`
+            + `等了 ${Math.round(slotTicket.waitedMs / 1000)} 秒）→ 这一轮不跑`,
+        );
+        store.appendMessage({
+          roomId,
+          authorType: 'system',
+          authorName: '排队提示',
+          text:
+            `同时跑的任务已满，${store.getBot(botId)?.name ?? botId} 这一轮排队超时没有开跑。`
+            + '可以等手上的活跑完再发一次，或在「部门预算」里调高并发上限。',
+          status: 'done',
+          meta: { via: 'run_slot_timeout', botId, reason: slotTicket.reason },
+        });
+        return {
+          ok: false, text: '', ms: Date.now() - started,
+          error: '运行槽位排队超时', messageId: '',
+        };
+      }
       checkCancelled();
       // ★ 兜底：万一还是撞上"这个会话正在处理"（并发下理论上不该有了，
       //   但外部/扩展也能直接调 prompt），**别把红字甩给用户** ——
@@ -2222,6 +2295,10 @@ export class PiRunner {
       entry.turnController = null;
       entry.liveMsgId = null;
       entry.startedAt = null;
+      // ★ 槽位必须在 finally 里还 —— 成功、出错、被终止都会走到这里。
+      //   漏掉任何一条路径，槽位就永远少一个，最后整个服务端等于停摆。
+      entry.slotTicket?.release?.();
+      entry.slotTicket = null;
       bus.emit('event', { t: 'typing', roomId, botId: bot.id, active: false });
       // 每轮结束报一次上下文占用 —— 放在 finally 里，成功/出错都会报，
       // 否则出错那轮的数字会一直停在旧值上。
