@@ -47,6 +47,15 @@ class _HomeShellState extends State<HomeShell> {
   /// 聊天区最小宽度 —— 再小就没法看了
   static const _chatMin = 420.0;
 
+  /// 分隔条（可拖手柄）**真实占用的宽度**。
+  ///
+  /// ★ 这个数值必须只有一处定义，且**布局预算、拖动中的骨架、实际渲染三处共用**。
+  ///   之前预算按 1px 算、真实渲染是 6px（命中区），于是松手之后每条都多占 5px：
+  ///   开三栏就多 15px，全部从聊天区偷 —— Expanded 会默默吸收，**不报错**，
+  ///   窗口一窄就变成内容被切 / 溢出（用户说的拖完边缘就乱）。
+  ///   命中区要 6px 才好点中，所以预算必须按 6px 算，而不是把命中区改窄。
+  static const _handleWidth = 6.0;
+
   @override
   void initState() {
     super.initState();
@@ -122,8 +131,11 @@ class _HomeShellState extends State<HomeShell> {
     var showPanel = panelOpen;
     var showBrowser = browserOpen;
 
-    // 分隔条只有 1px 线；不参与宽度计算的地方也按 1px 算，宁多不少
-    double separators() => 1 + (showPanel ? 1 : 0) + (showBrowser ? 1 : 0);
+    // 分隔条只占 _handleWidth；不参与宽度计算的地方也按同一个数算
+    double separators() =>
+        _handleWidth +
+        (showPanel ? _handleWidth : 0) +
+        (showBrowser ? _handleWidth : 0);
 
     // 按**偏好值**算总共要多宽 —— 这是关键：不是按最小值
     double wanted() =>
@@ -247,14 +259,16 @@ class _HomeShellState extends State<HomeShell> {
                       return Row(
                         children: [
                           Container(width: leftW, color: PB.bgApp),
-                          Container(width: 1, color: PB.borderTertiary),
+                          // 骨架里的分隔条宽度必须和真实渲染一致（_handleWidth），
+                          // 否则拖动中/拖动后两个形态的宽度对不上，松手会跳一下。
+                          Container(width: _handleWidth, color: PB.bgApp),
                           const Expanded(child: SizedBox()),
                           if (showPanel) ...[
-                            Container(width: 1, color: PB.borderTertiary),
+                            Container(width: _handleWidth, color: PB.bgApp),
                             Container(width: rightW, color: PB.bgPane),
                           ],
                           if (showBrowser) ...[
-                            Container(width: 1, color: PB.borderTertiary),
+                            Container(width: _handleWidth, color: PB.bgApp),
                             Container(width: browserW, color: PB.bgPane),
                           ],
                         ],
@@ -280,6 +294,7 @@ class _HomeShellState extends State<HomeShell> {
                         ),
                       ),
                       _DragHandle(
+                        width: _handleWidth,
                         onDrag: (dx) => setState(() {
                           final total = MediaQuery.sizeOf(context).width;
                           // 左栏能长到多宽：扣掉聊天区最小和右侧两栏占位
@@ -320,6 +335,7 @@ class _HomeShellState extends State<HomeShell> {
                       // 白占内存、也让"关掉了没"变得说不清。
                       if (showPanel && selected != null)
                         _DragHandle(
+                          width: _handleWidth,
                           // 往左拖 = 面板变宽
                           onDrag: (dx) => setState(() {
                             _rightWidth = (_rightWidth - dx).clamp(
@@ -355,6 +371,7 @@ class _HomeShellState extends State<HomeShell> {
                       //   浏览器栏不依赖「选中会话」，所以没选会话也能开着。
                       if (showBrowser && state.browser.open)
                         _DragHandle(
+                          width: _handleWidth,
                           // 拖手柄是浏览器栏的左缘：往左拖 = 浏览器变宽
                           onDrag: (dx) => setState(() {
                             _browserWidth = (_browserWidth - dx).clamp(
@@ -431,13 +448,17 @@ class _NoSelection extends StatelessWidget {
 /// 看聊天时想窄。写死一个值总有人不合适。
 /// 视觉上默认 1px（不抢戏），hover 时加粗成主题色（提示"这儿能拖"）。
 class _DragHandle extends StatefulWidget {
-  const _DragHandle({required this.onDrag, this.onDragEnd});
+  const _DragHandle({required this.onDrag, this.onDragEnd, this.width = 6});
 
   /// 水平拖动量（正数 = 往右）
   final void Function(double dx) onDrag;
 
   /// 松手时调一次 —— 用来把最终宽度落盘（拖动过程中不写盘，太频繁）
   final VoidCallback? onDragEnd;
+
+  /// 占位宽度。**必须和 HomeShell 的布局预算用同一个数**，
+  /// 否则预算算出来的"刚好放得下"在实际排版时就是放不下。
+  final double width;
 
   @override
   State<_DragHandle> createState() => _DragHandleState();
@@ -457,8 +478,9 @@ class _DragHandleState extends State<_DragHandle> {
         onHorizontalDragUpdate: (d) => widget.onDrag(d.delta.dx),
         onHorizontalDragEnd: (_) => widget.onDragEnd?.call(),
         child: SizedBox(
-          // 命中区 6px（好点中），视觉上只有 1px 的线
-          width: 6,
+          // 命中区要宽一点才好点中；视觉上仍然只有 1px 的线。
+          // 这个宽度会**真的占掉布局空间**，所以布局预算必须按它算。
+          width: widget.width,
           child: Center(
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 120),

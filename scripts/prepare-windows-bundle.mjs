@@ -138,13 +138,34 @@ export function buildRootNeedles(buildRoot) {
   //   pack 传进来的是 …/.pi-bot-build/pi-bot-windows-build-<id>，而 app.so 里是
   //   file:///D:/.pi-bot-build/ —— 只换精确路径会漏掉，残留扫描就把包拦下。
   //   所以把基目录（去掉最后一段运行目录）也作为候选。
-  const parent = path.dirname(buildRoot);
+  //
+  // ★ 不能用 path.dirname：这个脚本会在 Linux CI 上跑（server tests 在 ubuntu 上
+  //   跑打包测试），而 posix 的 dirname 认不得 `D:\`，会把整个串原样返回 ——
+  //   于是"基目录候选"在 Linux 上根本不存在，测试断言 3 !== 6 直接红。
+  //   这里按**两种分隔符**自己切最后一段，结果与跑在哪个平台无关。
+  const parent = stripLastSegment(buildRoot);
   if (parent && parent !== buildRoot && isAbsoluteDebugPath(parent)) {
     values.add(parent);
     values.add(parent.replaceAll('\\', '/'));
     values.add(parent.replaceAll('\\', '\\\\'));
   }
   return [...values].filter(Boolean).sort((a, b) => b.length - a.length);
+}
+
+/**
+ * 去掉路径最后一段（`/` 与 `\` 都认，与宿主平台无关）。
+ *
+ * 为什么不用 `path.dirname`：它跟着 `process.platform` 变，而这个函数处理的
+ * 始终是 **Windows 路径**（构建根），跑在 Linux CI 上时必须得到同一个答案。
+ */
+function stripLastSegment(p) {
+  const trimmed = p.replace(/[\\/]+$/, '');
+  const at = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
+  if (at <= 0) return '';
+  const head = trimmed.slice(0, at);
+  // 只剩 "D:" 这种盘符根时没有更有意义的父级
+  if (/^[A-Za-z]:$/.test(head)) return '';
+  return head;
 }
 
 /** 等长占位串：基串不够长就截断，够长就用空格补齐，绝不超过原串宽度。 */

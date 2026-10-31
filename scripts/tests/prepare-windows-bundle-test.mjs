@@ -363,6 +363,22 @@ try {
     assert.deepEqual(buildRootNeedles(''), []);
     assert.deepEqual(buildRootNeedles('relative\\path'), []);
   });
+  test('★ 构建根解析与跑在哪个平台无关（Linux CI 必须同结果）', () => {
+    // CI 在 ubuntu 上跑这份测试，而这里处理的始终是 Windows 路径。
+    // 曾经用 path.dirname：posix 下 `dirname('D:\...')` 返回 '.'，
+    // 基目录候选直接丢失，三条变六条的断言在 Linux 上红（3 !== 6）。
+    const needles = buildRootNeedles(BUILD_ROOT);
+    assert.ok(
+      needles.some((n) => n.endsWith('.pi-bot-build')),
+      `必须收得到基目录（不依赖宿主平台），实际：${JSON.stringify(needles)}`,
+    );
+    assert.ok(
+      needles.some((n) => n.includes('D:/.pi-bot-build')),
+      '基目录的正斜杠写法也要在（app.so 里就是这种）',
+    );
+    // 盘符根不该被当成可用的父级
+    assert.deepEqual(buildRootNeedles('D:\\x'), ['D:\\x', 'D:/x', 'D:\\\\x'].sort((a, b) => b.length - a.length));
+  });
   test('★ 回归：app.so 里的 file:/// URI 用的是基目录，不带运行 id', () => {
     // 真实踩到的形态：pack 传的是 …/.pi-bot-build/pi-bot-windows-build-<id>，
     // 而 app.so 里是 file:///D:/.pi-bot-build/ —— 必须能换掉基目录那一层。
