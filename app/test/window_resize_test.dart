@@ -38,7 +38,7 @@ void main() {
       SystemMouseCursors.resizeDownLeft,
       SystemMouseCursors.resizeLeft,
     });
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
   testWidgets('热区只贴在边上，中间不挡点击', (tester) async {
     var tapped = 0;
@@ -65,7 +65,7 @@ void main() {
     // 正中间：应该穿到下面的内容上
     await tester.tapAt(tester.getCenter(find.byType(WindowResizeOverlay)));
     expect(tapped, 1, reason: '热区不能挡住窗口中间的操作');
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
   group('resizeBy：拖动后的窗口矩形', () {
     const start = Rect.fromLTWH(100, 100, 800, 600);
@@ -258,7 +258,7 @@ void main() {
           '★ 绝不能再自己发 setBounds：和原生缩放抢窗口尺寸，'
           '正是"松手后拉伸/缩放"的来源',
     );
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
   testWidgets('★★ 八个热区各自映射到正确的缩放边', (tester) async {
     final edges = <Map>[];
@@ -312,5 +312,5 @@ void main() {
     // 插件对"不涉及的方向"传的是 false（不是 null）
     expect(edges[1]['left'], isFalse, reason: '上边缘不该带 left');
     expect(edges[1]['bottom'], isFalse, reason: '上边缘不该带 bottom');
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 }

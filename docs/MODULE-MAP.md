@@ -119,7 +119,14 @@
 | `theme.dart` | 颜色/字号/圆角；新增图标需核对当前依赖字体的实际字形 |
 | `clipboard_image.dart` / `clipboard_image_macos.dart` | 剪贴板图片平台分流；Windows PowerShell、macOS PNG/TIFF 读取与临时文件清理 |
 | `window_state.dart` | 窗口位置/大小记忆：编码、解析、夹回可见区（纯函数） |
-| `browser_pane_state.dart` | 右侧通用展示栏状态：开关/历史/网页与文件两种模式；多栏争抢宽度时按「最久没动」收纳 |
+| `browser_pane_state.dart` | 右侧通用展示栏状态：开关、历史、网页/文件模式与交互活动记录 |
+| `browser_navigation.dart` | 同一 WebView 内的导航序号、主框架地址链和错误归属判定，规范化空根路径并保留查询区别 |
+| `desktop_pane_layout.dart` | 桌面实际栏宽分配、偏好压缩与附件内联预览的可用空间判定（纯逻辑） |
+| `attachment_external_open.dart` | 附件外部打开状态、并发请求合并及下载到系统程序的交接 |
+| `attachment_preview_request.dart` | 不可变附件预览请求、格式识别与原始/展示地址派生 |
+| `widgets/attachment_preview_scope.dart` / `attachment_preview_router.dart` | 真实布局约束下的统一附件入口，选择右侧阅读栏或独立二级页 |
+| `widgets/attachment_preview_content.dart` / `attachment_preview_surface.dart` | 两种阅读位置共用的文件内容与二级预览容器，HTML保持离线沙箱 |
+| `widgets/attachment_actions.dart` | 文件预览工具栏中的下载、系统打开与状态反馈 |
 | `browser_platform_policy.dart` | 展示栏的导航与 webview 策略（放开 cookies/localStorage 以便登录，但禁 file:/JS bridge）；与附件预览沙箱是两套配置 |
 | `widgets/browser_pane.dart` | 展示栏界面：地址栏 + 前进后退 + webview；PDF 交内核阅读器渲染真版式 |
 | `app_log.dart` | 界面层错误落盘（app.log）、打开日志目录 |

@@ -1,20 +1,18 @@
 import 'dart:io';
-import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:url_launcher/url_launcher.dart';
 
 import '../models.dart';
-import '../html_preview_loader.dart';
-import '../open_file.dart';
-import '../scope.dart';
-import '../save_file.dart';
+import '../attachment_preview_request.dart';
+import 'attachment_actions.dart';
+import 'attachment_preview_router.dart';
+import 'attachment_preview_surface.dart';
+
+export 'attachment_actions.dart'
+    show downloadAttachment, openAttachmentExternally;
+import '../attachment_external_open.dart';
 import '../theme.dart';
-import 'toast.dart';
-import 'md_text.dart';
-import 'html_attachment_preview.dart';
 
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
@@ -65,7 +63,7 @@ class AttachmentList extends StatelessWidget {
               alignment: alignEnd ? WrapAlignment.end : WrapAlignment.start,
               children: [
                 for (final img in images)
-                  _Thumb(url: urlFor(img.id), name: img.name),
+                  _Thumb(url: urlFor(img.id), file: img),
               ],
             ),
           ),
@@ -124,16 +122,17 @@ class AttachmentList extends StatelessWidget {
 }
 
 class _Thumb extends StatelessWidget {
-  const _Thumb({required this.url, required this.name});
+  const _Thumb({required this.url, required this.file});
 
   final String? url;
-  final String name;
+  final Attachment file;
+  String get name => file.name;
 
   @override
   Widget build(BuildContext context) {
     if (url == null) return const SizedBox.shrink();
     return GestureDetector(
-      onTap: () => showImageViewer(context, url!, name),
+      onTap: () => openAttachmentByBestRoute(context, file, url),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
         child: Container(
@@ -191,7 +190,7 @@ class _Thumb extends StatelessWidget {
 /// 两件事要分开：
 ///   · **点卡片本体** = 站内预览（不再一上来就丢给系统外部应用 —— 那等于把你踢出 App）
 ///   · **右边的下载按钮** = 直接存下来（不用点进去再找）
-class FileChip extends StatelessWidget {
+class FileChip extends StatefulWidget {
   const FileChip({
     super.key,
     required this.file,
@@ -205,18 +204,21 @@ class FileChip extends StatelessWidget {
   /// true = 在附件块里占满一行（等宽对齐，不随文件名长短参差）
   final bool fullWidth;
 
-  /// 能不能在右侧展示栏里直接看。
-  ///
-  /// 和 server/src/render-html.js 的白名单保持一致，另外 PDF 是**内核自己渲染**
-  /// （走原文件，不走 /html）。与 [isHtmlAttachment] 不同：HTML 附件仍在
-  /// 旧弹窗里看（那是沙箱预览），不抢展示栏。
+  /// 由原文件或服务端转换页面直接交给网络 WebView 的格式。
+  /// 其他格式也可进入右侧阅读栏，由对应的内容组件呈现。
   static bool canShowInPane(String name) {
     final lower = name.toLowerCase();
     return const [
-      '.xlsx', '.xls', '.xlsm', '.ods', '.csv', '.tsv', '.pdf', '.docx',
+      '.xlsx',
+      '.xls',
+      '.xlsm',
+      '.ods',
+      '.csv',
+      '.tsv',
+      '.pdf',
+      '.docx',
     ].any(lower.endsWith);
   }
-
 
   static IconData iconFor(String name) {
     final lower = name.toLowerCase();
@@ -234,7 +236,53 @@ class FileChip extends StatelessWidget {
   }
 
   @override
+  State<FileChip> createState() => _FileChipState();
+}
+
+class _FileChipState extends State<FileChip> {
+  late AttachmentOpenController _opener;
+
+  @override
+  void initState() {
+    super.initState();
+    _createOpener();
+  }
+
+  void _createOpener() {
+    _opener = AttachmentOpenController(
+      operation: () =>
+          openAttachmentFile(name: widget.file.name, url: widget.url!),
+    )..addListener(_updateOpenStatus);
+  }
+
+  void _updateOpenStatus() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void didUpdateWidget(FileChip oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.file.id == widget.file.id &&
+        oldWidget.file.name == widget.file.name &&
+        oldWidget.url == widget.url)
+      return;
+    _opener.removeListener(_updateOpenStatus);
+    _opener.dispose();
+    _createOpener();
+  }
+
+  @override
+  void dispose() {
+    _opener.removeListener(_updateOpenStatus);
+    _opener.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final file = widget.file;
+    final url = widget.url;
+    final fullWidth = widget.fullWidth;
     const fg = PB.textPrimary;
     const dim = PB.textQuaternary;
 
@@ -253,6 +301,21 @@ class FileChip extends StatelessWidget {
             file.sizeText,
             style: TextStyle(fontSize: PB.fsXxs, color: dim),
           ),
+        if (_opener.message case final message?)
+          Padding(
+            padding: const EdgeInsets.only(top: 3),
+            child: Text(
+              message,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: PB.fsXxs,
+                color: _opener.phase == AttachmentOpenPhase.failed
+                    ? PB.danger
+                    : PB.textSecondary,
+              ),
+            ),
+          ),
       ],
     );
 
@@ -266,7 +329,11 @@ class FileChip extends StatelessWidget {
         child: Row(
           mainAxisSize: fullWidth ? MainAxisSize.max : MainAxisSize.min,
           children: [
-            Icon(FileChip.iconFor(file.name), size: 18, color: PB.textSecondary),
+            Icon(
+              FileChip.iconFor(file.name),
+              size: 18,
+              color: PB.textSecondary,
+            ),
             const SizedBox(width: 8),
             if (fullWidth)
               Expanded(child: nameCol)
@@ -294,14 +361,13 @@ class FileChip extends StatelessWidget {
             Expanded(child: openArea)
           else
             Flexible(child: openArea),
-          // 「在展示栏打开」：表格 / PDF / Word 由服务端渲染成 HTML，
-          // 直接在右侧栏里看，不用先下载再找软件打开。
-          if (!kIsWeb && canShowInPane(file.name) && url != null)
+          // 文件名与预览按钮采用相同的空间判定和呈现方式。
+          if (!kIsWeb && FileChip.canShowInPane(file.name) && url != null)
             _IconAction(
               icon: LucideIcons.panelRight,
-              tip: '在右侧展示栏打开',
+              tip: '预览文件',
               color: dim,
-              onTap: () => AppScope.read(context).showAttachmentInPane(file),
+              onTap: () => openAttachmentByBestRoute(context, file, url),
             ),
           // 「用系统程序打开」：只在桌面端出现 —— 手机上交给系统的分享/打开
           // 机制是另一件事，先不给（给了也点不了）。价值在于：**看原样**，
@@ -312,13 +378,10 @@ class FileChip extends StatelessWidget {
               icon: LucideIcons.squareArrowOutUpRight,
               tip: '用系统程序打开',
               color: dim,
-              onTap: url == null
+              busy: _opener.opening,
+              onTap: url == null || _opener.opening
                   ? null
-                  : () => openAttachmentExternally(
-                      context,
-                      file: file,
-                      url: url!,
-                    ),
+                  : () => _opener.open(),
             ),
           // 下载按钮就放在卡片上 —— 不用点进去再找
           _IconAction(
@@ -327,7 +390,7 @@ class FileChip extends StatelessWidget {
             color: dim,
             onTap: url == null
                 ? null
-                : () => downloadAttachment(context, file: file, url: url!),
+                : () => downloadAttachment(context, file: file, url: url),
           ),
           const SizedBox(width: 4),
         ],
@@ -343,429 +406,60 @@ class _IconAction extends StatelessWidget {
     required this.tip,
     required this.color,
     required this.onTap,
-    this.size = 16,
+    this.busy = false,
   });
 
   final IconData icon;
   final String tip;
   final Color color;
   final VoidCallback? onTap;
-  final double size;
+  static const double size = 16;
+  final bool busy;
 
   @override
   Widget build(BuildContext context) {
     return Tooltip(
-      message: tip,
+      message: busy ? '正在打开…' : tip,
       waitDuration: const Duration(milliseconds: 500),
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(PB.rFull),
         child: Padding(
           padding: const EdgeInsets.all(6),
-          child: Icon(icon, size: size, color: color),
+          child: busy
+              ? SizedBox(
+                  width: size,
+                  height: size,
+                  child: const CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Icon(icon, size: size, color: color),
         ),
       ),
     );
   }
 }
 
-/// 下载一个附件到用户选的位置。
-///
-/// 和"用系统应用打开"是两件事：那个是拿别的程序看，这个是存下来。
-/// 用系统默认程序打开附件（桌面端）。
-///
-/// 和"下载"分开：下载是**存到用户选的位置**（留着），打开是**落到临时文件**
-/// 交给系统（看完就算）——两件事，别混。
-Future<void> openAttachmentExternally(
-  BuildContext context, {
-  required Attachment file,
-  required String url,
-}) async {
-  void say(String text) => toast(context, text);
-
-  say('正在打开 ${file.name}…');
-  try {
-    final res = await http
-        .get(Uri.parse(url))
-        .timeout(const Duration(seconds: 120));
-    if (res.statusCode >= 400) throw Exception('HTTP ${res.statusCode}');
-    final err = await openWithSystemApp(
-      name: file.name,
-      bytes: res.bodyBytes,
-      tempDir: attachmentTempDir(),
-    );
-    if (err != null) say(err);
-  } catch (err) {
-    say('打开失败：$err');
-  }
-}
-
-Future<void> downloadAttachment(
-  BuildContext context, {
-  required Attachment file,
-  required String url,
-}) async {
-  // 先把 messenger 抓在手里：await 之后 context 可能已经失效
-  void say(String text) => toast(context, text);
-
-  say('正在下载 ${file.name}…');
-  try {
-    final res = await http
-        .get(Uri.parse(url))
-        .timeout(const Duration(seconds: 120));
-    if (res.statusCode >= 400) throw Exception('HTTP ${res.statusCode}');
-    final path = await saveAttachment(name: file.name, bytes: res.bodyBytes);
-    if (path == null) return; // 用户取消，不用吭声
-    say('已保存到 $path');
-  } catch (err) {
-    say('下载失败：$err');
-  }
-}
-
-/// 点了之后该去哪：能进展示栏的优先送右侧，其余走旧弹窗。
-///
-/// 用户要的就是「点文件直接在右边看」，而不是先弹个窗说"这类文件画不出来"。
-/// 图片不在此列（它有自己的全屏查看器）。
+/// 文件卡片与按钮共用预览路由，由实际布局决定侧栏或二级页面。
 void openAttachmentByBestRoute(
   BuildContext context,
   Attachment file,
   String? url,
 ) {
   if (url == null) return;
-  final paneAvailable = !kIsWeb && FileChip.canShowInPane(file.name) && !file.isImage;
-  if (paneAvailable) {
-    AppScope.read(context).showAttachmentInPane(file);
-    return;
-  }
-  showFilePreview(context, file: file, url: url);
+  openAttachmentPreview(context, file, url);
 }
 
-/// 站内预览：点文件卡弹出来的那个悬浮窗。
-///
-/// 能就地画出来的（文本、图片）直接画；画不出来的（pdf/xlsx/zip）**老实说画不了**，
-/// 但下载和"用系统应用打开"两个出口一定在 —— 标题栏 X 左边一个，
-/// 空状态里再给一个，不让用户找不到下一步。
+/// 在独立二级页面中预览文件，关闭后回到原聊天布局。
 Future<void> showFilePreview(
   BuildContext context, {
   required Attachment file,
   required String? url,
-}) async {
-  if (url == null) return;
-  await Navigator.of(context).push(
-    PageRouteBuilder(
-      opaque: false,
-      barrierColor: Colors.black.withValues(alpha: 0.6),
-      pageBuilder: (ctx, _, __) => _FilePreview(file: file, url: url),
-      transitionsBuilder: (ctx, anim, _, child) => FadeTransition(
-        opacity: anim,
-        child: Transform.scale(scale: 0.97 + 0.03 * anim.value, child: child),
-      ),
-    ),
+}) {
+  if (url == null) return Future<void>.value();
+  return showAttachmentSecondary(
+    context,
+    AttachmentPreviewRequest(file: file, sourceUrl: url),
   );
-}
-
-class _FilePreview extends StatefulWidget {
-  const _FilePreview({required this.file, required this.url});
-
-  final Attachment file;
-  final String url;
-
-  @override
-  State<_FilePreview> createState() => _FilePreviewState();
-}
-
-class _FilePreviewState extends State<_FilePreview> {
-  /// null = 还在读
-  Object? _error;
-  String? _text;
-  bool _loading = true;
-  bool _expanded = false;
-
-  bool get _isImage => widget.file.isImage;
-  bool get _isHtml => isHtmlAttachment(widget.file.name, widget.file.mime);
-
-  bool get _looksTextual {
-    final n = widget.file.name.toLowerCase();
-    const exts = [
-      '.md',
-      '.markdown',
-      '.txt',
-      '.json',
-      '.csv',
-      '.tsv',
-      '.log',
-      '.yml',
-      '.yaml',
-      '.xml',
-      '.html',
-      '.css',
-      '.js',
-      '.ts',
-      '.dart',
-      '.py',
-      '.sh',
-      '.toml',
-      '.ini',
-    ];
-    return exts.any(n.endsWith);
-  }
-
-  bool get _isMarkdown {
-    final n = widget.file.name.toLowerCase();
-    return n.endsWith('.md') || n.endsWith('.markdown');
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    // 图片走 Image.network，不用在这儿读字节
-    if (_isImage || _isHtml || !_looksTextual) {
-      setState(() => _loading = false);
-      return;
-    }
-    try {
-      final bytes = await http
-          .get(Uri.parse(widget.url))
-          .timeout(const Duration(seconds: 30))
-          .then((r) {
-            if (r.statusCode >= 400) throw Exception('HTTP ${r.statusCode}');
-            return r.bodyBytes;
-          });
-      if (!mounted) return;
-      setState(() {
-        // 预览上限 512KB：再大就不是"看一眼"了，该下载
-        final capped = bytes.length > 512 * 1024;
-        _text = utf8.decode(
-          capped ? bytes.sublist(0, 512 * 1024) : bytes,
-          allowMalformed: true,
-        );
-        if (capped) _text = '$_text\n\n…（内容太长，只显示了前 512KB，要看全部请下载）';
-        _loading = false;
-      });
-    } catch (err) {
-      if (!mounted) return;
-      setState(() {
-        _error = err;
-        _loading = false;
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final screen = MediaQuery.sizeOf(context);
-    final w = _expanded
-        ? (screen.width - 24).clamp(0.0, double.infinity)
-        : (screen.width * 0.78).clamp(320.0, 900.0);
-    final h = _expanded
-        ? (screen.height - 24).clamp(0.0, double.infinity)
-        : (screen.height * 0.82).clamp(300.0, 820.0);
-
-    return Center(
-      child: Material(
-        // ★ Overlay/路由里没有 Material 祖先时，Flutter 会给文字画黄色双下划线
-        type: MaterialType.transparency,
-        child: Container(
-          width: w,
-          height: h,
-          decoration: BoxDecoration(
-            color: PB.bgPane,
-            borderRadius: BorderRadius.circular(PB.r2xl),
-            border: Border.all(color: PB.borderSecondary),
-            boxShadow: PB.shadow(y: 12, blur: 40, alpha: 0.5),
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: Column(
-            children: [
-              _titleBar(context),
-              Container(height: 1, color: PB.borderTertiary),
-              Expanded(child: _body()),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _titleBar(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
-      child: Row(
-        children: [
-          Icon(
-            FileChip.iconFor(widget.file.name),
-            size: 15,
-            color: PB.textSecondary,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              widget.file.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: PB.fsSm,
-                fontWeight: FontWeight.w600,
-                color: PB.textPrimary,
-              ),
-            ),
-          ),
-          if (_isHtml)
-            TextButton(
-              onPressed: () => setState(() => _expanded = !_expanded),
-              child: Text(_expanded ? '恢复' : '放大'),
-            ),
-          // 下载在 X 左边
-          _IconAction(
-            icon: LucideIcons.download,
-            tip: '下载',
-            color: PB.textSecondary,
-            size: 17,
-            onTap: () =>
-                downloadAttachment(context, file: widget.file, url: widget.url),
-          ),
-          _IconAction(
-            icon: LucideIcons.externalLink,
-            tip: '用系统应用打开',
-            color: PB.textSecondary,
-            size: 17,
-            onTap: () => _isHtml
-                ? openAttachmentExternally(
-                    context,
-                    file: widget.file,
-                    url: widget.url,
-                  )
-                : launchUrl(
-                    Uri.parse(widget.url),
-                    mode: LaunchMode.externalApplication,
-                  ),
-          ),
-          _IconAction(
-            icon: LucideIcons.x,
-            tip: '关闭',
-            color: PB.textSecondary,
-            size: 17,
-            onTap: () => Navigator.of(context).pop(),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _body() {
-    if (_isHtml) {
-      return HtmlAttachmentPreview(
-        source: Uri.parse(widget.url),
-        declaredSize: widget.file.size,
-      );
-    }
-    if (_loading) {
-      return const Center(
-        child: SizedBox(
-          width: 22,
-          height: 22,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
-      );
-    }
-
-    if (_isImage) {
-      return Padding(
-        padding: const EdgeInsets.all(14),
-        child: InteractiveViewer(
-          child: Image.network(widget.url, fit: BoxFit.contain),
-        ),
-      );
-    }
-
-    if (_error != null) {
-      return _cantPreview('读不出来：$_error');
-    }
-
-    if (_text != null) {
-      return SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-        child: _isMarkdown
-            ? MdText(
-                _text!,
-                selectable: true,
-                style: const TextStyle(
-                  fontSize: PB.fsSm,
-                  height: 1.6,
-                  color: PB.textPrimary,
-                ),
-              )
-            : SelectableText(
-                _text!,
-                style: const TextStyle(
-                  fontSize: PB.fsXs,
-                  height: 1.5,
-                  fontFamily: PB.monoFamily,
-                  fontFamilyFallback: PB.monoFallback,
-                  color: PB.textSecondary,
-                ),
-              ),
-      );
-    }
-
-    // 画不出来的（pdf / xlsx / zip / 图片以外的二进制）：
-    // 明说画不了，然后把两个出口摆出来
-    return _cantPreview('这类文件没法在窗口里画出来（${widget.file.sizeText}）');
-  }
-
-  Widget _cantPreview(String reason) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            FileChip.iconFor(widget.file.name),
-            size: 40,
-            color: PB.textQuaternary,
-          ),
-          const SizedBox(height: 14),
-          Text(
-            widget.file.name,
-            style: const TextStyle(fontSize: PB.fsBase, color: PB.textPrimary),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            reason,
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: PB.fsXs, color: PB.textQuaternary),
-          ),
-          const SizedBox(height: 18),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              FilledButton.icon(
-                onPressed: () => downloadAttachment(
-                  context,
-                  file: widget.file,
-                  url: widget.url,
-                ),
-                icon: const Icon(LucideIcons.download, size: 16),
-                label: const Text('下载'),
-              ),
-              const SizedBox(width: 10),
-              TextButton.icon(
-                onPressed: () => launchUrl(
-                  Uri.parse(widget.url),
-                  mode: LaunchMode.externalApplication,
-                ),
-                icon: const Icon(LucideIcons.externalLink, size: 16),
-                label: const Text('用系统应用打开'),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 /// 全屏看图（可双指缩放）

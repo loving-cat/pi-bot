@@ -1,22 +1,5 @@
-/// 内置浏览器栏的导航与 webview 策略。
-///
-/// ⚠️ 这里和 `html_preview_platform_policy.dart` 是**两套不同的东西**，不要混用：
-///
-/// | | 附件 HTML 预览 | 内置浏览器栏 |
-/// |---|---|---|
-/// | 用途 | 看 bot 生成的本地 HTML | 真的浏览网页 |
-/// | 导航 | 只许 about:blank / srcdoc | 允许 http/https |
-/// | Cookies | 关 | **开**（不然登录状态存不住，等于没用） |
-/// | localStorage | 关 | **开**（同上） |
-/// | incognito | 开（不落盘） | 关 |
-///
-/// 放开的只是「能浏览网页」必需的那几样；下面这些**始终关着**：
-///   · file:// / content:// —— 网页不该能读本机文件
-///   · JS bridge —— 网页拿不到 pi-bot 的接口
-///   · window.open / 多窗口 —— 一律收进同一栏，不弹独立窗
-///   · 定位、自动填充、密码保存、第三方 cookie
+/// 桌面展示栏的网页导航与原生资源限制；存储仅在当前WebView会话内保留。
 library;
-
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -49,14 +32,28 @@ InAppWebViewSettings browserPaneSettings(TargetPlatform platform) =>
       // ★ 不落盘：浏览记录、缓存留在内存里，退出就没了
       incognito: true,
       cacheEnabled: true,
-      // ★ 这两样必须开，否则所有需要登录的站点都用不了
-      sharedCookiesEnabled: true,
+      // Mac不导入宿主Cookie库；网页自身Cookie与本地存储仍可用于本次登录。
+      sharedCookiesEnabled: platform != TargetPlatform.macOS,
       domStorageEnabled: true,
       databaseEnabled: true,
       // 第三方 cookie 不要（跟踪器）
       thirdPartyCookiesEnabled: false,
       useShouldOverrideUrlLoading: true,
       useShouldInterceptRequest: platform == TargetPlatform.windows,
+      contentBlockers: platform == TargetPlatform.macOS
+          ? [
+              for (final scheme in ['file', 'content', 'ftp'])
+                ContentBlocker(
+                  trigger: ContentBlockerTrigger(
+                    urlFilter: '^$scheme:',
+                    urlFilterIsCaseSensitive: false,
+                  ),
+                  action: ContentBlockerAction(
+                    type: ContentBlockerActionType.BLOCK,
+                  ),
+                ),
+            ]
+          : [],
       // 本地文件一律不给
       allowFileAccess: false,
       allowContentAccess: false,
@@ -81,7 +78,7 @@ InAppWebViewSettings browserPaneSettings(TargetPlatform platform) =>
 
 /// Windows 上要拦掉的请求：非 http/https 一律不加载。
 ///
-/// macOS 那边靠 ContentBlocker 拦 http 以外的 scheme；Windows 没有等价物，
+/// macOS 用原生规则阻断本地文件、内容和 FTP；Windows 在请求回调中判定协议，
 /// 所以在 shouldInterceptRequest 里直接返回空响应。
 bool shouldBlockBrowserRequest(Uri? uri) {
   if (uri == null) return true;
@@ -94,5 +91,8 @@ bool shouldBlockBrowserRequest(Uri? uri) {
 /// 这个地址要不要交给系统浏览器/邮件客户端处理（mailto:、tel: 等）。
 bool isExternalScheme(Uri uri) {
   final scheme = uri.scheme.toLowerCase();
-  return scheme == 'mailto' || scheme == 'tel' || scheme == 'sms' || scheme == 'magnet';
+  return scheme == 'mailto' ||
+      scheme == 'tel' ||
+      scheme == 'sms' ||
+      scheme == 'magnet';
 }

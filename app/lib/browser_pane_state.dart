@@ -1,14 +1,9 @@
-/// 右侧「通用展示栏」的状态：开关、当前内容、历史，以及多栏争抢宽度时的收纳规则。
-///
-/// 这一栏既是浏览器（点链接打开网页），也是**通用查看器**（表格 / PDF / Word
-/// 由服务端渲染成 HTML 后在这里显示）—— 两者共用同一个 webview 和宽度管理，
-/// 所以只有一个状态对象。
-///
-/// 为什么放这里而不是 widget 里：它是 HomeShell 布局里的一栏，
-/// 但开启入口散在 Markdown 链接、附件卡片、顶部按钮等多处，需要一个共同的地方。
+/// 展示栏状态、完整导航历史与多栏活动顺序。
 library;
 
 import 'package:flutter/foundation.dart';
+
+import 'attachment_preview_request.dart';
 
 /// 一栏的标识。用于「宽度不够时收谁」的判定。
 enum PaneKind {
@@ -22,11 +17,7 @@ enum PaneKind {
   final String label;
 }
 
-/// 记录每一栏「最后一次被用户动过」的时间。
-///
-/// 判定规则（用户定的）：分辨率不够时，**自动收起用户最早开的那栏** ——
-/// 开得久且一直没动，大概率是已经不需要了。
-/// 注意「开」和「动」分开记：开得早但刚滚过消息，不该被收。
+/// 记录每个栏的打开与最近交互时间；显示范围由桌面布局模块决定。
 class PaneActivity {
   final Map<PaneKind, int> _lastTouched = {};
 
@@ -70,18 +61,42 @@ enum PaneContentKind {
   file,
 }
 
+class _BrowserLocation {
+  const _BrowserLocation({
+    required this.url,
+    required this.kind,
+    required this.title,
+    this.fileName = '',
+    this.nativeViewer = false,
+    this.fileRequest,
+  });
+  final String url;
+  final PaneContentKind kind;
+  final String title;
+  final String fileName;
+  final bool nativeViewer;
+  final AttachmentPreviewRequest? fileRequest;
+}
+
 /// 内置浏览器 / 通用展示栏的状态。
 class BrowserPaneState extends ChangeNotifier {
   bool _open = false;
   String _url = '';
   PaneContentKind _kind = PaneContentKind.web;
   String _title = '';
+
   /// 当前展示的附件名（file 模式下用于标签显示）
   String _fileName = '';
 
   /// 是否由 webview 内核直接渲染（PDF）而不是显示我们的 HTML
   bool _nativeViewer = false;
-  final List<String> _history = [];
+  AttachmentPreviewRequest? _fileRequest;
+  AttachmentPreviewRequest? get fileRequest => _fileRequest;
+  final List<_BrowserLocation> _history = [];
+  int _navigationRevision = 0;
+
+  /// 宿主发起的导航序号；页面自身导航不会再次触发加载。
+  int get navigationRevision => _navigationRevision;
   int _historyIndex = -1;
 
   final PaneActivity activity = PaneActivity();
@@ -105,6 +120,7 @@ class BrowserPaneState extends ChangeNotifier {
     required String name,
     required String htmlUrl,
     bool nativeViewer = false,
+    AttachmentPreviewRequest? request,
   }) {
     if (!_open) {
       _open = true;
@@ -117,7 +133,9 @@ class BrowserPaneState extends ChangeNotifier {
     _title = name;
     _url = htmlUrl;
     _nativeViewer = nativeViewer;
-    _pushHistory(htmlUrl);
+    _fileRequest = request;
+    _pushHistory();
+    _navigationRevision++;
     notifyListeners();
   }
 
@@ -128,9 +146,11 @@ class BrowserPaneState extends ChangeNotifier {
   String get displayUrl => _url;
 
   bool get canGoBack => _historyIndex > 0;
-  bool get canGoForward => _historyIndex >= 0 && _historyIndex < _history.length - 1;
+  bool get canGoForward =>
+      _historyIndex >= 0 && _historyIndex < _history.length - 1;
 
-  List<String> get history => List.unmodifiable(_history);
+  List<String> get history =>
+      List.unmodifiable(_history.map((entry) => entry.url));
 
   /// 打开某个网页地址。已经开着就换页，不重置历史。
   void openUrl(String url) {
@@ -145,20 +165,66 @@ class BrowserPaneState extends ChangeNotifier {
     _kind = PaneContentKind.web;
     _fileName = '';
     _nativeViewer = false;
+    _fileRequest = null;
     _title = Uri.tryParse(normalized)?.host ?? '';
     _url = normalized;
-    _pushHistory(normalized);
+    _pushHistory();
+    _navigationRevision++;
     notifyListeners();
   }
 
-  /// 记一条历史（同一地址不重复记）
-  void _pushHistory(String normalized) {
-    if (_historyIndex >= 0 && _history[_historyIndex] == normalized) return;
+  _BrowserLocation get _location => _BrowserLocation(
+    url: _url,
+    kind: _kind,
+    title: _title,
+    fileName: _fileName,
+    nativeViewer: _nativeViewer,
+    fileRequest: _fileRequest,
+  );
+
+  void _restore(_BrowserLocation entry) {
+    _url = entry.url;
+    _kind = entry.kind;
+    _title = entry.title;
+    _fileName = entry.fileName;
+    _nativeViewer = entry.nativeViewer;
+    _fileRequest = entry.fileRequest;
+  }
+
+  void _pushHistory() {
+    if (_historyIndex >= 0 && _history[_historyIndex].url == _url) {
+      _history[_historyIndex] = _location;
+      return;
+    }
     if (_historyIndex < _history.length - 1) {
       _history.removeRange(_historyIndex + 1, _history.length);
     }
-    _history.add(normalized);
+    _history.add(_location);
     _historyIndex = _history.length - 1;
+  }
+
+  /// 记录页面实际跳转，不发出新的宿主加载指令。
+  void recordNavigation(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null ||
+        !['http', 'https'].contains(uri.scheme) ||
+        uri.host.isEmpty ||
+        url == _url)
+      return;
+    final sameFile =
+        _kind == PaneContentKind.file &&
+        Uri.tryParse(_url)?.replace(fragment: '') == uri.replace(fragment: '');
+    _url = url;
+    if (!sameFile) {
+      _kind = PaneContentKind.web;
+      _title = uri.host;
+      _fileName = '';
+      _nativeViewer = false;
+      _fileRequest = null;
+    }
+    _pushHistory();
+    activity.touched(PaneKind.browser);
+    notifyListeners();
   }
 
   void close() {
@@ -179,7 +245,8 @@ class BrowserPaneState extends ChangeNotifier {
   String? back() {
     if (!canGoBack) return null;
     _historyIndex--;
-    _url = _history[_historyIndex];
+    _restore(_history[_historyIndex]);
+    _navigationRevision++;
     activity.touched(PaneKind.browser);
     notifyListeners();
     return _url;
@@ -188,7 +255,8 @@ class BrowserPaneState extends ChangeNotifier {
   String? forward() {
     if (!canGoForward) return null;
     _historyIndex++;
-    _url = _history[_historyIndex];
+    _restore(_history[_historyIndex]);
+    _navigationRevision++;
     activity.touched(PaneKind.browser);
     notifyListeners();
     return _url;

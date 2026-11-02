@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:io' show Platform;
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 
 import 'app_logo.dart';
@@ -334,17 +334,9 @@ Rect clampToWorkArea({
   return Rect.fromLTRB(l, t, r, b);
 }
 
-/// 无边框窗口的**八向缩放热区**。
-///
-/// `setAsFrameless()` 去掉了系统标题栏，Windows 的窗口过程就不再给边框做命中
-/// 测试 —— 窗口属性上仍然"可缩放"，但四个边、四个角全拖不动，看着像被锁死了。
-/// 这里在窗口四周铺一层透明热区，把拖动转给 windowManager.startResizing：
-///
-///   四个角 = 斜着等比缩放（`resizeUpLeft` 那种对角光标）
-///   四条边 = 单方向拉伸/压缩
-///
-/// 铺在最上层但**在窗口控制按钮下面**（main.dart 里的 Stack 顺序），
-/// 所以右上角"关闭"按钮的右上角不会被角热区抢走点击。
+/// Windows/Linux 无边框窗口的八向缩放热区。
+/// macOS 保留 NSWindow 原生边缘命中，不用 Flutter 热区覆盖。
+/// 热区位于窗口控制按钮下方，右上角避开按钮占用范围。
 class WindowResizeOverlay extends StatefulWidget {
   const WindowResizeOverlay({
     super.key,
@@ -366,7 +358,10 @@ class WindowResizeOverlay extends StatefulWidget {
   /// 表现很怪（悬停右上角后整窗变灰，就是从这个位置触发的）。
   final double reserveTopRight;
 
-  static bool get isSupported => WindowTitleBar.isSupported;
+  static bool get isSupported =>
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.windows ||
+          defaultTargetPlatform == TargetPlatform.linux);
 
   @override
   State<WindowResizeOverlay> createState() => _WindowResizeOverlayState();
@@ -375,10 +370,6 @@ class WindowResizeOverlay extends StatefulWidget {
 class _WindowResizeOverlayState extends State<WindowResizeOverlay>
     with WindowListener {
   bool _maximized = false;
-
-  // 缩放已经整个交给 Windows 原生循环（见 _beginDrag），这里不再自己算矩形、
-  // 不再插值、不再逐帧 setBounds —— 那套东西既是"卡"的来源，也是
-  // "松手后画面被拉伸/缩放"的来源（小数矩形 + 12ms 一个微小增量 = 每一步都真重排）。
 
   @override
   void initState() {
@@ -499,29 +490,7 @@ class _WindowResizeOverlayState extends State<WindowResizeOverlay>
     );
   }
 
-  /// 拖动开始：记下窗口当前的矩形和鼠标位置。
-  ///
-  /// 这里**不用** windowManager.startResizing —— 那条路会进 Windows 的原生
-  /// 模态缩放循环，WM_SIZE 按消息速率猛刷，每一发都要把整个窗口重新光栅化一遍
-  /// （拉伸时光栅化容易超过 16ms 的帧预算，拖起来就是"不丝滑"）。
-  /// 改成自己算：每个 pointer 事件算一次矩形交给 setBounds，节奏跟着 Flutter
-  /// 的帧走，不跟系统消息队列赛跑。
-  /// 把拖动交给 **Windows 原生缩放循环**。
-  ///
-  /// ★ 为什么改用原生（2026-11-01 改）：
-  ///   之前是自己算矩形 + ticker 插值 + 每 12ms 一次 setBounds。实测两个问题：
-  ///     ① 松手后拉伸/缩放 —— 插值出的是**小数**矩形，12ms 一个微小增量，
-  ///        Windows 每个尺寸都要真重排，Flutter 按非整数 DPI 缩放画布，
-  ///        看着就是"整块被拉伸"；
-  ///     ② 拖动途中很卡 —— 每一帧都在做整窗重排 + 全量重光栅。
-  ///   原生 `startResizing` 走 WM_NCLBUTTONDOWN(HTLEFT…)，系统自己接管：
-  ///   过程中用位图预览（不重排，所以丝滑），松手后只做**一次**正确重排
-  ///   （所以不会留下拉伸）。这正是 Windows 上任何正常窗口的手感。
-  ///
-  /// ★ 代价与取舍：原生循环里 Flutter 收不到"正在缩放"的信号，
-  ///   `appResizing` 骨架降级用不上。但原生预览本身就是位图，不需要我们再降级。
-  ///   反过来，**不要**在原生缩放的同时继续 setBounds —— 两套东西抢窗口尺寸
-  ///   会互相打架（那才是真正会出怪象的写法）。
+  /// 将一次边缘拖动交给平台原生缩放循环，不自行发送窗口尺寸。
   Future<void> _beginDrag(ResizeEdge edge, DragStartDetails d) async {
     if (!mounted) return;
     try {

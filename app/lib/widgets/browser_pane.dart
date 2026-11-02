@@ -1,11 +1,4 @@
-/// 最右列：内置浏览器。
-///
-/// 布局约定（用户定的）：Bot 信息栏永远在右侧第一列，这个浏览器栏永远在
-/// **最右列**。两栏互不覆盖、各自让出宽度，不抢同一个位置。
-///
-/// 和附件预览的关系：这**不是**附件预览的复用。附件预览刻意锁死到只看
-/// about:srcdoc，这里要真的浏览网页，所以用的是 `browser_platform_policy.dart`
-/// 那套独立配置。两者不共享 settings，避免为了浏览网页把预览的沙箱拆掉。
+/// 展示栏的网页与文档阅读界面；附件HTML沙箱使用独立组件。
 library;
 
 import 'dart:async';
@@ -17,19 +10,28 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../browser_pane_state.dart';
+import '../browser_navigation.dart';
 import '../scope.dart';
 import '../browser_platform_policy.dart';
 import '../theme.dart';
+import 'attachment_actions.dart';
+import 'attachment_preview_content.dart';
 
 class BrowserPane extends StatefulWidget {
   const BrowserPane({
     super.key,
     required this.state,
     this.width,
+    this.onClose,
+    this.showNavigationControls = true,
+    this.toolbarActions = const [],
   });
 
   final BrowserPaneState state;
   final double? width;
+  final VoidCallback? onClose;
+  final bool showNavigationControls;
+  final List<Widget> toolbarActions;
 
   @override
   State<BrowserPane> createState() => _BrowserPaneState();
@@ -42,14 +44,22 @@ class _BrowserPaneState extends State<BrowserPane> {
   double _progress = 0;
   String? _error;
   String _currentUrl = '';
-  final bool _environmentFailed = false;
+  final _navigation = BrowserNavigation();
+  int _navigationRevision = 0;
+  int _viewGeneration = 0;
+  bool _processFailed = false;
+  int _initialGeneration = -1;
+  int _initialRevision = -1;
+  String _initialUrl = '';
   TargetPlatform get _platform => defaultTargetPlatform;
 
   @override
   void initState() {
     super.initState();
+    _navigationRevision = widget.state.navigationRevision;
     _currentUrl = widget.state.url;
     _address.text = _currentUrl;
+    _navigation.begin(_currentUrl);
     widget.state.addListener(_onStateChanged);
     _addressFocus.addListener(() {
       if (_addressFocus.hasFocus) {
@@ -63,6 +73,19 @@ class _BrowserPaneState extends State<BrowserPane> {
   }
 
   @override
+  void didUpdateWidget(BrowserPane oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.state == widget.state) return;
+    oldWidget.state.removeListener(_onStateChanged);
+    widget.state.addListener(_onStateChanged);
+    _controller = null;
+    _processFailed = false;
+    _viewGeneration++;
+    _navigationRevision = -1;
+    _onStateChanged();
+  }
+
+  @override
   void dispose() {
     widget.state.removeListener(_onStateChanged);
     _address.dispose();
@@ -71,13 +94,170 @@ class _BrowserPaneState extends State<BrowserPane> {
   }
 
   void _onStateChanged() {
-    final next = widget.state.url;
-    if (next != _currentUrl) {
-      _currentUrl = next;
-      _address.text = next;
-      unawaited(_controller?.loadUrl(urlRequest: URLRequest(url: WebUri(next))));
+    final state = widget.state;
+    final shouldLoad = state.navigationRevision != _navigationRevision;
+    _navigationRevision = state.navigationRevision;
+    _currentUrl = state.url;
+    _address.text = _currentUrl;
+    if (shouldLoad) {
+      _navigation.begin(_currentUrl);
+      _error = null;
+      _progress = 0;
+      if (_processFailed) {
+        _processFailed = false;
+        _viewGeneration++;
+      }
+      final controller = _controller;
+      if (state.fileRequest?.usesWebView == false) {
+        _controller = null;
+        _viewGeneration++;
+      } else if (controller != null && _currentUrl.isNotEmpty) {
+        unawaited(_load(controller, _currentUrl, _navigationRevision));
+      }
     }
     if (mounted) setState(() {});
+  }
+
+  Future<void> _load(
+    InAppWebViewController controller,
+    String url,
+    int revision,
+  ) async {
+    final epoch = _navigation.epoch;
+    try {
+      await controller.loadUrl(urlRequest: URLRequest(url: WebUri(url)));
+    } catch (_) {
+      if (mounted &&
+          identical(_controller?.platform, controller.platform) &&
+          revision == _navigationRevision &&
+          epoch == _navigation.epoch) {
+        setState(() => _error = '页面暂时无法加载，请重试或使用系统浏览器打开。');
+      }
+    }
+  }
+
+  void _reload() {
+    final request = widget.state.fileRequest;
+    if (request != null && !request.usesWebView) {
+      widget.state.showFile(
+        name: request.file.name,
+        htmlUrl: request.viewUrl,
+        request: request,
+      );
+      return;
+    }
+    final controller = _controller;
+    _navigation.begin(widget.state.url);
+    setState(() {
+      _error = null;
+      _progress = 0;
+      if (controller == null) _viewGeneration++;
+      _processFailed = false;
+    });
+    if (controller != null) {
+      unawaited(_load(controller, widget.state.url, _navigationRevision));
+    }
+  }
+
+  bool _isCurrent(InAppWebViewController controller, int generation) =>
+      mounted &&
+      generation == _viewGeneration &&
+      identical(_controller?.platform, controller.platform);
+
+  Future<bool> _acceptActualLocation(
+    InAppWebViewController controller,
+    String? url,
+    int generation,
+    int epoch,
+  ) async {
+    if (!_isCurrent(controller, generation) || epoch != _navigation.epoch)
+      return false;
+    try {
+      final actual = await controller.getUrl();
+      return _isCurrent(controller, generation) &&
+          epoch == _navigation.epoch &&
+          browserRequestIdentity(actual?.toString()) != null &&
+          browserRequestIdentity(actual?.toString()) ==
+              browserRequestIdentity(url) &&
+          _navigation.acceptActual(url, epoch);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _recordLocation(
+    InAppWebViewController controller,
+    WebUri? url,
+    int generation,
+  ) async {
+    final epoch = _navigation.epoch;
+    if (url == null ||
+        !await _acceptActualLocation(
+          controller,
+          url.toString(),
+          generation,
+          epoch,
+        ))
+      return;
+    widget.state.recordNavigation(url.toString());
+    widget.state.touch();
+  }
+
+  Future<void> _mainFrameError(
+    InAppWebViewController controller,
+    WebResourceRequest request,
+    int generation, {
+    int? status,
+    bool cancelled = false,
+  }) async {
+    if (!_isCurrent(controller, generation) ||
+        request.isForMainFrame != true ||
+        cancelled)
+      return;
+    final epoch = _navigation.epoch;
+    final url = request.url.toString();
+    if (!_navigation.contains(url) &&
+        !await _acceptActualLocation(controller, url, generation, epoch))
+      return;
+    if (!_isCurrent(controller, generation) || epoch != _navigation.epoch)
+      return;
+    setState(() {
+      if (status == 415) {
+        _error = '这个文件不能转成网页查看。\n用工具栏的「用系统浏览器打开」，或先下载再打开。';
+      } else if (status != null) {
+        _error = '服务端返回 HTTP $status';
+      } else {
+        _error = widget.state.nativeViewer
+            ? '这个 PDF 暂时无法打开。\n可以用工具栏的「用系统浏览器打开」，或先下载。'
+            : '页面暂时无法加载，请刷新或换一个地址。';
+      }
+    });
+    _navigation.finished(url, epoch);
+  }
+
+  Future<void> _redirected(
+    InAppWebViewController controller,
+    int generation,
+  ) async {
+    if (!_isCurrent(controller, generation)) return;
+    final epoch = _navigation.epoch;
+    _navigation.redirected(epoch);
+    try {
+      final actual = await controller.getUrl();
+      if (_isCurrent(controller, generation) && epoch == _navigation.epoch) {
+        _navigation.acceptActual(actual?.toString(), epoch);
+      }
+    } catch (_) {}
+  }
+
+  void _processStopped(InAppWebViewController controller, int generation) {
+    if (!_isCurrent(controller, generation)) return;
+    setState(() {
+      _controller = null;
+      _processFailed = true;
+      _error = '网页进程已停止，点击刷新可以重新打开。';
+      _progress = 0;
+    });
   }
 
   Future<void> _submit(String raw) async {
@@ -119,42 +299,30 @@ class _BrowserPaneState extends State<BrowserPane> {
     ),
     child: Row(
       children: [
-        _iconButton(
-          key: const ValueKey('browser-back'),
-          icon: LucideIcons.chevronLeft,
-          tooltip: '后退',
-          enabled: state.canGoBack,
-          onTap: () {
-            final url = state.back();
-            if (url != null) {
-              unawaited(
-                _controller?.loadUrl(urlRequest: URLRequest(url: WebUri(url))),
-              );
-            }
-          },
-        ),
-        _iconButton(
-          key: const ValueKey('browser-forward'),
-          icon: LucideIcons.chevronRight,
-          tooltip: '前进',
-          enabled: state.canGoForward,
-          onTap: () {
-            final url = state.forward();
-            if (url != null) {
-              unawaited(
-                _controller?.loadUrl(urlRequest: URLRequest(url: WebUri(url))),
-              );
-            }
-          },
-        ),
-        _iconButton(
-          key: const ValueKey('browser-reload'),
-          icon: LucideIcons.rotateCw,
-          tooltip: '刷新',
-          enabled: _controller != null,
-          onTap: () => unawaited(_controller?.reload()),
-        ),
-        const SizedBox(width: 4),
+        if (widget.showNavigationControls) ...[
+          _iconButton(
+            key: const ValueKey('browser-back'),
+            icon: LucideIcons.chevronLeft,
+            tooltip: '后退',
+            enabled: state.canGoBack,
+            onTap: () => state.back(),
+          ),
+          _iconButton(
+            key: const ValueKey('browser-forward'),
+            icon: LucideIcons.chevronRight,
+            tooltip: '前进',
+            enabled: state.canGoForward,
+            onTap: () => state.forward(),
+          ),
+          _iconButton(
+            key: const ValueKey('browser-reload'),
+            icon: LucideIcons.rotateCw,
+            tooltip: '刷新',
+            enabled: state.url.isNotEmpty,
+            onTap: _reload,
+          ),
+          const SizedBox(width: 4),
+        ],
         Expanded(
           child: SizedBox(
             height: 30,
@@ -192,49 +360,55 @@ class _BrowserPaneState extends State<BrowserPane> {
                     ),
                   )
                 : TextField(
-              key: const ValueKey('browser-address'),
-              controller: _address,
-              focusNode: _addressFocus,
-              style: const TextStyle(
-                fontSize: PB.fsXs,
-                color: PB.textSecondary,
-                fontFamily: PB.monoFamily,
-              ),
-              decoration: InputDecoration(
-                isDense: true,
-                filled: true,
-                fillColor: PB.bgElevated,
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(PB.rSm),
-                  borderSide: BorderSide.none,
-                ),
-                hintText: '输入网址或搜索词',
-                hintStyle: const TextStyle(
-                  fontSize: PB.fsXs,
-                  color: PB.textQuaternary,
-                ),
-              ),
-              textInputAction: TextInputAction.go,
-              onSubmitted: _submit,
-              onTap: () => state.touch(),
-            ),
+                    key: const ValueKey('browser-address'),
+                    controller: _address,
+                    focusNode: _addressFocus,
+                    style: const TextStyle(
+                      fontSize: PB.fsXs,
+                      color: PB.textSecondary,
+                      fontFamily: PB.monoFamily,
+                    ),
+                    decoration: InputDecoration(
+                      isDense: true,
+                      filled: true,
+                      fillColor: PB.bgElevated,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(PB.rSm),
+                        borderSide: BorderSide.none,
+                      ),
+                      hintText: '输入网址或搜索词',
+                      hintStyle: const TextStyle(
+                        fontSize: PB.fsXs,
+                        color: PB.textQuaternary,
+                      ),
+                    ),
+                    textInputAction: TextInputAction.go,
+                    onSubmitted: _submit,
+                    onTap: () => state.touch(),
+                  ),
           ),
         ),
         const SizedBox(width: 4),
-        _iconButton(
-          key: const ValueKey('browser-open-external'),
-          icon: LucideIcons.externalLink,
-          tooltip: '用系统浏览器打开',
-          enabled: _currentUrl.isNotEmpty,
-          onTap: () async {
-            final uri = Uri.tryParse(_currentUrl);
-            if (uri != null) {
-              await launchUrl(uri, mode: LaunchMode.externalApplication);
-            }
-          },
-        ),
+        ...widget.toolbarActions,
+        if (state.fileRequest case final request?)
+          AttachmentActionButtons(request: request)
+        else
+          _iconButton(
+            key: const ValueKey('browser-open-external'),
+            icon: LucideIcons.externalLink,
+            tooltip: '用系统浏览器打开',
+            enabled: _currentUrl.isNotEmpty,
+            onTap: () async {
+              final uri = Uri.tryParse(_currentUrl);
+              if (uri != null) {
+                await launchUrl(uri, mode: LaunchMode.externalApplication);
+              }
+            },
+          ),
         _iconButton(
           key: const ValueKey('browser-close'),
           icon: LucideIcons.x,
@@ -242,7 +416,8 @@ class _BrowserPaneState extends State<BrowserPane> {
           enabled: true,
           // ★ 走 AppState 而不是 state.close：
           //   展示栏是布局里的一列，只有 AppState 的通知能读到 HomeShell。
-          onTap: () => AppScope.read(context).closeBrowserPane(),
+          onTap:
+              widget.onClose ?? () => AppScope.read(context).closeBrowserPane(),
         ),
       ],
     ),
@@ -266,77 +441,84 @@ class _BrowserPaneState extends State<BrowserPane> {
   );
 
   Widget _content(BrowserPaneState state) {
-    if (kIsWeb || !supportsBrowserPane(_platform)) {
-      return const _Hint('内置浏览器只在桌面端提供（Windows / macOS）。');
+    final request = state.fileRequest;
+    if (request != null && !request.usesWebView) {
+      return AttachmentPreviewContent(
+        key: ValueKey((request, state.navigationRevision)),
+        request: request,
+      );
     }
-    if (_environmentFailed) {
-      return const _Hint('这个系统的 WebView 运行时不可用，没法内置浏览。\n可以用右上角「用系统浏览器打开」。');
+    if (kIsWeb || !supportsBrowserPane(_platform)) {
+      return request == null
+          ? const _Hint('内置浏览器只在桌面端提供（Windows / macOS）。')
+          : AttachmentPreviewContent(request: request);
     }
     if (state.url.isEmpty) {
       return const _Hint('在聊天里点任何链接，都会在这里打开。');
     }
-    if (_error != null) {
-      return _Hint(_error!);
+    final generation = _viewGeneration;
+    if (_initialGeneration != generation) {
+      _initialGeneration = generation;
+      _initialRevision = _navigationRevision;
+      _initialUrl = state.url;
     }
-    return InAppWebView(
-      key: const ValueKey('browser-webview'),
-      initialUrlRequest: URLRequest(url: WebUri(state.url)),
+    final initialRevision = _initialRevision;
+    final view = InAppWebView(
+      key: ValueKey('browser-webview-$generation'),
+      initialUrlRequest: URLRequest(url: WebUri(_initialUrl)),
       initialSettings: browserPaneSettings(_platform),
       onWebViewCreated: (controller) {
+        if (!mounted || generation != _viewGeneration) return;
         _controller = controller;
+        if (_navigationRevision != initialRevision &&
+            widget.state.url.isNotEmpty) {
+          unawaited(_load(controller, widget.state.url, _navigationRevision));
+        }
       },
       onLoadStart: (controller, url) {
-        if (!mounted) return;
-        setState(() {
-          _progress = 0;
-          _error = null;
-          if (url != null) _currentUrl = url.toString();
-        });
+        if (!_isCurrent(controller, generation) ||
+            !_navigation.started(url?.toString()))
+          return;
+        setState(() => _progress = 0);
         state.touch();
       },
       onLoadStop: (controller, url) async {
-        if (!mounted) return;
-        setState(() {
-          _progress = 1;
-          if (url != null) {
-            _currentUrl = url.toString();
-            _address.text = _currentUrl;
-          }
-        });
-        // 读真实标题，方便以后做标签页
-        state.touch();
+        final epoch = _navigation.epoch;
+        if (url == null ||
+            !await _acceptActualLocation(
+              controller,
+              url.toString(),
+              generation,
+              epoch,
+            ))
+          return;
+        setState(() => _progress = 1);
+        _navigation.finished(url.toString(), epoch);
+        await _recordLocation(controller, url, generation);
       },
       onProgressChanged: (controller, progress) {
-        if (!mounted) return;
+        if (!_isCurrent(controller, generation)) return;
         setState(() => _progress = progress / 100);
       },
-      onReceivedError: (controller, request, error) {
-        if (!mounted) return;
-        // 只报主框架的错误；子资源失败不该整页变错误页
-        if (!request.isForMainFrame!) return;
-        setState(() {
-          _error = widget.state.nativeViewer
-              ? '这个 PDF 没打开（${error.description}）。\n'
-                    '可以用工具栏的「用系统浏览器打开」，或先下载。'
-              : '打不开这个页面（${error.description}）';
-        });
-      },
-      // 服务端对「不能渲染的格式」返回 415：这里换成一句人话，
-      // 而不是让 webview 显示一个 415 错误页。
-      onReceivedHttpError: (controller, request, response) {
-        if (!mounted) return;
-        if (request.isForMainFrame != true) return;
+      onReceivedError: (controller, request, error) => _mainFrameError(
+        controller,
+        request,
+        generation,
+        cancelled: error.type == WebResourceErrorType.CANCELLED,
+      ),
+      onReceivedHttpError: (controller, request, response) async {
         final status = response.statusCode ?? 0;
-        if (status == 415) {
-          setState(() {
-            _error =
-                '这个文件不能转成网页查看。\n'
-                '用工具栏的「用系统浏览器打开」，或先下载再打开。';
-          });
-        } else if (status >= 400) {
-          setState(() => _error = '服务端返回 HTTP $status');
+        if (status >= 400) {
+          await _mainFrameError(
+            controller,
+            request,
+            generation,
+            status: status,
+          );
         }
       },
+      onDidReceiveServerRedirectForProvisionalNavigation: (controller) =>
+          _redirected(controller, generation),
       shouldOverrideUrlLoading: (controller, action) async {
         final uri = action.request.url;
         if (uri == null) return NavigationActionPolicy.CANCEL;
@@ -347,6 +529,23 @@ class _BrowserPaneState extends State<BrowserPane> {
         }
         // 只认 http/https，其余拦掉（file:、content: 等）
         if (!shouldLoadInPlace(uri)) return NavigationActionPolicy.CANCEL;
+        if (_isCurrent(controller, generation) &&
+            action.isForMainFrame == true) {
+          final newPage = _navigation.request(
+            uri.toString(),
+            explicit:
+                action.navigationType == NavigationType.LINK_ACTIVATED ||
+                action.navigationType == NavigationType.FORM_SUBMITTED ||
+                action.navigationType == NavigationType.BACK_FORWARD ||
+                action.navigationType == NavigationType.RELOAD,
+            redirect: action.isRedirect == true,
+          );
+          if (newPage)
+            setState(() {
+              _error = null;
+              _progress = 0;
+            });
+        }
         return NavigationActionPolicy.ALLOW;
       },
       shouldInterceptRequest: _platform == TargetPlatform.windows
@@ -360,7 +559,36 @@ class _BrowserPaneState extends State<BrowserPane> {
               return null;
             }
           : null,
+      onUpdateVisitedHistory: (controller, url, _) =>
+          _recordLocation(controller, url, generation),
+      onPermissionRequest: (_, request) async => PermissionResponse(
+        resources: request.resources,
+        action: PermissionResponseAction.DENY,
+      ),
+      onWebContentProcessDidTerminate: (controller) =>
+          _processStopped(controller, generation),
+      onProcessFailed: (controller, _) =>
+          _processStopped(controller, generation),
       onCreateWindow: (controller, action) async => false,
+    );
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        view,
+        if (_error != null)
+          ColoredBox(
+            color: PB.bgPane,
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _Hint(_error!),
+                  TextButton(onPressed: _reload, child: const Text('重试')),
+                ],
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

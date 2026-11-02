@@ -9,6 +9,7 @@ import 'package:pi_bot/browser_pane_state.dart';
 import 'package:pi_bot/models.dart';
 import 'package:pi_bot/scope.dart';
 import 'package:pi_bot/widgets/attachment_view.dart';
+import 'package:pi_bot/widgets/attachment_preview_scope.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class _State extends AppState {
@@ -20,7 +21,9 @@ Attachment _file(String name, {String kind = 'file'}) => Attachment(
   id: 'f1',
   name: name,
   kind: kind,
-  mime: name.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream',
+  mime: name.toLowerCase().endsWith('.pdf')
+      ? 'application/pdf'
+      : 'application/octet-stream',
 );
 
 void main() {
@@ -33,9 +36,15 @@ void main() {
       AppScope(
         state: state,
         child: MaterialApp(
-          home: Scaffold(
-            body: Center(
-              child: FileChip(file: file, url: 'http://127.0.0.1:8787/api/files/f1'),
+          home: AttachmentPreviewScope(
+            inlineAvailable: true,
+            child: Scaffold(
+              body: Center(
+                child: FileChip(
+                  file: file,
+                  url: 'http://127.0.0.1:8787/api/files/f1',
+                ),
+              ),
             ),
           ),
         ),
@@ -79,14 +88,11 @@ void main() {
     expect(state.browser.open, isTrue);
   });
 
-  testWidgets('★ 点 md 文本：仍走旧弹窗（不抢展示栏）', (tester) async {
+  testWidgets('空间足够时 md 文本也进入右侧阅读栏', (tester) async {
     final state = await pumpChip(tester, _file('笔记.md'));
     await tester.tap(find.text('笔记.md'));
     await tester.pumpAndSettle();
-    expect(
-      state.browser.open,
-      isFalse,
-      reason: '纯文本有自己的预览窗，不该占展示栏',
-    );
+    expect(state.browser.open, isTrue, reason: '所有文件共用当前布局的可用空间判定');
+    expect(state.browser.fileRequest?.file.name, '笔记.md');
   });
 }

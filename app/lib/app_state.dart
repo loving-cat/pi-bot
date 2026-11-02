@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'api.dart';
+import 'attachment_preview_request.dart';
 import 'browser_pane_state.dart';
 import 'models.dart';
 import 'native.dart';
@@ -177,26 +178,20 @@ class AppState extends ChangeNotifier {
     _notify();
   }
 
-  /// 把附件送到右侧展示栏（表格 / PDF / Word 由服务端渲染成 HTML）。
-  ///
-  /// 服务端只对能渲染的格式出页面，其余返回 415 —— 那种情况栏里会显示
-  /// 一句「不能转成网页查看」，并保留「下载 / 用系统应用打开」两个出口。
+  /// 以服务端附件地址打开文件栏；布局不足时由宿主转到二级预览。
   void showAttachmentInPane(Attachment file) {
     final base = fileUrl(file.id);
     if (base == null) return;
-    // ★ PDF 不走 /html：直接把原文件交给 webview，用它自带的 PDF 阅读器
-    //   渲染真版式（抽文字再拼 HTML 会把表格/字号/图全丢掉）。
-    //   其余可渲染格式（表格 / Word）走服务端渲染成的 HTML。
-    final isPdf =
-        file.name.toLowerCase().endsWith('.pdf') ||
-        file.mime.toLowerCase() == 'application/pdf';
-    // ★ 不能直接 `$base/html`：base 末尾带着 `?token=...`，
-    //   拼出来会变成 `/api/files/xx?token=yy/html` —— 路径坏了，渲染必失败。
-    //   必须把 /html 插在**查询串前面**。
+    showAttachmentRequest(AttachmentPreviewRequest(file: file, sourceUrl: base));
+  }
+
+  /// 使用入口已解析的附件请求，不重新生成或修改访问地址。
+  void showAttachmentRequest(AttachmentPreviewRequest request) {
     browser.showFile(
-      name: file.name,
-      htmlUrl: isPdf ? base : (fileUrlWithSuffix(file.id, '/html') ?? base),
-      nativeViewer: isPdf,
+      name: request.file.name,
+      htmlUrl: request.viewUrl,
+      nativeViewer: request.kind == AttachmentPreviewKind.pdf,
+      request: request,
     );
     _notify();
   }
