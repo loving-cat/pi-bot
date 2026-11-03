@@ -245,12 +245,12 @@ class _BotRunSectionState extends State<BotRunSection> {
             ),
             if (saving) ...[
               const SizedBox(width: 8),
-              const SizedBox(
+              SizedBox(
                 width: 11,
                 height: 11,
                 child: CircularProgressIndicator(
                   strokeWidth: 1.8,
-                  color: PB.accent,
+                  color: PB.colors(context).accentBright,
                 ),
               ),
             ],

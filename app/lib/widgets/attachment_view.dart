@@ -143,13 +143,13 @@ class _Thumb extends StatelessWidget {
             fit: BoxFit.cover,
             loadingBuilder: (ctx, child, progress) {
               if (progress == null) return child;
-              return const SizedBox(
+              return SizedBox(
                 width: 140,
                 height: 100,
                 child: Center(
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    color: PB.accent,
+                    color: PB.colors(context).accentBright,
                   ),
                 ),
               );

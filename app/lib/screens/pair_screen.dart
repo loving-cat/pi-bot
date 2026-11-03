@@ -276,15 +276,15 @@ class _PairScreenState extends State<PairScreen> {
                           ],
                         ),
                         const SizedBox(height: 12),
-                        const _Step(index: '1', text: '电脑上启动服务端（终端会直接打印地址和配对码）'),
+                        const _Step(
+                          index: '1',
+                          text: '电脑上启动服务端（终端会直接打印地址和配对码）',
+                        ),
                         // ★ 示例用中性路径，不要写开发机的绝对路径：
                         //   这个字符串会被编进 app.so，等于把本机目录随发行包发出去，
                         //   打包扫描会拦（真实拦截过一次）。
                         const _Code('cd <你解压的目录>/server\nnode src/index.js'),
-                        const _Step(
-                          index: '2',
-                          text: '把它打印的地址和配对码填到上面（就在这一页）',
-                        ),
+                        const _Step(index: '2', text: '把它打印的地址和配对码填到上面（就在这一页）'),
                         const _Code(
                           'http://192.168.1.100:8787  (以太网)\n★ 配对码：482913',
                         ),
@@ -330,13 +330,20 @@ class _ScanButton extends StatelessWidget {
         borderRadius: BorderRadius.circular(PB.r3xl),
         child: Ink(
           decoration: BoxDecoration(
-            gradient: const LinearGradient(
+            gradient: LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-              colors: [PB.accentBright, PB.accentHover],
+              colors: [
+                PB.colors(context).accentBright,
+                PB.colors(context).accentHover,
+              ],
             ),
             borderRadius: BorderRadius.circular(PB.r3xl),
-            boxShadow: PB.glow(PB.accent, blur: 22, alpha: 0.35),
+            boxShadow: PB.glow(
+              PB.colors(context).accent,
+              blur: 22,
+              alpha: 0.35,
+            ),
           ),
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 17),

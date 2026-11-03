@@ -413,6 +413,8 @@ class Bot {
     this.enabled = true,
     this.reserveTokens,
     this.keepRecentTokens,
+    this.avatarColor,
+    this.avatarShape,
   }) : skills = skills ?? [],
        mcpServers = mcpServers ?? [];
 
@@ -427,6 +429,10 @@ class Bot {
   /// 服务端一直支持这两个值；客户端不解析的话，面板里也就改不了。
   int? reserveTokens;
   int? keepRecentTokens;
+
+  /// 自定义形象；null 使用稳定种子产生的默认外观。
+  String? avatarColor;
+  int? avatarShape;
 
   /// 给用户看的一句话简介（persona 是给模型的系统提示，不能直接展示）
   String tagline;
@@ -451,6 +457,10 @@ class Bot {
     thinking: json['thinking'] as String?,
     reserveTokens: (json['reserveTokens'] as num?)?.toInt(),
     keepRecentTokens: (json['keepRecentTokens'] as num?)?.toInt(),
+    avatarColor: json['avatarColor'] is String
+        ? json['avatarColor'] as String
+        : null,
+    avatarShape: json['avatarShape'] is int ? json['avatarShape'] as int : null,
     persona: json['persona'] as String? ?? '',
     skills: ((json['skills'] as List?) ?? const [])
         .whereType<Map>()
@@ -475,8 +485,8 @@ class LocalCapabilities {
     List<LocalMcpEntry>? mcpServers,
     this.skillsRoot = '',
     this.mcpFile = '',
-  })  : skills = skills ?? [],
-        mcpServers = mcpServers ?? [];
+  }) : skills = skills ?? [],
+       mcpServers = mcpServers ?? [];
 
   final List<LocalSkillEntry> skills;
   final List<LocalMcpEntry> mcpServers;
@@ -524,13 +534,14 @@ class LocalSkillEntry {
   /// 正文太长被截断过
   final bool truncated;
 
-  factory LocalSkillEntry.fromJson(Map<String, dynamic> json) => LocalSkillEntry(
-    title: json['title'] as String? ?? '',
-    summary: json['summary'] as String? ?? '',
-    howto: json['howto'] as String? ?? '',
-    imported: json['imported'] as bool? ?? false,
-    truncated: json['truncated'] as bool? ?? false,
-  );
+  factory LocalSkillEntry.fromJson(Map<String, dynamic> json) =>
+      LocalSkillEntry(
+        title: json['title'] as String? ?? '',
+        summary: json['summary'] as String? ?? '',
+        howto: json['howto'] as String? ?? '',
+        imported: json['imported'] as bool? ?? false,
+        truncated: json['truncated'] as bool? ?? false,
+      );
 }
 
 /// 本机 mcp.json 里的一条服务
@@ -585,9 +596,9 @@ class McpServer {
     Map<String, String>? headers,
     this.credentialKeys = const [],
     this.hasCredentials = false,
-  })  : args = args ?? [],
-        env = env ?? const {},
-        headers = headers ?? const {};
+  }) : args = args ?? [],
+       env = env ?? const {},
+       headers = headers ?? const {};
 
   final String id;
 
@@ -641,7 +652,8 @@ class McpServer {
         '${e.key}': '${e.value}',
     },
     credentialKeys: ((json['credentialKeys'] as List?) ?? const [])
-        .whereType<String>().toList(),
+        .whereType<String>()
+        .toList(),
     hasCredentials: json['hasCredentials'] == true,
   );
 }
@@ -793,7 +805,8 @@ class ModelSpec {
     reasoning: json['reasoning'] as bool? ?? false,
     thinkingFormat: json['thinkingFormat'] as String? ?? '',
     thinkingLevelMap: {
-      for (final entry in ((json['thinkingLevelMap'] as Map?) ?? const {}).entries)
+      for (final entry
+          in ((json['thinkingLevelMap'] as Map?) ?? const {}).entries)
         '${entry.key}': entry.value == null ? null : '${entry.value}',
     },
     thinkingLevels: ((json['thinkingLevels'] as List?) ?? const [])

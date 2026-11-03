@@ -80,7 +80,9 @@ class ModelCardsEditor extends StatelessWidget {
       color: PB.bgPane,
       borderRadius: BorderRadius.circular(PB.rLg),
       border: Border.all(
-        color: row.rowId == focusedRowId ? PB.accent : PB.borderTertiary,
+        color: row.rowId == focusedRowId
+            ? PB.colors(context).accent
+            : PB.borderTertiary,
       ),
     ),
     child: Column(
@@ -213,11 +215,11 @@ class ModelCardsEditor extends StatelessWidget {
                     levels: isOn
                         ? const {}
                         : (input.levels.isEmpty
-                            ? defaultThinkingLevelMap(
-                                levels: levels,
-                                upstreamValues: upstream,
-                              )
-                            : input.levels),
+                              ? defaultThinkingLevelMap(
+                                  levels: levels,
+                                  upstreamValues: upstream,
+                                )
+                              : input.levels),
                   ),
                 )
               : null,
@@ -230,9 +232,7 @@ class ModelCardsEditor extends StatelessWidget {
                   width: 30,
                   height: 18,
                   decoration: BoxDecoration(
-                    color: isOn
-                        ? PB.success
-                        : PB.borderTertiary,
+                    color: isOn ? PB.success : PB.borderTertiary,
                     borderRadius: BorderRadius.circular(9),
                   ),
                   child: AnimatedAlign(
@@ -275,9 +275,7 @@ class ModelCardsEditor extends StatelessWidget {
         ),
         const SizedBox(height: 2),
         Text(
-          isOn
-              ? '前台会给这个模型的 bot 展示思考档位；关掉后前台不再展示。'
-              : '这个模型不思考，前台也不会展示思考档位。',
+          isOn ? '前台会给这个模型的 bot 展示思考档位；关掉后前台不再展示。' : '这个模型不思考，前台也不会展示思考档位。',
           style: const TextStyle(
             fontSize: PB.fsXxs,
             color: PB.textQuaternary,
@@ -402,51 +400,50 @@ class _LevelSummary extends StatelessWidget {
   final VoidCallback onReset;
 
   @override
-  Widget build(BuildContext context) =>
-      Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SizedBox(
-            width: 96,
-            child: Text(
-              '档位映射',
-              style: TextStyle(fontSize: PB.fsXxs, color: PB.textTertiary),
-            ),
-          ),
-          Expanded(
-            child: Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                for (final level in levels)
-                  _LevelChip(
-                    key: ValueKey('model-thinking-chip-$rowId-$level'),
-                    level: level,
-                    value: current.levels[level] ?? '',
-                  ),
-                // 一键回到同名映射：用户改乱了能一步还原
-                InkWell(
-                  key: ValueKey('model-thinking-reset-$rowId'),
-                  onTap: enabled ? onReset : null,
-                  borderRadius: BorderRadius.circular(PB.rSm),
-                  child: const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                    child: Text(
-                      '恢复同名',
-                      style: TextStyle(
-                        fontSize: PB.fsXxs,
-                        color: PB.textTertiary,
-                        decoration: TextDecoration.underline,
-                      ),
-                    ),
+  Widget build(BuildContext context) => Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const SizedBox(
+        width: 96,
+        child: Text(
+          '档位映射',
+          style: TextStyle(fontSize: PB.fsXxs, color: PB.textTertiary),
+        ),
+      ),
+      Expanded(
+        child: Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            for (final level in levels)
+              _LevelChip(
+                key: ValueKey('model-thinking-chip-$rowId-$level'),
+                level: level,
+                value: current.levels[level] ?? '',
+              ),
+            // 一键回到同名映射：用户改乱了能一步还原
+            InkWell(
+              key: ValueKey('model-thinking-reset-$rowId'),
+              onTap: enabled ? onReset : null,
+              borderRadius: BorderRadius.circular(PB.rSm),
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                child: Text(
+                  '恢复同名',
+                  style: TextStyle(
+                    fontSize: PB.fsXxs,
+                    color: PB.textTertiary,
+                    decoration: TextDecoration.underline,
                   ),
                 ),
-              ],
+              ),
             ),
-          ),
-        ],
-      );
+          ],
+        ),
+      ),
+    ],
+  );
 }
 
 /// 单个档位的紧凑胶囊：映射了就高亮，没映射就是淡的「未启用」。

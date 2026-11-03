@@ -186,7 +186,7 @@ class _ServiceIcon extends StatelessWidget {
           (importing
                   ? PB.palette[3]
                   : remote
-                  ? PB.accent
+                  ? PB.colors(context).accent
                   : PB.palette[5])
               .withValues(alpha: .14),
       borderRadius: BorderRadius.circular(11),
@@ -201,7 +201,7 @@ class _ServiceIcon extends StatelessWidget {
       color: importing
           ? PB.palette[3]
           : remote
-          ? PB.accentBright
+          ? PB.colors(context).accentBright
           : PB.palette[5],
     ),
   );

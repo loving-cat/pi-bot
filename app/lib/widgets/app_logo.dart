@@ -44,7 +44,11 @@ class AppLogo extends StatelessWidget {
         errorBuilder: (_, __, ___) => Container(
           color: PB.bgBubble,
           alignment: Alignment.center,
-          child: const Icon(Icons.circle, size: 10, color: PB.accent),
+          child: Icon(
+            Icons.circle,
+            size: 10,
+            color: PB.colors(context).accentBright,
+          ),
         ),
       ),
     );

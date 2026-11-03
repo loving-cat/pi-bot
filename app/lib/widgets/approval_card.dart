@@ -44,7 +44,9 @@ class _ApprovalCardState extends State<ApprovalCard> {
             borderRadius: BorderRadius.circular(PB.rXl),
             border: Border.all(
               color: decided
-                  ? (approved ? PB.accent.withValues(alpha: 0.25) : PB.danger.withValues(alpha: 0.3))
+                  ? (approved
+                        ? PB.success.withValues(alpha: 0.25)
+                        : PB.danger.withValues(alpha: 0.3))
                   : PB.warn.withValues(alpha: 0.45),
             ),
           ),
@@ -56,11 +58,13 @@ class _ApprovalCardState extends State<ApprovalCard> {
                 children: [
                   Icon(
                     decided
-                        ? (approved ? LucideIcons.shieldCheck : LucideIcons.shieldX)
+                        ? (approved
+                              ? LucideIcons.shieldCheck
+                              : LucideIcons.shieldX)
                         : LucideIcons.shieldAlert,
                     size: 15,
                     color: decided
-                        ? (approved ? PB.accent : PB.danger)
+                        ? (approved ? PB.success : PB.danger)
                         : PB.warn,
                   ),
                   const SizedBox(width: 7),
@@ -72,7 +76,7 @@ class _ApprovalCardState extends State<ApprovalCard> {
                       fontSize: PB.fsXxs,
                       fontWeight: FontWeight.w600,
                       color: decided
-                          ? (approved ? PB.accent : PB.danger)
+                          ? (approved ? PB.success : PB.danger)
                           : PB.warn,
                     ),
                   ),
@@ -134,7 +138,10 @@ class _ApprovalCardState extends State<ApprovalCard> {
                   padding: const EdgeInsets.only(top: 8),
                   child: Text(
                     approved ? '已经放行这一次，它会接着做完。' : '已拒绝，它不会执行这次操作。',
-                    style: const TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
+                    style: const TextStyle(
+                      fontSize: PB.fsXxs,
+                      color: PB.textQuaternary,
+                    ),
                   ),
                 ),
             ],

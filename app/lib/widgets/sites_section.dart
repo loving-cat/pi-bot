@@ -46,7 +46,10 @@ class _SitesSectionState extends State<SitesSection> {
                 list.isEmpty
                     ? '把你在用的 Web 系统接进来，bot 就能直接查它的数据'
                     : '已接入 ${list.length} 个系统',
-                style: const TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+                style: const TextStyle(
+                  fontSize: PB.fsXs,
+                  color: PB.textTertiary,
+                ),
               ),
             ),
             FilledButton.icon(
@@ -92,7 +95,11 @@ class _SitesSectionState extends State<SitesSection> {
     toast(context, text, kind: ToastKind.error);
   }
 
-  Future<void> _deleteSite(BuildContext context, AppState state, SiteSystem site) async {
+  Future<void> _deleteSite(
+    BuildContext context,
+    AppState state,
+    SiteSystem site,
+  ) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -101,10 +108,17 @@ class _SitesSectionState extends State<SitesSection> {
         content: Text(
           '「${site.name}」会被移除，凭证也一起删掉。\n'
           '它对应的团队（如果建过）不会删 —— 里面的聊天记录还在。',
-          style: const TextStyle(fontSize: PB.fsSm, color: PB.textSecondary, height: 1.6),
+          style: const TextStyle(
+            fontSize: PB.fsSm,
+            color: PB.textSecondary,
+            height: 1.6,
+          ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: FilledButton.styleFrom(backgroundColor: PB.danger),
@@ -119,16 +133,27 @@ class _SitesSectionState extends State<SitesSection> {
     _toast(context, err ?? '已移除');
   }
 
-  Future<void> _testSite(BuildContext context, AppState state, SiteSystem site) async {
+  Future<void> _testSite(
+    BuildContext context,
+    AppState state,
+    SiteSystem site,
+  ) async {
     _toast(context, '正在连接 ${site.name}…');
     final r = await state.testSite(site.id);
     if (!context.mounted) return;
-    _toast(context, r['ok'] == true ? '${site.name} 连接正常' : '连不上：${r['reason'] ?? '未知原因'}');
+    _toast(
+      context,
+      r['ok'] == true ? '${site.name} 连接正常' : '连不上：${r['reason'] ?? '未知原因'}',
+    );
     await state.loadSites();
   }
 
   /// 为一个系统建团队：创建部门并把该系统的查询能力交给它
-  Future<void> _makeTeam(BuildContext context, AppState state, SiteSystem site) async {
+  Future<void> _makeTeam(
+    BuildContext context,
+    AppState state,
+    SiteSystem site,
+  ) async {
     final name = TextEditingController(text: '${site.name} 团队');
     final ok = await showDialog<bool>(
       context: context,
@@ -144,7 +169,11 @@ class _SitesSectionState extends State<SitesSection> {
               Text(
                 '会给「${site.name}」建一个部门，部门里的人都能查这个系统的数据。\n'
                 '以后你直接对它们说"帮我看看 xx"，它们就去查。',
-                style: const TextStyle(fontSize: PB.fsXs, color: PB.textTertiary, height: 1.7),
+                style: const TextStyle(
+                  fontSize: PB.fsXs,
+                  color: PB.textTertiary,
+                  height: 1.7,
+                ),
               ),
               const SizedBox(height: 12),
               TextField(
@@ -156,8 +185,14 @@ class _SitesSectionState extends State<SitesSection> {
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('创建')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('创建'),
+          ),
         ],
       ),
     );
@@ -228,7 +263,11 @@ class _SitesSectionState extends State<SitesSection> {
                     const Text(
                       '填上系统的网址和登录信息，我们会先试着连一次，'
                       '确认能连上再存下来。',
-                      style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary, height: 1.7),
+                      style: TextStyle(
+                        fontSize: PB.fsXs,
+                        color: PB.textTertiary,
+                        height: 1.7,
+                      ),
                     ),
                     const SizedBox(height: 14),
                     TextField(
@@ -259,14 +298,19 @@ class _SitesSectionState extends State<SitesSection> {
                         child: Row(
                           children: [
                             Icon(
-                              advanced ? LucideIcons.chevronDown : LucideIcons.chevronRight,
+                              advanced
+                                  ? LucideIcons.chevronDown
+                                  : LucideIcons.chevronRight,
                               size: 14,
                               color: PB.textQuaternary,
                             ),
                             const SizedBox(width: 4),
                             const Text(
                               '连不上？手动指定登录字段',
-                              style: TextStyle(fontSize: PB.fsXxs, color: PB.textTertiary),
+                              style: TextStyle(
+                                fontSize: PB.fsXxs,
+                                color: PB.textTertiary,
+                              ),
                             ),
                           ],
                         ),
@@ -296,8 +340,9 @@ class _SitesSectionState extends State<SitesSection> {
                           ],
                         ),
                       ),
-                      crossFadeState:
-                          advanced ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+                      crossFadeState: advanced
+                          ? CrossFadeState.showSecond
+                          : CrossFadeState.showFirst,
                       duration: Motion.base,
                     ),
                     if (status != null) ...[
@@ -309,13 +354,19 @@ class _SitesSectionState extends State<SitesSection> {
                             const SizedBox(
                               width: 12,
                               height: 12,
-                              child: CircularProgressIndicator(strokeWidth: 1.6),
+                              child: CircularProgressIndicator(
+                                strokeWidth: 1.6,
+                              ),
                             )
                           else
                             Icon(
-                              probeOk == true ? LucideIcons.checkCircle2 : LucideIcons.xCircle,
+                              probeOk == true
+                                  ? LucideIcons.checkCircle2
+                                  : LucideIcons.xCircle,
                               size: 14,
-                              color: probeOk == true ? PB.accent : PB.danger,
+                              color: probeOk == true
+                                  ? PB.success
+                                  : PB.danger,
                             ),
                           const SizedBox(width: 6),
                           Expanded(
@@ -326,7 +377,9 @@ class _SitesSectionState extends State<SitesSection> {
                                 height: 1.6,
                                 color: probeOk == true
                                     ? PB.textSecondary
-                                    : (probeOk == false ? PB.danger : PB.textTertiary),
+                                    : (probeOk == false
+                                          ? PB.danger
+                                          : PB.textTertiary),
                               ),
                             ),
                           ),
@@ -338,7 +391,10 @@ class _SitesSectionState extends State<SitesSection> {
               ),
             ),
             actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('取消'),
+              ),
               OutlinedButton(
                 onPressed: probing ? null : doProbe,
                 child: Text(probing ? '连接中…' : '试连接'),
@@ -460,7 +516,7 @@ class _SiteCardState extends State<_SiteCard> {
               height: 7,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: s.connected ? PB.accent : PB.textQuaternary,
+                color: s.connected ? PB.success : PB.textQuaternary,
               ),
             ),
             const SizedBox(width: 10),
@@ -472,19 +528,28 @@ class _SiteCardState extends State<_SiteCard> {
                     children: [
                       Text(
                         s.name,
-                        style: const TextStyle(fontSize: PB.fsSm, color: PB.textPrimary),
+                        style: const TextStyle(
+                          fontSize: PB.fsSm,
+                          color: PB.textPrimary,
+                        ),
                       ),
                       if (s.teamRoomId.isNotEmpty) ...[
                         const SizedBox(width: 6),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 5,
+                            vertical: 1,
+                          ),
                           decoration: BoxDecoration(
                             color: PB.bgActive,
                             borderRadius: BorderRadius.circular(4),
                           ),
                           child: const Text(
                             '已建团队',
-                            style: TextStyle(fontSize: 10, color: PB.textTertiary),
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: PB.textTertiary,
+                            ),
                           ),
                         ),
                       ],
@@ -495,7 +560,10 @@ class _SiteCardState extends State<_SiteCard> {
                     '${s.baseUrl}  ·  ${s.account}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: PB.fsXxs, color: PB.textTertiary),
+                    style: const TextStyle(
+                      fontSize: PB.fsXxs,
+                      color: PB.textTertiary,
+                    ),
                   ),
                   if (s.lastError.isNotEmpty) ...[
                     const SizedBox(height: 2),
@@ -503,15 +571,26 @@ class _SiteCardState extends State<_SiteCard> {
                       s.lastError,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: PB.fsXxs, color: PB.danger),
+                      style: const TextStyle(
+                        fontSize: PB.fsXxs,
+                        color: PB.danger,
+                      ),
                     ),
                   ],
                 ],
               ),
             ),
             if (_hover) ...[
-              _SiteAction(icon: LucideIcons.plugZap, tooltip: '测试连接', onTap: widget.onTest),
-              _SiteAction(icon: LucideIcons.users, tooltip: '建团队', onTap: widget.onTeam),
+              _SiteAction(
+                icon: LucideIcons.plugZap,
+                tooltip: '测试连接',
+                onTap: widget.onTest,
+              ),
+              _SiteAction(
+                icon: LucideIcons.users,
+                tooltip: '建团队',
+                onTap: widget.onTeam,
+              ),
               _SiteAction(
                 icon: LucideIcons.trash2,
                 tooltip: '移除',
@@ -548,7 +627,11 @@ class _SiteAction extends StatelessWidget {
         onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.all(6),
-          child: Icon(icon, size: 14, color: danger ? PB.danger : PB.textTertiary),
+          child: Icon(
+            icon,
+            size: 14,
+            color: danger ? PB.danger : PB.textTertiary,
+          ),
         ),
       ),
     );

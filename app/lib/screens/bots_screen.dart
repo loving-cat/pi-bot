@@ -6,6 +6,7 @@ import '../theme.dart';
 import '../widgets/model_picker_field.dart';
 import '../widgets/thinking_slider.dart';
 import '../widgets/blob_avatar.dart';
+import '../widgets/bot_appearance_section.dart';
 import 'chat_screen.dart';
 
 import 'package:lucide_icons_flutter/lucide_icons.dart';
@@ -175,6 +176,7 @@ class _BotRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
+    final colors = PB.colors(context);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 1),
       child: Material(
@@ -183,103 +185,107 @@ class _BotRow extends StatelessWidget {
         child: InkWell(
           borderRadius: BorderRadius.circular(12),
           onTap: () => _openBotSheet(context, bot),
-          child: AvatarHoverScope(child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-            child: Row(
-              children: [
-                BlobAvatar(
-                  seed: bot.id,
-                  color: PB.colorFor(bot.id),
-                  emoji: bot.emoji,
-                  size: 44,
-                  animate: false,
-                  badge: bot.isMain
-                      ? const Icon(
-                          LucideIcons.shieldCheck,
-                          size: 12,
-                          color: PB.accent,
-                        )
-                      : null,
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Text(
-                            bot.name,
-                            style: const TextStyle(
-                              fontSize: PB.fsBase,
-                              fontWeight: FontWeight.w500,
-                              color: PB.textPrimary,
+          child: AvatarHoverScope(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+              child: Row(
+                children: [
+                  BlobAvatar(
+                    seed: bot.id,
+                    color: PB.colorFor(bot.id),
+                    emoji: bot.emoji,
+                    size: 44,
+                    animate: false,
+                    badge: bot.isMain
+                        ? Icon(
+                            LucideIcons.shieldCheck,
+                            size: 12,
+                            color: colors.accentBright,
+                          )
+                        : null,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text(
+                              bot.name,
+                              style: const TextStyle(
+                                fontSize: PB.fsBase,
+                                fontWeight: FontWeight.w500,
+                                color: PB.textPrimary,
+                              ),
                             ),
-                          ),
-                          if (bot.isMain) ...[
-                            const SizedBox(width: 7),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 1.5,
-                              ),
-                              decoration: BoxDecoration(
-                                color: PB.accentSoft,
-                                borderRadius: BorderRadius.circular(PB.rSm),
-                              ),
-                              child: const Text(
-                                '总经理',
-                                style: TextStyle(
-                                  fontSize: 9.5,
-                                  color: PB.accent,
-                                  fontWeight: FontWeight.w600,
+                            if (bot.isMain) ...[
+                              const SizedBox(width: 7),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 1.5,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: colors.accentSoft,
+                                  borderRadius: BorderRadius.circular(PB.rSm),
+                                ),
+                                child: Text(
+                                  '总经理',
+                                  style: TextStyle(
+                                    fontSize: 9.5,
+                                    color: colors.link,
+                                    fontWeight: FontWeight.w600,
+                                  ),
                                 ),
                               ),
-                            ),
+                            ],
                           ],
-                        ],
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        shortText(bot.persona.replaceAll('\n', ' '), 52),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: PB.fsXs,
-                          color: PB.textTertiary,
                         ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '${bot.model ?? '默认模型'} · thinking ${bot.thinking ?? '-'}',
-                        style: const TextStyle(
-                          fontSize: PB.fsXxs,
-                          color: PB.textQuaternary,
-                          fontFamily: PB.monoFamily,
-                          fontFamilyFallback: PB.monoFallback,
+                        const SizedBox(height: 3),
+                        Text(
+                          shortText(bot.persona.replaceAll('\n', ' '), 52),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: PB.fsXs,
+                            color: PB.textTertiary,
+                          ),
                         ),
-                      ),
-                    ],
+                        const SizedBox(height: 2),
+                        Text(
+                          '${bot.model ?? '默认模型'} · thinking ${bot.thinking ?? '-'}',
+                          style: const TextStyle(
+                            fontSize: PB.fsXxs,
+                            color: PB.textQuaternary,
+                            fontFamily: PB.monoFamily,
+                            fontFamilyFallback: PB.monoFallback,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        BotAppearanceSection(key: ValueKey(bot.id), bot: bot),
+                      ],
+                    ),
                   ),
-                ),
-                IconButton(
-                  tooltip: '私聊',
-                  onPressed: () async {
-                    final room = await state.ensureDm(bot.id);
-                    if (room != null && context.mounted) {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => ChatScreen(room: room),
-                        ),
-                      );
-                    }
-                  },
-                  icon: const Icon(LucideIcons.messageSquare, size: 18),
-                ),
-              ],
+                  IconButton(
+                    tooltip: '私聊',
+                    onPressed: () async {
+                      final room = await state.ensureDm(bot.id);
+                      if (room != null && context.mounted) {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => ChatScreen(room: room),
+                          ),
+                        );
+                      }
+                    },
+                    icon: const Icon(LucideIcons.messageSquare, size: 18),
+                  ),
+                ],
+              ),
             ),
-          )),
+          ),
         ),
       ),
     );
@@ -292,6 +298,8 @@ class _BotRow extends StatelessWidget {
     final emojiController = TextEditingController(text: bot.emoji ?? '');
     final modelController = TextEditingController(text: bot.model ?? '');
     var thinking = bot.thinking ?? 'medium';
+    var saving = false;
+    String? saveError;
     // 这个 bot 选中的 MCP 服务（名字）。默认空 = 一个都不挂。
     var pickedMcp = [...bot.mcpServers];
 
@@ -347,6 +355,8 @@ class _BotRow extends StatelessWidget {
                         ),
                       ],
                     ),
+                    const SizedBox(height: 20),
+                    BotAppearanceSection(key: ValueKey(bot.id), bot: bot),
                     const SizedBox(height: 20),
                     TextField(
                       controller: nameController,
@@ -411,13 +421,17 @@ class _BotRow extends StatelessWidget {
                     // ★ MCP 能力：只列**已启用**的服务。
                     //   没启用的连都连不上，摆出来只会让人选了却没反应。
                     ...(() {
-                      final available =
-                          state.mcpServers.where((s) => s.enabled).toList();
+                      final available = state.mcpServers
+                          .where((s) => s.enabled)
+                          .toList();
                       if (available.isEmpty) {
                         return const <Widget>[
                           Text(
                             'MCP 能力',
-                            style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+                            style: TextStyle(
+                              fontSize: PB.fsXs,
+                              color: PB.textTertiary,
+                            ),
                           ),
                           SizedBox(height: 6),
                           Text(
@@ -443,7 +457,9 @@ class _BotRow extends StatelessWidget {
                             ),
                             const SizedBox(width: 6),
                             Text(
-                              pickedMcp.isEmpty ? '（没挂）' : '已挂 ${pickedMcp.length} 个',
+                              pickedMcp.isEmpty
+                                  ? '（没挂）'
+                                  : '已挂 ${pickedMcp.length} 个',
                               style: const TextStyle(
                                 fontSize: PB.fsXxs,
                                 color: PB.textQuaternary,
@@ -473,11 +489,13 @@ class _BotRow extends StatelessWidget {
                                   }
                                 }),
                                 backgroundColor: PB.bgPane,
-                                selectedColor: PB.accentSoft,
-                                side: const BorderSide(color: PB.borderTertiary),
+                                selectedColor: PB.colors(ctx).accentSoft,
+                                side: const BorderSide(
+                                  color: PB.borderTertiary,
+                                ),
                                 labelStyle: TextStyle(
                                   color: pickedMcp.contains(server.name)
-                                      ? PB.accent
+                                      ? PB.colors(ctx).link
                                       : PB.textTertiary,
                                   fontSize: PB.fsXs,
                                 ),
@@ -505,15 +523,25 @@ class _BotRow extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 18),
+                    if (saveError != null)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: Text(
+                          saveError!,
+                          style: const TextStyle(color: PB.danger),
+                        ),
+                      ),
                     Row(
                       children: [
                         if (!bot.isMain)
                           Expanded(
                             child: TextButton(
-                              onPressed: () async {
-                                Navigator.pop(ctx, false);
-                                await state.deleteBot(bot.id);
-                              },
+                              onPressed: saving
+                                  ? null
+                                  : () async {
+                                      Navigator.pop(ctx, false);
+                                      await state.deleteBot(bot.id);
+                                    },
                               child: const Text(
                                 '删除',
                                 style: TextStyle(color: PB.danger),
@@ -524,18 +552,44 @@ class _BotRow extends StatelessWidget {
                         Expanded(
                           flex: 2,
                           child: FilledButton(
-                            onPressed: () async {
-                              Navigator.pop(ctx, true);
-                              await state.updateBot(bot.id, {
-                                'name': nameController.text.trim(),
-                                'emoji': emojiController.text.trim(),
-                                'persona': personaController.text,
-                                'model': modelController.text.trim(),
-                                'thinking': thinking,
-                                'mcpServers': pickedMcp,
-                              });
-                            },
-                            child: const Text('保存'),
+                            onPressed: saving
+                                ? null
+                                : () async {
+                                    setLocal(() {
+                                      saving = true;
+                                      saveError = null;
+                                    });
+                                    try {
+                                      final saved = await state.tryUpdateBot(
+                                        bot.id,
+                                        {
+                                          'name': nameController.text.trim(),
+                                          'emoji': emojiController.text.trim(),
+                                          'persona': personaController.text,
+                                          'model': modelController.text.trim(),
+                                          'thinking': thinking,
+                                          'mcpServers': pickedMcp,
+                                        },
+                                      );
+                                      if (!saved) {
+                                        if (ctx.mounted) {
+                                          setLocal(() {
+                                            saving = false;
+                                            saveError = '保存失败，请检查连接后重试。';
+                                          });
+                                        }
+                                        return;
+                                      }
+                                      if (ctx.mounted) Navigator.pop(ctx, true);
+                                    } catch (_) {
+                                      if (ctx.mounted)
+                                        setLocal(() {
+                                          saving = false;
+                                          saveError = '保存失败，请检查连接后重试。';
+                                        });
+                                    }
+                                  },
+                            child: Text(saving ? '保存中…' : '保存'),
                           ),
                         ),
                       ],

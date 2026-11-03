@@ -393,7 +393,7 @@ class _DragHandleState extends State<_DragHandle> {
               duration: const Duration(milliseconds: 120),
               width: _hover ? 2 : 1,
               color: _hover
-                  ? PB.accent.withValues(alpha: 0.6)
+                  ? PB.colors(context).accent.withValues(alpha: 0.6)
                   : PB.borderTertiary,
             ),
           ),

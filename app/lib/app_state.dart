@@ -182,7 +182,9 @@ class AppState extends ChangeNotifier {
   void showAttachmentInPane(Attachment file) {
     final base = fileUrl(file.id);
     if (base == null) return;
-    showAttachmentRequest(AttachmentPreviewRequest(file: file, sourceUrl: base));
+    showAttachmentRequest(
+      AttachmentPreviewRequest(file: file, sourceUrl: base),
+    );
   }
 
   /// 使用入口已解析的附件请求，不重新生成或修改访问地址。
@@ -754,7 +756,8 @@ class AppState extends ChangeNotifier {
   /// 一键导入本机已装的能力。
   /// [kind] 是 'skill' 或 'mcp'，[names] 是要导入的名字列表。
   /// 返回 (成功导入的名字, 跳过明细)
-  Future<({List<String> imported, List<String> skipped})> importLocalCapabilities({
+  Future<({List<String> imported, List<String> skipped})>
+  importLocalCapabilities({
     required String kind,
     required List<String> names,
   }) async {
@@ -770,9 +773,9 @@ class AppState extends ChangeNotifier {
         ...((json['imported'] as List?) ?? const []).map((e) => '$e'),
       ];
       final skipped = <String>[
-        ...((json['skipped'] as List?) ?? const [])
-            .whereType<Map>()
-            .map((e) => '${e['title']}：${e['reason']}'),
+        ...((json['skipped'] as List?) ?? const []).whereType<Map>().map(
+          (e) => '${e['title']}：${e['reason']}',
+        ),
       ];
       // 导入后两边的库都变了，刷新
       if (kind == 'skill') {
@@ -1083,7 +1086,9 @@ class AppState extends ChangeNotifier {
   Future<String?> bindSiteTeam(String id, String siteName) async {
     if (api == null) return '未连接服务端';
     try {
-      await api!.post('/api/sites/${Uri.encodeComponent(id)}/team', {'name': '$siteName 团队'});
+      await api!.post('/api/sites/${Uri.encodeComponent(id)}/team', {
+        'name': '$siteName 团队',
+      });
       await loadSites();
       return null;
     } catch (err) {
@@ -1137,6 +1142,7 @@ class AppState extends ChangeNotifier {
     if (client == null) return;
     try {
       final res = await client.get('/api/state');
+      if (_disposed || !identical(api, client)) return;
       serverInfo = ServerInfo.fromJson(
         (res['server'] as Map?)?.cast<String, dynamic>() ?? const {},
       );
@@ -1179,6 +1185,7 @@ class AppState extends ChangeNotifier {
       lastError = null;
       _lastRefreshStatus = 200;
     } catch (err) {
+      if (_disposed || !identical(api, client)) return;
       lastError = '$err';
       _lastRefreshStatus = err is ApiException ? err.status : null;
     }
@@ -1271,10 +1278,9 @@ class AppState extends ChangeNotifier {
     final client = api;
     if (client == null) return null;
     try {
-      final res = await client.post(
-        '/api/rooms/$roomId/memory/refresh',
-        {if (botId != null) 'botId': botId},
-      );
+      final res = await client.post('/api/rooms/$roomId/memory/refresh', {
+        if (botId != null) 'botId': botId,
+      });
       final m = MemorySummary.fromJson(res);
       memorySummaries[_memoryKey(roomId, botId)] = m;
       _notify();
@@ -1680,12 +1686,46 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> updateBot(String botId, Map<String, dynamic> patch) async {
+    final client = api;
+    if (client == null || _disposed) {
+      if (!_disposed) {
+        lastError = '服务未连接，无法保存';
+        _notify();
+      }
+      return;
+    }
     try {
-      await api?.patch('/api/bots/$botId', patch);
+      final response = await client.patch('/api/bots/$botId', patch);
+      if (_disposed || !identical(api, client)) return;
+      final saved = response['bot'];
+      if (saved is! Map<String, dynamic> || saved['id'] != botId) {
+        throw const FormatException('服务端未返回已保存的 Bot');
+      }
+      lastError = null;
+      applyBotUpdate(Bot.fromJson(saved));
       await refresh();
+      return;
     } catch (err) {
+      if (_disposed || !identical(api, client)) return;
       lastError = '$err';
       _notify();
+      return;
+    }
+  }
+
+  /// 保存 Bot 并报告结果；失败保留错误，连接切换不确认旧请求。
+  Future<bool> tryUpdateBot(String botId, Map<String, dynamic> patch) async {
+    if (_disposed) return false;
+    final client = api;
+    lastError = null;
+    try {
+      await updateBot(botId, patch);
+      return !_disposed && identical(api, client) && lastError == null;
+    } catch (err) {
+      if (_disposed || !identical(api, client)) return false;
+      lastError = '$err';
+      _notify();
+      return false;
     }
   }
 

@@ -4,11 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../text_utils.dart';
 import '../highlight.dart';
+import '../markdown_inline.dart';
 import '../theme.dart';
 import 'toast.dart';
 import 'blob_avatar.dart';
+import 'md_quote.dart';
 
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
@@ -28,6 +29,7 @@ class MdText extends StatefulWidget {
     this.mentions = const [],
     this.onMentionTap,
     this.onLinkTap,
+    this.linkColor,
     this.mentionOf,
   });
 
@@ -36,6 +38,9 @@ class MdText extends StatefulWidget {
   final TextStyle? mono;
   final bool selectable;
   final bool compact;
+
+  /// 气泡背景上的链接颜色；省略时使用当前主题，引用内使用主题链接色。
+  final Color? linkColor;
 
   /// 要高亮的名字（不含 @）—— 部门成员。agent 之间用 @ 派活，高亮后一眼看得出谁被点名了。
   final List<String> mentions;
@@ -90,6 +95,20 @@ class _MdTextState extends State<MdText> {
       () => TapGestureRecognizerHandle.custom(() {
         Clipboard.setData(ClipboardData(text: url));
         toast(context, '链接已复制');
+      }),
+    );
+  }
+
+  TapGestureRecognizerHandle _copyEmailRecognizer(String email) {
+    return _links.putIfAbsent(
+      'email:$email',
+      () => TapGestureRecognizerHandle.custom(() async {
+        try {
+          await Clipboard.setData(ClipboardData(text: email));
+          if (mounted) toast(context, '邮箱已复制', kind: ToastKind.success);
+        } catch (_) {
+          if (mounted) toast(context, '复制失败，请重试', kind: ToastKind.error);
+        }
       }),
     );
   }
@@ -178,15 +197,13 @@ class _MdTextState extends State<MdText> {
         return _CodeBlock(language: language, code: code_, style: code);
 
       case _Quote(:final text):
-        return Container(
-          padding: const EdgeInsets.fromLTRB(12, 6, 10, 6),
-          decoration: const BoxDecoration(
-            border: Border(left: BorderSide(color: PB.accent, width: 2.5)),
-          ),
+        return MarkdownQuote(
+          text: markdownInlineText(text, mentions: widget.mentions),
           child: _rich(
             text,
-            base.copyWith(color: PB.textSecondary, height: 1.5),
+            base.copyWith(color: PB.colors(context).quoteText, height: 1.6),
             code,
+            quote: true,
           ),
         );
 
@@ -234,118 +251,103 @@ class _MdTextState extends State<MdText> {
     }
   }
 
-  Widget _rich(String source, TextStyle base, TextStyle code) {
-    final spans = _inline(source, base, code);
+  Widget _rich(
+    String source,
+    TextStyle base,
+    TextStyle code, {
+    bool quote = false,
+  }) {
+    final spans = _inline(
+      source,
+      base,
+      code,
+      linkColor: quote ? PB.colors(context).link : widget.linkColor,
+    );
     // 选中交给最外层那一个 SelectionArea（见 build），这里只画文本。
     // 不用 SelectableText.rich：它不支持 WidgetSpan，而 @提及 要画头像 chip。
     return Text.rich(TextSpan(children: spans, style: base));
   }
 
-  List<InlineSpan> _inline(String source, TextStyle base, TextStyle code) {
+  List<InlineSpan> _inline(
+    String source,
+    TextStyle base,
+    TextStyle code, {
+    Color? linkColor,
+  }) {
     final spans = <InlineSpan>[];
-    final mentionAlt = widget.mentions
-        .where((m) => m.trim().isNotEmpty)
-        .map((m) => RegExp.escape(m))
-        .join('|');
-    final re = RegExp(
-      r'(`[^`\n]+`)' // 行内代码
-      r'|(\*\*[^*\n]+\*\*)' // 粗体
-      r'|(~~[^~\n]+~~)' // 删除线
-      r'|(\[[^\]\n]+\]\([^)\s]+\))' // 链接
-      r'|(https?://[^\s<>`\u3002\uff0c\uff1b\uff1a\uff09)]+)' // 裸网址
-      r'|((?<![\w*])\*[^*\n]+\*(?![\w*]))' // 斜体 *
-      r'|((?<![\w_])_[^_\n]+_(?![\w_]))' // 斜体 _
-      r'|(@(?:all|全体|所有人|大家|全员))' // @全体
-      '|(@[\\s\\p{Extended_Pictographic}\\uFE0F\\u200D]*(?:${mentionAlt.isEmpty ? '(?!)' : mentionAlt}))', // @某个成员
-      unicode: true,
-    );
-    var i = 0;
-    for (final match in re.allMatches(source)) {
-      if (match.start > i)
-        spans.add(TextSpan(text: source.substring(i, match.start)));
-      final token = match.group(0)!;
-      if (token.startsWith('`')) {
-        final inner = token.substring(1, token.length - 1);
-        spans.add(
-          TextSpan(
-            text: inner,
-            style: code.copyWith(backgroundColor: PB.bgActive),
-            // 行内代码里的网址：点一下复制（打开 localhost 没有意义）
-            recognizer: RegExp(r'^https?://').hasMatch(inner)
-                ? _copyUrlRecognizer(inner).value
-                : null,
-          ),
-        );
-      } else if (token.startsWith('**')) {
-        spans.add(
-          TextSpan(
-            text: token.substring(2, token.length - 2),
-            style: base.copyWith(fontWeight: FontWeight.w700),
-          ),
-        );
-      } else if (token.startsWith('~~')) {
-        spans.add(
-          TextSpan(
-            text: token.substring(2, token.length - 2),
-            style: base.copyWith(
+    final colors = PB.colors(context);
+    for (final token in markdownInlineTokens(
+      source,
+      mentions: widget.mentions,
+    )) {
+      switch (token.kind) {
+        case MarkdownInlineKind.plain:
+          spans.add(TextSpan(text: token.text));
+        case MarkdownInlineKind.code:
+          spans.add(
+            TextSpan(
+              text: token.text,
+              style: code.copyWith(backgroundColor: PB.bgActive),
+              recognizer: RegExp(r'^https?://').hasMatch(token.text)
+                  ? _copyUrlRecognizer(token.text).value
+                  : null,
+            ),
+          );
+        case MarkdownInlineKind.strong:
+        case MarkdownInlineKind.strike:
+        case MarkdownInlineKind.emphasis:
+          final style = switch (token.kind) {
+            MarkdownInlineKind.strong => base.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+            MarkdownInlineKind.strike => base.copyWith(
               decoration: TextDecoration.lineThrough,
               color: PB.textTertiary,
             ),
-          ),
-        );
-      } else if (token.startsWith('[')) {
-        final m = RegExp(r'^\[([^\]]+)\]\(([^)\s]+)\)$').firstMatch(token);
-        final label = m?.group(1) ?? token;
-        final url = m?.group(2) ?? '';
-        spans.add(
-          TextSpan(
-            text: label,
-            style: base.copyWith(
-              color: PB.accentBright,
-              decoration: TextDecoration.underline,
+            _ => base.copyWith(fontStyle: FontStyle.italic),
+          };
+          spans.add(
+            TextSpan(
+              style: style,
+              children: _inline(token.text, style, code, linkColor: linkColor),
             ),
-            recognizer: _recognizer(url).value,
-          ),
-        );
-      } else if (token.startsWith('@')) {
-        // @提及：画成「小头像 + 名字」的 chip。
-        //
-        // 颜色 + 头像比一段高亮文字快得多 ——
-        // 群里一串 @ 排在一起时，"这活到底派给谁了"要能扫一眼看出来。
-        final name = cleanMentionName(token);
-        final onTap = widget.onMentionTap;
-        final info = widget.mentionOf?.call(name);
-        spans.add(
-          WidgetSpan(
-            alignment: PlaceholderAlignment.middle,
-            child: _MentionChip(
-              name: name.isEmpty ? token : name,
-              info: info,
-              onTap: onTap == null ? null : () => onTap(name),
+          );
+        case MarkdownInlineKind.link:
+          spans.add(
+            TextSpan(
+              text: token.text,
+              style: base.copyWith(
+                color: linkColor ?? colors.link,
+                decoration: TextDecoration.underline,
+              ),
+              recognizer: _recognizer(token.target!).value,
             ),
-          ),
-        );
-      } else if (RegExp(r'^https?://').hasMatch(token)) {
-        // 裸网址：点一下复制（不自动打开，避免把用户踢出 App）
-        spans.add(
-          TextSpan(
-            text: token,
-            style: base.copyWith(color: PB.accentBright),
-            recognizer: _copyUrlRecognizer(token).value,
-          ),
-        );
-      } else {
-        final inner = token.substring(1, token.length - 1);
-        spans.add(
-          TextSpan(
-            text: inner,
-            style: base.copyWith(fontStyle: FontStyle.italic),
-          ),
-        );
+          );
+        case MarkdownInlineKind.url:
+        case MarkdownInlineKind.email:
+          spans.add(
+            TextSpan(
+              text: token.text,
+              style: base.copyWith(color: linkColor ?? colors.link),
+              recognizer: token.kind == MarkdownInlineKind.email
+                  ? _copyEmailRecognizer(token.text).value
+                  : _copyUrlRecognizer(token.text).value,
+            ),
+          );
+        case MarkdownInlineKind.mention:
+          final onTap = widget.onMentionTap;
+          spans.add(
+            WidgetSpan(
+              alignment: PlaceholderAlignment.middle,
+              child: _MentionChip(
+                name: token.text,
+                info: widget.mentionOf?.call(token.text),
+                onTap: onTap == null ? null : () => onTap(token.text),
+              ),
+            ),
+          );
       }
-      i = match.end;
     }
-    if (i < source.length) spans.add(TextSpan(text: source.substring(i)));
     return spans;
   }
 }
@@ -562,25 +564,28 @@ List<_Block> _parse(String src) {
 // 代码块 / 表格
 // ---------------------------------------------------------------------------
 
-
 /// 语法着色的调色板。
 ///
 /// 只用设计系统里已有的令牌（不另造颜色）—— 聊天窗口里代码块不该比正文更花。
 /// 未知/纯文本不染色，交给基础样式（也就是"看起来没高亮"，但那是对的）。
-TextStyle? _syntaxStyle(TokKind kind, TextStyle base) {
+TextStyle? _syntaxStyle(BuildContext context, TokKind kind, TextStyle base) {
+  final colors = PB.colors(context);
   switch (kind) {
     case TokKind.keyword:
-      return base.copyWith(color: PB.accent, fontWeight: FontWeight.w500);
+      return base.copyWith(color: colors.accent, fontWeight: FontWeight.w500);
     case TokKind.str:
       return base.copyWith(color: PB.success);
     case TokKind.comment:
-      return base.copyWith(color: PB.textQuaternary, fontStyle: FontStyle.italic);
+      return base.copyWith(
+        color: PB.textQuaternary,
+        fontStyle: FontStyle.italic,
+      );
     case TokKind.number:
-      return base.copyWith(color: PB.accentBright);
+      return base.copyWith(color: colors.accentBright);
     case TokKind.type:
       return base.copyWith(color: PB.textPrimary, fontWeight: FontWeight.w500);
     case TokKind.fn:
-      return base.copyWith(color: PB.accentBright);
+      return base.copyWith(color: colors.accentBright);
     case TokKind.punct:
     case TokKind.plain:
       return null;
@@ -653,7 +658,10 @@ class _CodeBlock extends StatelessWidget {
                 TextSpan(
                   children: [
                     for (final t in highlightCode(code.trimRight(), language))
-                      TextSpan(text: t.text, style: _syntaxStyle(t.kind, style)),
+                      TextSpan(
+                        text: t.text,
+                        style: _syntaxStyle(context, t.kind, style),
+                      ),
                   ],
                 ),
                 style: style,

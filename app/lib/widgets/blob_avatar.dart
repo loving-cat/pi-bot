@@ -6,6 +6,8 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/material.dart';
 
 import '../theme.dart';
+import '../avatar_appearance.dart';
+import '../scope.dart';
 import 'avatar_life.dart';
 import 'avatar_character.dart';
 import 'avatar_character_painter.dart';
@@ -25,10 +27,16 @@ class BlobAvatar extends StatefulWidget {
     this.interactive = false,
     this.followPointer = true,
     this.hovered = false,
+    this.shape,
+    this.useBotAppearance = true,
   });
 
   final String seed;
   final Color color;
+  final int? shape;
+
+  /// 正常头像读取当前 Bot 设置；草稿预览关闭此项，只使用显式颜色与轮廓。
+  final bool useBotAppearance;
   final String? emoji;
   final double size;
 
@@ -123,7 +131,9 @@ class _AvatarHover extends InheritedWidget {
 }
 
 class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
-  late AvatarCharacter _character = AvatarCharacter.fromSeed(widget.seed);
+  late AvatarCharacter _baseCharacter = AvatarCharacter.fromSeed(widget.seed);
+  late AvatarCharacter _character = _baseCharacter;
+  late Color _resolvedColor = widget.color;
   AnimationController? _wobble;
   AnimationController? _blink;
   AnimationController? _poke;
@@ -324,7 +334,8 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
   void didUpdateWidget(BlobAvatar old) {
     super.didUpdateWidget(old);
     if (widget.seed != old.seed) {
-      _character = AvatarCharacter.fromSeed(widget.seed);
+      _baseCharacter = AvatarCharacter.fromSeed(widget.seed);
+      _character = _baseCharacter;
       _rng = math.Random(widget.seed.hashCode);
     }
     if (widget.seed != old.seed ||
@@ -416,6 +427,18 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
+    final bot = widget.useBotAppearance
+        ? context
+              .dependOnInheritedWidgetOfExactType<AppScope>()
+              ?.notifier
+              ?.botById(widget.seed)
+        : null;
+    final shape = normalizeAvatarShape(bot?.avatarShape ?? widget.shape);
+    final kind = shape == null
+        ? _baseCharacter.kind
+        : AvatarCharacterKind.values[shape];
+    if (_character.kind != kind) _character = _baseCharacter.withKind(kind);
+    _resolvedColor = resolveAvatarColor(bot) ?? widget.color;
     final cornerBadge = widget.badge ?? _emojiBadge();
     return MouseRegion(
       onEnter: _onEnter,
@@ -463,7 +486,7 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
           size: Size.square(widget.size),
           painter: AvatarCharacterPainter(
             character: _character,
-            color: widget.color,
+            color: _resolvedColor,
             phase: phase,
             blink: blink,
             poke: poke,

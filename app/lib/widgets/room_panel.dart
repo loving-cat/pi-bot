@@ -8,6 +8,7 @@ import 'toast.dart';
 import 'attachment_view.dart';
 import 'blob_avatar.dart';
 import 'bot_run_section.dart';
+import 'bot_appearance_section.dart';
 
 /// 点聊天顶部的胶囊 → 从右边滑出来的面板。
 ///
@@ -113,6 +114,7 @@ class _RoomPanelState extends State<RoomPanel> {
 
   Widget _header(BuildContext context, Room room) {
     final lead = room.leadName;
+    final bot = _primaryBot(room);
     return AvatarHoverScope(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(18, 18, 10, 14),
@@ -155,6 +157,10 @@ class _RoomPanelState extends State<RoomPanel> {
                 fontWeight: FontWeight.w600,
               ),
             ),
+            if (!room.isGroup && bot != null) ...[
+              const SizedBox(height: 12),
+              BotAppearanceSection(key: ValueKey(bot.id), bot: bot),
+            ],
             if (room.topic.isNotEmpty) ...[
               const SizedBox(height: 6),
               Text(
@@ -506,44 +512,53 @@ class _MemberRow extends StatelessWidget {
     return AvatarHoverScope(
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 3),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            BlobAvatar(
-              seed: b.id,
-              color: PB.colorFor(b.id),
-              size: 30,
-              animate: false,
-              followPointer: false,
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                b.name,
-                style: const TextStyle(
-                  fontSize: PB.fsSm,
-                  color: PB.textPrimary,
+            Row(
+              children: [
+                BlobAvatar(
+                  seed: b.id,
+                  color: PB.colorFor(b.id),
+                  size: 30,
+                  animate: false,
+                  followPointer: false,
                 ),
-              ),
-            ),
-            if (isLead)
-              const Padding(
-                padding: EdgeInsets.only(right: 8),
-                child: Text(
-                  '负责人',
-                  style: TextStyle(
-                    fontSize: PB.fsXxs,
-                    color: PB.textQuaternary,
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    b.name,
+                    style: const TextStyle(
+                      fontSize: PB.fsSm,
+                      color: PB.textPrimary,
+                    ),
                   ),
                 ),
-              ),
-            if (canRemove)
-              TextButton(
-                onPressed: onRemove,
-                child: const Text(
-                  '移除',
-                  style: TextStyle(fontSize: PB.fsXs, color: PB.danger),
-                ),
-              ),
+                if (isLead)
+                  const Padding(
+                    padding: EdgeInsets.only(right: 8),
+                    child: Text(
+                      '负责人',
+                      style: TextStyle(
+                        fontSize: PB.fsXxs,
+                        color: PB.textQuaternary,
+                      ),
+                    ),
+                  ),
+                if (canRemove)
+                  TextButton(
+                    onPressed: onRemove,
+                    child: const Text(
+                      '移除',
+                      style: TextStyle(fontSize: PB.fsXs, color: PB.danger),
+                    ),
+                  ),
+              ],
+            ),
+            Padding(
+              padding: const EdgeInsets.only(left: 40, top: 6, bottom: 10),
+              child: BotAppearanceSection(key: ValueKey(b.id), bot: b),
+            ),
           ],
         ),
       ),
@@ -1082,16 +1097,16 @@ class _MemoryTabState extends State<_MemoryTab> {
                             style: TextStyle(
                               fontSize: PB.fsXxs,
                               color: m.stale
-                                  ? PB.accentBright
+                                  ? PB.colors(context).accentBright
                                   : PB.textQuaternary,
                             ),
                           ),
                         ),
-                        const Text(
+                        Text(
                           '查看完整摘要 →',
                           style: TextStyle(
                             fontSize: PB.fsXxs,
-                            color: PB.accentBright,
+                            color: PB.colors(context).accentBright,
                           ),
                         ),
                       ],

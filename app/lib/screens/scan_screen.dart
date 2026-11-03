@@ -188,7 +188,11 @@ class _ScanScreenState extends State<ScanScreen> {
 
           // 取景框（相机没就绪时先不画，免得挖个洞却什么都看不到）
           if (ready)
-            Positioned.fill(child: CustomPaint(painter: _ScanOverlayPainter())),
+            Positioned.fill(
+              child: CustomPaint(
+                painter: _ScanOverlayPainter(PB.colors(context).accentBright),
+              ),
+            ),
 
           if (!ready)
             Positioned.fill(
@@ -248,12 +252,12 @@ class _ScanScreenState extends State<ScanScreen> {
                             ),
                           ),
                         ] else if (error == null) ...[
-                          const SizedBox(
+                          SizedBox(
                             width: 26,
                             height: 26,
                             child: CircularProgressIndicator(
                               strokeWidth: 2.4,
-                              color: PB.accentBright,
+                              color: PB.colors(context).accentBright,
                             ),
                           ),
                           const SizedBox(height: 20),
@@ -350,7 +354,9 @@ class _ScanScreenState extends State<ScanScreen> {
                         _torch
                             ? LucideIcons.flashlight
                             : LucideIcons.flashlightOff,
-                        color: _torch ? PB.accentBright : Colors.white,
+                        color: _torch
+                            ? PB.colors(context).accentBright
+                            : Colors.white,
                         size: 22,
                       ),
                     ),
@@ -405,6 +411,8 @@ class _ScanScreenState extends State<ScanScreen> {
 }
 
 class _ScanOverlayPainter extends CustomPainter {
+  const _ScanOverlayPainter(this.color);
+  final Color color;
   @override
   void paint(Canvas canvas, Size size) {
     final side = size.shortestSide * 0.66;
@@ -429,7 +437,7 @@ class _ScanOverlayPainter extends CustomPainter {
     // 四个角
     const len = 26.0;
     final paint = Paint()
-      ..color = PB.accentBright
+      ..color = color
       ..strokeWidth = 3.2
       ..strokeCap = StrokeCap.round
       ..style = PaintingStyle.stroke;
@@ -445,5 +453,6 @@ class _ScanOverlayPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  bool shouldRepaint(covariant _ScanOverlayPainter oldDelegate) =>
+      oldDelegate.color != color;
 }

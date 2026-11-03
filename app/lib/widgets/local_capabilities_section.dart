@@ -26,7 +26,8 @@ class LocalCapabilitiesSection extends StatefulWidget {
   final String title;
 
   @override
-  State<LocalCapabilitiesSection> createState() => _LocalCapabilitiesSectionState();
+  State<LocalCapabilitiesSection> createState() =>
+      _LocalCapabilitiesSectionState();
 }
 
 class _LocalCapabilitiesSectionState extends State<LocalCapabilitiesSection> {
@@ -44,15 +45,14 @@ class _LocalCapabilitiesSectionState extends State<LocalCapabilitiesSection> {
   Future<void> _import(List<String> names) async {
     if (names.isEmpty || _busy) return;
     setState(() => _busy = true);
-    final r = await AppScope.of(context).importLocalCapabilities(
-      kind: widget.kind,
-      names: names,
-    );
+    final r = await AppScope.of(context)
+        .importLocalCapabilities(kind: widget.kind, names: names);
     if (!mounted) return;
     setState(() => _busy = false);
 
     final msg = [
-      if (r.imported.isNotEmpty) '导入了 ${r.imported.length} 个：${r.imported.join('、')}',
+      if (r.imported.isNotEmpty)
+        '导入了 ${r.imported.length} 个：${r.imported.join('、')}',
       if (r.skipped.isNotEmpty) '跳过：${r.skipped.join('；')}',
     ].join('\n');
     if (msg.isNotEmpty) {
@@ -103,12 +103,18 @@ class _LocalCapabilitiesSectionState extends State<LocalCapabilitiesSection> {
               child: Row(
                 children: [
                   Icon(
-                    _expanded ? LucideIcons.chevronDown : LucideIcons.chevronRight,
+                    _expanded
+                        ? LucideIcons.chevronDown
+                        : LucideIcons.chevronRight,
                     size: 15,
                     color: PB.textTertiary,
                   ),
                   const SizedBox(width: 8),
-                  Icon(LucideIcons.hardDriveDownload, size: 14, color: PB.accent),
+                  Icon(
+                    LucideIcons.hardDriveDownload,
+                    size: 14,
+                    color: PB.colors(context).accentBright,
+                  ),
                   const SizedBox(width: 7),
                   // 左边这段（标题 + 名单）可以缩短，右边的「全部导入」优先保位置
                   Expanded(
@@ -162,9 +168,9 @@ class _LocalCapabilitiesSectionState extends State<LocalCapabilitiesSection> {
               child: Text(
                 isSkill
                     ? '扫的是 $root。只读，不会改你终端里的 pi 配置；'
-                        '导入是复制一份过来，之后两边独立。'
+                          '导入是复制一份过来，之后两边独立。'
                     : '扫的是 $root。只读，不会改你终端里的 pi 配置；'
-                        '导入后默认**不启用**（MCP 会起进程）。',
+                          '导入后默认**不启用**（MCP 会起进程）。',
                 style: const TextStyle(
                   fontSize: PB.fsXxs,
                   color: PB.textQuaternary,
@@ -174,12 +180,15 @@ class _LocalCapabilitiesSectionState extends State<LocalCapabilitiesSection> {
             ),
             for (final e in entries)
               _row(
-                title: isSkill ? (e as LocalSkillEntry).title : (e as LocalMcpEntry).name,
+                title: isSkill
+                    ? (e as LocalSkillEntry).title
+                    : (e as LocalMcpEntry).name,
                 summary: isSkill
                     ? (e as LocalSkillEntry).summary
-                    : [if ((e as LocalMcpEntry).isHttp) 'HTTP' else '本地', e.target]
-                        .where((x) => x.isNotEmpty)
-                        .join(' · '),
+                    : [
+                        if ((e as LocalMcpEntry).isHttp) 'HTTP' else '本地',
+                        e.target,
+                      ].where((x) => x.isNotEmpty).join(' · '),
                 imported: isSkill
                     ? (e as LocalSkillEntry).imported
                     : (e as LocalMcpEntry).imported,

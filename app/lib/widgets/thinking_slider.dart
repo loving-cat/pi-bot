@@ -224,6 +224,8 @@ class _ThinkingSliderState extends State<ThinkingSlider>
               levels: widget.levels.length,
               glow: glow,
               dim: !enabled,
+              accent: PB.colors(context).accent,
+              bright: PB.colors(context).accentBright,
             ),
             child: const SizedBox.expand(),
           );
@@ -248,7 +250,9 @@ class _ThinkingSliderState extends State<ThinkingSlider>
                       : (i == n - 1 ? TextAlign.right : TextAlign.center),
                   style: TextStyle(
                     fontSize: PB.fsXxs,
-                    color: i == idx ? PB.accentBright : PB.textQuaternary,
+                    color: i == idx
+                        ? PB.colors(context).accentBright
+                        : PB.textQuaternary,
                     fontWeight: i == idx ? FontWeight.w600 : FontWeight.w400,
                   ),
                 ),
@@ -266,12 +270,16 @@ class _TrackPainter extends CustomPainter {
     required this.levels,
     required this.glow,
     required this.dim,
+    required this.accent,
+    required this.bright,
   });
 
   final double t;
   final int levels;
   final double glow;
   final bool dim;
+  final Color accent;
+  final Color bright;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -307,7 +315,7 @@ class _TrackPainter extends CustomPainter {
           LinearGradient(
             colors: dim
                 ? [PB.textQuaternary, PB.textTertiary]
-                : [PB.accent.withValues(alpha: 0.55), PB.accentBright],
+                : [accent.withValues(alpha: 0.55), bright],
           ).createShader(
             Rect.fromLTWH(
               left - knob,
@@ -330,7 +338,7 @@ class _TrackPainter extends CustomPainter {
       canvas.drawCircle(
         Offset(x, cy),
         knob + 7 * glow,
-        Paint()..color = PB.accentBright.withValues(alpha: 0.22 * glow),
+        Paint()..color = bright.withValues(alpha: 0.22 * glow),
       );
     }
 
@@ -347,13 +355,18 @@ class _TrackPainter extends CustomPainter {
     canvas.drawCircle(
       Offset(x, cy),
       knob - 4.6,
-      Paint()..color = dim ? PB.textQuaternary : PB.accent,
+      Paint()..color = dim ? PB.textQuaternary : accent,
     );
   }
 
   @override
   bool shouldRepaint(_TrackPainter old) =>
-      old.t != t || old.glow != glow || old.dim != dim || old.levels != levels;
+      old.t != t ||
+      old.glow != glow ||
+      old.dim != dim ||
+      old.levels != levels ||
+      old.accent != accent ||
+      old.bright != bright;
 }
 
 /// 带"已选档位"文案的整块控件（面板里直接用这个）
@@ -405,7 +418,9 @@ class ThinkingLevelField extends StatelessWidget {
                 style: TextStyle(
                   fontSize: PB.fsXs,
                   fontWeight: FontWeight.w600,
-                  color: isMax ? PB.accentBright : PB.textSecondary,
+                  color: isMax
+                      ? PB.colors(context).accentBright
+                      : PB.textSecondary,
                 ),
               ),
             ),

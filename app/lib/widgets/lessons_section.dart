@@ -57,7 +57,11 @@ class _LessonsSectionState extends State<LessonsSection> {
         children: [
           Row(
             children: [
-              const Icon(LucideIcons.lightbulb, size: 15, color: PB.accent),
+              Icon(
+                LucideIcons.lightbulb,
+                size: 15,
+                color: PB.colors(context).accentBright,
+              ),
               const SizedBox(width: 7),
               const Text(
                 '经验',
@@ -73,7 +77,10 @@ class _LessonsSectionState extends State<LessonsSection> {
                   '只有启用的会进主控提示词，一次最多 3 条 / 600 字',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
+                  style: const TextStyle(
+                    fontSize: PB.fsXxs,
+                    color: PB.textQuaternary,
+                  ),
                 ),
               ),
             ],
@@ -125,7 +132,9 @@ class _LessonsSectionState extends State<LessonsSection> {
               color: selected ? PB.bgElevated : Colors.transparent,
               borderRadius: BorderRadius.circular(PB.rFull),
               border: Border.all(
-                color: selected ? PB.accent.withValues(alpha: 0.5) : PB.borderTertiary,
+                color: selected
+                    ? PB.colors(context).accent.withValues(alpha: 0.5)
+                    : PB.borderTertiary,
               ),
             ),
             child: Text(
@@ -152,9 +161,7 @@ class _LessonsSectionState extends State<LessonsSection> {
   Widget _emptyHint(int candidates, int active) {
     final text = switch (_filter) {
       _Filter.candidate =>
-        candidates == 0
-            ? '还没有待确认的经验。群聊收尾后会自动复盘出候选，你在这里决定要不要让它记住。'
-            : '没有待确认的经验',
+        candidates == 0 ? '还没有待确认的经验。群聊收尾后会自动复盘出候选，你在这里决定要不要让它记住。' : '没有待确认的经验',
       _Filter.active =>
         active == 0 ? '还没有启用的经验。候选条目点「启用」后，主控派活时才会参考它。' : '没有启用的经验',
       _Filter.all => '还没有经验。群聊收尾后会自动复盘出候选。',
@@ -193,7 +200,10 @@ class _LessonsSectionState extends State<LessonsSection> {
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: FilledButton.styleFrom(backgroundColor: PB.danger),
@@ -211,10 +221,7 @@ class _LessonsSectionState extends State<LessonsSection> {
   /// 直接甩“经验不存在”用户看不懂，也以为自己点错了。
   void _showError(String err) {
     if (!mounted) return;
-    toast(
-      context,
-      err.contains('不存在') ? '这条经验已经不在了（可能被删了），列表已刷新' : err,
-    );
+    toast(context, err.contains('不存在') ? '这条经验已经不在了（可能被删了），列表已刷新' : err);
   }
 }
 
@@ -246,7 +253,9 @@ class _LessonCard extends StatelessWidget {
         color: PB.bgPane,
         borderRadius: BorderRadius.circular(PB.rXl),
         border: Border.all(
-          color: active ? PB.accent.withValues(alpha: 0.45) : PB.borderTertiary,
+          color: active
+              ? PB.colors(context).accent.withValues(alpha: 0.45)
+              : PB.borderTertiary,
         ),
       ),
       child: Column(
@@ -335,13 +344,19 @@ class _LessonCard extends StatelessWidget {
               if (lesson.dept.isNotEmpty)
                 Text(
                   lesson.dept,
-                  style: const TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
+                  style: const TextStyle(
+                    fontSize: PB.fsXxs,
+                    color: PB.textQuaternary,
+                  ),
                 ),
               if (lesson.hits > 0) ...[
                 const SizedBox(width: 8),
                 Text(
                   '已命中 ${lesson.hits} 次',
-                  style: const TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
+                  style: const TextStyle(
+                    fontSize: PB.fsXxs,
+                    color: PB.textQuaternary,
+                  ),
                 ),
               ],
               const Spacer(),

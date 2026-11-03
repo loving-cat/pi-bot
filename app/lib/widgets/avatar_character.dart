@@ -25,6 +25,17 @@ class AvatarCharacter {
   final double faceLift;
   final double restTilt;
 
+  /// 只替换轮廓，面部与静止姿态继续使用同一身份参数。
+  AvatarCharacter withKind(AvatarCharacterKind next) => next == kind
+      ? this
+      : AvatarCharacter(
+          kind: next,
+          eyeSpacing: eyeSpacing,
+          eyeScale: eyeScale,
+          faceLift: faceLift,
+          restTilt: restTilt,
+        );
+
   /// 用有界整数运算生成稳定身份，不依赖运行时的 String.hashCode。
   factory AvatarCharacter.fromSeed(String seed) {
     var hash = 5381;

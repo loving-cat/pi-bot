@@ -556,12 +556,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         style: TextStyle(fontSize: PB.fsXxs, color: PB.warn),
                       )
                     else
-                      const SizedBox(
+                      SizedBox(
                         width: 11,
                         height: 11,
                         child: CircularProgressIndicator(
                           strokeWidth: 1.8,
-                          color: PB.accent,
+                          color: PB.colors(context).accentBright,
                         ),
                       ),
                   ],
@@ -589,11 +589,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 icon: Badge(
                   isLabelVisible: pending > 0,
                   label: Text('$pending'),
-                  backgroundColor: PB.accent,
+                  backgroundColor: PB.colors(context).accent,
                   child: Icon(
                     LucideIcons.checkCircle2,
                     size: 18,
-                    color: pending > 0 ? PB.accent : PB.textTertiary,
+                    color: pending > 0
+                        ? PB.colors(context).accentBright
+                        : PB.textTertiary,
                   ),
                 ),
               );
@@ -940,16 +942,19 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         color: PB.bgBubble,
                         borderRadius: BorderRadius.circular(PB.r2xl),
                         border: Border.all(
-                          color: PB.accent.withValues(alpha: 0.5),
+                          color: PB
+                              .colors(context)
+                              .accent
+                              .withValues(alpha: 0.5),
                         ),
                       ),
-                      child: const Column(
+                      child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Icon(
                             LucideIcons.paperclip,
                             size: 22,
-                            color: PB.accent,
+                            color: PB.colors(context).accentBright,
                           ),
                           SizedBox(height: 8),
                           Text(
@@ -1251,7 +1256,11 @@ class _ComposerState extends State<_Composer> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(LucideIcons.zap, size: 12, color: PB.accent),
+                    Icon(
+                      LucideIcons.zap,
+                      size: 12,
+                      color: PB.colors(context).accentBright,
+                    ),
                     const SizedBox(width: 5),
                     Text(
                       // ★ 语义变了：用户一说话，正在跑的会**立刻停下**，
@@ -1280,7 +1289,7 @@ class _ComposerState extends State<_Composer> {
                   scrollDirection: Axis.horizontal,
                   children: [
                     if (widget.uploading)
-                      const Padding(
+                      Padding(
                         padding: EdgeInsets.symmetric(
                           horizontal: 8,
                           vertical: 10,
@@ -1291,7 +1300,7 @@ class _ComposerState extends State<_Composer> {
                           child: Center(
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
-                              color: PB.accent,
+                              color: PB.colors(context).accentBright,
                             ),
                           ),
                         ),
@@ -1378,11 +1387,15 @@ class _ComposerState extends State<_Composer> {
                       borderRadius: BorderRadius.circular(22),
                       border: Border.all(
                         color: widget.focus.hasFocus
-                            ? PB.accent.withValues(alpha: 0.45)
+                            ? PB.colors(context).accent.withValues(alpha: 0.45)
                             : PB.borderSecondary,
                       ),
                       boxShadow: widget.focus.hasFocus
-                          ? PB.glow(PB.accent, blur: 14, alpha: 0.12)
+                          ? PB.glow(
+                              PB.colors(context).accent,
+                              blur: 14,
+                              alpha: 0.12,
+                            )
                           : null,
                     ),
                     padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -1506,7 +1519,7 @@ class _ComposerState extends State<_Composer> {
                 ],
                 _RoundButton(
                   icon: busy ? LucideIcons.zap : LucideIcons.arrowUp,
-                  color: hasText ? PB.accent : PB.bgActive,
+                  color: hasText ? PB.colors(context).accent : PB.bgActive,
                   iconColor: hasText ? Colors.white : PB.textQuaternary,
                   tooltip: busy ? '发出去，它会看到 (Enter)' : '发送 (Enter)',
                   onTap: onSend,
@@ -1877,32 +1890,36 @@ class _MessageRow extends StatelessWidget {
                         ),
                         padding: const EdgeInsets.fromLTRB(15, 13, 15, 13),
                         decoration: BoxDecoration(
-                          gradient: const LinearGradient(
+                          gradient: LinearGradient(
                             begin: Alignment.topLeft,
                             end: Alignment.bottomRight,
-                            colors: [PB.userBubbleTop, PB.userBubbleBottom],
+                            colors: [
+                              PB.colors(context).userBubbleTop,
+                              PB.colors(context).userBubbleBottom,
+                            ],
                           ),
                           borderRadius: BorderRadius.circular(PB.rBubble),
                           border: Border.all(
                             color: Colors.white.withValues(alpha: 0.10),
                           ),
                           boxShadow: PB.glow(
-                            PB.userBubbleBottom,
+                            PB.colors(context).userBubbleBottom,
                             blur: 16,
                             alpha: 0.28,
                           ),
                         ),
                         child: MdText(
                           msg.text,
+                          linkColor: PB.colors(context).onAccent,
                           selectable: true,
                           onMentionTap: (name) => openBotDm(context, name),
                           onLinkTap: (url) =>
                               AppScope.read(context).openInBrowser(url),
                           mentionOf: mentionOf,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: PB.fsBase,
                             height: 1.45,
-                            color: Colors.white,
+                            color: PB.colors(context).onAccent,
                           ),
                         ),
                       ),
@@ -1921,7 +1938,11 @@ class _MessageRow extends StatelessWidget {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(LucideIcons.zap, size: 11, color: PB.accent),
+                      Icon(
+                        LucideIcons.zap,
+                        size: 11,
+                        color: PB.colors(context).accentBright,
+                      ),
                       const SizedBox(width: 3),
                       Text(
                         // ★ 用户的新要求会让它**立刻停下**，不是排队等。
@@ -1929,9 +1950,9 @@ class _MessageRow extends StatelessWidget {
                         msg.meta?['queued'] == 'followUp'
                             ? '排在它后面，做完会看'
                             : '已打断它，按这条重新开始',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: PB.fsXxs,
-                          color: PB.accent,
+                          color: PB.colors(context).link,
                         ),
                       ),
                     ],
@@ -2047,7 +2068,10 @@ class _MessageRow extends StatelessWidget {
                             color: msg.status == 'error'
                                 ? PB.danger.withValues(alpha: 0.45)
                                 : (streaming
-                                      ? PB.accent.withValues(alpha: 0.22)
+                                      ? PB
+                                            .colors(context)
+                                            .accent
+                                            .withValues(alpha: 0.22)
                                       : PB.borderHighlight),
                           ),
                           boxShadow: PB.shadow(y: 1, blur: 4, alpha: 0.22),

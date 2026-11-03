@@ -7,11 +7,7 @@ import '../scope.dart';
 
 /// 工具调用状态：默认只显示运行中提示；调试模式显示可展开的步骤明细。
 class ToolSteps extends StatefulWidget {
-  const ToolSteps({
-    super.key,
-    required this.steps,
-    this.quietWhenDone = true,
-  });
+  const ToolSteps({super.key, required this.steps, this.quietWhenDone = true});
 
   final List<ToolStep> steps;
 
@@ -67,16 +63,13 @@ class _ToolStepsState extends State<ToolSteps> {
               height: 11,
               child: CircularProgressIndicator(
                 strokeWidth: 1.6,
-                color: PB.accent.withValues(alpha: 0.8),
+                color: PB.colors(context).accentBright.withValues(alpha: 0.8),
               ),
             ),
             const SizedBox(width: 7),
             const Text(
               '正在干活…',
-              style: TextStyle(
-                fontSize: PB.fsXxs,
-                color: PB.textQuaternary,
-              ),
+              style: TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
             ),
           ],
         ),
@@ -116,7 +109,7 @@ class _ToolStepsState extends State<ToolSteps> {
                       running ? LucideIcons.loader : LucideIcons.circleCheck,
                       size: 11,
                       color: running
-                          ? PB.accent
+                          ? PB.colors(context).accentBright
                           : (failed.isEmpty ? PB.textQuaternary : PB.danger),
                     ),
                     const SizedBox(width: 5),
@@ -126,7 +119,9 @@ class _ToolStepsState extends State<ToolSteps> {
                         fontSize: PB.fsXxs,
                         fontWeight: FontWeight.w600,
                         letterSpacing: 0.3,
-                        color: running ? PB.accent : PB.textTertiary,
+                        color: running
+                            ? PB.colors(context).link
+                            : PB.textTertiary,
                       ),
                     ),
                     const SizedBox(width: 6),
@@ -211,9 +206,9 @@ class _StepRow extends StatelessWidget {
           width: 12,
           height: 12,
           child: isRunning
-              ? const CircularProgressIndicator(
+              ? CircularProgressIndicator(
                   strokeWidth: 1.6,
-                  color: PB.accent,
+                  color: PB.colors(context).accentBright,
                 )
               : Icon(
                   isError ? LucideIcons.x : LucideIcons.check,
@@ -239,7 +234,7 @@ class _StepRow extends StatelessWidget {
                 fontSize: PB.fsTinyCjk,
                 color: isError
                     ? PB.danger
-                    : (isRunning ? PB.accent : PB.textQuaternary),
+                    : (isRunning ? PB.colors(context).link : PB.textQuaternary),
               ),
             ),
           ),
@@ -248,4 +243,3 @@ class _StepRow extends StatelessWidget {
     );
   }
 }
-

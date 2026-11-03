@@ -54,7 +54,7 @@ class CircleIconButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final button = Material(
-      color: filled ? PB.accent : PB.bgHover,
+      color: filled ? PB.colors(context).accent : PB.bgHover,
       shape: const CircleBorder(),
       clipBehavior: Clip.antiAlias,
       child: InkWell(

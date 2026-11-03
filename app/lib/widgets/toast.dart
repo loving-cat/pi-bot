@@ -61,14 +61,13 @@ void toast(
     list.first.dismiss();
   }
 
-  final handle = _ToastHandle(
-    message: message,
-    kind: kind,
-    overlay: overlay,
+  final handle = _ToastHandle(message: message, kind: kind, overlay: overlay);
+  handle.show(
+    duration ??
+        (kind == ToastKind.error
+            ? const Duration(seconds: 4)
+            : const Duration(milliseconds: 2400)),
   );
-  handle.show(duration ?? (kind == ToastKind.error
-      ? const Duration(seconds: 4)
-      : const Duration(milliseconds: 2400)));
   list.add(handle);
   handle.onGone = () {
     list.remove(handle);
@@ -207,7 +206,7 @@ class _ToastViewState extends State<_ToastView>
     final (icon, color) = switch (widget.handle.kind) {
       ToastKind.success => (LucideIcons.check, PB.success),
       ToastKind.error => (LucideIcons.x, PB.danger),
-      ToastKind.info => (LucideIcons.info, PB.accent),
+      ToastKind.info => (LucideIcons.info, PB.colors(context).accent),
     };
 
     return Positioned(

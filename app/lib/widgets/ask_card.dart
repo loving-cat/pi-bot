@@ -34,6 +34,7 @@ class _AskCardState extends State<AskCard> with SingleTickerProviderStateMixin {
 
   /// 用户选的/写的那个回答（本地记录，服务端回包后以服务端为准）
   String? _localAnswer;
+
   /// 入场：卡片本体先"弹"出来，选项再一行一行跟上。
   ///
   /// 用户："这个询问卡片 要有动态动画，现在没有动画 触发的感觉都没有"。
@@ -62,12 +63,11 @@ class _AskCardState extends State<AskCard> with SingleTickerProviderStateMixin {
     // 系统开了"减弱动态效果"就直接到位（无障碍，也顺便省电）。
     // ★ 这里读 platformDispatcher 而不是 MediaQuery —— initState 里还不能读
     //   继承的 widget（组件测试会直接报错）。
-    final reduce =
-        WidgetsBinding
-            .instance
-            .platformDispatcher
-            .accessibilityFeatures
-            .disableAnimations;
+    final reduce = WidgetsBinding
+        .instance
+        .platformDispatcher
+        .accessibilityFeatures
+        .disableAnimations;
     if (reduce) {
       _c.value = 1;
     } else {
@@ -143,7 +143,9 @@ class _AskCardState extends State<AskCard> with SingleTickerProviderStateMixin {
           decoration: BoxDecoration(
             color: PB.bgElevated,
             borderRadius: BorderRadius.circular(PB.rXl),
-            border: Border.all(color: PB.accent.withValues(alpha: 0.35)),
+            border: Border.all(
+              color: PB.colors(context).accent.withValues(alpha: 0.35),
+            ),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -151,13 +153,17 @@ class _AskCardState extends State<AskCard> with SingleTickerProviderStateMixin {
             children: [
               Row(
                 children: [
-                  Icon(LucideIcons.circleHelp, size: 15, color: PB.accent),
+                  Icon(
+                    LucideIcons.circleHelp,
+                    size: 15,
+                    color: PB.colors(context).accentBright,
+                  ),
                   const SizedBox(width: 7),
                   Text(
                     '${msg.authorName} 问你',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: PB.fsXxs,
-                      color: PB.accent,
+                      color: PB.colors(context).link,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -225,17 +231,11 @@ class _CollapsedAsk extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            LucideIcons.circleCheck,
-            size: 13,
-            color: PB.textQuaternary,
-          ),
+          Icon(LucideIcons.circleCheck, size: 13, color: PB.textQuaternary),
           const SizedBox(width: 6),
           Flexible(
             child: Text(
-              answer.isEmpty
-                  ? '已回答：$question'
-                  : '已回答：$answer',
+              answer.isEmpty ? '已回答：$question' : '已回答：$answer',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
@@ -322,7 +322,9 @@ class _OptionButtonState extends State<_OptionButton> {
             color: _hover ? PB.bgHover : PB.bgActive,
             borderRadius: BorderRadius.circular(PB.rLg),
             border: Border.all(
-              color: _hover ? PB.accent.withValues(alpha: 0.45) : PB.borderSecondary,
+              color: _hover
+                  ? PB.colors(context).accent.withValues(alpha: 0.45)
+                  : PB.borderSecondary,
             ),
           ),
           child: Row(
@@ -357,7 +359,9 @@ class _OptionButtonState extends State<_OptionButton> {
               Icon(
                 LucideIcons.chevronRight,
                 size: 15,
-                color: _hover ? PB.accent : PB.textQuaternary,
+                color: _hover
+                    ? PB.colors(context).accentBright
+                    : PB.textQuaternary,
               ),
             ],
           ),

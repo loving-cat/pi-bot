@@ -37,6 +37,7 @@
 | `watchdog.js` | 心跳与卡死判定、收尾 |
 | `prompt-input.js` | 拼输入：附件正文、图片、自动附图 |
 | `system-prompt.js` | 系统提示词：身份、说话规矩、部门规矩 |
+| `reply-format.js` | 回复排版规则：解释与代写正文分开，引用保持原文身份，代码块只承载代码和命令 |
 | `mentions.js` | @解析与花名册文本 |
 | `model-*.js` | 模型接线：注册（registry）/模型组（groups）/探活（health）/菜单（menu） |
 | `model-capacity.js` | 同 ID 模型元数据合并、容量优先级与正整数/最大输出校验（纯逻辑） |
@@ -117,6 +118,11 @@
 | `widgets/avatar_solid.dart` | 连续侧壁网格、顶点颜色及同向实体覆盖面，按深度排列三角面 |
 | `widgets/blob_avatar.dart` / `widgets/avatar_life.dart` | 头像交互、动画生命周期、指针阻尼与群成员组合；设计约束见 `docs/TODO-AVATAR.md` |
 | `theme.dart` | 颜色/字号/圆角；新增图标需核对当前依赖字体的实际字形 |
+| `theme_colors.dart` | 从主控头像色派生按钮、用户气泡、链接和选中颜色；按文字与背景对比度调整亮度，状态色独立 |
+| `avatar_appearance.dart` / `widgets/avatar_appearance_picker.dart` | 头像颜色与形状校验、种子回退和外观编辑草稿；保存复用 Bot 更新接口 |
+| `appearance_save_controller.dart` / `bot_appearance_save.dart` | 按服务连接与 Bot 共用外观自动保存队列；连续选择合并为最后一次，失败可重试 |
+| `widgets/bot_appearance_section.dart` / `widgets/bot_appearance_controls.dart` | 头像下的形象和颜色入口，连接保存状态；私聊详情、群聊成员与花名册共用 |
+| `markdown_inline.dart` / `widgets/md_quote.dart` | 共用行内文本解析、邮箱识别、引用正文复制和引用块展示；选择范围由 `md_text` 统一管理 |
 | `clipboard_image.dart` / `clipboard_image_macos.dart` | 剪贴板图片平台分流；Windows PowerShell、macOS PNG/TIFF 读取与临时文件清理 |
 | `window_state.dart` | 窗口位置/大小记忆：编码、解析、夹回可见区（纯函数） |
 | `browser_pane_state.dart` | 右侧通用展示栏状态：开关、历史、网页/文件模式与交互活动记录 |

@@ -1,51 +1,41 @@
 import 'package:flutter/material.dart';
 
-/// pi-bot 设计系统。
-///
-/// 颜色不是拍脑袋定的，推导规则是：
-///   · 中性面只留 7 个色阶，界面角色按固定索引取（侧栏/聊天区/卡片/正文…）
-///   · 半透明色一律用「墨色按 alpha 叠在底色上」算，不硬编码
-///   · 最后逐点校准色值
-/// 侧栏 #0E0E0E、聊天区 #121212、气泡 #1B1B1B、圆按钮 #1F1F1F、强调 #1E86FC。
-/// 宽屏阈值：>= 这个宽度走左右分栏（微信 PC 那种），否则单页导航。
-/// 只在这里定义一次 —— HomeShell 和"跳会话"的逻辑必须用同一个数，
-/// 不然会出现"宽屏下点了跳转却 push 出一个整页聊天"。
+import 'theme_colors.dart';
+
+export 'theme_colors.dart' show PBThemeColors;
+
+/// 双栏布局和会话跳转共用的逻辑像素宽度阈值。
 const double kTwoPaneMinWidth = 760;
 
 /// 聊天内容列的左右最小留白（px）。
 const double kChatSidePad = 12;
 
-/// 聊天内容列的最大宽度。窗口／栏再宽也不让内容铺满 ——
-/// 一行 200 个字很难读，居中留白比撑满好看。
-/// 注意：这是**内容列**上限，不是气泡上限；气泡另外再缩到 82%。
+/// 聊天内容列居中排版的最大宽度；气泡在内容列内继续限制宽度。
 const double kChatContentMax = 1180;
 
-/// 窗口最小尺寸（逻辑像素）。
-/// main.dart 建窗口和 WindowResizeOverlay 自己算缩放都要用同一个数 ——
-/// 两边写两份的话，拖到最小尺寸时窗口会抖（一边卡住一边还在缩）。
+/// 窗口创建和边缘缩放共用的最小逻辑尺寸。
 const Size kWindowMinSize = Size(760, 520);
 
 class PB {
-  // ---- 背景层次
-  static const bgApp = Color(0xFF0E0E0E);
-  static const bgPane = Color(0xFF121212);
-  static const bgElevated = Color(0xFF1A1A1A);
-  static const bgBubble = Color(0xFF1B1B1B);
-  static const bgHover = Color(0xFF212121);
-  static const bgActive = Color(0xFF282828);
-  static const bgInput = Color(0xFF1B1B1B);
+  // 中性背景与文字保持固定，Bot 个性色只影响强调元素。
+  static const bgApp = PBNeutral.bgApp;
+  static const bgPane = PBNeutral.bgPane;
+  static const bgElevated = PBNeutral.bgElevated;
+  static const bgBubble = PBNeutral.bgBubble;
+  static const bgHover = PBNeutral.bgHover;
+  static const bgActive = PBNeutral.bgActive;
+  static const bgInput = PBNeutral.bgInput;
 
-  // ---- 文字
-  // ★ 四级文字是同一墨色（#F2F2F2）按 alpha 叠在深底上。
-  //   最低一档曾经是 0x5C（36%），在 #0E0E0E 上对比度只有 3.07:1 ——
-  //   低于 WCAG AA 对正文的 4.5:1 要求，而它被用在 160+ 处 10–12px 小字上。
-  //   深色界面本来就靠“低对比”做层次，但对比低到读不清就不是层次而是缺陷。
-  //   现在整条梯子一起上调：最低档 5.12:1（达标），且四级之间的亮度差
-  //   （54/26/28）比原来（58/46/46）更均匀 —— 层次没丢，只是整体抬亮。
-  static const textPrimary = Color(0xFFF2F2F2);
-  static const textSecondary = Color(0xBCF2F2F2);
-  static const textTertiary = Color(0xA2F2F2F2);
-  static const textQuaternary = Color(0x86F2F2F2);
+  // 四级正文颜色在最亮的常用中性面上均保持至少 4.5:1 的对比度。
+  static const textPrimary = PBNeutral.textPrimary;
+  static const textSecondary = PBNeutral.textSecondary;
+  static const textTertiary = PBNeutral.textTertiary;
+  static const textQuaternary = PBNeutral.textQuaternary;
+
+  static const quoteBorder = PBNeutral.quoteBorder;
+  static const quoteBackground = PBNeutral.quoteBackground;
+  static const quoteText = PBNeutral.quoteText;
+  static const link = Color(0xFF77B4FF);
 
   // ---- 描边
   static const borderPrimary = Color(0x3DF2F2F2);
@@ -78,17 +68,7 @@ class PB {
   static const rBubble = 18.0;
   static const rFull = 999.0;
 
-  // ---- 字号
-  // ★ 字号比常规小 1px。
-  //   Inter 的 x/cap 比参考那套字体高一截（0.750 vs 0.731）——
-  //   同一个 font-size 下它的字形实际更大，整页看着"胀"。
-  //   统一收 1px 之后，视觉大小和参考基本对齐（这是量出来的，不是感觉）。
-  //
-  //   ★ 但这个换算只对拉丁字母成立：它算的是 x-height / cap-height 的比例，
-  //   而汉字没有这两个度量（汉字是方块字，字身框基本等于 em）。
-  //   所以收 1px 对中文是纯粹变小，不是"对齐" —— 而中文在同样的 px 下
-  //   本来就比拉丁字母难认（笔画多、内部空隙小）。这也是为什么中文 UI
-  //   通常要让正文比同牌的英文版大 1px 左右。
+  // 字号按标签、正文和标题的阅读层级取值。
   static const fsXxs = 10.0;
   static const fsXs = 11.0;
   static const fsSm = 12.0;
@@ -97,26 +77,14 @@ class PB {
   static const fsXl = 16.0;
   static const fsXxl = 21.0;
 
-  /// 汉字专用的字号修正：正文类字号 +1px，标签类不动。
-  ///
-  /// Windows 上 Flutter 走的是**灰度抗锯齿**（不开 ClearType 次像素渲染，
-  /// 实测渲染结果 R==G==B），小字天然比系统原生控件发虚；再叠上中文笔画密，
-  /// 10–12px 这档就是"糊"。把真正承载阅读的字号抬一档最直接。
-  ///
-  /// 只对正文/标题类生效（它们整行都是中文），不碰图标旁的小标签 ——
-  /// 那些地方中文和数字混排，抬高了会挤。
+  /// 中文正文和标题的字号增量，标签字号保持不变。
   static const cjkScale = 1.0;
 
-  /// 工具调用那种小字（10 号）在 125% 缩放下是 **12.5 个物理像素** ——
-  /// 半像素字号本来就不锐，中文字形又比拉丁繁复得多，两个凑一起就是"糊"。
-  /// 这里把用到中文的小字抬到 12（= 15 个物理像素，整像素）——
-  /// 只改"中英混排的那几行"，不动标签类的小字。
+  /// 工具说明等中英混排小字的可读字号。
   static const fsTinyCjk = 12.0;
 
-  /// 图标的可用字形以当前依赖字体为准；组件测试只检查 IconData，无法验证字形。
-  /// 新增图标须核对字体中的对应字形。
-  /// 优先用装了的现代等宽，退回系统自带 —— 常见等宽字体的度量差异在噪声范围内，
-  /// 挑顺眼的就行，不值得为它打包字体。
+  /// 新增图标须核对依赖字体字形；组件测试无法检测缺字。
+  /// 代码使用系统已有的等宽字体，中文兜底与正文保持一致。
   static const monoFamily = 'JetBrains Mono';
   static const monoFallback = <String>[
     'Geist Mono',
@@ -125,10 +93,6 @@ class PB {
     'Consolas',
     'Menlo',
     'monospace',
-    // ★ 上面这些**一个中文字形都没有**。不显式列出中文，引擎只能自己挑，
-    //   而它挑到的不一定是屏显黑体 —— 用户看到的就是"工具调用那一行
-    //   英文挺清楚、中文发糊"（`create_bot  name: 平台开发工程师`）。
-    //   中文的兜底必须和正文用同一套。
     'Microsoft YaHei UI',
     'Microsoft YaHei',
     'PingFang SC',
@@ -141,21 +105,14 @@ class PB {
   static TextStyle mono(TextStyle base) =>
       base.copyWith(fontFamily: monoFamily, fontFamilyFallback: monoFallback);
 
-  /// Latin 用 Inter，中文用随包分发的 Noto Sans SC。
-  ///
-  /// ★ 两套字体必须**共享同一套字重**，否则一行里的中英文会一格一格错开：
-  ///   以前中文回落系统字体（Windows 雅黑），雅黑只有 Regular / Bold 两档，
-  ///   `w500` 渲染结果和 `w400` 逐像素相同、`w600` 直接跳到 Bold（墨量 1.6 倍），
-  ///   于是“英文 Semibold + 中文粗黑”同时出现在一行里。
-  ///   现在两者都是带 wght 轴的可变字体，w400/500/600 连续可用。
+  /// 拉丁字母与中文均使用可变字体，保持相同字重层级。
   static const fontFamily = 'Inter';
 
   /// 中文字体族名（pubspec 里登记的就是这个名字）
   static const cjkFamily = 'NotoSansSC';
 
   static const fontFallback = <String>[
-    // ★ 自家带的中文字体排在最前：它是随包的、可变字重的，
-    //   系统字体只作为缺字时的最后保底。
+    // 随包中文字体优先，系统字体只作缺字兜底。
     cjkFamily,
     'Microsoft YaHei UI',
     'Microsoft YaHei',
@@ -166,14 +123,7 @@ class PB {
     'sans-serif',
   ];
 
-  /// Bot 头像调色板。
-  ///
-  /// 取色标准对齐 GrokBot（实测 S 88~97% / L 50~62%）：
-  /// 暗色底上，饱和度不够的实体会发灰、和背景糊在一起。
-  /// 这里除灰色外的每一档都拉到 S ≥ 83%，亮度集中在 42~68% 之间。
-  ///
-  /// 灰色（gray）是**故意保留低饱和**的：它承担“中性/未分类”的语义，
-  /// 拉高了反而和其他颜色抢注意力。
+  /// Bot 头像保留独立的多色标识；灰色用于中性和未分类形象。
   static const palette = <Color>[
     Color(0xFF1E86FC), // blue   S97 L55
     Color(0xFF12C878), // green  S83 L43
@@ -220,11 +170,19 @@ class PB {
     ),
   ];
 
-  static ThemeData theme() {
-    const scheme = ColorScheme.dark(
-      primary: accent,
-      onPrimary: Colors.white,
-      secondary: accent,
+  static final _defaultColors = PBThemeColors.derive(accent);
+
+  /// 从当前主题读取语义颜色，未挂主题时使用默认种子。
+  static PBThemeColors colors(BuildContext context) =>
+      Theme.of(context).extension<PBThemeColors>() ?? _defaultColors;
+
+  static ThemeData theme({Color? seed}) {
+    final colors = PBThemeColors.derive(seed ?? accent);
+    final scheme = ColorScheme.dark(
+      primary: colors.accent,
+      onPrimary: colors.onAccent,
+      secondary: colors.accent,
+      onSecondary: colors.onAccent,
       surface: bgPane,
       onSurface: textPrimary,
       error: danger,
@@ -238,15 +196,10 @@ class PB {
       useMaterial3: true,
       fontFamily: fontFamily,
       fontFamilyFallback: fontFallback,
+      extensions: [colors],
     );
 
-    /// 统一字距：大标题收紧、正文略放，读起来更"贵"
-    ///
-    /// ★ 这里必须把 fontFamily **和** fontFamilyFallback 一起给。
-    ///   TextStyle 只要显式写了 fontFamily，它就不再继承 ThemeData 上的
-    ///   fontFamilyFallback —— 于是 "Inter" 里找不到的汉字会去问**系统默认
-    ///   字体**（Windows 上是雅黑），随包的 NotoSansSC 根本轮不到。
-    ///   表现就是：样式表里改了中文字体，界面里却一点变化没有。
+    // 正文显式携带字体及回退列表，标题与正文按角色设置字距和行距。
     TextStyle t(
       double size,
       FontWeight weight, {
@@ -265,10 +218,7 @@ class PB {
     return base.copyWith(
       scaffoldBackgroundColor: bgApp,
       canvasColor: bgApp,
-      // ★ 页面切换统一用**淡入淡出**，不用默认的"滑入/上浮"。
-      //   默认那套是从一边推过来的：设置页整页盖过来的时候，聊天顶部那个
-      //   悬浮胶囊正好在同一位置，看着像"被盖住了一下"。
-      //   淡入没有位移，也就没有"谁盖谁"的错觉 —— 桌面端本来也更习惯这种。
+      // 所有平台统一使用无位移的淡入页面过渡。
       pageTransitionsTheme: const PageTransitionsTheme(
         builders: {
           TargetPlatform.windows: _FadePageTransitionsBuilder(),
@@ -279,6 +229,11 @@ class PB {
         },
       ),
       dividerColor: borderTertiary,
+      textSelectionTheme: TextSelectionThemeData(
+        cursorColor: colors.accentBright,
+        selectionColor: colors.accentSoft,
+        selectionHandleColor: colors.accentBright,
+      ),
       splashFactory: InkSparkle.splashFactory,
       textTheme: base.textTheme.copyWith(
         displaySmall: t(28, FontWeight.w600, spacing: -0.6, height: 1.2),
@@ -286,9 +241,7 @@ class PB {
         titleLarge: t(17, FontWeight.w600, spacing: -0.2, height: 1.3),
         titleMedium: t(15, FontWeight.w600, spacing: -0.1, height: 1.35),
         titleSmall: t(13.5, FontWeight.w600, spacing: -0.05),
-        // ★ 行距放宽到 1.7 —— 原先 1.5 在中文长段落里"糊成一坨"，
-        //   尤其消息里经常整段整段地写。字距也稍微放开一点（中文比拉丁字母
-        //   更需要一点点呼吸，但别放太多，否则像拉散了对齐）。
+        // 中文长段落保持宽松行距和有限字距。
         bodyLarge: t(15, FontWeight.w400, spacing: 0.12, height: 1.7),
         bodyMedium: t(fsBase, FontWeight.w400, spacing: 0.12, height: 1.7),
         bodySmall: t(fsSm, FontWeight.w400, spacing: 0.1, height: 1.65),
@@ -400,13 +353,14 @@ class PB {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(rXl),
-          borderSide: const BorderSide(color: accent, width: 1.4),
+          borderSide: BorderSide(color: colors.accentBright, width: 1.4),
         ),
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
-          backgroundColor: accent,
-          foregroundColor: Colors.white,
+          backgroundColor: colors.accent,
+          foregroundColor: colors.onAccent,
+          overlayColor: Colors.black.withValues(alpha: 0.12),
           disabledBackgroundColor: bgActive,
           disabledForegroundColor: textQuaternary,
           elevation: 0,
@@ -439,7 +393,7 @@ class PB {
         style: IconButton.styleFrom(foregroundColor: textSecondary),
       ),
       popupMenuTheme: PopupMenuThemeData(
-        color: const Color(0xFF1D1D1D),
+        color: bgElevated,
         surfaceTintColor: Colors.transparent,
         elevation: 16,
         shadowColor: Colors.black.withValues(alpha: 0.5),
@@ -463,8 +417,8 @@ class PB {
         trackColor: const WidgetStatePropertyAll(Colors.transparent),
         crossAxisMargin: 2,
       ),
-      progressIndicatorTheme: const ProgressIndicatorThemeData(
-        color: accent,
+      progressIndicatorTheme: ProgressIndicatorThemeData(
+        color: colors.accentBright,
         linearTrackColor: Colors.transparent,
         circularTrackColor: Colors.transparent,
       ),
@@ -498,7 +452,7 @@ class PB {
       ),
       tooltipTheme: TooltipThemeData(
         decoration: BoxDecoration(
-          color: const Color(0xFF262626),
+          color: bgActive,
           borderRadius: BorderRadius.circular(rLg),
           border: Border.all(color: borderSecondary),
         ),
@@ -514,7 +468,7 @@ class PB {
   }
 }
 
-/// 纯淡入的页面过渡（无位移、无缩放）—— 不制造"页面盖过来"的错觉。
+/// 无位移、无缩放的淡入页面过渡。
 class _FadePageTransitionsBuilder extends PageTransitionsBuilder {
   const _FadePageTransitionsBuilder();
 

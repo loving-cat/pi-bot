@@ -247,7 +247,7 @@ class _ProgressPeekLayerState extends State<_ProgressPeekLayer>
     final dept = _deptName(state, [m]);
     final result = progressResult(m);
     final resultColor = switch (result) {
-      ProgressResult.success => PB.accentBright,
+      ProgressResult.success => PB.success,
       ProgressResult.failure => PB.danger,
       _ => PB.textQuaternary,
     };

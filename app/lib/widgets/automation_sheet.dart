@@ -21,7 +21,12 @@ class AutomationSheet extends StatefulWidget {
 
   final String roomName;
   final List<Automation> items;
-  final void Function(String title, String prompt, {int? everyMinutes, String? dailyAt})
+  final void Function(
+    String title,
+    String prompt, {
+    int? everyMinutes,
+    String? dailyAt,
+  })
   onCreate;
   final ValueChanged<Automation> onToggle;
   final ValueChanged<Automation> onRunNow;
@@ -74,7 +79,11 @@ class _AutomationSheetState extends State<AutomationSheet> {
           children: [
             Row(
               children: [
-                const Icon(LucideIcons.clock, size: 16, color: PB.textSecondary),
+                const Icon(
+                  LucideIcons.clock,
+                  size: 16,
+                  color: PB.textSecondary,
+                ),
                 const SizedBox(width: 8),
                 Text(
                   '定时任务 · ${widget.roomName}',
@@ -87,7 +96,10 @@ class _AutomationSheetState extends State<AutomationSheet> {
                 const Spacer(),
                 Text(
                   '${widget.items.where((a) => a.enabled).length} 个在跑',
-                  style: const TextStyle(fontSize: PB.fsXs, color: PB.textQuaternary),
+                  style: const TextStyle(
+                    fontSize: PB.fsXs,
+                    color: PB.textQuaternary,
+                  ),
                 ),
               ],
             ),
@@ -108,10 +120,7 @@ class _AutomationSheetState extends State<AutomationSheet> {
                 ),
                 const SizedBox(width: 10),
                 if (!_daily)
-                  SizedBox(
-                    width: 90,
-                    child: _field(_interval, '分钟'),
-                  )
+                  SizedBox(width: 90, child: _field(_interval, '分钟'))
                 else
                   TextButton.icon(
                     onPressed: () async {
@@ -142,7 +151,10 @@ class _AutomationSheetState extends State<AutomationSheet> {
                         padding: EdgeInsets.symmetric(vertical: 14),
                         child: Text(
                           '还没有定时任务。适合：盘前简报、每天巡检、每小时看一次进度。',
-                          style: TextStyle(fontSize: PB.fsXs, color: PB.textQuaternary),
+                          style: TextStyle(
+                            fontSize: PB.fsXs,
+                            color: PB.textQuaternary,
+                          ),
                         ),
                       ),
                     for (final a in widget.items) _row(a),
@@ -171,7 +183,9 @@ class _AutomationSheetState extends State<AutomationSheet> {
           Icon(
             a.enabled ? LucideIcons.clock : LucideIcons.clock3,
             size: 15,
-            color: a.enabled ? PB.accent : PB.textQuaternary,
+            color: a.enabled
+                ? PB.colors(context).accentBright
+                : PB.textQuaternary,
           ),
           const SizedBox(width: 8),
           Expanded(
@@ -187,7 +201,10 @@ class _AutomationSheetState extends State<AutomationSheet> {
                 ),
                 Text(
                   '${a.scheduleLabel}$nextLabel',
-                  style: const TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
+                  style: const TextStyle(
+                    fontSize: PB.fsXxs,
+                    color: PB.textQuaternary,
+                  ),
                 ),
               ],
             ),
@@ -218,7 +235,11 @@ class _AutomationSheetState extends State<AutomationSheet> {
     );
   }
 
-  Widget _field(TextEditingController c, String hint, {int maxLines = 1}) => TextField(
+  Widget _field(
+    TextEditingController c,
+    String hint, {
+    int maxLines = 1,
+  }) => TextField(
     controller: c,
     maxLines: maxLines,
     style: const TextStyle(fontSize: PB.fsSm),
@@ -253,13 +274,14 @@ Future<void> showAutomationSheet(
     builder: (_) => AutomationSheet(
       roomName: room.name,
       items: state.automationsFor(room.id),
-      onCreate: (title, prompt, {everyMinutes, dailyAt}) => state.createAutomation(
-        roomId: room.id,
-        title: title,
-        prompt: prompt,
-        everyMinutes: everyMinutes,
-        dailyAt: dailyAt,
-      ),
+      onCreate: (title, prompt, {everyMinutes, dailyAt}) =>
+          state.createAutomation(
+            roomId: room.id,
+            title: title,
+            prompt: prompt,
+            everyMinutes: everyMinutes,
+            dailyAt: dailyAt,
+          ),
       onToggle: (a) => state.updateAutomation(a.id, {'enabled': !a.enabled}),
       onRunNow: (a) => state.runAutomationNow(a.id),
       onDelete: (a) => state.deleteAutomation(a.id),

@@ -161,8 +161,10 @@ class _TeachDialogState extends State<_TeachDialog> {
                   const SizedBox(width: 6),
                   HoverTap(
                     enabled: _ready,
-                    baseColor: _ready ? PB.accent : PB.bgActive,
-                    hoverColor: _ready ? PB.accentHover : PB.bgActive,
+                    baseColor: _ready ? PB.colors(context).accent : PB.bgActive,
+                    hoverColor: _ready
+                        ? PB.colors(context).accentHover
+                        : PB.bgActive,
                     borderRadius: BorderRadius.circular(PB.rXl),
                     onTap: () => Navigator.pop(context, true),
                     child: Padding(

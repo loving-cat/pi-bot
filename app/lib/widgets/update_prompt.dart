@@ -52,7 +52,11 @@ Future<UpdateChoice> showUpdateDialog(
       backgroundColor: PB.bgElevated,
       title: Row(
         children: [
-          const Icon(Icons.system_update_alt, size: 20, color: PB.accent),
+          Icon(
+            Icons.system_update_alt,
+            size: 20,
+            color: PB.colors(context).accentBright,
+          ),
           const SizedBox(width: 8),
           Text(
             '发现新版本 ${info.latest}',

@@ -191,13 +191,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 children: [
                   Text(
                     '${pairing['code']}',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: PB.monoFamily,
                       fontFamilyFallback: PB.monoFallback,
                       fontSize: 30,
                       fontWeight: FontWeight.w700,
                       letterSpacing: 7,
-                      color: PB.accentBright,
+                      color: PB.colors(context).accentBright,
                     ),
                   ),
                   const SizedBox(width: 6),
@@ -275,10 +275,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _Card(
                   child: ListTile(
                     contentPadding: EdgeInsets.zero,
-                    leading: const Icon(
+                    leading: Icon(
                       LucideIcons.qrCode,
                       size: 20,
-                      color: PB.accent,
+                      color: PB.colors(context).accentBright,
                     ),
                     title: const Text(
                       '重新扫码配对',
@@ -646,10 +646,10 @@ class _TabPillState extends State<_TabPill> {
   @override
   Widget build(BuildContext context) {
     final bg = widget.selected
-        ? PB.accent.withValues(alpha: 0.16)
+        ? PB.colors(context).accent.withValues(alpha: 0.16)
         : (_hover ? PB.bgHover : Colors.transparent);
     final fg = widget.selected
-        ? PB.accent
+        ? PB.colors(context).accent
         : (_hover ? PB.textSecondary : PB.textTertiary);
 
     return MouseRegion(
@@ -667,7 +667,7 @@ class _TabPillState extends State<_TabPill> {
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
               color: widget.selected
-                  ? PB.accent.withValues(alpha: 0.35)
+                  ? PB.colors(context).accent.withValues(alpha: 0.35)
                   : PB.borderSecondary,
             ),
           ),
@@ -854,7 +854,7 @@ class _UpdateRowState extends State<_UpdateRow> {
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
             minimumSize: Size.zero,
             tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            foregroundColor: PB.accent,
+            foregroundColor: PB.colors(context).accent,
             textStyle: const TextStyle(fontSize: PB.fsXs),
           ),
         ),

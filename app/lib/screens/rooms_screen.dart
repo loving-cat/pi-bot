@@ -74,9 +74,12 @@ class _RoomsScreenState extends State<RoomsScreen> {
                   room.name,
                   style: const TextStyle(fontSize: PB.fsSm),
                 ),
-                trailing: const Text(
+                trailing: Text(
                   '取消隐藏',
-                  style: TextStyle(fontSize: PB.fsXs, color: PB.accent),
+                  style: TextStyle(
+                    fontSize: PB.fsXs,
+                    color: PB.colors(context).link,
+                  ),
                 ),
                 onTap: () {
                   Navigator.pop(ctx);
@@ -214,7 +217,7 @@ class _RoomsScreenState extends State<RoomsScreen> {
         ],
       ),
       body: RefreshIndicator(
-        color: PB.accent,
+        color: PB.colors(context).accent,
         backgroundColor: PB.bgElevated,
         onRefresh: () => state.refresh(),
         child: Center(
@@ -576,7 +579,7 @@ class _CircleIcon extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: filled ? PB.accent : PB.bgElevated,
+      color: filled ? PB.colors(context).accent : PB.bgElevated,
       shape: const CircleBorder(),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -618,13 +621,13 @@ class _SheetRow extends StatelessWidget {
         width: 36,
         height: 36,
         decoration: BoxDecoration(
-          color: highlight ? PB.accentSoft : PB.bgActive,
+          color: highlight ? PB.colors(context).accentSoft : PB.bgActive,
           borderRadius: BorderRadius.circular(10),
         ),
         child: Icon(
           icon,
           size: 18,
-          color: highlight ? PB.accent : PB.textSecondary,
+          color: highlight ? PB.colors(context).accentBright : PB.textSecondary,
         ),
       ),
       title: Text(
@@ -807,12 +810,12 @@ class _RoomRowState extends State<_RoomRow> {
                                     ?.isMain ??
                                 false,
                             badge: busy
-                                ? const SizedBox(
+                                ? SizedBox(
                                     width: 12,
                                     height: 12,
                                     child: CircularProgressIndicator(
                                       strokeWidth: 1.8,
-                                      color: PB.accent,
+                                      color: PB.colors(context).accentBright,
                                     ),
                                   )
                                 : null,
@@ -857,7 +860,9 @@ class _RoomRowState extends State<_RoomRow> {
                                 style: TextStyle(
                                   fontSize: PB.fsSm,
                                   height: 1.3,
-                                  color: busy ? PB.accent : PB.textTertiary,
+                                  color: busy
+                                      ? PB.colors(context).link
+                                      : PB.textTertiary,
                                 ),
                               ),
                             ],
@@ -877,7 +882,7 @@ class _RoomRowState extends State<_RoomRow> {
                 child: Container(
                   width: 3,
                   decoration: BoxDecoration(
-                    color: PB.accent,
+                    color: PB.colors(context).accent,
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),

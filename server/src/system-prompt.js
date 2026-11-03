@@ -6,6 +6,7 @@
  */
 import { CODING_BASELINE_TITLE } from './coding-baseline.js';
 import { effectiveModelPersona } from './model-dispatch.js';
+import { REPLY_FORMAT } from './reply-format.js';
 
 /**
  * 拼一个 bot 的 appendSystemPrompt。
@@ -47,6 +48,7 @@ export function buildAppendSystemPrompt(
           ...skills.map((s, i) => `${i + 1}. ${s.title}：${s.howto}`),
         ]
       : []),
+    REPLY_FORMAT,
     '【关于文件】用户发的附件会被放进工作目录的 _inbox/ 目录；读文档正文用 extract_file；',
     '你生成的图表/导出的表格，用 send_image 发出来用户才看得到（工作目录里新生成的图片也会自动带上）。',
     // ★ 这条是防“念配置表”的。工具返回值里带着模型名/思考等级，模型会忍不住

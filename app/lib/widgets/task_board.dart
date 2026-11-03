@@ -223,7 +223,7 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
     final color = first.isDone
         ? PB.textQuaternary
         : first.isDoing
-        ? PB.accent
+        ? PB.colors(context).accent
         : PB.textSecondary;
     final owners = group
         .map((t) => t.ownerName)
@@ -244,7 +244,9 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
                 widget.onToggleDone(t);
               }
             },
-            tooltip: first.isDone ? '把这 ${group.length} 条都标为未完成' : '把这 ${group.length} 条都标为完成',
+            tooltip: first.isDone
+                ? '把这 ${group.length} 条都标为未完成'
+                : '把这 ${group.length} 条都标为完成',
             icon: Icon(
               first.isDone
                   ? LucideIcons.circleCheck
@@ -266,7 +268,9 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
                   style: TextStyle(
                     fontSize: PB.fsSm,
                     color: color,
-                    decoration: first.isDone ? TextDecoration.lineThrough : null,
+                    decoration: first.isDone
+                        ? TextDecoration.lineThrough
+                        : null,
                   ),
                 ),
                 Text(
@@ -306,7 +310,7 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
     final color = task.isDone
         ? PB.textQuaternary
         : task.isDoing
-        ? PB.accent
+        ? PB.colors(context).accent
         : PB.textSecondary;
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
@@ -333,8 +337,8 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
               width: 5,
               height: 5,
               margin: const EdgeInsets.only(right: 6),
-              decoration: const BoxDecoration(
-                color: PB.accent,
+              decoration: BoxDecoration(
+                color: PB.colors(context).accent,
                 shape: BoxShape.circle,
               ),
             ),
@@ -372,7 +376,9 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
             icon: Icon(
               task.isPinned ? LucideIcons.pin : LucideIcons.pinOff,
               size: 14,
-              color: task.isPinned ? PB.accent : PB.textQuaternary,
+              color: task.isPinned
+                  ? PB.colors(context).accentBright
+                  : PB.textQuaternary,
             ),
           ),
           IconButton(

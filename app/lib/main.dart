@@ -8,6 +8,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'app_log.dart';
 import 'app_state.dart';
+import 'avatar_appearance.dart';
 import 'models.dart';
 import 'frame_log.dart';
 import 'widgets/avatar_life.dart';
@@ -221,49 +222,73 @@ class _PiBotAppState extends State<PiBotApp> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     return AppScope(
       state: _state,
-      child: MaterialApp(
-        navigatorKey: _navKey,
-        title: 'pi-bot',
-        debugShowCheckedModeBanner: false,
-        themeMode: ThemeMode.dark,
-        darkTheme: PB.theme(),
-        // 无边框窗口：控制按钮和八向缩放热区铺在最上层。
-        // 放根上而不是 HomeShell 里 —— 配对页 / 连不上服务端那页也要能关窗口、能缩放。
-        // 顺序要紧：后面的先命中，所以窗口按钮压住缩放热区（右上角那个角别抢"关闭"）。
-        // 让所有头像都能知道鼠标在哪（眼睛跟着看）。包在最外层，弹层里也生效。
-        //
-        // ★ 结构：`Column([标题条, 其余])`。
-        //   标题条是**独立的一条**，窗口控制按钮住在它里面 ——
-        //   于是下面所有的页面（包括 push 出来的路由、对话框、全屏浮层）
-        //   从 y=0 起就和按钮没关系了，**任何页面都不需要"让位"**。
-        //   按钮不能浮在最上层：那样谁的上边缘在窗口顶部谁就得手动避让，
-        //   每加一个页面都要想一遍（设置页会被压过、聊天页还得为此白推左 132px）。
-        //
-        //   手机上 WindowTitleBar 返回零高，这里等于没加东西。
-        builder: (context, child) => AvatarLife.watchPointer(
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              Column(
-                children: [
-                  const WindowTitleBar(),
-                  Expanded(child: child ?? const SizedBox.shrink()),
-                ],
-              ),
-              // ★ 缩放热区必须**浮在最上层**。
-              //   它不能放在标题条下面 —— 热区的"顶边"就在 y=0..5，
-              //   会被标题条（y=0..38）整个盖住，向上拖只会移动窗口、
-              //   没法把窗口往上拉伸。
-              //   右上角那 132px 依然让开控制按钮（reserveTopRight）。
-              if (WindowResizeOverlay.isSupported)
-                const Positioned.fill(child: WindowResizeOverlay()),
-            ],
-          ),
-        ),
-        home: const _Root(),
-      ),
+      child: PiBotThemedApplication(navigatorKey: _navKey),
     );
   }
+}
+
+/// 主控颜色变化时替换主题；流式通知继续复用应用和导航实例。
+class PiBotThemedApplication extends StatefulWidget {
+  const PiBotThemedApplication({super.key, required this.navigatorKey});
+
+  final GlobalKey<NavigatorState> navigatorKey;
+
+  @override
+  State<PiBotThemedApplication> createState() => _PiBotThemedApplicationState();
+}
+
+class _PiBotThemedApplicationState extends State<PiBotThemedApplication> {
+  int? _seedValue;
+  late ThemeData _theme;
+  Widget? _application;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final mainBot = AppScope.of(context).mainBot;
+    final seed = mainBot == null
+        ? PB.accent
+        : parseAvatarColor(mainBot.avatarColor) ?? PB.colorFor(mainBot.id);
+    if (_seedValue != seed.toARGB32()) {
+      _seedValue = seed.toARGB32();
+      _theme = PB.theme(seed: seed);
+      _application = null;
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant PiBotThemedApplication oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.navigatorKey != widget.navigatorKey) _application = null;
+  }
+
+  @override
+  Widget build(BuildContext context) => _application ??= MaterialApp(
+    navigatorKey: widget.navigatorKey,
+    title: 'pi-bot',
+    debugShowCheckedModeBanner: false,
+    themeMode: ThemeMode.dark,
+    darkTheme: _theme,
+    themeAnimationDuration: Duration.zero,
+    // 标题条独立占位；所有路由共享头像指针监听与窗口缩放覆盖层。
+    builder: (context, child) => AvatarLife.watchPointer(
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Column(
+            children: [
+              const WindowTitleBar(),
+              Expanded(child: child ?? const SizedBox.shrink()),
+            ],
+          ),
+          // 缩放热区置于页面之上，由组件保留窗口控制按钮的点击范围。
+          if (WindowResizeOverlay.isSupported)
+            const Positioned.fill(child: WindowResizeOverlay()),
+        ],
+      ),
+    ),
+    home: const _Root(),
+  );
 }
 
 class _Root extends StatelessWidget {
