@@ -15,16 +15,30 @@ import '../theme.dart';
 /// 所以把它摆在头部，一眼能看到：用了多少、是不是正在压缩。
 ///
 /// 点一下展开细节（服务端已经把数字都算好了，这里只是画出来）。
-class ContextChip extends StatelessWidget {
+class ContextChip extends StatefulWidget {
   const ContextChip({super.key, required this.roomId});
 
   final String roomId;
 
   @override
+  State<ContextChip> createState() => _ContextChipState();
+}
+
+class _ContextChipState extends State<ContextChip> {
+  /// 上一次拿到的有效读数。
+  ///
+  /// 服务端在刚压缩完的一小段时间里给不出 percent（要等下一次回复才知道）。
+  /// 直接隐藏整个圆环的话，用户会看到它「消失再出现」—— 和「上下文空了」
+  /// 分不清。保留上一次的数字继续显示，等新读数到了再覆盖。
+  ContextInfo? _lastKnown;
+
+  @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
-    final compacting = state.compactingIn(roomId);
-    final info = state.contextFor(roomId);
+    final compacting = state.compactingIn(widget.roomId);
+    final fresh = state.contextFor(widget.roomId);
+    final info = (fresh != null && fresh.known) ? fresh : _lastKnown;
+    if (fresh != null && fresh.known) _lastKnown = fresh;
 
     if (compacting) {
       return Padding(

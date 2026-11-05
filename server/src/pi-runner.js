@@ -979,14 +979,21 @@ export class PiRunner {
         log(`【${room.name}】${plan.why} → 不再叫它`);
         // ★ 不能静默：用户看到"A @ 了 B"却没人动，会以为群卡死了。
         //   在群里留一条可见提示，并说明怎么解（调高部门预算/发新消息重置）。
-        if (item.fromId) {
+        //
+        //   ★ 用户自己 @ 的也算：老实现只在 item.fromId 非空时留痕，
+        //     于是"用户亲自 @ 了某人、但那人预算用完"这件事群里零痕迹 ——
+        //     用户只知道"我叫了它，它没反应"。这条路径恰恰是最需要解释的。
+        {
+          const byUser = !item.fromId;
           store.appendMessage({
             roomId,
             authorType: 'system',
             authorName: '调度提示',
-            text:
-              `${bot.name} 本轮已发言 ${done} 次（上限 ${budget(bot.id)} 次），` +
-              `这条 @ 没有派发。发一条新消息可重置本轮预算，或在「部门预算」里调高每轮发言次数。`,
+            text: byUser
+              ? `${bot.name} 本轮已发言 ${done} 次（上限 ${budget(bot.id)} 次），` +
+                '这次没有派发。发一条新消息可重置本轮预算，或在「部门预算」里调高每轮发言次数。'
+              : `${bot.name} 本轮已发言 ${done} 次（上限 ${budget(bot.id)} 次），` +
+                '这条 @ 没有派发。发一条新消息可重置本轮预算，或在「部门预算」里调高每轮发言次数。',
             status: 'done',
             meta: { via: 'turn_budget_skip', botId: bot.id, fromId: item.fromId ?? null },
           });
@@ -1718,6 +1725,9 @@ export class PiRunner {
   async #compactIfNeeded(entry, bot) {
     const session = entry?.session;
     if (!session || session.isCompacting) return;
+    // 关掉自动压缩时这里也要停 —— 否则 PI_BOT_AUTO_COMPACT=0 只关掉了 pi
+    // 自己的压缩，这段主动压缩照跑，用户会发现"开关不起作用"。
+    if (!config.autoCompact) return;
     try {
       const usage = session.getContextUsage?.();
       const percent = usage?.percent;
@@ -1821,9 +1831,7 @@ export class PiRunner {
     };
 
     entry.lastUsed = Date.now();
-    // ★ 先看上下文：到阈值就压缩成摘要，再开始这一轮。
-    //   （别等 pi 的 98% 触发线 —— 压完没余量，群聊长任务会陷入压缩循环）
-    await this.#compactIfNeeded(entry, entry.bot);
+    const bot = entry.bot;
     // ★ 心跳：这一轮从什么时候开始、最后一次动静是什么时候、
     //   以及它正在写的是哪条消息（卡死时要拿这个收尾）。
     entry.startedAt = Date.now();
@@ -1832,7 +1840,6 @@ export class PiRunner {
     const beat = () => {
       entry.progressAt = Date.now();
     };
-    const bot = entry.bot;
     const botMsg = store.appendMessage({
       roomId,
       authorType: 'bot',
@@ -1905,21 +1912,27 @@ export class PiRunner {
             const saved = res.tokensBefore
               ? Math.max(0, res.tokensBefore - (res.estimatedTokensAfter ?? 0))
               : null;
-            store.appendMessage({
-              roomId,
-              authorType: 'system',
-              authorId: bot.id,
-              authorName: bot.name,
-              kind: 'compact',
-              text: '',
-              status: 'done',
-              meta: {
-                reason: event.reason,
-                tokensBefore: res.tokensBefore ?? null,
-                tokensAfter: res.estimatedTokensAfter ?? null,
-                saved,
+            store.appendMessage(
+              {
+                roomId,
+                authorType: 'system',
+                authorId: bot.id,
+                authorName: bot.name,
+                kind: 'compact',
+                text: '',
+                status: 'done',
+                meta: {
+                  reason: event.reason,
+                  tokensBefore: res.tokensBefore ?? null,
+                  tokensAfter: res.estimatedTokensAfter ?? null,
+                  saved,
+                },
               },
-            });
+              // ★ 插在当前这条正在写的回复**之前**。
+              //   普通追加会落在 botMsg 后面，界面就成了"结论还没写完、
+              //   压缩条先出来了"；刷新重载后顺序又变回正确 —— 前后不一致。
+              { beforeStreaming: true },
+            );
           }
           break;
         }
@@ -1999,6 +2012,19 @@ export class PiRunner {
 
     const unsubscribe = entry.session.subscribe(onEvent);
     entry.unsubscribe = unsubscribe;
+
+    // ★ 压缩必须在这里做，不能更早。
+    //
+    //   主动压缩可能要跑几分钟。放在建消息/订阅之前的话，这段时间里
+    //   监听器还没挂上、botMsg 也还没建 —— 压缩产生的事件没人接，
+    //   界面既没有"压缩中"也没有横条，连 typing 都没有：
+    //   用户发完消息看到的是界面**完全静止**，然后突然开始回复。
+    //   项目自己在下面 compaction_start 的注释里把这种体验判为"看着像卡死"，
+    //   但它当时正发生在另一条路径上。
+    //
+    //   顺序：先建占位消息 + 订阅 + 发 typing，再做压缩。
+    //   这样用户立刻看到"正在处理"，压缩开始/结束都能正常广播和留痕。
+    await this.#compactIfNeeded(entry, bot);
 
     // 用户带的图 -> 喂给模型（视觉模型能直接看）
     const images = [];
