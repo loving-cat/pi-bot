@@ -43,9 +43,11 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
 
   void _fill(Map<String, int> l) {
     if (_dirty) return; // 用户正在改，别被刷新冲掉
-    _lead.text = '${l['leadTurns'] ?? 4}';
-    _member.text = '${l['memberTurns'] ?? 2}';
-    _runs.text = '${l['maxRuns'] ?? 10}';
+    // 兜底值必须和服务端 GROUP_LIMITS_DEFAULT 一致，
+    // 否则拿不到数据时会显示一个用户从没设置过的数字。
+    _lead.text = '${l['leadTurns'] ?? 15}';
+    _member.text = '${l['memberTurns'] ?? 15}';
+    _runs.text = '${l['maxRuns'] ?? 100}';
     _steps.text = '${l['maxSteps'] ?? 30}';
     final ms = l['turnMaxMs'] ?? 600000;
     _turnMin.text = '${(ms / 60000).round()}';
@@ -136,31 +138,65 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
                   height: 1.6,
                 ),
               ),
+              const SizedBox(height: 14),
+              // 第一组：单个 bot 能跑多少（最常调的）
+              _groupTitle(strings.t('limits.groupPerBot')),
+              const SizedBox(height: 8),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _num(
+                    strings.t('limits.turnMinutes'),
+                    _turnMin,
+                    '10',
+                    desc: strings.t('limits.turnMinutesDesc'),
+                  ),
+                  const SizedBox(width: 10),
+                  _num(
+                    strings.t('limits.leadTurns'),
+                    _lead,
+                    '15',
+                    desc: strings.t('limits.leadTurnsDesc'),
+                  ),
+                ],
+              ),
               const SizedBox(height: 12),
               Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _num(strings.t('limits.leadTurns'), _lead, '4'),
-                  const SizedBox(width: 10),
-                  _num(strings.t('limits.memberTurns'), _member, '2'),
-                ],
-              ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  _num(strings.t('limits.runsPerMessage'), _runs, '10'),
-                  const SizedBox(width: 10),
-                  _num(strings.t('limits.stepsPerRun'), _steps, '30'),
-                ],
-              ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  _num(strings.t('limits.turnMinutes'), _turnMin, '10'),
+                  _num(
+                    strings.t('limits.memberTurns'),
+                    _member,
+                    '15',
+                    desc: strings.t('limits.memberTurnsDesc'),
+                  ),
                   const SizedBox(width: 10),
                   const Expanded(child: SizedBox()),
                 ],
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 16),
+              // 第二组：整个任务的兜底上限（很少需要动）
+              _groupTitle(strings.t('limits.groupPerTask')),
+              const SizedBox(height: 8),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _num(
+                    strings.t('limits.runsPerMessage'),
+                    _runs,
+                    '100',
+                    desc: strings.t('limits.runsPerMessageDesc'),
+                  ),
+                  const SizedBox(width: 10),
+                  _num(
+                    strings.t('limits.stepsPerRun'),
+                    _steps,
+                    '30',
+                    desc: strings.t('limits.stepsPerRunDesc'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
               Text(
                 strings.t('limits.turnHint'),
                 style: const TextStyle(
@@ -264,7 +300,26 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
     );
   }
 
-  Widget _num(String label, TextEditingController c, String hint) {
+  /// 分组标题：把"单个 bot 能跑多久"和"整个任务的兜底上限"分开。
+  Widget _groupTitle(String text) => Text(
+    text,
+    style: const TextStyle(
+      fontSize: PB.fsXxs,
+      fontWeight: FontWeight.w600,
+      color: PB.textTertiary,
+    ),
+  );
+
+  /// 一个数字输入项。
+  ///
+  /// [desc] 是这个数到底管什么 —— 光有名字（"负责人一次发言跑几步"）
+  /// 用户还是不知道几步算多、几步算少，必须给一句具体的。
+  Widget _num(
+    String label,
+    TextEditingController c,
+    String hint, {
+    String? desc,
+  }) {
     return Expanded(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -294,6 +349,17 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
               ),
             ),
           ),
+          if (desc != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              desc,
+              style: const TextStyle(
+                fontSize: PB.fsXxs,
+                color: PB.textQuaternary,
+                height: 1.45,
+              ),
+            ),
+          ],
         ],
       ),
     );

@@ -346,7 +346,7 @@ class _ScanButton extends StatelessWidget {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Icon(LucideIcons.scanLine, size: 21, color: Colors.white),
+                const Icon(LucideIcons.link, size: 21, color: Colors.white),
                 const SizedBox(width: 10),
                 Text(
                   L10n.s(context).t('pair.scanTitle'),

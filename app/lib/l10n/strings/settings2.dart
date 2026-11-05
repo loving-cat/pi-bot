@@ -7,7 +7,7 @@ import 'area.dart';
 const areaSettings2 = StringArea(
   zh: {
     'settings.connect.title': '手机连接',
-    'settings.connect.subtitleHost': '手机扫下面的码就能连上这台电脑',
+    'settings.connect.subtitleHost': '在手机上填下面的地址和配对码即可连接',
     'settings.connect.subtitleRemote': '这台设备是通过配对连上服务端的',
     'settings.connect.copyUrl': '复制地址',
     'settings.connect.urlCopied': '地址已复制',
@@ -16,11 +16,11 @@ const areaSettings2 = StringArea(
     'settings.connect.codeRefreshing': '正在换码…',
     'settings.connect.connectedServer': '已连接的服务端',
     'settings.connect.unknownServer': '（未知）',
-    'settings.connect.remoteHint': '这台手机上还是这台电脑的码 —— 换一台电脑就连它的二维码、或者手填它的地址。',
-    'settings.connect.rescan': '重新扫码配对',
-    'settings.connect.rescanSubtitle': '换电脑、或者配对码失效了就点这里',
+    'settings.connect.remoteHint': '换成另一台电脑，就连那台的二维码或手填地址。',
+    'settings.connect.rescan': '断开并重新连接',
+    'settings.connect.rescanSubtitle': '换电脑或配对码失效时点这里',
     'settings.connect.wifiHint':
-        '手机和电脑要在同一个 WiFi 下。\n手机装 pi-bot App → 点「扫码配对」→ 扫上面这个码。',
+        '手机和电脑要在同一个 WiFi 下。\n手机装 pi-bot App → 点「配对」→ 填上面的地址和配对码。',
     'settings.connect.manualAddress': '手动填地址',
     'settings.connect.fixedTokenHint':
         '服务端配的是固定 token（PI_BOT_TOKEN），没有二维码。手机端在「固定 token」页填那个 token 就行。',
@@ -63,7 +63,7 @@ const areaSettings2 = StringArea(
   en: {
     'settings.connect.title': 'Phone connection',
     'settings.connect.subtitleHost':
-        'Scan the code below on your phone to connect to this computer',
+        'Enter the address and code below on your phone to connect',
     'settings.connect.subtitleRemote':
         'This device reached the server through pairing',
     'settings.connect.copyUrl': 'Copy address',
@@ -74,7 +74,7 @@ const areaSettings2 = StringArea(
     'settings.connect.connectedServer': 'Connected server',
     'settings.connect.unknownServer': '(unknown)',
     'settings.connect.remoteHint': 'This phone still holds this computer\'s code. To switch computers, scan the new one\'s code or enter its address manually.',
-    'settings.connect.rescan': 'Pair again',
+    'settings.connect.rescan': 'Disconnect and reconnect',
     'settings.connect.rescanSubtitle':
         'Use this after switching computers or when the code expires',
     'settings.connect.wifiHint': 'Phone and computer must be on the same WiFi.\nInstall the pi-bot app on your phone → tap "Scan to pair" → scan the code above.',

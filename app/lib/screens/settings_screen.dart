@@ -287,8 +287,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _Card(
                   child: ListTile(
                     contentPadding: EdgeInsets.zero,
+                    // 这个按钮实际是"退出登录并重连"，不是扫码 ——
+                    // 用二维码图标会让人以为还要扫一次。
                     leading: Icon(
-                      LucideIcons.qrCode,
+                      LucideIcons.refreshCw,
                       size: 20,
                       color: PB.colors(context).accentBright,
                     ),
