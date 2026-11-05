@@ -1,0 +1,128 @@
+app/lib/l10n/strings/common.dart
+  h_c2e638ff76b3b9 7-8,45-46
+app/lib/main.dart
+  h_c2e638ff76b3b9 189-190,300-325,327,330-335,338,354-361
+app/lib/screens/bots_screen.dart
+  h_c2e638ff76b3b9 104,226,260,273,365,421,451,459,472,484,514,529,627
+app/lib/screens/chat_screen.dart
+  h_c2e638ff76b3b9 1052,1116,1155,1367,1423,1429,1442,1446,1570,1770,1825,2146,2222,2298,2381
+app/lib/screens/home_shell.dart
+  h_c2e638ff76b3b9 377,385
+app/lib/screens/host_connect_screen.dart
+  h_c2e638ff76b3b9 134,155,206,229,237,258,274,305
+app/lib/screens/pair_screen.dart
+  h_c2e638ff76b3b9 141,152,165,266,274,294,463,474,505
+app/lib/screens/rooms_screen.dart
+  h_c2e638ff76b3b9 14,75,164-166,197,282,293,302,468,590,761,773,858,1006,1047,1115,1123
+app/lib/screens/scan_screen.dart
+  h_c2e638ff76b3b9 213,224,272,280,286,307
+app/lib/screens/settings_screen.dart
+  h_c2e638ff76b3b9 171,180,221,234,247,259,267,277,303,327,339,348,358,414,426,437,545,581,751,762,806,930,939
+app/lib/theme.dart
+  h_c2e638ff76b3b9 4-12,29-66,69-78,81-82,215,217-219,232,296,318,328,330,337,344,354,363,371,376,381,392,396,446,448,481,492,503
+app/lib/theme_colors.dart
+  h_c2e638ff76b3b9 19-40
+app/lib/theme_mode.dart
+  h_c2e638ff76b3b9 1-48
+app/lib/widgets/anchored_menu.dart
+  h_c2e638ff76b3b9 215,231,251,329,342
+app/lib/widgets/approval_card.dart
+  h_c2e638ff76b3b9 96,111,154
+app/lib/widgets/ask_card.dart
+  h_c2e638ff76b3b9 177,244,342,352,415,426
+app/lib/widgets/attachment_preview_content.dart
+  h_c2e638ff76b3b9 158,166,190
+app/lib/widgets/attachment_view.dart
+  h_c2e638ff76b3b9 75,83,169,177,291-292
+app/lib/widgets/automation_sheet.dart
+  h_c2e638ff76b3b9 84,92,103,170,225,269
+app/lib/widgets/avatar_appearance_picker.dart
+  h_c2e638ff76b3b9 68
+app/lib/widgets/bot_appearance_controls.dart
+  h_c2e638ff76b3b9 129,131,175,193,201,298
+app/lib/widgets/bot_run_section.dart
+  h_c2e638ff76b3b9 226,234,243,277,300,321,326
+app/lib/widgets/browser_pane.dart
+  h_c2e638ff76b3b9 300,347,362,376,395,628
+app/lib/widgets/changed_files.dart
+  h_c2e638ff76b3b9 65,73,90,136,155
+app/lib/widgets/connections_cards.dart
+  h_c2e638ff76b3b9 63,73,140,161,172,200
+app/lib/widgets/connections_detail.dart
+  h_c2e638ff76b3b9 128,147,210,231,251,262
+app/lib/widgets/connections_editor.dart
+  h_c2e638ff76b3b9 232,296,371
+app/lib/widgets/connections_import.dart
+  h_c2e638ff76b3b9 69,104
+app/lib/widgets/connections_section.dart
+  h_c2e638ff76b3b9 209,224,264,352
+app/lib/widgets/context_chip.dart
+  h_c2e638ff76b3b9 136,163,169,248,266
+app/lib/widgets/conversation_people.dart
+  h_c2e638ff76b3b9 26
+app/lib/widgets/default_model_picker.dart
+  h_c2e638ff76b3b9 57,69,88,162
+app/lib/widgets/floating_menu.dart
+  h_c2e638ff76b3b9 339,384
+app/lib/widgets/group_limits_section.dart
+  h_c2e638ff76b3b9 96,104,135,202,209,213,222,234,270,283,290,306,329,348,356
+app/lib/widgets/html_attachment_preview.dart
+  h_c2e638ff76b3b9 274,352,376
+app/lib/widgets/language_card.dart
+  h_c2e638ff76b3b9 28,41
+app/lib/widgets/lessons_section.dart
+  h_c2e638ff76b3b9 70,82,190,211,298,323,342,353,369,378
+app/lib/widgets/local_capabilities_section.dart
+  h_c2e638ff76b3b9 148,160,193,262,292
+app/lib/widgets/log_section.dart
+  h_c2e638ff76b3b9 23,27,55,64
+app/lib/widgets/md_text.dart
+  h_c2e638ff76b3b9 636,654,807,901
+app/lib/widgets/model_capacity_fields.dart
+  h_c2e638ff76b3b9 64,97,276,291,305,369,428,452,548,567,656,667
+app/lib/widgets/model_group_editor.dart
+  h_c2e638ff76b3b9 31,35,64,106,139,154,189,422,431,498,646,656,667
+app/lib/widgets/model_picker_field.dart
+  h_c2e638ff76b3b9 88,100,113,129
+app/lib/widgets/model_setup_gate.dart
+  h_c2e638ff76b3b9 70,134,141
+app/lib/widgets/msg_ref_chip.dart
+  h_c2e638ff76b3b9 221,261,283,299,347,363,402,423
+app/lib/widgets/progress_notice.dart
+  h_c2e638ff76b3b9 178,195,236,286,318,328,349
+app/lib/widgets/room_panel.dart
+  h_c2e638ff76b3b9 186,304,310,411,447,504,567,578,756,806,890,910,933,1011,1019,1033,1045,1150,1161,1170,1191,1272,1281,1308,1327,1335,1358,1385
+app/lib/widgets/server_config_section.dart
+  h_c2e638ff76b3b9 38,42,69,83,141,147,242,295,306
+app/lib/widgets/sites_section.dart
+  h_c2e638ff76b3b9 51,119,190,293,341,495,499,573,591,605
+app/lib/widgets/skills_library.dart
+  h_c2e638ff76b3b9 99,138,197,390,453,479,483,489,563,611,655,665,700
+app/lib/widgets/task_board.dart
+  h_c2e638ff76b3b9 71,79,90,108,145,181,206,293,311,376,404,470
+app/lib/widgets/teach_dialog.dart
+  h_c2e638ff76b3b9 110,122,157,208,226,232
+app/lib/widgets/theme_toggle_button.dart
+  h_c2e638ff76b3b9 1-186
+app/lib/widgets/thinking_slider.dart
+  h_c2e638ff76b3b9 173,417
+app/lib/widgets/toast.dart
+  h_c2e638ff76b3b9 244
+app/lib/widgets/tool_steps.dart
+  h_c2e638ff76b3b9 74,140
+app/lib/widgets/update_prompt.dart
+  h_c2e638ff76b3b9 77,86,99,109,209,223,388,399
+app/lib/widgets/user_name_section.dart
+  h_c2e638ff76b3b9 51,55,82,105
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "15e1877df50e6273ee6b2181eecf98afbd3531ac",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
