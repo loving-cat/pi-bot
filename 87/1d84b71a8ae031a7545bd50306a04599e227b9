@@ -1,0 +1,20 @@
+server/src/pi-runner.js
+  h_c2e638ff76b3b9 65-70,1183-1187,1197,1201,1218,1226-1232,1242-1245,1295,2337-2351
+server/src/retry-policy.js
+  h_c2e638ff76b3b9 18-40,60-66,75-85,88-123,167-170,211-217,219-233
+server/tests/all.mjs
+  h_c2e638ff76b3b9 33
+server/tests/retry-transient.mjs
+  h_c2e638ff76b3b9 1-113
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "871d84b71a8ae031a7545bd50306a04599e227b9",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
