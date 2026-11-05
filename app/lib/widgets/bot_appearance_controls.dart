@@ -145,7 +145,7 @@ class _BotAppearanceControlsState extends State<BotAppearanceControls> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '$title选择',
+                    title,
                     style: const TextStyle(fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: 14),
@@ -185,7 +185,7 @@ class _BotAppearanceControlsState extends State<BotAppearanceControls> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('$title选择', style: const TextStyle(fontSize: PB.fsXs)),
+                  Text(title, style: const TextStyle(fontSize: PB.fsXs)),
                   Text(
                     value,
                     maxLines: 1,
@@ -280,7 +280,7 @@ class _BotAppearanceControlsState extends State<BotAppearanceControls> {
                     ),
                     TextButton(
                       onPressed: () => _chooseColor(null),
-                      child: const Text('恢复默认颜色'),
+                      child: Text(strings.t('avatar.restoreDefaultColor')),
                     ),
                   ],
                 ),
@@ -291,11 +291,14 @@ class _BotAppearanceControlsState extends State<BotAppearanceControls> {
         const SizedBox(height: 6),
         _feedback(),
         if (widget.isMain)
-          const Padding(
-            padding: EdgeInsets.only(top: 3),
+          Padding(
+            padding: const EdgeInsets.only(top: 3),
             child: Text(
-              '主控颜色会同步用于消息气泡、按钮和重点信息。',
-              style: TextStyle(fontSize: PB.fsXxs, color: PB.textTertiary),
+              strings.t('avatar.themeNote'),
+              style: const TextStyle(
+                fontSize: PB.fsXxs,
+                color: PB.textTertiary,
+              ),
             ),
           ),
       ],
