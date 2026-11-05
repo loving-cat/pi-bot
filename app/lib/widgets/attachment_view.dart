@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../models.dart';
 import '../attachment_preview_request.dart';
 import 'attachment_actions.dart';
@@ -78,7 +79,7 @@ class AttachmentList extends StatelessWidget {
               ),
               const SizedBox(width: 5),
               Text(
-                '附件 ${files.length} 个文件',
+                L10n.s(context).tf('attach.count', {'n': files.length}),
                 style: const TextStyle(
                   fontSize: PB.fsXxs,
                   fontWeight: FontWeight.w600,
@@ -365,7 +366,7 @@ class _FileChipState extends State<FileChip> {
           if (!kIsWeb && FileChip.canShowInPane(file.name) && url != null)
             _IconAction(
               icon: LucideIcons.panelRight,
-              tip: '预览文件',
+              tip: L10n.s(context).t('attach.preview'),
               color: dim,
               onTap: () => openAttachmentByBestRoute(context, file, url),
             ),
@@ -376,7 +377,7 @@ class _FileChipState extends State<FileChip> {
               (Platform.isWindows || Platform.isMacOS || Platform.isLinux))
             _IconAction(
               icon: LucideIcons.squareArrowOutUpRight,
-              tip: '用系统程序打开',
+              tip: L10n.s(context).t('attach.openWithSystemAlt'),
               color: dim,
               busy: _opener.opening,
               onTap: url == null || _opener.opening
@@ -386,7 +387,7 @@ class _FileChipState extends State<FileChip> {
           // 下载按钮就放在卡片上 —— 不用点进去再找
           _IconAction(
             icon: LucideIcons.download,
-            tip: '下载',
+            tip: L10n.s(context).t('common.download'),
             color: dim,
             onTap: url == null
                 ? null
@@ -419,7 +420,7 @@ class _IconAction extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Tooltip(
-      message: busy ? '正在打开…' : tip,
+      message: busy ? L10n.s(context).t('attach.openingShort') : tip,
       waitDuration: const Duration(milliseconds: 500),
       child: InkWell(
         onTap: onTap,
@@ -501,9 +502,9 @@ class _ImageViewer extends StatelessWidget {
                   child: Image.network(
                     url,
                     fit: BoxFit.contain,
-                    errorBuilder: (ctx, err, stack) => const Text(
-                      '图片加载失败',
-                      style: TextStyle(color: Colors.white70),
+                    errorBuilder: (ctx, err, stack) => Text(
+                      L10n.s(context).t('attach.imageFailed'),
+                      style: const TextStyle(color: Colors.white70),
                     ),
                   ),
                 ),

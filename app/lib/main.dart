@@ -16,13 +16,16 @@ import 'notify.dart';
 import 'scope.dart';
 import 'screens/pair_screen.dart';
 import 'platform.dart';
-import 'widgets/window_title_bar.dart';
+import 'widgets/desktop_window_frame.dart';
+import 'widgets/window_resize_overlay.dart';
+import 'window_chrome.dart';
 import 'screens/home_shell.dart';
 import 'screens/host_connect_screen.dart';
 import 'theme.dart';
 import 'widgets/toast.dart';
 import 'update_info.dart';
 import 'widgets/update_prompt.dart';
+import 'l10n/l10n.dart';
 import 'window_state.dart';
 
 /// 开发用：`--dart-define=PI_BOT_URL=http://127.0.0.1:8787 --dart-define=PI_BOT_TOKEN=test-token`
@@ -39,8 +42,8 @@ Future<void> main() async {
   // 帧耗时采样（只有带了 PI_BOT_FRAME_LOG 环境变量才工作，平时零开销）
   FrameLog.start();
 
-  // 桌面端：无边框窗口，控制按钮由 App 自己画在右上角
-  if (WindowTitleBar.isSupported) {
+  // 桌面窗口控制由应用绘制，窗口动作仍交给操作系统。
+  if (DesktopWindowFrame.isSupported) {
     await windowManager.ensureInitialized();
 
     // 上次的窗口位置/大小（外接屏拔掉、分辨率变了会自动夹回可见区域）
@@ -108,6 +111,7 @@ class _WindowSaver with WindowListener {
 
   Future<void> _save() async {
     try {
+      if (await windowManager.isFullScreen()) return;
       final bounds = await windowManager.getBounds();
       final maxed = await windowManager.isMaximized();
       await prefs.setString(
@@ -126,6 +130,10 @@ class _WindowSaver with WindowListener {
   @override
   void onWindowUnmaximize() => _schedule();
   @override
+  void onWindowEnterFullScreen() => _timer?.cancel();
+  @override
+  void onWindowLeaveFullScreen() => _schedule();
+  @override
   void onWindowClose() {
     _timer?.cancel();
     _save();
@@ -143,10 +151,14 @@ class _PiBotAppState extends State<PiBotApp> with WidgetsBindingObserver {
   final AppState _state = AppState();
   final GlobalKey<NavigatorState> _navKey = GlobalKey<NavigatorState>();
 
+  /// 语言在启动前就要定下来：默认中文，读到用户偏好再覆盖。
+  final LocaleController _locale = LocaleController();
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _loadLocale();
     Notifier.init();
     // 点通知 → 直接进那个会话
     Notifier.onTap = (roomId) {
@@ -211,18 +223,31 @@ class _PiBotAppState extends State<PiBotApp> with WidgetsBindingObserver {
     _state.foreground = state == AppLifecycleState.resumed;
   }
 
+  /// 语言偏好异步读盘；读到就刷新，界面短暂保持中文不会闪。
+  Future<void> _loadLocale() async {
+    final loaded = await LocaleController.load();
+    if (!mounted) return;
+    if (loaded.language != _locale.language) {
+      await _locale.setLanguage(loaded.language);
+    }
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _locale.dispose();
     _state.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return AppScope(
-      state: _state,
-      child: PiBotThemedApplication(navigatorKey: _navKey),
+    return L10n(
+      controller: _locale,
+      child: AppScope(
+        state: _state,
+        child: PiBotThemedApplication(navigatorKey: _navKey),
+      ),
     );
   }
 }
@@ -270,21 +295,21 @@ class _PiBotThemedApplicationState extends State<PiBotThemedApplication> {
     themeMode: ThemeMode.dark,
     darkTheme: _theme,
     themeAnimationDuration: Duration.zero,
-    // 标题条独立占位；所有路由共享头像指针监听与窗口缩放覆盖层。
+    // 各分栏占满窗口高度，角落窗口按钮独立叠加。
     builder: (context, child) => AvatarLife.watchPointer(
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          Column(
-            children: [
-              const WindowTitleBar(),
-              Expanded(child: child ?? const SizedBox.shrink()),
-            ],
-          ),
-          // 缩放热区置于页面之上，由组件保留窗口控制按钮的点击范围。
-          if (WindowResizeOverlay.isSupported)
-            const Positioned.fill(child: WindowResizeOverlay()),
-        ],
+      child: DesktopWindowFrame(
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            child ?? const SizedBox.shrink(),
+            if (WindowResizeOverlay.isSupported)
+              const Positioned.fill(
+                child: WindowResizeOverlay(
+                  reserveTopRight: windowChromeControlsReserve,
+                ),
+              ),
+          ],
+        ),
       ),
     ),
     home: const _Root(),

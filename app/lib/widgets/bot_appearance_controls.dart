@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../avatar_appearance.dart';
+import '../l10n/l10n.dart';
 import '../theme.dart';
 import 'avatar_appearance_choices.dart';
 import 'blob_avatar.dart';
@@ -210,8 +211,17 @@ class _BotAppearanceControlsState extends State<BotAppearanceControls> {
 
   @override
   Widget build(BuildContext context) {
+    final strings = L10n.s(context);
     final color = parseAvatarColor(widget.color) ?? PB.colorFor(widget.seed);
     final shape = normalizeAvatarShape(widget.shape);
+    // ★ 标签必须跟随「实际画出来的轮廓」。
+    //   shape == null 时头像按 seed 派生出某个具体轮廓，此时显示"默认轮廓"
+    //   会和用户看到的形状对不上 —— 所以这里解析出真实 kind 再取名字。
+    final resolvedKind = resolveAvatarShape(widget.seed, shape);
+    final shapeLabel = strings.avatarShapeNames[resolvedKind.index];
+    final colorName =
+        strings.avatarColorName(normalizeAvatarColor(widget.color) ?? '') ??
+        strings.t('avatar.colorCustom');
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -220,8 +230,8 @@ class _BotAppearanceControlsState extends State<BotAppearanceControls> {
             Expanded(
               child: _menu(
                 controller: _shapeMenu,
-                title: '形象',
-                value: shape == null ? '默认轮廓' : avatarShapeNames[shape],
+                title: strings.t('avatar.shape'),
+                value: shapeLabel,
                 keyName: 'bot-appearance-shape',
                 icon: BlobAvatar(
                   seed: widget.seed,
@@ -244,8 +254,8 @@ class _BotAppearanceControlsState extends State<BotAppearanceControls> {
             Expanded(
               child: _menu(
                 controller: _colorMenu,
-                title: '颜色',
-                value: normalizeAvatarColor(widget.color) ?? '默认颜色',
+                title: strings.t('avatar.color'),
+                value: colorName,
                 keyName: 'bot-appearance-color',
                 icon: Container(
                   width: 22,

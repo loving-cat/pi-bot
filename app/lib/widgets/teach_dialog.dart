@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../l10n/l10n.dart';
 import '../scope.dart';
 import '../models.dart';
 import '../motion.dart';
@@ -75,6 +76,7 @@ class _TeachDialogState extends State<_TeachDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final strings = L10n.s(context);
     return Dialog(
       backgroundColor: Colors.transparent,
       insetPadding: const EdgeInsets.all(28),
@@ -104,7 +106,7 @@ class _TeachDialogState extends State<_TeachDialog> {
                   const SizedBox(width: 9),
                   Expanded(
                     child: Text(
-                      '教 ${widget.bot.name} 做一项任务',
+                      strings.tf('teach.title', {'bot': widget.bot.name}),
                       style: const TextStyle(
                         fontSize: PB.fsLg,
                         fontWeight: FontWeight.w600,
@@ -115,23 +117,24 @@ class _TeachDialogState extends State<_TeachDialog> {
                 ],
               ),
               const SizedBox(height: 6),
-              const Text(
-                '写一遍"以后遇到这类事就照这么做"，它就记住了。',
-                style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+              Text(
+                strings.t('teach.intro'),
+                style: const TextStyle(
+                  fontSize: PB.fsXs,
+                  color: PB.textTertiary,
+                ),
               ),
               const SizedBox(height: 18),
               _field(
-                label: '这是一件什么事',
-                hint: '例：每周五收盘后汇总本周数据',
+                label: strings.t('teach.whatLabel'),
+                hint: strings.t('teach.whatHint'),
                 controller: widget.title,
                 maxLines: 1,
               ),
               const SizedBox(height: 14),
               _field(
-                label: '具体怎么做',
-                hint:
-                    '例：先读 data/ 下本周的 csv，算涨跌幅和成交额，'
-                    '生成一张对比表，再发一条带表格的消息到群里。',
+                label: strings.t('teach.howLabel'),
+                hint: strings.t('teach.howHint'),
                 controller: widget.howto,
                 maxLines: 6,
               ),
@@ -144,14 +147,14 @@ class _TeachDialogState extends State<_TeachDialog> {
                     hoverColor: PB.bgHover,
                     borderRadius: BorderRadius.circular(PB.rXl),
                     onTap: () => Navigator.pop(context, false),
-                    child: const Padding(
-                      padding: EdgeInsets.symmetric(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
                         horizontal: 16,
                         vertical: 10,
                       ),
                       child: Text(
-                        '取消',
-                        style: TextStyle(
+                        strings.t('common.cancel'),
+                        style: const TextStyle(
                           fontSize: PB.fsSm,
                           color: PB.textSecondary,
                         ),
@@ -173,7 +176,7 @@ class _TeachDialogState extends State<_TeachDialog> {
                         vertical: 10,
                       ),
                       child: Text(
-                        '教给它',
+                        strings.t('teach.submit'),
                         style: TextStyle(
                           fontSize: PB.fsSm,
                           fontWeight: FontWeight.w600,

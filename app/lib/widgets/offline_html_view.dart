@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import '../html_preview_document.dart';
+import '../l10n/l10n.dart';
 import '../html_preview_environment.dart';
 import '../html_preview_platform_policy.dart';
 
@@ -53,6 +54,7 @@ class _OfflineHtmlViewState extends State<OfflineHtmlView> {
   }
 
   Future<void> _initialize() async {
+    final strings = L10n.s(context);
     final generation = ++_generation;
     _timeout?.cancel();
     final previous = _session;
@@ -64,7 +66,7 @@ class _OfflineHtmlViewState extends State<OfflineHtmlView> {
     _ready = false;
     _diagnose('initializing', generation);
     _timeout = Timer(const Duration(seconds: 20), () {
-      _fail('网页加载超时，可以切换源码或下载文件。', generation);
+      _fail(strings.t('offline.timeout'), generation);
     });
     if (previous != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -74,14 +76,14 @@ class _OfflineHtmlViewState extends State<OfflineHtmlView> {
     }
     final platform = defaultTargetPlatform;
     if (kIsWeb || !supportsOfflineHtmlPreview(platform)) {
-      _fail('当前平台暂不支持网页预览，请查看源码或下载文件。', generation);
+      _fail(strings.t('offline.unsupported'), generation);
       return;
     }
     _PreviewSession? session;
     try {
       final document = buildOfflineHtmlDocument(widget.html);
       if (utf8.encode(document).length > 2 * 1024 * 1024) {
-        _fail('文档超出网页预览上限，请下载后查看。', generation);
+        _fail(strings.t('offline.tooLarge'), generation);
         return;
       }
       session = _PreviewSession(generation, document, platform);
@@ -91,7 +93,7 @@ class _OfflineHtmlViewState extends State<OfflineHtmlView> {
           const Duration(seconds: 8),
         );
         if (version == null || version.isEmpty) {
-          _fail('缺少网页预览运行环境，请安装 WebView2 或查看源码。', generation);
+          _fail(strings.t('offline.missingRuntime'), generation);
           return;
         }
         if (session.closed) return;
@@ -125,7 +127,7 @@ class _OfflineHtmlViewState extends State<OfflineHtmlView> {
       setState(() => _session = session);
       _diagnose('environment-ready', generation);
     } catch (_) {
-      _fail('网页预览无法初始化，可以切换源码或下载文件。', generation);
+      _fail(strings.t('offline.initFailed'), generation);
       await session?.release();
     }
   }
@@ -172,6 +174,7 @@ class _OfflineHtmlViewState extends State<OfflineHtmlView> {
 
   Future<void> _checkReady(_PreviewSession session) async {
     if (!_current(session) || _ready || session.polling) return;
+    final strings = L10n.s(context);
     session.polling = true;
     try {
       while (_current(session) && !_ready) {
@@ -225,7 +228,7 @@ class _OfflineHtmlViewState extends State<OfflineHtmlView> {
               }
             } catch (_) {}
           }
-          _fail('网页隔离检查未通过，已停止预览，请查看源码。', session.generation);
+          _fail(strings.t('offline.isolationFailed'), session.generation);
           return;
         }
         if (ready == 'ready') {
@@ -256,6 +259,7 @@ class _OfflineHtmlViewState extends State<OfflineHtmlView> {
 
   @override
   Widget build(BuildContext context) {
+    final strings = L10n.s(context);
     final session = _session;
     if (session == null || _failed) return const SizedBox.shrink();
     return InAppWebView(
@@ -292,7 +296,7 @@ class _OfflineHtmlViewState extends State<OfflineHtmlView> {
       },
       onReceivedError: (_, request, _) {
         if (request.isForMainFrame == true) {
-          _fail('网页未能加载，可以切换源码或下载文件。', session.generation);
+          _fail(strings.t('offline.loadFailed'), session.generation);
         }
       },
       shouldOverrideUrlLoading: (_, action) async {
@@ -358,11 +362,11 @@ class _OfflineHtmlViewState extends State<OfflineHtmlView> {
         return true;
       },
       onWebContentProcessDidTerminate: (_) =>
-          _fail('网页进程已停止，可以切换源码或重新打开文件。', session.generation),
+          _fail(strings.t('offline.processStopped'), session.generation),
       onProcessFailed: (_, _) =>
-          _fail('网页进程未能继续运行，可以切换源码或重新打开文件。', session.generation),
+          _fail(strings.t('offline.processCrashed'), session.generation),
       onRenderProcessGone: (_, _) async {
-        _fail('网页进程已停止，可以切换源码或重新打开文件。', session.generation);
+        _fail(strings.t('offline.processStopped'), session.generation);
       },
     );
   }

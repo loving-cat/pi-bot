@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../l10n/l10n.dart';
 import '../theme.dart';
 
 import 'package:lucide_icons_flutter/lucide_icons.dart';
@@ -168,6 +169,7 @@ class _ScanScreenState extends State<ScanScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final s = L10n.s(context);
     final value = _controller.value;
     final error = value.error;
     final ready = value.isInitialized && value.isRunning;
@@ -216,8 +218,8 @@ class _ScanScreenState extends State<ScanScreen> {
                           const SizedBox(height: 18),
                           Text(
                             _perm!.isPermanentlyDenied
-                                ? '扫码要用相机。\n你之前拒绝过两次，系统不再弹窗了 ——\n去设置里把 pi-bot 的相机权限打开。'
-                                : '扫码要用相机。\n不给权限就扫不了码（也可以直接手填地址+配对码）。',
+                                ? s.t('scan.permPermanentlyDenied')
+                                : s.t('scan.permNeeded'),
                             textAlign: TextAlign.center,
                             style: const TextStyle(
                               color: PB.textSecondary,
@@ -237,15 +239,17 @@ class _ScanScreenState extends State<ScanScreen> {
                               size: 18,
                             ),
                             label: Text(
-                              _perm!.isPermanentlyDenied ? '去系统设置' : '允许使用相机',
+                              _perm!.isPermanentlyDenied
+                                  ? s.t('scan.openSettings')
+                                  : s.t('scan.allowCamera'),
                             ),
                           ),
                           const SizedBox(height: 6),
                           TextButton(
                             onPressed: () => Navigator.pop(context),
-                            child: const Text(
-                              '不用扫码，手动填地址和配对码',
-                              style: TextStyle(
+                            child: Text(
+                              s.t('scan.manualInstead'),
+                              style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: PB.fsSm,
                               ),
@@ -262,16 +266,18 @@ class _ScanScreenState extends State<ScanScreen> {
                           ),
                           const SizedBox(height: 20),
                           Text(
-                            _slow ? '相机还没起来…' : '正在启动相机…',
+                            _slow
+                                ? s.t('scan.cameraSlow')
+                                : s.t('scan.cameraStarting'),
                             style: const TextStyle(
                               color: PB.textSecondary,
                               fontSize: PB.fsBase,
                             ),
                           ),
                           const SizedBox(height: 8),
-                          const Text(
-                            '第一次用会弹一个相机权限，点「允许」',
-                            style: TextStyle(
+                          Text(
+                            s.t('scan.firstUseHint'),
+                            style: const TextStyle(
                               color: PB.textQuaternary,
                               fontSize: PB.fsXs,
                             ),
@@ -285,11 +291,17 @@ class _ScanScreenState extends State<ScanScreen> {
                           const SizedBox(height: 18),
                           Text(
                             switch (error.errorCode) {
-                              MobileScannerErrorCode.permissionDenied => '没拿到相机权限。\n去「系统设置 → 应用 → pi-bot → 权限」里打开相机，再回来点重试。',
-                              MobileScannerErrorCode.unsupported =>
-                                '这台设备不支持扫码。',
-                              _ =>
-                                '相机打不开：${error.errorDetails?.message ?? error.errorCode.name}',
+                              MobileScannerErrorCode.permissionDenied => s.t(
+                                'scan.errorPermission',
+                              ),
+                              MobileScannerErrorCode.unsupported => s.t(
+                                'scan.errorUnsupported',
+                              ),
+                              _ => s.tf('scan.errorGeneric', {
+                                'error':
+                                    error.errorDetails?.message ??
+                                    error.errorCode.name,
+                              }),
                             },
                             textAlign: TextAlign.center,
                             style: const TextStyle(
@@ -302,7 +314,7 @@ class _ScanScreenState extends State<ScanScreen> {
                           FilledButton.icon(
                             onPressed: _retry,
                             icon: const Icon(LucideIcons.refreshCw, size: 18),
-                            label: const Text('重试'),
+                            label: Text(s.t('common.retry')),
                           ),
                           const SizedBox(height: 10),
                           // ★ 相机起不来时别把人堵死在这页上。
@@ -313,9 +325,9 @@ class _ScanScreenState extends State<ScanScreen> {
                           //   被挤到屏幕顶部去。直接给一个按钮最实在。
                           TextButton(
                             onPressed: () => Navigator.pop(context),
-                            child: const Text(
-                              '不用扫码，手动填地址和配对码',
-                              style: TextStyle(
+                            child: Text(
+                              s.t('scan.manualInstead'),
+                              style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: PB.fsSm,
                               ),
@@ -379,9 +391,9 @@ class _ScanScreenState extends State<ScanScreen> {
                 padding: const EdgeInsets.only(bottom: 28),
                 child: Column(
                   children: [
-                    const Text(
-                      '对准电脑终端里那个二维码',
-                      style: TextStyle(
+                    Text(
+                      s.t('scan.alignHint'),
+                      style: const TextStyle(
                         color: Colors.white,
                         fontSize: PB.fsLg,
                         fontWeight: FontWeight.w600,
@@ -391,7 +403,7 @@ class _ScanScreenState extends State<ScanScreen> {
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 24),
                       child: Text(
-                        '扫不了？在电脑端「设置 → 远程连接」里有配对码，回上一页手动填',
+                        s.t('scan.manualHint'),
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           color: Colors.white.withValues(alpha: 0.6),

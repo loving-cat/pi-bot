@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../app_state.dart';
+import '../l10n/l10n.dart';
 import '../models.dart';
 import '../theme.dart';
 
@@ -70,6 +71,7 @@ class _AutomationSheetState extends State<AutomationSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final strings = L10n.s(context);
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 14, 20, 18),
@@ -86,7 +88,7 @@ class _AutomationSheetState extends State<AutomationSheet> {
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  '定时任务 · ${widget.roomName}',
+                  strings.tf('auto.title', {'room': widget.roomName}),
                   style: const TextStyle(
                     fontSize: PB.fsLg,
                     fontWeight: FontWeight.w600,
@@ -95,7 +97,9 @@ class _AutomationSheetState extends State<AutomationSheet> {
                 ),
                 const Spacer(),
                 Text(
-                  '${widget.items.where((a) => a.enabled).length} 个在跑',
+                  strings.tf('auto.runningCount', {
+                    'n': widget.items.where((a) => a.enabled).length,
+                  }),
                   style: const TextStyle(
                     fontSize: PB.fsXs,
                     color: PB.textQuaternary,
@@ -104,23 +108,32 @@ class _AutomationSheetState extends State<AutomationSheet> {
               ],
             ),
             const SizedBox(height: 10),
-            _field(_title, '任务名（例如 盘前简报）'),
+            _field(_title, strings.t('auto.nameHint')),
             const SizedBox(height: 8),
-            _field(_prompt, '到点要它做什么（发给它的话）', maxLines: 2),
+            _field(_prompt, strings.t('auto.promptHint'), maxLines: 2),
             const SizedBox(height: 8),
             Row(
               children: [
                 SegmentedButton<bool>(
-                  segments: const [
-                    ButtonSegment(value: false, label: Text('每隔')),
-                    ButtonSegment(value: true, label: Text('每天')),
+                  segments: [
+                    ButtonSegment(
+                      value: false,
+                      label: Text(strings.t('auto.every')),
+                    ),
+                    ButtonSegment(
+                      value: true,
+                      label: Text(strings.t('auto.daily')),
+                    ),
                   ],
                   selected: {_daily},
                   onSelectionChanged: (v) => setState(() => _daily = v.first),
                 ),
                 const SizedBox(width: 10),
                 if (!_daily)
-                  SizedBox(width: 90, child: _field(_interval, '分钟'))
+                  SizedBox(
+                    width: 90,
+                    child: _field(_interval, strings.t('auto.minutes')),
+                  )
                 else
                   TextButton.icon(
                     onPressed: () async {
@@ -137,7 +150,10 @@ class _AutomationSheetState extends State<AutomationSheet> {
                     ),
                   ),
                 const Spacer(),
-                FilledButton(onPressed: _add, child: const Text('添加')),
+                FilledButton(
+                  onPressed: _add,
+                  child: Text(strings.t('common.add')),
+                ),
               ],
             ),
             const SizedBox(height: 12),
@@ -147,11 +163,11 @@ class _AutomationSheetState extends State<AutomationSheet> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     if (widget.items.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 14),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
                         child: Text(
-                          '还没有定时任务。适合：盘前简报、每天巡检、每小时看一次进度。',
-                          style: TextStyle(
+                          strings.t('auto.empty'),
+                          style: const TextStyle(
                             fontSize: PB.fsXs,
                             color: PB.textQuaternary,
                           ),
@@ -169,13 +185,18 @@ class _AutomationSheetState extends State<AutomationSheet> {
   }
 
   Widget _row(Automation a) {
+    final strings = L10n.s(context);
     final next = a.nextRunAt > 0
         ? DateTime.fromMillisecondsSinceEpoch(a.nextRunAt)
         : null;
     final nextLabel = next == null
         ? ''
-        : ' · 下次 ${next.month}/${next.day} '
-              '${next.hour.toString().padLeft(2, '0')}:${next.minute.toString().padLeft(2, '0')}';
+        : strings.tf('auto.nextRun', {
+            'time':
+                '${next.month}/${next.day} '
+                '${next.hour.toString().padLeft(2, '0')}:'
+                '${next.minute.toString().padLeft(2, '0')}',
+          });
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
       child: Row(
@@ -211,13 +232,13 @@ class _AutomationSheetState extends State<AutomationSheet> {
           ),
           IconButton(
             visualDensity: VisualDensity.compact,
-            tooltip: '立刻跑一次',
+            tooltip: strings.t('auto.runNow'),
             onPressed: () => widget.onRunNow(a),
             icon: const Icon(LucideIcons.play, size: 14),
           ),
           IconButton(
             visualDensity: VisualDensity.compact,
-            tooltip: a.enabled ? '暂停' : '启用',
+            tooltip: strings.t(a.enabled ? 'auto.pause' : 'misc.enable'),
             onPressed: () => widget.onToggle(a),
             icon: Icon(
               a.enabled ? LucideIcons.pause : LucideIcons.play,
@@ -226,7 +247,7 @@ class _AutomationSheetState extends State<AutomationSheet> {
           ),
           IconButton(
             visualDensity: VisualDensity.compact,
-            tooltip: '删除',
+            tooltip: strings.t('common.delete'),
             onPressed: () => widget.onDelete(a),
             icon: const Icon(LucideIcons.trash2, size: 14),
           ),

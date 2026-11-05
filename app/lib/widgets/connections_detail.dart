@@ -1,9 +1,38 @@
 import 'package:flutter/material.dart';
 
-import '../connections_filters.dart';
 import '../connections_models.dart';
+import '../l10n/l10n.dart';
 import '../models.dart';
 import '../theme.dart';
+
+/// 验证状态的文案 key；未知状态按「尚未验证」处理。
+String _statusKey(String state) => switch (state) {
+  'checking' => 'conn.status.checking',
+  'ready' => 'conn.status.ready',
+  'auth_required' => 'conn.status.authRequired',
+  'error' => 'conn.status.error',
+  'stale' => 'conn.status.stale',
+  _ => 'conn.status.unverified',
+};
+
+/// 验证时间标签：无记录时给出提示，有记录时按「月/日 时:分」显示。
+String _checkedAtLabel(AppStrings strings, int? value) {
+  if (value == null || value <= 0) return strings.t('conn.neverChecked');
+  final dt = DateTime.fromMillisecondsSinceEpoch(value);
+  String two(int n) => n.toString().padLeft(2, '0');
+  return strings.tf('conn.checkedAt', {
+    'time': '${dt.month}/${dt.day} ${two(dt.hour)}:${two(dt.minute)}',
+  });
+}
+
+/// 验证通过但没有工具时的说明；其余状态沿用通用状态文案。
+String _statusLabel(AppStrings strings, ConnectionVerification evidence) {
+  final state = evidence.displayState;
+  if (state == 'ready' && evidence.toolCount == 0) {
+    return strings.t('conn.status.readyNoTools');
+  }
+  return strings.t(_statusKey(state));
+}
 
 /// 连接验证证据、可用工具与 Bot 分配。
 class ConnectionsDetail extends StatefulWidget {
@@ -59,8 +88,29 @@ class _ConnectionsDetailState extends State<ConnectionsDetail> {
     });
   }
 
+  /// 工具区在明细为空时的提示：先按验证状态给原因，再退回通用说明。
+  String _toolsEmptyHint(AppStrings strings, ConnectionVerification evidence) =>
+      switch (evidence.displayState) {
+        'ready' when evidence.toolCount == 0 => strings.t(
+          'conn.toolsReadyEmpty',
+        ),
+        'auth_required' => strings.t('conn.toolsAuthRequired'),
+        'error' => strings.t('conn.toolsError'),
+        'stale' => strings.t('conn.toolsStale'),
+        'checking' => strings.t('conn.toolsChecking'),
+        _ => strings.t('conn.toolsUnverified'),
+      };
+
+  /// 分配区上方的执行规则说明，按当前危险操作策略选文案。
+  String _policyHint(AppStrings strings) => switch (widget.policy) {
+    'deny' => strings.t('conn.policyDeny'),
+    'ask' => strings.t('conn.policyAsk'),
+    _ => strings.t('conn.policyDefault'),
+  };
+
   @override
   Widget build(BuildContext context) {
+    final strings = L10n.s(context);
     final item = widget.connection;
     final evidence = item.verification;
     return AlertDialog(
@@ -83,7 +133,7 @@ class _ConnectionsDetailState extends State<ConnectionsDetail> {
                 const SizedBox(height: 12),
               ],
               Text(
-                evidence.label,
+                _statusLabel(strings, evidence),
                 style: TextStyle(
                   color: evidence.displayState == 'ready'
                       ? PB.success
@@ -93,7 +143,7 @@ class _ConnectionsDetailState extends State<ConnectionsDetail> {
               ),
               const SizedBox(height: 4),
               Text(
-                connectionCheckedAt(evidence.checkedAt),
+                _checkedAtLabel(strings, evidence.checkedAt),
                 style: const TextStyle(
                   fontSize: PB.fsSm,
                   color: PB.textTertiary,
@@ -114,22 +164,28 @@ class _ConnectionsDetailState extends State<ConnectionsDetail> {
                 children: [
                   OutlinedButton(
                     onPressed: widget.busy ? null : () => _run(widget.onVerify),
-                    child: Text(widget.busy ? '处理中…' : '重新验证'),
+                    child: Text(
+                      widget.busy
+                          ? strings.t('conn.processing')
+                          : strings.t('conn.reverify'),
+                    ),
                   ),
                   TextButton(
                     onPressed: widget.busy ? null : widget.onEdit,
-                    child: const Text('编辑配置'),
+                    child: Text(strings.t('conn.editConfig')),
                   ),
                 ],
               ),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
-                title: const Text(
-                  '允许 Bot 使用',
-                  style: TextStyle(fontSize: PB.fsBase),
+                title: Text(
+                  strings.t('conn.allowBots'),
+                  style: const TextStyle(fontSize: PB.fsBase),
                 ),
                 subtitle: Text(
-                  item.server.enabled ? '已启用' : '已停用',
+                  strings.t(
+                    item.server.enabled ? 'conn.enabled' : 'conn.disabled',
+                  ),
                   style: const TextStyle(fontSize: PB.fsSm),
                 ),
                 value: item.server.enabled,
@@ -139,7 +195,9 @@ class _ConnectionsDetailState extends State<ConnectionsDetail> {
               ),
               const Divider(height: 24),
               Text(
-                '可用工具${evidence.toolCount == null ? '' : ' · ${evidence.toolCount}'}',
+                evidence.toolCount == null
+                    ? strings.t('conn.tools')
+                    : strings.tf('conn.toolsCount', {'n': evidence.toolCount}),
                 style: const TextStyle(
                   fontWeight: FontWeight.w600,
                   fontSize: PB.fsBase,
@@ -148,15 +206,7 @@ class _ConnectionsDetailState extends State<ConnectionsDetail> {
               const SizedBox(height: 8),
               if (evidence.tools.isEmpty)
                 Text(
-                  switch (evidence.displayState) {
-                    'ready' when evidence.toolCount == 0 =>
-                      '服务响应正常，但没有提供可调用工具。',
-                    'auth_required' => '认证未通过，请检查凭据后重新验证。',
-                    'error' => '验证未通过，暂时无法确认可用工具。',
-                    'stale' => '验证记录已过期，请重新验证后查看可用工具。',
-                    'checking' => '正在确认可用工具…',
-                    _ => '验证后会在这里展示工具。',
-                  },
+                  _toolsEmptyHint(strings, evidence),
                   style: const TextStyle(
                     color: PB.textTertiary,
                     fontSize: PB.fsSm,
@@ -188,20 +238,16 @@ class _ConnectionsDetailState extends State<ConnectionsDetail> {
                     ),
                   ),
               const Divider(height: 24),
-              const Text(
-                '分配给 Bot',
-                style: TextStyle(
+              Text(
+                strings.t('conn.assignTitle'),
+                style: const TextStyle(
                   fontWeight: FontWeight.w600,
                   fontSize: PB.fsBase,
                 ),
               ),
               const SizedBox(height: 6),
               Text(
-                switch (widget.policy) {
-                  'deny' => '当前为只读模式，外部工具不会执行。分配将在规则允许时生效。',
-                  'ask' => '按部门规矩执行；需批准模式下，每次外部工具调用需确认。部门负责人通过成员完成操作。',
-                  _ => '按部门规矩执行；部门负责人仍通过成员完成操作。',
-                },
+                _policyHint(strings),
                 style: const TextStyle(
                   fontSize: PB.fsSm,
                   color: PB.textTertiary,
@@ -209,11 +255,11 @@ class _ConnectionsDetailState extends State<ConnectionsDetail> {
                 ),
               ),
               if (widget.bots.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 12),
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
                   child: Text(
-                    '还没有可分配的 Bot',
-                    style: TextStyle(color: PB.textTertiary),
+                    strings.t('conn.noBots'),
+                    style: const TextStyle(color: PB.textTertiary),
                   ),
                 ),
               for (final bot in widget.bots)
@@ -248,7 +294,7 @@ class _ConnectionsDetailState extends State<ConnectionsDetail> {
                           () => widget.onAssign(_selected.toList()),
                           assigning: true,
                         ),
-                  child: const Text('保存分配'),
+                  child: Text(strings.t('conn.saveAssignment')),
                 ),
               ),
               if (_error != null || widget.error != null)
@@ -266,11 +312,14 @@ class _ConnectionsDetailState extends State<ConnectionsDetail> {
       actions: [
         TextButton(
           onPressed: widget.busy ? null : widget.onDelete,
-          child: const Text('删除连接', style: TextStyle(color: PB.danger)),
+          child: Text(
+            strings.t('conn.delete'),
+            style: const TextStyle(color: PB.danger),
+          ),
         ),
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('关闭'),
+          child: Text(strings.t('common.close')),
         ),
       ],
     );

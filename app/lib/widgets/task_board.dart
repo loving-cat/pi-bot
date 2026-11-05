@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../app_state.dart';
+import '../l10n/l10n.dart';
 import '../models.dart';
 import '../ime_guard.dart';
 import '../theme.dart';
@@ -51,6 +52,7 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final strings = L10n.s(context);
     final doing = widget.tasks.where((t) => t.isDoing).toList();
     final open = widget.tasks.where((t) => !t.isDone && !t.isDoing).toList();
     final done = widget.tasks.where((t) => t.isDone).toList();
@@ -71,7 +73,7 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  '任务 · ${widget.roomName}',
+                  strings.tf('task.title', {'room': widget.roomName}),
                   style: const TextStyle(
                     fontSize: PB.fsLg,
                     fontWeight: FontWeight.w600,
@@ -80,7 +82,9 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
                 ),
                 const Spacer(),
                 Text(
-                  '${doing.length + open.length} 个未完成',
+                  strings.tf('task.openCount', {
+                    'n': doing.length + open.length,
+                  }),
                   style: const TextStyle(
                     fontSize: PB.fsXs,
                     color: PB.textQuaternary,
@@ -98,7 +102,7 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
                     style: const TextStyle(fontSize: PB.fsSm),
                     onSubmitted: submitUnlessComposing(_input, _add),
                     decoration: InputDecoration(
-                      hintText: '加一条任务（回车添加）',
+                      hintText: strings.t('task.newHint'),
                       hintStyle: const TextStyle(
                         fontSize: PB.fsXs,
                         color: PB.textQuaternary,
@@ -121,7 +125,7 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
                 IconButton(
                   onPressed: _add,
                   icon: const Icon(LucideIcons.plus, size: 18),
-                  tooltip: '添加',
+                  tooltip: strings.t('common.add'),
                 ),
               ],
             ),
@@ -132,23 +136,23 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     if (doing.isEmpty && open.isEmpty && done.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 18),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 18),
                         child: Text(
-                          '还没有任务。部门里派的活会自动出现在这里。',
-                          style: TextStyle(
+                          strings.t('task.empty'),
+                          style: const TextStyle(
                             fontSize: PB.fsXs,
                             color: PB.textQuaternary,
                           ),
                         ),
                       ),
                     if (doing.isNotEmpty) ...[
-                      _section('进行中'),
+                      _section(strings.t('task.doing')),
                       ..._grouped(doing),
                       const SizedBox(height: 8),
                     ],
                     if (open.isNotEmpty) ...[
-                      _section('待办'),
+                      _section(strings.t('task.todo')),
                       ..._grouped(open),
                       const SizedBox(height: 8),
                     ],
@@ -169,7 +173,9 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
                               ),
                               const SizedBox(width: 6),
                               Text(
-                                '已完成 ${done.length}',
+                                strings.tf('task.doneCount', {
+                                  'n': done.length,
+                                }),
                                 style: const TextStyle(
                                   fontSize: PB.fsXs,
                                   color: PB.textTertiary,
@@ -219,6 +225,7 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
 
   /// 一个任务、多个执行者
   Widget _multiRow(List<TaskItem> group) {
+    final strings = L10n.s(context);
     final first = group.first;
     final color = first.isDone
         ? PB.textQuaternary
@@ -244,9 +251,10 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
                 widget.onToggleDone(t);
               }
             },
-            tooltip: first.isDone
-                ? '把这 ${group.length} 条都标为未完成'
-                : '把这 ${group.length} 条都标为完成',
+            tooltip: strings.tf(
+              first.isDone ? 'task.markOpenAll' : 'task.markDoneAll',
+              {'n': group.length},
+            ),
             icon: Icon(
               first.isDone
                   ? LucideIcons.circleCheck
@@ -274,7 +282,10 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
                   ),
                 ),
                 Text(
-                  '${group.length} 人：${owners.join('、')}',
+                  strings.tf('task.owners', {
+                    'n': group.length,
+                    'names': owners.join(strings.t('misc.listSeparator')),
+                  }),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
@@ -294,7 +305,7 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
                 widget.onDelete(t);
               }
             },
-            tooltip: '删除这 ${group.length} 条',
+            tooltip: strings.tf('task.deleteAll', {'n': group.length}),
             icon: const Icon(
               LucideIcons.trash2,
               size: 14,
@@ -307,6 +318,7 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
   }
 
   Widget _row(TaskItem task) {
+    final strings = L10n.s(context);
     final color = task.isDone
         ? PB.textQuaternary
         : task.isDoing
@@ -321,7 +333,7 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
             onPressed: () => widget.onToggleDone(task),
-            tooltip: task.isDone ? '标为未完成' : '标为完成',
+            tooltip: strings.t(task.isDone ? 'task.markOpen' : 'task.markDone'),
             icon: Icon(
               task.isDone
                   ? LucideIcons.circleCheck
@@ -372,7 +384,7 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
             onPressed: () => widget.onTogglePin(task),
-            tooltip: task.isPinned ? '取消置顶' : '置顶',
+            tooltip: strings.t(task.isPinned ? 'task.unpin' : 'task.pin'),
             icon: Icon(
               task.isPinned ? LucideIcons.pin : LucideIcons.pinOff,
               size: 14,
@@ -386,7 +398,7 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
             onPressed: () => widget.onDelete(task),
-            tooltip: '删除',
+            tooltip: strings.t('common.delete'),
             icon: const Icon(
               LucideIcons.trash2,
               size: 14,

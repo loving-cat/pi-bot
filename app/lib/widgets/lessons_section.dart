@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../app_state.dart';
+import '../l10n/l10n.dart';
 import '../models.dart';
 import '../scope.dart';
 import '../theme.dart';
@@ -40,6 +41,7 @@ class _LessonsSectionState extends State<LessonsSection> {
 
   @override
   Widget build(BuildContext context) {
+    final strings = L10n.s(context);
     final state = AppScope.of(context);
     final all = state.lessons;
     final candidates = all.where((l) => l.isCandidate).length;
@@ -63,9 +65,9 @@ class _LessonsSectionState extends State<LessonsSection> {
                 color: PB.colors(context).accentBright,
               ),
               const SizedBox(width: 7),
-              const Text(
-                '经验',
-                style: TextStyle(
+              Text(
+                strings.t('lesson.title'),
+                style: const TextStyle(
                   fontSize: PB.fsSm,
                   fontWeight: FontWeight.w600,
                   color: PB.textSecondary,
@@ -74,7 +76,7 @@ class _LessonsSectionState extends State<LessonsSection> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  '只有启用的会进主控提示词，一次最多 3 条 / 600 字',
+                  strings.t('lesson.intro'),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
@@ -149,22 +151,31 @@ class _LessonsSectionState extends State<LessonsSection> {
       );
     }
 
+    final strings = L10n.s(context);
     return Row(
       children: [
-        chip(_Filter.candidate, '待确认 $candidates'),
-        chip(_Filter.active, '已启用 $active'),
-        chip(_Filter.all, '全部'),
+        chip(
+          _Filter.candidate,
+          strings.tf('lesson.candidateCount', {'n': candidates}),
+        ),
+        chip(_Filter.active, strings.tf('lesson.activeCount', {'n': active})),
+        chip(_Filter.all, strings.t('lesson.all')),
       ],
     );
   }
 
   Widget _emptyHint(int candidates, int active) {
+    final strings = L10n.s(context);
     final text = switch (_filter) {
       _Filter.candidate =>
-        candidates == 0 ? '还没有待确认的经验。群聊收尾后会自动复盘出候选，你在这里决定要不要让它记住。' : '没有待确认的经验',
+        candidates == 0
+            ? strings.t('lesson.emptyCandidates')
+            : strings.t('lesson.noCandidates'),
       _Filter.active =>
-        active == 0 ? '还没有启用的经验。候选条目点「启用」后，主控派活时才会参考它。' : '没有启用的经验',
-      _Filter.all => '还没有经验。群聊收尾后会自动复盘出候选。',
+        active == 0
+            ? strings.t('lesson.emptyActive')
+            : strings.t('lesson.noActive'),
+      _Filter.all => strings.t('lesson.emptyAll'),
     };
     return Container(
       width: double.infinity,
@@ -186,13 +197,17 @@ class _LessonsSectionState extends State<LessonsSection> {
   }
 
   Future<void> _confirmDelete(AppState state, LibraryLesson lesson) async {
+    final strings = L10n.s(context);
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: PB.bgElevated,
-        title: const Text('删掉这条经验？', style: TextStyle(fontSize: PB.fsLg)),
+        title: Text(
+          strings.t('lesson.deleteTitle'),
+          style: const TextStyle(fontSize: PB.fsLg),
+        ),
         content: Text(
-          '「${lesson.cue}」会从库里移除，之后不会再被注入。',
+          strings.tf('lesson.deleteBody', {'cue': lesson.cue}),
           style: const TextStyle(
             fontSize: PB.fsSm,
             color: PB.textSecondary,
@@ -202,12 +217,12 @@ class _LessonsSectionState extends State<LessonsSection> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
+            child: Text(strings.t('common.cancel')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: FilledButton.styleFrom(backgroundColor: PB.danger),
-            child: const Text('删掉'),
+            child: Text(strings.t('lesson.delete')),
           ),
         ],
       ),
@@ -221,7 +236,8 @@ class _LessonsSectionState extends State<LessonsSection> {
   /// 直接甩“经验不存在”用户看不懂，也以为自己点错了。
   void _showError(String err) {
     if (!mounted) return;
-    toast(context, err.contains('不存在') ? '这条经验已经不在了（可能被删了），列表已刷新' : err);
+    // 按状态码判断，不靠中文子串：服务端语言可能与界面语言不同。
+    toast(context, isGoneError(err) ? L10n.s(context).t('lesson.gone') : err);
   }
 }
 
@@ -289,11 +305,14 @@ class _LessonCard extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               if (active)
-                const Padding(
-                  padding: EdgeInsets.only(top: 2),
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
                   child: Text(
-                    '已启用',
-                    style: TextStyle(fontSize: PB.fsXxs, color: PB.success),
+                    L10n.s(context).t('lesson.enabled'),
+                    style: const TextStyle(
+                      fontSize: PB.fsXxs,
+                      color: PB.success,
+                    ),
                   ),
                 ),
             ],
@@ -318,9 +337,12 @@ class _LessonCard extends StatelessWidget {
               ),
               child: Row(
                 children: [
-                  const Text(
-                    '证据',
-                    style: TextStyle(fontSize: 9, color: PB.textQuaternary),
+                  Text(
+                    L10n.s(context).t('lesson.evidence'),
+                    style: const TextStyle(
+                      fontSize: 9,
+                      color: PB.textQuaternary,
+                    ),
                   ),
                   const SizedBox(width: 6),
                   Expanded(
@@ -352,7 +374,7 @@ class _LessonCard extends StatelessWidget {
               if (lesson.hits > 0) ...[
                 const SizedBox(width: 8),
                 Text(
-                  '已命中 ${lesson.hits} 次',
+                  L10n.s(context).tf('lesson.hits', {'n': lesson.hits}),
                   style: const TextStyle(
                     fontSize: PB.fsXxs,
                     color: PB.textQuaternary,
@@ -363,18 +385,24 @@ class _LessonCard extends StatelessWidget {
               if (!active)
                 TextButton(
                   onPressed: () => onToggle('active'),
-                  child: const Text('启用', style: TextStyle(fontSize: PB.fsXs)),
+                  child: Text(
+                    L10n.s(context).t('misc.enable'),
+                    style: const TextStyle(fontSize: PB.fsXs),
+                  ),
                 )
               else
                 TextButton(
                   onPressed: () => onToggle('candidate'),
-                  child: const Text('停用', style: TextStyle(fontSize: PB.fsXs)),
+                  child: Text(
+                    L10n.s(context).t('misc.disable'),
+                    style: const TextStyle(fontSize: PB.fsXs),
+                  ),
                 ),
               IconButton(
                 onPressed: onDelete,
                 icon: const Icon(LucideIcons.trash2, size: 14),
                 color: PB.textQuaternary,
-                tooltip: '删掉',
+                tooltip: L10n.s(context).t('lesson.delete'),
                 visualDensity: VisualDensity.compact,
               ),
             ],

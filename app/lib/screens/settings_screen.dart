@@ -9,6 +9,9 @@ import '../native.dart';
 import '../notify.dart';
 import '../scope.dart';
 import '../theme.dart';
+import '../l10n/l10n.dart';
+import '../widgets/language_card.dart';
+import '../window_chrome.dart';
 import '../widgets/toast.dart';
 import '../widgets/group_limits_section.dart';
 import '../widgets/user_name_section.dart';
@@ -66,20 +69,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     return Scaffold(
       backgroundColor: PB.bgApp,
-      appBar: AppBar(
-        toolbarHeight: 58,
-        title: const Text('设置'),
-        actions: [
-          IconButton(
-            tooltip: '刷新',
-            onPressed: () {
-              state.loadPairingInfo();
-              state.refresh();
-            },
-            icon: const Icon(LucideIcons.refreshCw, size: 20),
-          ),
-          const SizedBox(width: 8),
-        ],
+      appBar: chromeAppBar(
+        context,
+        AppBar(
+          flexibleSpace: const WindowDragArea(),
+          toolbarHeight: 58,
+          title: Text(L10n.s(context).t('settings.title')),
+          actions: [
+            IconButton(
+              tooltip: L10n.s(context).t('common.refresh'),
+              onPressed: () {
+                state.loadPairingInfo();
+                state.refresh();
+              },
+              icon: const Icon(LucideIcons.refreshCw, size: 20),
+            ),
+            const SizedBox(width: 8),
+          ],
+        ),
       ),
       body: Center(
         child: ConstrainedBox(
@@ -129,6 +136,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   /// 标签页一：手机连接与设备
   List<Widget> get _connectTab {
+    final s = L10n.s(context);
     final state = AppScope.read(context);
     final pairing = AppScope.read(context).pairing;
     final base = AppScope.read(context).serverUrl ?? '';
@@ -141,8 +149,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return [
       _SectionTitle(
         icon: LucideIcons.smartphone,
-        title: '手机连接',
-        subtitle: isHostPlatform ? '手机扫下面的码就能连上这台电脑' : '这台设备是通过配对连上服务端的',
+        title: s.t('settings.connect.title'),
+        subtitle: isHostPlatform
+            ? s.t('settings.connect.subtitleHost')
+            : s.t('settings.connect.subtitleRemote'),
       ),
       // ★ 二维码只有**宿主端**（跑服务端的那台电脑）才画。
       //
@@ -176,11 +186,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                   ),
                   IconButton(
-                    tooltip: '复制地址',
+                    tooltip: s.t('settings.connect.copyUrl'),
                     icon: const Icon(LucideIcons.copy, size: 15),
                     onPressed: () {
                       Clipboard.setData(ClipboardData(text: base));
-                      toast(context, '地址已复制');
+                      toast(context, s.t('settings.connect.urlCopied'));
                     },
                   ),
                 ],
@@ -206,7 +216,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       Clipboard.setData(
                         ClipboardData(text: '${pairing['code']}'),
                       );
-                      toast(context, '配对码已复制');
+                      toast(context, s.t('settings.connect.codeCopied'));
                     },
                     child: const Icon(
                       LucideIcons.copy,
@@ -218,7 +228,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               const SizedBox(height: 4),
               Text(
-                remaining > 0 ? '$remaining 秒后换新码' : '正在换码…',
+                remaining > 0
+                    ? s.tf('settings.connect.codeRefreshIn', {'n': remaining})
+                    : s.t('settings.connect.codeRefreshing'),
                 style: const TextStyle(
                   fontSize: PB.fsXs,
                   color: PB.textQuaternary,
@@ -230,9 +242,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        '已连接的服务端',
-                        style: TextStyle(
+                      Text(
+                        s.t('settings.connect.connectedServer'),
+                        style: const TextStyle(
                           fontSize: PB.fsXs,
                           color: PB.textTertiary,
                         ),
@@ -242,7 +254,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         children: [
                           Expanded(
                             child: Text(
-                              state.serverUrl ?? '（未知）',
+                              state.serverUrl ??
+                                  s.t('settings.connect.unknownServer'),
                               style: const TextStyle(
                                 fontFamily: PB.monoFamily,
                                 fontFamilyFallback: PB.monoFallback,
@@ -259,10 +272,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ],
                       ),
                       const SizedBox(height: 4),
-                      const Text(
-                        '这台手机上还是这台电脑的码 —— 换一台电脑就连它的二维码、'
-                        '或者手填它的地址。',
-                        style: TextStyle(
+                      Text(
+                        s.t('settings.connect.remoteHint'),
+                        style: const TextStyle(
                           fontSize: PB.fsXxs,
                           color: PB.textQuaternary,
                           height: 1.6,
@@ -280,13 +292,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       size: 20,
                       color: PB.colors(context).accentBright,
                     ),
-                    title: const Text(
-                      '重新扫码配对',
-                      style: TextStyle(fontSize: PB.fsSm),
+                    title: Text(
+                      s.t('settings.connect.rescan'),
+                      style: const TextStyle(fontSize: PB.fsSm),
                     ),
-                    subtitle: const Text(
-                      '换电脑、或者配对码失效了就点这里',
-                      style: TextStyle(
+                    subtitle: Text(
+                      s.t('settings.connect.rescanSubtitle'),
+                      style: const TextStyle(
                         fontSize: PB.fsXxs,
                         color: PB.textQuaternary,
                       ),
@@ -299,10 +311,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ],
               const SizedBox(height: 14),
-              const _Hint(
-                '手机和电脑要在同一个 WiFi 下。\n'
-                '手机装 pi-bot App → 点「扫码配对」→ 扫上面这个码。',
-              ),
+              _Hint(s.t('settings.connect.wifiHint')),
             ],
           ),
         ),
@@ -311,9 +320,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                '手动填地址',
-                style: TextStyle(
+              Text(
+                s.t('settings.connect.manualAddress'),
+                style: const TextStyle(
                   fontSize: PB.fsXs,
                   fontWeight: FontWeight.w600,
                   color: PB.textTertiary,
@@ -356,16 +365,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         ),
       ] else
-        const _Card(
-          child: _Hint(
-            '服务端配的是固定 token（PI_BOT_TOKEN），没有二维码。手机端在「固定 token」页填那个 token 就行。',
-          ),
-        ),
+        _Card(child: _Hint(s.t('settings.connect.fixedTokenHint'))),
     ];
   }
 
   /// 标签页二：服务端与运行参数
   List<Widget> get _serverTab {
+    final s = L10n.s(context);
     final state = AppScope.read(context);
     final info = state.serverInfo;
     return [
@@ -389,10 +395,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
       const GroupLimitsSection(),
 
       const SizedBox(height: 22),
-      const _SectionTitle(icon: LucideIcons.monitorSmartphone, title: '已连接的设备'),
+      _SectionTitle(
+        icon: LucideIcons.monitorSmartphone,
+        title: s.t('settings.server.devices'),
+      ),
       _Card(
         child: state.devices.isEmpty
-            ? const _Hint('还没有手机配对过')
+            ? _Hint(s.t('settings.server.noDevices'))
             : Column(
                 children: [
                   for (final d in state.devices)
@@ -418,7 +427,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                   ),
                                 ),
                                 Text(
-                                  '最后活跃 ${formatTime((d['lastSeenAt'] as num?)?.toInt() ?? 0)}',
+                                  s.tf('settings.server.lastSeen', {
+                                    'time': formatTime(
+                                      (d['lastSeenAt'] as num?)?.toInt() ?? 0,
+                                    ),
+                                  }),
                                   style: const TextStyle(
                                     fontSize: PB.fsXxs,
                                     color: PB.textQuaternary,
@@ -430,9 +443,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           TextButton(
                             // 撤销走设备 id：接口不下发 token（那是设备的凭证）
                             onPressed: () => state.revokeDevice('${d['id']}'),
-                            child: const Text(
-                              '移除',
-                              style: TextStyle(
+                            child: Text(
+                              s.t('common.remove'),
+                              style: const TextStyle(
                                 color: PB.danger,
                                 fontSize: PB.fsXs,
                               ),
@@ -446,22 +459,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
 
       const SizedBox(height: 22),
-      const _SectionTitle(icon: LucideIcons.server, title: '服务端'),
+      _SectionTitle(
+        icon: LucideIcons.server,
+        title: s.t('settings.server.title'),
+      ),
       _Card(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _InfoRow('连接方式', state.localMode ? '本机直连（无需配对）' : '远程配对'),
-            _InfoRow('地址', state.serverUrl ?? '-'),
-            _InfoRow('主机', info?.hostname ?? '-'),
-            _InfoRow('模型', info?.model ?? '-'),
-            _InfoRow('工具', info?.tools.join(', ') ?? '-'),
-            _InfoRow('工作目录', info?.workspace ?? '-'),
+            _InfoRow(
+              s.t('settings.server.mode'),
+              state.localMode
+                  ? s.t('settings.server.modeLocal')
+                  : s.t('settings.server.modeRemote'),
+            ),
+            _InfoRow(s.t('settings.server.address'), state.serverUrl ?? '-'),
+            _InfoRow(s.t('settings.server.hostname'), info?.hostname ?? '-'),
+            _InfoRow(s.t('settings.server.model'), info?.model ?? '-'),
+            _InfoRow(
+              s.t('settings.server.tools'),
+              info?.tools.join(', ') ?? '-',
+            ),
+            _InfoRow(s.t('settings.server.workspace'), info?.workspace ?? '-'),
             // ★ 数据目录要显式给用户看：房间/会话/上传/附件都在这儿。
             //   它不能跟着安装目录跑，否则换个安装位置就变成“数据没了”。
-            _InfoRow('数据目录', info?.dataDir ?? '-'),
-            _InfoRow('版本', info?.version ?? '-'),
-            _InfoRow('设备名', state.deviceName),
+            _InfoRow(s.t('settings.server.dataDir'), info?.dataDir ?? '-'),
+            _InfoRow(s.t('settings.server.version'), info?.version ?? '-'),
+            _InfoRow(s.t('settings.server.deviceName'), state.deviceName),
             const SizedBox(height: 6),
             _UpdateRow(state: state),
           ],
@@ -472,24 +496,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   /// 标签页四：高级（通知与操作）
   List<Widget> get _advancedTab {
+    final s = L10n.s(context);
     final state = AppScope.read(context);
     return [
       // 「后台通知」是手机专属（前台服务 + 电池白名单），桌面端不显示
       if (isMobilePlatform) ...[
         const SizedBox(height: 22),
-        const _SectionTitle(
+        _SectionTitle(
           icon: LucideIcons.bellRing,
-          title: '后台通知',
-          subtitle: '锁屏也能收到机器人干完活的消息',
+          title: s.t('settings.notify.title'),
+          subtitle: s.t('settings.notify.subtitle'),
         ),
         _Card(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const _Hint(
-                '不走 FCM。App 会起一个低优先级的常驻通知保住连接，\n'
-                '机器人干完活时再单独推一条消息通知。',
-              ),
+              _Hint(s.t('settings.notify.hint')),
               const SizedBox(height: 14),
               SizedBox(
                 width: double.infinity,
@@ -497,13 +519,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   onPressed: () async {
                     await Notifier.init();
                     await Notifier.show(
-                      title: 'pi-bot 通知测试',
-                      body: '看到这条说明通知是通的 ✅',
+                      title: s.t('settings.notify.testTitle'),
+                      body: s.t('settings.notify.testBody'),
                       roomId: null,
                     );
                   },
                   icon: const Icon(LucideIcons.bellRing, size: 16),
-                  label: const Text('发一条测试通知'),
+                  label: Text(s.t('settings.notify.testButton')),
                 ),
               ),
               const SizedBox(height: 8),
@@ -512,13 +534,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 child: OutlinedButton.icon(
                   onPressed: () => Native.requestIgnoreBatteryOptimizations(),
                   icon: const Icon(LucideIcons.batteryCharging, size: 16),
-                  label: const Text('加入电池白名单'),
+                  label: Text(s.t('settings.notify.batteryButton')),
                 ),
               ),
               const SizedBox(height: 10),
-              const Text(
-                '国产 ROM 不加白名单的话，常驻服务也会被系统清掉，通知就收不到了。',
-                style: TextStyle(
+              Text(
+                s.t('settings.notify.romHint'),
+                style: const TextStyle(
                   fontSize: PB.fsXxs,
                   color: PB.textQuaternary,
                   height: 1.5,
@@ -530,7 +552,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ],
 
       const SizedBox(height: 22),
-      const _SectionTitle(icon: LucideIcons.slidersHorizontal, title: '操作'),
+      _SectionTitle(
+        icon: LucideIcons.languages,
+        title: s.t('settings.language'),
+      ),
+      const LanguageCard(),
+
+      const SizedBox(height: 22),
+      _SectionTitle(
+        icon: LucideIcons.slidersHorizontal,
+        title: s.t('settings.actions.title'),
+      ),
       _Card(
         child: Column(
           children: [
@@ -538,13 +570,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(LucideIcons.house, size: 20),
-                title: const Text(
-                  '回到本机直连',
-                  style: TextStyle(fontSize: PB.fsSm),
+                title: Text(
+                  s.t('settings.actions.reconnectLocal'),
+                  style: const TextStyle(fontSize: PB.fsSm),
                 ),
-                subtitle: const Text(
-                  '重新连 127.0.0.1:8787（桌面端就是宿主）',
-                  style: TextStyle(
+                subtitle: Text(
+                  s.t('settings.actions.reconnectLocalSubtitle'),
+                  style: const TextStyle(
                     fontSize: PB.fsXxs,
                     color: PB.textQuaternary,
                   ),
@@ -561,7 +593,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 color: PB.danger,
               ),
               title: Text(
-                isHostPlatform ? '切到别的服务端' : '断开重新配对',
+                isHostPlatform
+                    ? s.t('settings.actions.switchServer')
+                    : s.t('settings.actions.repair'),
                 style: const TextStyle(fontSize: PB.fsSm, color: PB.danger),
               ),
               onTap: () async {
@@ -589,17 +623,19 @@ class _SettingsTabs extends StatelessWidget {
   final int index;
   final ValueChanged<int> onChanged;
 
-  static const _items = <({IconData icon, String label})>[
-    (icon: LucideIcons.smartphone, label: '连接'),
-    (icon: LucideIcons.server, label: '服务端'),
-    (icon: LucideIcons.sparkles, label: '技能'),
-    (icon: LucideIcons.plug, label: '应用连接'),
-    (icon: LucideIcons.network, label: '系统'),
-    (icon: LucideIcons.slidersHorizontal, label: '高级'),
+  /// 标签图标与文案 key，顺序与 _SettingsScreenState._tab 一致。
+  static const _items = <({IconData icon, String labelKey})>[
+    (icon: LucideIcons.smartphone, labelKey: 'settings.tab.connect'),
+    (icon: LucideIcons.server, labelKey: 'settings.tab.server'),
+    (icon: LucideIcons.sparkles, labelKey: 'settings.tab.skills'),
+    (icon: LucideIcons.plug, labelKey: 'settings.tab.sites'),
+    (icon: LucideIcons.network, labelKey: 'settings.tab.system'),
+    (icon: LucideIcons.slidersHorizontal, labelKey: 'settings.tab.advanced'),
   ];
 
   @override
   Widget build(BuildContext context) {
+    final s = L10n.s(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 4, 14, 10),
       // 可横向滚动：手机或窄窗口下五个标签排不下时不会溢出（Row 会报 RenderFlex overflow）
@@ -611,7 +647,7 @@ class _SettingsTabs extends StatelessWidget {
               if (i > 0) const SizedBox(width: 6),
               _TabPill(
                 icon: _items[i].icon,
-                label: _items[i].label,
+                label: s.t(_items[i].labelKey),
                 selected: i == index,
                 onTap: () => onChanged(i),
               ),
@@ -792,13 +828,14 @@ class _UpdateRowState extends State<_UpdateRow> {
 
   Future<void> _check() async {
     if (_checking) return;
+    final s = L10n.s(context);
     setState(() => _checking = true);
     final info = await widget.state.checkUpdate(force: true);
     if (!mounted) return;
     setState(() => _checking = false);
 
     if (info == null) {
-      toast(context, '检查更新失败（服务端没连上或网络不通）');
+      toast(context, s.t('settings.update.failed'));
       return;
     }
     if (!info.ok) {
@@ -806,7 +843,7 @@ class _UpdateRowState extends State<_UpdateRow> {
       return;
     }
     if (!info.update) {
-      toast(context, '已经是最新版本（${info.current}）');
+      toast(context, s.tf('settings.update.latest', {'version': info.current}));
       return;
     }
     // 有新版本：走同一个提示流程，用户确认后下载
@@ -831,13 +868,17 @@ class _UpdateRowState extends State<_UpdateRow> {
       if (result.ok) {
         await showDownloadDoneDialog(context, path: result.path!, info: info);
       } else if (result.error != null && result.error != '已取消') {
-        toast(context, '下载失败：${result.error}');
+        toast(
+          context,
+          s.tf('settings.update.downloadFailed', {'error': result.error}),
+        );
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final s = L10n.s(context);
     return Row(
       children: [
         TextButton.icon(
@@ -849,7 +890,11 @@ class _UpdateRowState extends State<_UpdateRow> {
                   child: CircularProgressIndicator(strokeWidth: 1.6),
                 )
               : const Icon(Icons.refresh, size: 15),
-          label: Text(_checking ? '检查中…' : '检查更新'),
+          label: Text(
+            _checking
+                ? s.t('settings.update.checking')
+                : s.t('settings.update.check'),
+          ),
           style: TextButton.styleFrom(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
             minimumSize: Size.zero,

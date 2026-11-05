@@ -5,6 +5,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../app_state.dart';
 import '../bot_model_selection.dart';
+import '../l10n/l10n.dart';
 import '../model_selection_save.dart';
 import '../models.dart';
 import '../scope.dart';
@@ -193,23 +194,24 @@ class _BotRunSectionState extends State<BotRunSection> {
     final r = num(_reserve);
     final k = num(_keep);
     if (r == null && _reserve.text.trim().isNotEmpty) {
-      _toast('预留值要填数字（或者留空用默认）');
+      _toast(L10n.s(context).t('think.reserveMustBeNumber'));
       return;
     }
     if (k == null && _keep.text.trim().isNotEmpty) {
-      _toast('保留最近要填数字（或者留空用默认）');
+      _toast(L10n.s(context).t('think.keepMustBeNumber'));
       return;
     }
     await _patch({
       'reserveTokens': r,
       'keepRecentTokens': k,
-    }, msg: '上下文预算已保存，下一轮生效');
+    }, msg: L10n.s(context).t('think.budgetSaved'));
   }
 
   void _toast(String text) => toast(context, text);
 
   @override
   Widget build(BuildContext context) {
+    final strings = L10n.s(context);
     final bot = widget.bot;
     final thinking = bot.thinking ?? '';
     final modelSave = _modelSave!;
@@ -227,9 +229,9 @@ class _BotRunSectionState extends State<BotRunSection> {
               color: PB.textTertiary,
             ),
             const SizedBox(width: 6),
-            const Text(
-              '运行参数',
-              style: TextStyle(
+            Text(
+              strings.t('think.runSettings'),
+              style: const TextStyle(
                 fontSize: PB.fsXs,
                 fontWeight: FontWeight.w600,
                 color: PB.textSecondary,
@@ -237,7 +239,7 @@ class _BotRunSectionState extends State<BotRunSection> {
             ),
             const Spacer(),
             Text(
-              bot.isMain ? '主控' : bot.name,
+              bot.isMain ? strings.t('misc.mainBot') : bot.name,
               style: const TextStyle(
                 fontSize: PB.fsXs,
                 color: PB.textQuaternary,
@@ -261,8 +263,8 @@ class _BotRunSectionState extends State<BotRunSection> {
         // 模型
         ModelPickerField(
           controller: _model,
-          label: '模型（留空用默认）',
-          helperText: '选择即应用；手动输入后按回车应用',
+          label: strings.t('model.pickerLabel'),
+          helperText: strings.t('think.modelHelper'),
           enabled: !_saving,
           canCommit: () => mounted && identical(_modelSave, modelSave),
           onPicked: (_) => _modelDraft = true,
@@ -270,22 +272,22 @@ class _BotRunSectionState extends State<BotRunSection> {
         ),
         const SizedBox(height: 4),
         if (modelSave.saving)
-          const Text(
-            '正在切换模型…',
-            style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+          Text(
+            strings.t('think.switchingModel'),
+            style: const TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
           ),
         if (modelSave.failed)
           Row(
             children: [
-              const Expanded(
+              Expanded(
                 child: Text(
-                  '未能确认模型切换，请重试。',
-                  style: TextStyle(fontSize: PB.fsXs, color: PB.danger),
+                  strings.t('think.switchUnconfirmed'),
+                  style: const TextStyle(fontSize: PB.fsXs, color: PB.danger),
                 ),
               ),
               TextButton(
                 onPressed: () => unawaited(modelSave.retry()),
-                child: const Text('重试'),
+                child: Text(strings.t('common.retry')),
               ),
             ],
           ),
@@ -293,9 +295,9 @@ class _BotRunSectionState extends State<BotRunSection> {
             !modelSave.failed &&
             modelSave.hasSaved &&
             !_modelDraft)
-          const Text(
-            '模型已切换，下一轮使用',
-            style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+          Text(
+            strings.t('think.switchApplied'),
+            style: const TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
           ),
 
         // 思考等级：滑条（从关到 max 一档一档拖过去）
@@ -314,14 +316,14 @@ class _BotRunSectionState extends State<BotRunSection> {
         const SizedBox(height: 12),
 
         // 上下文预算
-        const Text(
-          '上下文预算',
-          style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+        Text(
+          strings.t('think.contextBudget'),
+          style: const TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
         ),
         const SizedBox(height: 4),
-        const Text(
-          '留空就用全局默认。改大 = 记得更多但更贵；改小 = 便宜但更容易忘事。',
-          style: TextStyle(
+        Text(
+          strings.t('think.budgetHint'),
+          style: const TextStyle(
             fontSize: PB.fsXxs,
             color: PB.textQuaternary,
             height: 1.5,
@@ -334,10 +336,10 @@ class _BotRunSectionState extends State<BotRunSection> {
               child: TextField(
                 controller: _reserve,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   isDense: true,
-                  labelText: '预留（给回复）',
-                  hintText: '默认',
+                  labelText: strings.t('think.reserveLabel'),
+                  hintText: strings.t('misc.default'),
                 ),
               ),
             ),
@@ -346,10 +348,10 @@ class _BotRunSectionState extends State<BotRunSection> {
               child: TextField(
                 controller: _keep,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   isDense: true,
-                  labelText: '保留最近',
-                  hintText: '默认',
+                  labelText: strings.t('think.keepRecentLabel'),
+                  hintText: strings.t('misc.default'),
                 ),
               ),
             ),
@@ -360,7 +362,10 @@ class _BotRunSectionState extends State<BotRunSection> {
           child: TextButton.icon(
             onPressed: saving ? null : _saveBudget,
             icon: const Icon(LucideIcons.check, size: 14),
-            label: const Text('保存预算', style: TextStyle(fontSize: PB.fsXs)),
+            label: Text(
+              strings.t('think.saveBudget'),
+              style: const TextStyle(fontSize: PB.fsXs),
+            ),
           ),
         ),
       ],

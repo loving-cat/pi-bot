@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../app_state.dart';
+import '../l10n/l10n.dart';
 import '../models.dart';
 import '../motion.dart';
 import '../scope.dart';
@@ -60,11 +61,15 @@ class _SkillsLibrarySectionState extends State<SkillsLibrarySection> {
         ? all
         : all.where((s) => s.matches(_query)).toList();
 
+    final strings = L10n.s(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // 用户在终端里装过的 skill，一键导进来（只读扫描，不改他的配置）
-        const LocalCapabilitiesSection(kind: 'skill', title: '技能'),
+        LocalCapabilitiesSection(
+          kind: 'skill',
+          title: strings.t('skills.title'),
+        ),
         _Toolbar(
           total: all.length,
           shown: list.length,
@@ -90,7 +95,7 @@ class _SkillsLibrarySectionState extends State<SkillsLibrarySection> {
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 24),
             child: Text(
-              '没有匹配「$_query」的技能',
+              strings.tf('skills.noMatch', {'query': _query}),
               style: const TextStyle(fontSize: PB.fsSm, color: PB.textTertiary),
             ),
           )
@@ -124,9 +129,12 @@ class _SkillsLibrarySectionState extends State<SkillsLibrarySection> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: PB.bgElevated,
-        title: const Text('删掉这条技能？', style: TextStyle(fontSize: PB.fsLg)),
+        title: Text(
+          L10n.s(ctx).t('skills.deleteTitle'),
+          style: const TextStyle(fontSize: PB.fsLg),
+        ),
         content: Text(
-          '「${skill.title}」会从库里移除。已经分给 bot 的那份不受影响。',
+          L10n.s(ctx).tf('skills.deleteBody', {'title': skill.title}),
           style: const TextStyle(
             fontSize: PB.fsSm,
             color: PB.textSecondary,
@@ -136,12 +144,12 @@ class _SkillsLibrarySectionState extends State<SkillsLibrarySection> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
+            child: Text(L10n.s(ctx).t('common.cancel')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: FilledButton.styleFrom(backgroundColor: PB.danger),
-            child: const Text('删掉'),
+            child: Text(L10n.s(ctx).t('common.delete')),
           ),
         ],
       ),
@@ -157,10 +165,13 @@ class _SkillsLibrarySectionState extends State<SkillsLibrarySection> {
     AppState state,
     LibrarySkill? skill,
   ) async {
+    final strings = L10n.s(context);
     final title = TextEditingController(text: skill?.title ?? '');
     final summary = TextEditingController(text: skill?.summary ?? '');
     final howto = TextEditingController(text: skill?.howto ?? '');
-    final tags = TextEditingController(text: (skill?.tags ?? []).join('、'));
+    final tags = TextEditingController(
+      text: (skill?.tags ?? []).join(strings.t('skills.listSeparator')),
+    );
     String? error;
 
     final saved = await showDialog<bool>(
@@ -169,7 +180,9 @@ class _SkillsLibrarySectionState extends State<SkillsLibrarySection> {
         builder: (ctx, setLocal) => AlertDialog(
           backgroundColor: PB.bgElevated,
           title: Text(
-            skill == null ? '新建技能' : '编辑技能',
+            strings.t(
+              skill == null ? 'skills.createTitle' : 'skills.editTitle',
+            ),
             style: const TextStyle(fontSize: PB.fsLg),
           ),
           content: SizedBox(
@@ -179,10 +192,9 @@ class _SkillsLibrarySectionState extends State<SkillsLibrarySection> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    '技能是给 bot 看的「做法」：什么时候用、具体怎么做。\n'
-                    '存进库之后，主控会按任务挑相关的几条交给干活的 bot。',
-                    style: TextStyle(
+                  Text(
+                    strings.t('skills.formIntro'),
+                    style: const TextStyle(
                       fontSize: PB.fsXs,
                       color: PB.textTertiary,
                       height: 1.6,
@@ -192,25 +204,25 @@ class _SkillsLibrarySectionState extends State<SkillsLibrarySection> {
                   TextField(
                     controller: title,
                     autofocus: true,
-                    decoration: const InputDecoration(
-                      labelText: '标题',
-                      hintText: '如：线上排查三步',
+                    decoration: InputDecoration(
+                      labelText: strings.t('skills.fieldTitle'),
+                      hintText: strings.t('skills.fieldTitleHint'),
                     ),
                   ),
                   const SizedBox(height: 10),
                   TextField(
                     controller: summary,
-                    decoration: const InputDecoration(
-                      labelText: '一句话说明（选填）',
-                      hintText: '如：线上出问题先走这个',
+                    decoration: InputDecoration(
+                      labelText: strings.t('skills.fieldSummary'),
+                      hintText: strings.t('skills.fieldSummaryHint'),
                     ),
                   ),
                   const SizedBox(height: 10),
                   TextField(
                     controller: tags,
-                    decoration: const InputDecoration(
-                      labelText: '标签（选填）',
-                      hintText: '用顿号或逗号分隔，如：运维、发版',
+                    decoration: InputDecoration(
+                      labelText: strings.t('skills.fieldTags'),
+                      hintText: strings.t('skills.fieldTagsHint'),
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -218,9 +230,9 @@ class _SkillsLibrarySectionState extends State<SkillsLibrarySection> {
                     controller: howto,
                     minLines: 6,
                     maxLines: 12,
-                    decoration: const InputDecoration(
-                      labelText: '具体怎么做',
-                      hintText: '1. 先看 server.log\n2. 再看 pid\n3. 看端口有没有被占',
+                    decoration: InputDecoration(
+                      labelText: strings.t('skills.fieldHowto'),
+                      hintText: strings.t('skills.fieldHowtoHint'),
                       alignLabelWithHint: true,
                     ),
                   ),
@@ -241,13 +253,13 @@ class _SkillsLibrarySectionState extends State<SkillsLibrarySection> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消'),
+              child: Text(strings.t('common.cancel')),
             ),
             FilledButton(
               onPressed: () async {
                 final t = title.text.trim();
                 if (t.isEmpty) {
-                  setLocal(() => error = '标题不能为空');
+                  setLocal(() => error = strings.t('skills.titleRequired'));
                   return;
                 }
                 final tagList = tags.text
@@ -275,7 +287,7 @@ class _SkillsLibrarySectionState extends State<SkillsLibrarySection> {
                 }
                 if (ctx.mounted) Navigator.pop(ctx, true);
               },
-              child: const Text('保存'),
+              child: Text(strings.t('common.save')),
             ),
           ],
         ),
@@ -286,7 +298,9 @@ class _SkillsLibrarySectionState extends State<SkillsLibrarySection> {
     summary.dispose();
     howto.dispose();
     tags.dispose();
-    if (saved == true && context.mounted) _toast(context, '已保存');
+    if (saved == true && context.mounted) {
+      _toast(context, strings.t('common.saved'));
+    }
   }
 
   /// 导入 SKILL.md：读文本 → 交给服务端解析（规则只有一份）
@@ -297,13 +311,19 @@ class _SkillsLibrarySectionState extends State<SkillsLibrarySection> {
 
     final res = await state.importSkillFiles(picked);
     if (!context.mounted) return;
+    final strings = L10n.s(context);
     final lines = <String>[];
-    if (res.imported > 0) lines.add('导入成功 ${res.imported} 条');
+    if (res.imported > 0) {
+      lines.add(strings.tf('skills.importedCount', {'n': res.imported}));
+    }
     if (res.skipped.isNotEmpty) {
-      lines.add('跳过 ${res.skipped.length} 条：');
+      lines.add(strings.tf('skills.skippedCount', {'n': res.skipped.length}));
       lines.addAll(res.skipped.take(6));
     }
-    _toast(context, lines.isEmpty ? '没有可导入的内容' : lines.join('\n'));
+    _toast(
+      context,
+      lines.isEmpty ? strings.t('skills.nothingToImport') : lines.join('\n'),
+    );
   }
 }
 
@@ -351,6 +371,7 @@ class _Toolbar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final strings = L10n.s(context);
     return Row(
       children: [
         Expanded(
@@ -363,7 +384,9 @@ class _Toolbar extends StatelessWidget {
                 isDense: true,
                 prefixIcon: const Icon(LucideIcons.search, size: 15),
                 prefixIconConstraints: const BoxConstraints(minWidth: 32),
-                hintText: total == 0 ? '技能库是空的' : '搜标题 / 标签 / 内容（共 $total 条）',
+                hintText: total == 0
+                    ? strings.t('skills.searchEmptyHint')
+                    : strings.tf('skills.searchHint', {'n': total}),
                 hintStyle: const TextStyle(
                   fontSize: PB.fsXs,
                   color: PB.textQuaternary,
@@ -376,14 +399,14 @@ class _Toolbar extends StatelessWidget {
         const SizedBox(width: 8),
         _SmallButton(
           icon: LucideIcons.upload,
-          label: '导入',
+          label: strings.t('skills.import'),
           onTap: onImport,
-          tooltip: '导入 SKILL.md（可多选）',
+          tooltip: strings.t('skills.importTooltip'),
         ),
         const SizedBox(width: 6),
         _SmallButton(
           icon: LucideIcons.plus,
-          label: '新建',
+          label: strings.t('skills.new'),
           onTap: onAdd,
           filled: true,
         ),
@@ -442,6 +465,7 @@ class _EmptyHint extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final strings = L10n.s(context);
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(vertical: 34, horizontal: 20),
@@ -454,17 +478,15 @@ class _EmptyHint extends StatelessWidget {
         children: [
           const Icon(LucideIcons.sparkles, size: 26, color: PB.textQuaternary),
           const SizedBox(height: 12),
-          const Text(
-            '还没有技能',
-            style: TextStyle(fontSize: PB.fsSm, color: PB.textSecondary),
+          Text(
+            strings.t('skills.empty'),
+            style: const TextStyle(fontSize: PB.fsSm, color: PB.textSecondary),
           ),
           const SizedBox(height: 6),
-          const Text(
-            '技能是一套做法：什么时候用、具体怎么做。\n'
-            '存进来之后，主控会按任务挑相关的交给干活的 bot。\n'
-            '也可以直接导入现成的 SKILL.md 文件。',
+          Text(
+            strings.t('skills.emptyBody'),
             textAlign: TextAlign.center,
-            style: TextStyle(
+            style: const TextStyle(
               fontSize: PB.fsXs,
               color: PB.textTertiary,
               height: 1.7,
@@ -474,7 +496,10 @@ class _EmptyHint extends StatelessWidget {
           FilledButton.icon(
             onPressed: onAdd,
             icon: const Icon(LucideIcons.plus, size: 15),
-            label: const Text('建第一条', style: TextStyle(fontSize: PB.fsXs)),
+            label: Text(
+              strings.t('skills.createFirst'),
+              style: const TextStyle(fontSize: PB.fsXs),
+            ),
             style: FilledButton.styleFrom(minimumSize: const Size(0, 34)),
           ),
         ],
@@ -508,6 +533,7 @@ class _SkillCardState extends State<_SkillCard> {
 
   @override
   Widget build(BuildContext context) {
+    final strings = L10n.s(context);
     final s = widget.skill;
     return MouseRegion(
       onEnter: (_) => setState(() => _hover = true),
@@ -594,12 +620,12 @@ class _SkillCardState extends State<_SkillCard> {
                     if (_hover || _open) ...[
                       _IconBtn(
                         icon: LucideIcons.pencil,
-                        tooltip: '编辑',
+                        tooltip: strings.t('common.edit'),
                         onTap: widget.onEdit,
                       ),
                       _IconBtn(
                         icon: LucideIcons.trash2,
-                        tooltip: '删除',
+                        tooltip: strings.t('common.delete'),
                         onTap: widget.onDelete,
                         danger: true,
                       ),
@@ -624,9 +650,9 @@ class _SkillCardState extends State<_SkillCard> {
                 //   SKILL.md 里全是 `#` 标题、列表、```代码块```、表格 ——
                 //   原样显示就是一坨符号，既难读也看不出结构。
                 child: s.howto.isEmpty
-                    ? const SelectableText(
-                        '（还没写做法）',
-                        style: TextStyle(
+                    ? SelectableText(
+                        strings.t('skills.noHowto'),
+                        style: const TextStyle(
                           fontSize: PB.fsXs,
                           color: PB.textQuaternary,
                           height: 1.7,

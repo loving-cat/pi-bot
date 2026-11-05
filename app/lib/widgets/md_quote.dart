@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../l10n/l10n.dart';
 import '../theme.dart';
 import 'toast.dart';
 
@@ -47,12 +48,13 @@ class _MarkdownQuoteState extends State<MarkdownQuote> {
       if (!mounted) return;
       _reset?.cancel();
       setState(() => _copied = text == widget.text);
-      toast(context, '引用已复制', kind: ToastKind.success);
+      toast(context, L10n.s(context).t('copy.quote'), kind: ToastKind.success);
       _reset = Timer(const Duration(seconds: 2), () {
         if (mounted) setState(() => _copied = false);
       });
     } catch (_) {
-      if (mounted) toast(context, '复制失败，请重试', kind: ToastKind.error);
+      if (mounted)
+        toast(context, L10n.s(context).t('copy.failed'), kind: ToastKind.error);
     } finally {
       _copying = false;
     }
@@ -74,7 +76,8 @@ class _MarkdownQuoteState extends State<MarkdownQuote> {
           const SizedBox(width: 6),
           SelectionContainer.disabled(
             child: IconButton(
-              tooltip: _copied ? '已复制引用' : '复制引用',
+              tooltip: L10n.s(context)
+                  .t(_copied ? 'copy.quoteCopied' : 'copy.copyQuote'),
               visualDensity: VisualDensity.compact,
               constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
               padding: const EdgeInsets.all(5),

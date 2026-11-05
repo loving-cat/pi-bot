@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../l10n/l10n.dart';
 import '../models.dart';
 import '../theme.dart';
 
@@ -23,13 +24,16 @@ class _ChangedFilesViewState extends State<ChangedFilesView> {
 
   @override
   Widget build(BuildContext context) {
+    final strings = L10n.s(context);
     final s = widget.summary;
     if (s.isEmpty) return const SizedBox.shrink();
 
     final parts = <String>[
-      if (s.added.isNotEmpty) '新增 ${s.added.length}',
-      if (s.modified.isNotEmpty) '修改 ${s.modified.length}',
-      if (s.removed.isNotEmpty) '删除 ${s.removed.length}',
+      if (s.added.isNotEmpty) strings.tf('files.added', {'n': s.added.length}),
+      if (s.modified.isNotEmpty)
+        strings.tf('files.modified', {'n': s.modified.length}),
+      if (s.removed.isNotEmpty)
+        strings.tf('files.removed', {'n': s.removed.length}),
     ];
 
     final rows = <(String, ChangedFile)>[
@@ -65,7 +69,7 @@ class _ChangedFilesViewState extends State<ChangedFilesView> {
                     ),
                     const SizedBox(width: 5),
                     Text(
-                      '改动 ${s.total} 个文件',
+                      strings.tf('files.total', {'n': s.total}),
                       style: const TextStyle(
                         fontSize: PB.fsXxs,
                         fontWeight: FontWeight.w600,
@@ -76,7 +80,11 @@ class _ChangedFilesViewState extends State<ChangedFilesView> {
                     const SizedBox(width: 6),
                     Flexible(
                       child: Text(
-                        _open ? parts.join(' · ') : '${parts.join(' · ')} · 点开看',
+                        _open
+                            ? parts.join(' · ')
+                            : strings.tf('files.openHint', {
+                                'summary': parts.join(' · '),
+                              }),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -140,8 +148,10 @@ class _ChangedFilesViewState extends State<ChangedFilesView> {
                 Padding(
                   padding: const EdgeInsets.fromLTRB(10, 0, 10, 4),
                   child: Text(
-                    '还有 ${rows.length - shown.length} 个'
-                    '${s.truncated ? '（本次改动过多，只统计了一部分）' : ''}',
+                    strings.tf('files.more', {
+                          'n': rows.length - shown.length,
+                        }) +
+                        (s.truncated ? strings.t('files.truncated') : ''),
                     style: const TextStyle(
                       fontSize: PB.fsXxs,
                       color: PB.textQuaternary,

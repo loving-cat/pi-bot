@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../l10n/l10n.dart';
 import '../models.dart';
 import '../motion.dart';
 import '../scope.dart';
@@ -21,6 +22,7 @@ class MsgRefChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (refs.isEmpty) return const SizedBox.shrink();
+    final strings = L10n.s(context);
     final state = AppScope.of(context);
     // 仅汇总带计数的引用；全部缺失时省略数量。
     final counts = refs.map((r) => r.count).whereType<int>().toList();
@@ -39,7 +41,7 @@ class MsgRefChip extends StatelessWidget {
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
             child: ConversationPeople(
-              prefix: '已发消息给',
+              prefix: strings.t('ref.sentTo'),
               people: [
                 for (final ref in refs)
                   (
@@ -47,7 +49,9 @@ class MsgRefChip extends StatelessWidget {
                     name: state.botById(ref.botId)?.name ?? 'bot',
                   ),
               ],
-              suffix: totals == null ? '' : '$totals 条往来',
+              suffix: totals == null
+                  ? ''
+                  : strings.tf('ref.totals', {'n': totals}),
             ),
           ),
         ),
@@ -207,14 +211,14 @@ class _PeekLayerState extends State<_PeekLayer>
                       pressColor: PB.bgActive,
                       borderRadius: BorderRadius.circular(PB.rFull),
                       onTap: widget.onClose,
-                      child: const Padding(
-                        padding: EdgeInsets.symmetric(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
                           horizontal: 20,
                           vertical: 8,
                         ),
                         child: Text(
-                          '关闭聊天',
-                          style: TextStyle(
+                          L10n.s(context).t('ref.closeChat'),
+                          style: const TextStyle(
                             fontSize: PB.fsSm,
                             color: PB.textSecondary,
                           ),
@@ -233,6 +237,7 @@ class _PeekLayerState extends State<_PeekLayer>
 
   /// 顶部：谁 ⇄ 谁（单个私聊）；多个则显示"已发消息给 N 个 Bot"
   Widget _header() {
+    final strings = L10n.s(context);
     final refs = widget.refs;
     final single = refs.length == 1;
 
@@ -288,7 +293,7 @@ class _PeekLayerState extends State<_PeekLayer>
                     ],
                   )
                 : Text(
-                    '已发消息给 ${refs.length} 个 Bot',
+                    strings.tf('ref.sentToBots', {'n': refs.length}),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -301,12 +306,12 @@ class _PeekLayerState extends State<_PeekLayer>
           // 保留"直接打开这个会话"的出口（查看器是只读的）
           HoverIconButton(
             icon: LucideIcons.squareArrowOutUpRight,
-            tooltip: '打开这个对话',
+            tooltip: strings.t('ref.openChat'),
             onTap: () => widget.onOpenRoom(refs.first.roomId),
           ),
           HoverIconButton(
             icon: LucideIcons.x,
-            tooltip: '关闭',
+            tooltip: strings.t('common.close'),
             onTap: widget.onClose,
           ),
         ],
@@ -351,11 +356,11 @@ class _PeekLayerState extends State<_PeekLayer>
           ),
         ),
       if (msgs.isEmpty)
-        const Padding(
-          padding: EdgeInsets.symmetric(vertical: 16),
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16),
           child: Text(
-            '（还没有内容）',
-            style: TextStyle(fontSize: PB.fsXs, color: PB.textQuaternary),
+            L10n.s(context).t('ref.empty'),
+            style: const TextStyle(fontSize: PB.fsXs, color: PB.textQuaternary),
           ),
         )
       else
@@ -368,7 +373,7 @@ class _PeekLayerState extends State<_PeekLayer>
   Widget _message(Msg m) {
     final authorId = m.isUser ? 'me' : (m.authorId ?? m.authorName);
     final name = m.isUser
-        ? '我'
+        ? L10n.s(context).t('ref.me')
         : (m.authorName.isEmpty ? widget.botNameOf(authorId) : m.authorName);
 
     return Padding(

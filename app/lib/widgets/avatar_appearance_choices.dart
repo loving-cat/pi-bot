@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../avatar_appearance.dart';
+import '../l10n/l10n.dart';
 import '../theme.dart';
 import 'avatar_character.dart';
 import 'blob_avatar.dart';
@@ -16,7 +17,8 @@ const avatarColorPresets = [
   '#8C939B',
 ];
 
-const avatarShapeNames = ['豆豆', '软方', '圆石', '胶囊', '云朵', '圆角三角', '六边形', '圆蛋'];
+// 轮廓名字由词表提供（L10n.s(context).avatarShapeNames），
+// 这里不再保留第二份中文常量，避免两处名字漂移。
 
 /// 共用颜色选择器；预设立即回传，自定义输入仅回传完整合法颜色。
 class AvatarColorChoices extends StatefulWidget {
@@ -76,7 +78,7 @@ class _AvatarColorChoicesState extends State<AvatarColorChoices> {
         parseAvatarColor(value) != null ||
         (widget.allowEmptyDefault && value.isEmpty);
     setState(() {
-      _error = valid ? null : '请输入完整的 #RRGGBB';
+      _error = valid ? null : L10n.s(context).t('avatar.invalidHex');
     });
     widget.onValidityChanged?.call(valid);
     if (valid) {
@@ -100,9 +102,13 @@ class _AvatarColorChoicesState extends State<AvatarColorChoices> {
               Semantics(
                 button: true,
                 selected: selected == hex,
-                label: '颜色 $hex',
+                label:
+                    L10n.s(context).avatarColorName(hex) ??
+                    L10n.s(context).t('avatar.colorCustom'),
                 child: Tooltip(
-                  message: hex,
+                  message:
+                      L10n.s(context).avatarColorName(hex) ??
+                      L10n.s(context).t('avatar.colorCustom'),
                   child: InkWell(
                     key: ValueKey('avatar-color-$hex'),
                     onTap: () => _choose(hex),
@@ -136,7 +142,9 @@ class _AvatarColorChoicesState extends State<AvatarColorChoices> {
           autocorrect: false,
           enableSuggestions: false,
           decoration: InputDecoration(
-            labelText: widget.allowEmptyDefault ? '自定义颜色（留空默认）' : '自定义颜色',
+            labelText: widget.allowEmptyDefault
+                ? '${L10n.s(context).t('avatar.customColor')}（${L10n.s(context).t('avatar.colorDefault')}）'
+                : L10n.s(context).t('avatar.customColor'),
             hintText: '#RRGGBB',
             errorText: _error,
             counterText: '',
@@ -171,7 +179,7 @@ class AvatarShapeChoices extends StatelessWidget {
       children: [
         ChoiceChip(
           key: const ValueKey('avatar-shape-default'),
-          label: const Text('默认轮廓'),
+          label: Text(L10n.s(context).t('avatar.shapeDefault')),
           selected: selected == null,
           onSelected: (_) => onChanged(null),
         ),
@@ -187,7 +195,7 @@ class AvatarShapeChoices extends StatelessWidget {
               animate: false,
               followPointer: false,
             ),
-            label: Text(avatarShapeNames[i]),
+            label: Text(L10n.s(context).avatarShapeNames[i]),
             selected: selected == i,
             onSelected: (_) => onChanged(i),
           ),

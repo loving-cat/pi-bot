@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../l10n/l10n.dart';
 import '../models.dart';
 import '../ime_guard.dart';
 import '../theme.dart';
@@ -160,7 +161,7 @@ class _AskCardState extends State<AskCard> with SingleTickerProviderStateMixin {
                   ),
                   const SizedBox(width: 7),
                   Text(
-                    '${msg.authorName} 问你',
+                    L10n.s(context).tf('ask.asksYou', {'name': msg.authorName}),
                     style: TextStyle(
                       fontSize: PB.fsXxs,
                       color: PB.colors(context).link,
@@ -235,7 +236,9 @@ class _CollapsedAsk extends StatelessWidget {
           const SizedBox(width: 6),
           Flexible(
             child: Text(
-              answer.isEmpty ? '已回答：$question' : '已回答：$answer',
+              L10n.s(context).tf('ask.answered', {
+                'answer': answer.isEmpty ? question : answer,
+              }),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
@@ -408,7 +411,7 @@ class _CustomAnswerState extends State<_CustomAnswer> {
             onSubmitted: submitUnlessComposing(_c, _send),
             style: const TextStyle(fontSize: PB.fsSm),
             decoration: InputDecoration(
-              hintText: '或者我自己说一句…',
+              hintText: L10n.s(context).t('ask.customHint'),
               hintStyle: const TextStyle(
                 fontSize: PB.fsSm,
                 color: PB.textQuaternary,
@@ -427,7 +430,7 @@ class _CustomAnswerState extends State<_CustomAnswer> {
         ),
         const SizedBox(width: 8),
         IconButton(
-          tooltip: '发出去',
+          tooltip: L10n.s(context).t('ask.send'),
           onPressed: _send,
           icon: const Icon(LucideIcons.send, size: 17),
         ),

@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../l10n/l10n.dart';
 import '../models.dart';
 import '../scope.dart';
 import '../theme.dart';
@@ -40,9 +41,9 @@ class ContextChip extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 6),
-            const Text(
-              '压缩中',
-              style: TextStyle(fontSize: PB.fsXxs, color: PB.warn),
+            Text(
+              L10n.s(context).t('ctx.compacting'),
+              style: const TextStyle(fontSize: PB.fsXxs, color: PB.warn),
             ),
           ],
         ),
@@ -60,7 +61,7 @@ class ContextChip extends StatelessWidget {
         : PB.textTertiary;
 
     return Tooltip(
-      message: '点了看细节',
+      message: L10n.s(context).t('ctx.clickHint'),
       waitDuration: const Duration(milliseconds: 700),
       child: InkWell(
         borderRadius: BorderRadius.circular(PB.rFull),
@@ -92,6 +93,7 @@ class ContextChip extends StatelessWidget {
   }
 
   Future<void> _detail(BuildContext context, ContextInfo info) async {
+    final strings = L10n.s(context);
     final tokens = info.tokens ?? 0;
     final window = info.contextWindow ?? 0;
     String k(int n) => n >= 1000 ? '${(n / 1000).round()}k' : '$n';
@@ -100,25 +102,24 @@ class ContextChip extends StatelessWidget {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: PB.bgElevated,
-        title: const Text('上下文', style: TextStyle(fontSize: PB.fsLg)),
+        title: Text(
+          strings.t('ctx.title'),
+          style: const TextStyle(fontSize: PB.fsLg),
+        ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _row(
-              '已占用',
+              strings.t('ctx.used'),
               '${k(tokens)} / ${k(window)}  （${(info.percent ?? 0).round()}%）',
             ),
             const SizedBox(height: 6),
-            _row(
-              '自动压缩',
-              '开 —— 用到接近上限时，pi 会把前面的对话总结掉，'
-                  '然后接着干（历史消息还在，只是不再进上下文）',
-            ),
+            _row(strings.t('ctx.autoCompact'), strings.t('ctx.autoCompactOn')),
             const SizedBox(height: 10),
-            const Text(
-              '压缩时头部会显示「压缩中」。想让它装得更多，可以给这个 bot 单独调预算。',
-              style: TextStyle(
+            Text(
+              strings.t('ctx.compactNote'),
+              style: const TextStyle(
                 fontSize: PB.fsXxs,
                 color: PB.textQuaternary,
                 height: 1.5,
@@ -129,7 +130,7 @@ class ContextChip extends StatelessWidget {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('好'),
+            child: Text(strings.t('common.ok')),
           ),
         ],
       ),
@@ -212,6 +213,7 @@ class CompactNotice extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final strings = L10n.s(context);
     final meta = msg.meta ?? const {};
     final before = (meta['tokensBefore'] as num?)?.toInt();
     final saved = (meta['saved'] as num?)?.toInt();
@@ -237,11 +239,16 @@ class CompactNotice extends StatelessWidget {
               const SizedBox(width: 7),
               Flexible(
                 child: Text(
-                  before != null
-                      ? '上下文压缩了：${before ~/ 1000}k'
-                            '${saved != null && saved > 0 ? ' → 省下 ${saved ~/ 1000}k' : ''}'
-                            '（前面的对话已总结）'
-                      : '上下文压缩了（前面的对话已总结）',
+                  before == null
+                      ? strings.t('ctx.compacted')
+                      : (saved != null && saved > 0
+                            ? strings.tf('ctx.compactedSaved', {
+                                'before': before ~/ 1000,
+                                'saved': saved ~/ 1000,
+                              })
+                            : strings.tf('ctx.compactedFrom', {
+                                'before': before ~/ 1000,
+                              })),
                   style: const TextStyle(
                     fontSize: PB.fsXxs,
                     color: PB.textTertiary,

@@ -3,6 +3,7 @@ import 'package:http/http.dart' as http;
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../attachment_external_open.dart';
+import '../l10n/l10n.dart';
 import '../attachment_preview_request.dart';
 import '../models.dart';
 import '../save_file.dart';
@@ -15,12 +16,12 @@ Future<void> openAttachmentExternally(
   required Attachment file,
   required String url,
 }) async {
-  toast(context, '正在打开 ${file.name}…');
+  toast(context, L10n.s(context).tf('attach.opening', {'name': file.name}));
   final error = await openAttachmentFile(name: file.name, url: url);
   if (!context.mounted) return;
   toast(
     context,
-    error ?? '已交给系统程序',
+    error ?? L10n.s(context).t('attach.openedSystem'),
     kind: error == null ? ToastKind.success : ToastKind.error,
   );
 }
@@ -31,7 +32,7 @@ Future<void> downloadAttachment(
   required Attachment file,
   required String url,
 }) async {
-  toast(context, '正在下载 ${file.name}…');
+  toast(context, L10n.s(context).tf('attach.downloading', {'name': file.name}));
   try {
     final response = await http
         .get(Uri.parse(url))
@@ -44,10 +45,18 @@ Future<void> downloadAttachment(
       bytes: response.bodyBytes,
     );
     if (path == null || !context.mounted) return;
-    toast(context, '已保存到 $path', kind: ToastKind.success);
+    toast(
+      context,
+      L10n.s(context).tf('attach.savedTo', {'path': path}),
+      kind: ToastKind.success,
+    );
   } catch (_) {
     if (context.mounted)
-      toast(context, '下载失败，请检查连接或保存位置后重试。', kind: ToastKind.error);
+      toast(
+        context,
+        L10n.s(context).t('attach.downloadError'),
+        kind: ToastKind.error,
+      );
   }
 }
 
@@ -109,7 +118,7 @@ class _AttachmentActionButtonsState extends State<AttachmentActionButtons> {
           mainAxisSize: MainAxisSize.min,
           children: [
             IconButton(
-              tooltip: '下载',
+              tooltip: L10n.s(context).t('common.download'),
               visualDensity: VisualDensity.compact,
               constraints: const BoxConstraints.tightFor(width: 28, height: 28),
               style: const ButtonStyle(
@@ -124,7 +133,7 @@ class _AttachmentActionButtonsState extends State<AttachmentActionButtons> {
               ),
             ),
             IconButton(
-              tooltip: '用系统应用打开',
+              tooltip: L10n.s(context).t('attach.openWithSystem'),
               visualDensity: VisualDensity.compact,
               constraints: const BoxConstraints.tightFor(width: 28, height: 28),
               style: const ButtonStyle(

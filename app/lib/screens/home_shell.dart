@@ -10,6 +10,8 @@ import '../desktop_pane_layout.dart';
 import '../models.dart';
 import '../scope.dart';
 import '../theme.dart';
+import '../l10n/l10n.dart';
+import '../window_chrome.dart';
 import '../widgets/browser_pane.dart';
 import '../widgets/attachment_preview_scope.dart';
 import '../widgets/attachment_preview_surface.dart';
@@ -134,10 +136,15 @@ class _HomeShellState extends State<HomeShell> {
                 RepaintBoundary(
                   child: SizedBox(
                     width: layout.leftWidth,
-                    child: RoomsScreen(
-                      embedded: true,
-                      selectedId: selected?.id,
-                      onSelect: (room) => setState(() => _selectedId = room.id),
+                    child: WindowChromeRegion(
+                      leading: true,
+                      trailing: false,
+                      child: RoomsScreen(
+                        embedded: true,
+                        selectedId: selected?.id,
+                        onSelect: (room) =>
+                            setState(() => _selectedId = room.id),
+                      ),
                     ),
                   ),
                 ),
@@ -159,13 +166,20 @@ class _HomeShellState extends State<HomeShell> {
                   onDragEnd: () => state.saveLayoutWidths(left: _leftWidth),
                 ),
                 Expanded(
-                  child: selected == null
-                      ? const _NoSelection()
-                      : ChatScreen(
-                          key: ValueKey(selected.id),
-                          room: selected,
-                          embedded: true,
-                        ),
+                  child: WindowChromeRegion(
+                    leading: false,
+                    trailing:
+                        !layout.hasOverlay &&
+                        layout.panelWidth == 0 &&
+                        layout.browserWidth == 0,
+                    child: selected == null
+                        ? const _NoSelection()
+                        : ChatScreen(
+                            key: ValueKey(selected.id),
+                            room: selected,
+                            embedded: true,
+                          ),
+                  ),
                 ),
                 if (layout.panelWidth > 0) ...[
                   _DragHandle(
@@ -184,6 +198,7 @@ class _HomeShellState extends State<HomeShell> {
                     selected,
                     PaneKind.roomPanel,
                     layout.panelWidth,
+                    trailing: !layout.hasOverlay && layout.browserWidth == 0,
                   ),
                 ],
                 if (layout.browserWidth > 0) ...[
@@ -204,6 +219,7 @@ class _HomeShellState extends State<HomeShell> {
                     selected,
                     PaneKind.browser,
                     layout.browserWidth,
+                    trailing: !layout.hasOverlay,
                   ),
                 ],
               ],
@@ -213,7 +229,9 @@ class _HomeShellState extends State<HomeShell> {
                 color: Colors.black38,
                 dismissible: !layout.pairedOverlay,
                 onDismiss: layout.pairedOverlay ? null : closeOverlay,
-                semanticsLabel: layout.pairedOverlay ? null : '关闭右侧面板',
+                semanticsLabel: layout.pairedOverlay
+                    ? null
+                    : L10n.s(context).t('shell.closePane'),
               ),
               Positioned(
                 top: 0,
@@ -233,6 +251,10 @@ class _HomeShellState extends State<HomeShell> {
                             selected,
                             PaneKind.browser,
                             layout.overlayBrowserWidth,
+                            leading:
+                                width - layout.overlayWidth <
+                                windowChromeControlsReserve,
+                            trailing: layout.overlayPanelWidth == 0,
                           ),
                         ),
                       if (layout.pairedOverlay)
@@ -248,6 +270,10 @@ class _HomeShellState extends State<HomeShell> {
                             selected,
                             PaneKind.roomPanel,
                             layout.overlayPanelWidth,
+                            leading:
+                                width - layout.overlayPanelWidth <
+                                windowChromeControlsReserve,
+                            trailing: true,
                           ),
                         ),
                     ],
@@ -294,8 +320,9 @@ class _HomeShellState extends State<HomeShell> {
     AppState state,
     Room? room,
     PaneKind kind,
-    double width,
-  ) => TweenAnimationBuilder<double>(
+    double width, {
+    bool trailing = false,
+  }) => TweenAnimationBuilder<double>(
     key: ValueKey(kind),
     duration: const Duration(milliseconds: 240),
     curve: Curves.easeOutCubic,
@@ -311,19 +338,29 @@ class _HomeShellState extends State<HomeShell> {
         ),
       ),
     ),
-    child: _pane(state, room, kind, width),
+    child: _pane(state, room, kind, width, trailing: trailing),
   );
 
-  Widget _pane(AppState state, Room? room, PaneKind kind, double width) =>
-      Listener(
-        onPointerDown: (_) => state.browser.activity.touched(kind),
-        onPointerSignal: (_) => state.browser.activity.touched(kind),
-        child: RepaintBoundary(
-          child: kind == PaneKind.browser
-              ? BrowserPane(state: state.browser, width: width)
-              : RoomPanel(room: room!, width: width),
-        ),
-      );
+  Widget _pane(
+    AppState state,
+    Room? room,
+    PaneKind kind,
+    double width, {
+    bool leading = false,
+    bool trailing = false,
+  }) => WindowChromeRegion(
+    leading: leading,
+    trailing: trailing,
+    child: Listener(
+      onPointerDown: (_) => state.browser.activity.touched(kind),
+      onPointerSignal: (_) => state.browser.activity.touched(kind),
+      child: RepaintBoundary(
+        child: kind == PaneKind.browser
+            ? BrowserPane(state: state.browser, width: width)
+            : RoomPanel(room: room!, width: width),
+      ),
+    ),
+  );
 }
 
 class _NoSelection extends StatelessWidget {
@@ -334,14 +371,18 @@ class _NoSelection extends StatelessWidget {
     return Container(
       color: PB.bgPane,
       alignment: Alignment.center,
-      child: const Column(
+      child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(LucideIcons.messageSquare, size: 36, color: PB.textQuaternary),
-          SizedBox(height: 14),
+          const Icon(
+            LucideIcons.messageSquare,
+            size: 36,
+            color: PB.textQuaternary,
+          ),
+          const SizedBox(height: 14),
           Text(
-            '左边选一个会话',
-            style: TextStyle(fontSize: PB.fsSm, color: PB.textTertiary),
+            L10n.s(context).t('shell.noSelection'),
+            style: const TextStyle(fontSize: PB.fsSm, color: PB.textTertiary),
           ),
         ],
       ),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../l10n/l10n.dart';
 import '../scope.dart';
 import '../theme.dart';
 
@@ -13,7 +14,7 @@ class ModelPickerField extends StatelessWidget {
   const ModelPickerField({
     super.key,
     required this.controller,
-    this.label = '模型（留空用默认）',
+    this.label,
     this.onPicked,
     this.onCommitted,
     this.enabled = true,
@@ -22,7 +23,9 @@ class ModelPickerField extends StatelessWidget {
   });
 
   final TextEditingController controller;
-  final String label;
+
+  /// 输入框标签；为空时用词表里的默认文案。
+  final String? label;
 
   /// 选完/手改后通知调用方重建 —— 思考等级区域要跟着模型变。
   final ValueChanged<String>? onPicked;
@@ -37,16 +40,17 @@ class ModelPickerField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final strings = L10n.s(context);
     return TextField(
       controller: controller,
       enabled: enabled,
       decoration: InputDecoration(
-        labelText: label,
+        labelText: label ?? strings.t('model.pickerLabel'),
         hintText: 'provider/model-id',
         helperText: helperText,
         helperMaxLines: 2,
         suffixIcon: IconButton(
-          tooltip: '从列表里选',
+          tooltip: strings.t('model.pickFromList'),
           icon: const Icon(LucideIcons.list, size: 18),
           onPressed: enabled ? () => _pick(context) : null,
         ),
@@ -59,6 +63,7 @@ class ModelPickerField extends StatelessWidget {
   }
 
   Future<void> _pick(BuildContext context) async {
+    final strings = L10n.s(context);
     final state = AppScope.read(context);
     final groups = state.modelGroups.where((group) => group.enabled).toList();
 
@@ -66,7 +71,10 @@ class ModelPickerField extends StatelessWidget {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: PB.bgElevated,
-        title: const Text('选一个模型', style: TextStyle(fontSize: PB.fsLg)),
+        title: Text(
+          strings.t('model.pickTitle'),
+          style: const TextStyle(fontSize: PB.fsLg),
+        ),
         content: SizedBox(
           width: 460,
           child: SingleChildScrollView(
@@ -75,9 +83,9 @@ class ModelPickerField extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (groups.isEmpty)
-                  const Text(
-                    '还没有可用的模型组。\n请到「设置 → 模型组」添加或启用模型组。',
-                    style: TextStyle(
+                  Text(
+                    strings.t('model.emptyGroups'),
+                    style: const TextStyle(
                       fontSize: PB.fsXs,
                       color: PB.textQuaternary,
                       height: 1.7,
@@ -110,8 +118,13 @@ class ModelPickerField extends StatelessWidget {
                         subtitle: Text(
                           [
                             if (m.contextWindow > 0)
-                              '${(m.contextWindow / 1000).round()}k 上下文',
-                            if (m.maxTokens > 0) '最多出 ${m.maxTokens}',
+                              strings.tf('model.contextShort', {
+                                'n': (m.contextWindow / 1000).round(),
+                              }),
+                            if (m.maxTokens > 0)
+                              strings.tf('model.maxOutputShort', {
+                                'n': m.maxTokens,
+                              }),
                           ].join(' · '),
                           style: const TextStyle(
                             fontSize: PB.fsXxs,
@@ -128,7 +141,7 @@ class ModelPickerField extends StatelessWidget {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('取消'),
+            child: Text(strings.t('common.cancel')),
           ),
         ],
       ),

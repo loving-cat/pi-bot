@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../l10n/l10n.dart';
 import '../models.dart';
 import '../theme.dart';
 
@@ -26,11 +27,15 @@ class _ApprovalCardState extends State<ApprovalCard> {
 
   @override
   Widget build(BuildContext context) {
+    final strings = L10n.s(context);
     final decision = widget.msg.approvalDecision;
     final decided = decision != null && decision.isNotEmpty;
     final approved = decision == 'approved' || decision == 'consumed';
-    final summary =
-        widget.msg.approvalSummary ?? widget.msg.text.replaceFirst(' 想执行：', '');
+    // 优先用服务端下发的结构化摘要；完全没有时才退回正文。
+    //
+    // 不按中文前缀"想执行："去剥离：界面语言可切到英文，而服务端正文
+    // 由服务端语言决定，靠字符串匹配会在另一侧失效。
+    final summary = widget.msg.approvalSummary ?? widget.msg.text;
     final tool = widget.msg.approvalTool ?? '';
 
     return Padding(
@@ -70,8 +75,12 @@ class _ApprovalCardState extends State<ApprovalCard> {
                   const SizedBox(width: 7),
                   Text(
                     decided
-                        ? (approved ? '已批准' : '已拒绝')
-                        : '${widget.msg.authorName} 需要你批准',
+                        ? (approved
+                              ? strings.t('approval.approved')
+                              : strings.t('approval.rejected'))
+                        : strings.tf('approval.needsApproval', {
+                            'name': widget.msg.authorName,
+                          }),
                     style: TextStyle(
                       fontSize: PB.fsXxs,
                       fontWeight: FontWeight.w600,
@@ -119,7 +128,7 @@ class _ApprovalCardState extends State<ApprovalCard> {
                               setState(() => _sent = true);
                               widget.onDecide(false);
                             },
-                      child: const Text('拒绝'),
+                      child: Text(strings.t('approval.reject')),
                     ),
                     const SizedBox(width: 6),
                     FilledButton(
@@ -129,7 +138,7 @@ class _ApprovalCardState extends State<ApprovalCard> {
                               setState(() => _sent = true);
                               widget.onDecide(true);
                             },
-                      child: const Text('批准这一次'),
+                      child: Text(strings.t('approval.approveOnce')),
                     ),
                   ],
                 ),
@@ -137,7 +146,11 @@ class _ApprovalCardState extends State<ApprovalCard> {
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
                   child: Text(
-                    approved ? '已经放行这一次，它会接着做完。' : '已拒绝，它不会执行这次操作。',
+                    strings.t(
+                      approved
+                          ? 'approval.approvedHint'
+                          : 'approval.rejectedHint',
+                    ),
                     style: const TextStyle(
                       fontSize: PB.fsXxs,
                       color: PB.textQuaternary,

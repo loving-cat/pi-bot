@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../avatar_appearance.dart';
+import '../l10n/l10n.dart';
 import '../theme.dart';
 import 'avatar_appearance_choices.dart';
 import 'blob_avatar.dart';
@@ -39,6 +40,7 @@ class _AvatarAppearancePickerState extends State<AvatarAppearancePicker> {
 
   @override
   Widget build(BuildContext context) {
+    final strings = L10n.s(context);
     final previewColor =
         parseAvatarColor(widget.color) ?? PB.colorFor(widget.seed);
     return Column(
@@ -46,18 +48,24 @@ class _AvatarAppearancePickerState extends State<AvatarAppearancePicker> {
       children: [
         Row(
           children: [
-            const Expanded(
-              child: Text('形象', style: TextStyle(fontWeight: FontWeight.w600)),
+            Expanded(
+              child: Text(
+                strings.t('avatar.shape'),
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
             ),
-            TextButton(onPressed: _reset, child: const Text('恢复默认形象')),
+            TextButton(
+              onPressed: _reset,
+              child: Text(strings.t('avatar.restoreDefaultShape')),
+            ),
           ],
         ),
         if (widget.isMain)
-          const Padding(
-            padding: EdgeInsets.only(bottom: 10),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
             child: Text(
-              '保存后，它的颜色会同步用于你的消息气泡、按钮和重点信息。',
-              style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+              strings.t('avatar.saveNote'),
+              style: const TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
             ),
           ),
         Row(

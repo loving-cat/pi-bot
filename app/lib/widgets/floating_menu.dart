@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../l10n/l10n.dart';
 import '../motion.dart';
 import '../theme.dart';
 
@@ -345,18 +346,20 @@ class PlusTriggerButton extends StatelessWidget {
     required this.anchorKey,
     required this.onTap,
     this.size = 36,
-    this.tooltip = '更多',
+    this.tooltip,
   });
 
   final GlobalKey anchorKey;
   final VoidCallback onTap;
   final double size;
-  final String tooltip;
+
+  /// 悬停提示；为空时用词表里的「更多」。
+  final String? tooltip;
 
   @override
   Widget build(BuildContext context) {
     return Tooltip(
-      message: tooltip,
+      message: tooltip ?? L10n.s(context).t('common.more'),
       waitDuration: const Duration(milliseconds: 550),
       child: HoverTap(
         key: anchorKey,

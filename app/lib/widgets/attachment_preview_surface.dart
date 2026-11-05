@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../attachment_preview_request.dart';
+import '../l10n/l10n.dart';
 import '../browser_pane_state.dart';
 import '../theme.dart';
+import '../window_chrome.dart';
 import 'browser_pane.dart';
 
 /// 可用宽度不足时使用独立二级阅读页，不改变已打开的会话详情栏。
@@ -81,17 +83,24 @@ class _AttachmentPreviewSurfaceState extends State<_AttachmentPreviewSurface> {
             boxShadow: PB.shadow(y: 12, blur: 40, alpha: 0.5),
           ),
           clipBehavior: Clip.antiAlias,
-          child: BrowserPane(
-            state: _pane,
-            onClose: () => Navigator.of(context).pop(),
-            showNavigationControls: false,
-            toolbarActions: [
-              if (width >= 400)
-                TextButton(
-                  onPressed: () => setState(() => _expanded = !_expanded),
-                  child: Text(_expanded ? '恢复' : '放大'),
-                ),
-            ],
+          child: WindowChromeRegion(
+            leading: _expanded,
+            trailing: _expanded,
+            child: BrowserPane(
+              state: _pane,
+              onClose: () => Navigator.of(context).pop(),
+              showNavigationControls: false,
+              toolbarActions: [
+                if (width >= 400)
+                  TextButton(
+                    onPressed: () => setState(() => _expanded = !_expanded),
+                    child: Text(
+                      L10n.s(context)
+                          .t(_expanded ? 'misc.restore' : 'misc.expand'),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
       ),

@@ -10,6 +10,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../app_state.dart';
 import '../chat_input_action.dart';
+import '../l10n/l10n.dart';
 import '../chat_scroll_follow.dart';
 import '../clipboard_image.dart';
 import '../models.dart';
@@ -17,6 +18,7 @@ import '../progress_messages.dart';
 import '../scope.dart';
 import '../desktop_shortcuts.dart';
 import '../theme.dart';
+import '../window_chrome.dart';
 import '../widgets/toast.dart';
 import '../widgets/attachment_view.dart';
 import '../widgets/avatar_life.dart';
@@ -282,16 +284,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _pickImages() async {
+    final s = L10n.s(context);
     try {
       final picked = await ImagePicker().pickMultiImage(imageQuality: 88);
       if (picked.isEmpty) return;
       await _uploadAll(picked.map((x) => (x.name, x.readAsBytes)).toList());
     } catch (err) {
-      _toast('选图失败：$err');
+      _toast(s.tf('chat.pickImageFailed', {'error': err}));
     }
   }
 
   Future<void> _pickFiles() async {
+    final s = L10n.s(context);
     try {
       final result = await FilePicker.platform.pickFiles(
         withData: true,
@@ -306,7 +310,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       }
       await _uploadAll(items);
     } catch (err) {
-      _toast('选文件失败：$err');
+      _toast(s.tf('chat.pickFileFailed', {'error': err}));
     }
   }
 
@@ -443,6 +447,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    final s = L10n.s(context);
     final state = AppScope.of(context);
     final room = state.rooms.firstWhere(
       (r) => r.id == widget.room.id,
@@ -487,168 +492,195 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       // ★ 顶部是**浮在上面的小胶囊**，不是一整条 AppBar：
       //   透明背景 + 居中的圆角胶囊（头像 + 会话名），左右各留出返回 / 更多。
       //   整条工具栏是透明的，所以看上去就是"顶上浮了一个小椭圆"。
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        toolbarHeight: 54,
-        automaticallyImplyLeading: !widget.embedded,
-        titleSpacing: 0,
-        centerTitle: true,
-        // 居中的小胶囊：头像 + 会话名（状态只在"干活/压缩"时露出来，
-        // 平时保持安静）
-        // 点胶囊 → 右侧面板（这个会话是谁 / 里面有谁 / 上下文用得怎么样）。
-        // 宽屏它是布局里的一栏（和左边同级，没遮罩）；窄屏才走整页滑入。
-        // 鼠标移上去会**浮起来**、右边冒出一个 `>` —— 告诉用户"这里能点开"。
-        title: AvatarHoverScope(
-          child: _HoverLift(
-            onTap: () {
-              if (MediaQuery.sizeOf(context).width >= kTwoPaneMinWidth) {
-                AppScope.read(context).togglePanel();
-              } else {
-                showRoomPanel(context, room);
-              }
-            },
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(6, 5, 14, 5),
-              decoration: BoxDecoration(
-                color: PB.bgElevated,
-                borderRadius: BorderRadius.circular(PB.rFull),
-                border: Border.all(color: PB.borderSecondary),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (room.isGroup)
-                    GroupBlobAvatar(
-                      seeds: room.botIds,
-                      size: 22,
-                      animate: busy,
-                      mood: busy ? AvatarMood.busy : AvatarMood.idle,
-                    )
-                  else
-                    BlobAvatar(
-                      seed: room.botIds.isNotEmpty
-                          ? room.botIds.first
-                          : room.id,
-                      color: PB.colorFor(
-                        room.botIds.isNotEmpty ? room.botIds.first : room.id,
-                      ),
-                      emoji: lead?.emoji,
-                      size: 22,
-                      animate: true,
-                      mood: busy ? AvatarMood.busy : AvatarMood.idle,
-                    ),
-                  const SizedBox(width: 8),
-                  Text(
-                    room.isGroup ? room.name : (lead?.name ?? room.name),
-                    style: const TextStyle(
-                      fontSize: PB.fsSm,
-                      fontWeight: FontWeight.w500,
-                    ),
+      appBar: chromeAppBar(
+        context,
+        AppBar(
+          flexibleSpace: const WindowDragArea(),
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+          toolbarHeight: 54,
+          automaticallyImplyLeading: !widget.embedded,
+          titleSpacing: 0,
+          centerTitle: true,
+          // 居中的小胶囊：头像 + 会话名（状态只在"干活/压缩"时露出来，
+          // 平时保持安静）
+          // 点胶囊 → 右侧面板（这个会话是谁 / 里面有谁 / 上下文用得怎么样）。
+          // 宽屏它是布局里的一栏（和左边同级，没遮罩）；窄屏才走整页滑入。
+          // 鼠标移上去会**浮起来**、右边冒出一个 `>` —— 告诉用户"这里能点开"。
+          title: Listener(
+            behavior: HitTestBehavior.opaque,
+            child: AvatarHoverScope(
+              child: _HoverLift(
+                onTap: () {
+                  if (MediaQuery.sizeOf(context).width >= kTwoPaneMinWidth) {
+                    AppScope.read(context).togglePanel();
+                  } else {
+                    showRoomPanel(context, room);
+                  }
+                },
+                child: Container(
+                  padding: const EdgeInsets.fromLTRB(6, 5, 14, 5),
+                  decoration: BoxDecoration(
+                    color: PB.bgElevated,
+                    borderRadius: BorderRadius.circular(PB.rFull),
+                    border: Border.all(color: PB.borderSecondary),
                   ),
-                  // 状态只在"正在干活 / 正在压缩"时露出来 —— 平时不占地方
-                  if (busy || state.compactingIn(room.id)) ...[
-                    const SizedBox(width: 8),
-                    if (state.compactingIn(room.id))
-                      const Text(
-                        '压缩中',
-                        style: TextStyle(fontSize: PB.fsXxs, color: PB.warn),
-                      )
-                    else
-                      SizedBox(
-                        width: 11,
-                        height: 11,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 1.8,
-                          color: PB.colors(context).accentBright,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (room.isGroup)
+                        GroupBlobAvatar(
+                          seeds: room.botIds,
+                          size: 22,
+                          animate: busy,
+                          mood: busy ? AvatarMood.busy : AvatarMood.idle,
+                        )
+                      else
+                        BlobAvatar(
+                          seed: room.botIds.isNotEmpty
+                              ? room.botIds.first
+                              : room.id,
+                          color: PB.colorFor(
+                            room.botIds.isNotEmpty
+                                ? room.botIds.first
+                                : room.id,
+                          ),
+                          emoji: lead?.emoji,
+                          size: 22,
+                          animate: true,
+                          mood: busy ? AvatarMood.busy : AvatarMood.idle,
+                        ),
+                      const SizedBox(width: 8),
+                      Text(
+                        room.isGroup ? room.name : (lead?.name ?? room.name),
+                        style: const TextStyle(
+                          fontSize: PB.fsSm,
+                          fontWeight: FontWeight.w500,
                         ),
                       ),
-                  ],
-                  // 上下文占用：平时也就是一个小圆环
-                  const SizedBox(width: 6),
-                  ContextChip(roomId: room.id),
-                ],
+                      // 状态只在"正在干活 / 正在压缩"时露出来 —— 平时不占地方
+                      if (busy || state.compactingIn(room.id)) ...[
+                        const SizedBox(width: 8),
+                        if (state.compactingIn(room.id))
+                          Text(
+                            s.t('chat.compacting'),
+                            style: const TextStyle(
+                              fontSize: PB.fsXxs,
+                              color: PB.warn,
+                            ),
+                          )
+                        else
+                          SizedBox(
+                            width: 11,
+                            height: 11,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 1.8,
+                              color: PB.colors(context).accentBright,
+                            ),
+                          ),
+                      ],
+                      // 上下文占用：平时也就是一个小圆环
+                      const SizedBox(width: 6),
+                      ContextChip(roomId: room.id),
+                    ],
+                  ),
+                ),
               ),
             ),
           ),
-        ),
-        actions: [
-          // 任务板：显示这个房间未完成的数量，点开是清单
-          Builder(
-            builder: (ctx) {
-              final list = state.tasksFor(room.id);
-              final pending = list.where((t) => !t.isDone).length;
-              return IconButton(
-                padding: EdgeInsets.zero,
-                alignment: Alignment.center,
-                visualDensity: VisualDensity.compact,
-                constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-                tooltip: pending > 0 ? '任务（$pending 个未完成）' : '任务',
-                onPressed: () => showTaskBoard(ctx, state, room),
-                icon: Badge(
-                  isLabelVisible: pending > 0,
-                  label: Text('$pending'),
-                  backgroundColor: PB.colors(context).accent,
-                  child: Icon(
-                    LucideIcons.checkCircle2,
-                    size: 18,
-                    color: pending > 0
-                        ? PB.colors(context).accentBright
-                        : PB.textTertiary,
+          actions: [
+            // 任务板：显示这个房间未完成的数量，点开是清单
+            Builder(
+              builder: (ctx) {
+                final list = state.tasksFor(room.id);
+                final pending = list.where((t) => !t.isDone).length;
+                return IconButton(
+                  padding: EdgeInsets.zero,
+                  alignment: Alignment.center,
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(
+                    minWidth: 40,
+                    minHeight: 40,
                   ),
-                ),
-              );
-            },
-          ),
-          PopupMenuButton<String>(
-            icon: const Icon(LucideIcons.ellipsis, size: 18),
-            padding: EdgeInsets.zero,
-            // 紧贴右边的让位块，别在中间再挤出一段空白
-            iconSize: 18,
-            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-            onSelected: (value) async {
-              switch (value) {
-                case 'abort':
-                  await state.abort(room.id);
-                case 'automations':
-                  await showAutomationSheet(context, state, room);
-                case 'reset':
-                  final ok = await showDialog<bool>(
-                    context: context,
-                    builder: (ctx) => AlertDialog(
-                      title: const Text('开新会话'),
-                      content: const Text(
-                        '这个会话里的 bot 会忘掉之前的对话。历史消息还留着，只是不再进模型上下文。',
-                      ),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(ctx, false),
-                          child: const Text('取消'),
-                        ),
-                        FilledButton(
-                          onPressed: () => Navigator.pop(ctx, true),
-                          child: const Text('开新会话'),
-                        ),
-                      ],
+                  tooltip: pending > 0
+                      ? s.tf('chat.tasksWithCount', {'n': pending})
+                      : s.t('chat.tasks'),
+                  onPressed: () => showTaskBoard(ctx, state, room),
+                  icon: Badge(
+                    isLabelVisible: pending > 0,
+                    label: Text('$pending'),
+                    backgroundColor: PB.colors(context).accent,
+                    child: Icon(
+                      LucideIcons.checkCircle2,
+                      size: 18,
+                      color: pending > 0
+                          ? PB.colors(context).accentBright
+                          : PB.textTertiary,
                     ),
-                  );
-                  if (ok == true) await state.resetSession(room.id);
-                case 'reload':
-                  await state.loadMessages(room.id, force: true);
-                  _scrollFollow.resume();
-              }
-            },
-            itemBuilder: (ctx) => [
-              if (busy)
-                const PopupMenuItem(value: 'abort', child: Text('打断这一轮')),
-              const PopupMenuItem(value: 'reset', child: Text('开新会话（清记忆）')),
-              const PopupMenuItem(value: 'automations', child: Text('定时任务…')),
-              const PopupMenuItem(value: 'reload', child: Text('重新拉取消息')),
-            ],
-          ),
-          const SizedBox(width: 6),
-        ],
+                  ),
+                );
+              },
+            ),
+            PopupMenuButton<String>(
+              icon: const Icon(LucideIcons.ellipsis, size: 18),
+              padding: EdgeInsets.zero,
+              // 紧贴右边的让位块，别在中间再挤出一段空白
+              iconSize: 18,
+              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+              onSelected: (value) async {
+                switch (value) {
+                  case 'abort':
+                    await state.abort(room.id);
+                  case 'automations':
+                    await showAutomationSheet(context, state, room);
+                  case 'reset':
+                    final ok = await showDialog<bool>(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        title: Text(L10n.s(ctx).t('chat.newSession')),
+                        content: Text(L10n.s(ctx).t('chat.newSessionBody')),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(ctx, false),
+                            child: Text(L10n.s(ctx).t('common.cancel')),
+                          ),
+                          FilledButton(
+                            onPressed: () => Navigator.pop(ctx, true),
+                            child: Text(L10n.s(ctx).t('chat.newSession')),
+                          ),
+                        ],
+                      ),
+                    );
+                    if (ok == true) await state.resetSession(room.id);
+                  case 'reload':
+                    await state.loadMessages(room.id, force: true);
+                    _scrollFollow.resume();
+                }
+              },
+              itemBuilder: (ctx) => [
+                if (busy)
+                  PopupMenuItem(
+                    value: 'abort',
+                    child: Text(s.t('chat.stopTurn')),
+                  ),
+                PopupMenuItem(
+                  value: 'reset',
+                  child: Text(s.t('chat.resetMenu')),
+                ),
+                PopupMenuItem(
+                  value: 'automations',
+                  child: Text(s.t('chat.automations')),
+                ),
+                PopupMenuItem(
+                  value: 'reload',
+                  child: Text(s.t('chat.reloadMessages')),
+                ),
+              ],
+            ),
+            const SizedBox(width: 6),
+          ],
+        ),
       ),
       // ★ 把附件（图片 / PDF / Word…）直接拖进聊天框。
       //   只在桌面端有效（desktop_drop 在移动端不注册），移动端就是普通 Scaffold。
@@ -667,11 +699,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           //   名字里带 `文件夹/子目录/文件名`，bot 能看出目录结构。
           final items = _expandDroppedPaths(paths);
           if (items.isEmpty) {
-            _toast('拖进来的文件夹是空的（或全是跳过的目录）');
+            _toast(s.t('chat.dropEmptyFolder'));
             return;
           }
           if (items.length >= _maxFolderFiles) {
-            _toast('文件太多（$_maxFolderFiles 个封顶），只收了前 $_maxFolderFiles 个');
+            _toast(s.tf('chat.dropTooMany', {'n': _maxFolderFiles}));
           }
           await _uploadAll(items);
         },
@@ -958,8 +990,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           ),
                           SizedBox(height: 8),
                           Text(
-                            '松手就加进来（图片 / PDF / Word / Excel）',
-                            style: TextStyle(
+                            s.t('chat.dropHint'),
+                            style: const TextStyle(
                               fontSize: PB.fsSm,
                               color: PB.textSecondary,
                             ),
@@ -985,6 +1017,7 @@ class _EmptyHint extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = L10n.s(context);
     final isGroup = room.isGroup;
     return Center(
       child: Padding(
@@ -1018,7 +1051,9 @@ class _EmptyHint extends StatelessWidget {
             Text(
               room.topic.isNotEmpty
                   ? room.topic
-                  : (isGroup ? '把任务发进来，主控会分给对应的人' : '直接说你要干什么'),
+                  : (isGroup
+                        ? s.t('chat.emptyGroupHint')
+                        : s.t('chat.emptyDmHint')),
               textAlign: TextAlign.center,
               style: const TextStyle(
                 fontSize: PB.fsSm,
@@ -1134,25 +1169,26 @@ class _ComposerState extends State<_Composer> {
   final GlobalKey _plusKey = GlobalKey();
 
   void _openMenu() {
+    final s = L10n.s(context);
     showFloatingMenu(
       context: context,
       anchorKey: _plusKey,
       entries: [
         FloatingMenuEntry(
           icon: LucideIcons.image,
-          label: '添加附件',
-          hint: '可多选',
+          label: s.t('chat.addAttachment'),
+          hint: s.t('chat.multiSelect'),
           onTap: widget.onPickImages,
         ),
         FloatingMenuEntry(
           icon: LucideIcons.paperclip,
-          label: '上传文件',
-          hint: 'PDF/表格',
+          label: s.t('chat.uploadFile'),
+          hint: s.t('chat.uploadFileHint'),
           onTap: widget.onPickFiles,
         ),
         FloatingMenuEntry(
           icon: LucideIcons.target,
-          label: '教它做一项任务',
+          label: s.t('chat.teachTask'),
           iconColor: PB.danger,
           onTap: widget.onTeach,
         ),
@@ -1218,6 +1254,7 @@ class _ComposerState extends State<_Composer> {
 
   @override
   Widget build(BuildContext context) {
+    final s = L10n.s(context);
     final controller = widget.controller;
     final busy = widget.busy;
     final queuedCount = widget.queuedCount;
@@ -1267,8 +1304,8 @@ class _ComposerState extends State<_Composer> {
                       //   不是"排队等它忙完"。
                       //   所以这里不能说"下一步会看到"——那会让用户以为要等。
                       queuedCount > 0
-                          ? '已发了 $queuedCount 句 —— 发出去它会立刻停下来看'
-                          : '正在干活 —— 你随时可以打断它，说新的要求',
+                          ? s.tf('chat.busyQueued', {'n': queuedCount})
+                          : s.t('chat.busyHint'),
                       style: const TextStyle(
                         fontSize: PB.fsXxs,
                         color: PB.textTertiary,
@@ -1374,7 +1411,7 @@ class _ComposerState extends State<_Composer> {
                 PlusTriggerButton(
                   anchorKey: _plusKey,
                   size: 40,
-                  tooltip: '附件 / 教它做任务',
+                  tooltip: s.t('chat.attachOrTeach'),
                   onTap: _openMenu,
                 ),
                 const SizedBox(width: 8),
@@ -1471,7 +1508,7 @@ class _ComposerState extends State<_Composer> {
                               height: 1.4,
                             ),
                             decoration: InputDecoration(
-                              hintText: '说点什么',
+                              hintText: s.t('chat.composerHint'),
                               hintStyle: const TextStyle(
                                 color: PB.textQuaternary,
                                 fontSize: PB.fsBase,
@@ -1501,8 +1538,8 @@ class _ComposerState extends State<_Composer> {
                     color: PB.bgActive,
                     iconColor: PB.textSecondary,
                     tooltip: widget.unread > 0
-                        ? '回到最新（下面还有 ${widget.unread} 条）'
-                        : '回到最新',
+                        ? s.tf('chat.jumpUnread', {'n': widget.unread})
+                        : s.t('chat.jumpLatest'),
                     onTap: widget.onJump ?? () {},
                   ),
                   const SizedBox(width: 6),
@@ -1512,7 +1549,7 @@ class _ComposerState extends State<_Composer> {
                     icon: LucideIcons.square,
                     color: PB.bgActive,
                     iconColor: PB.textSecondary,
-                    tooltip: '打断这一轮',
+                    tooltip: s.t('chat.stopTurn'),
                     onTap: onStop,
                   ),
                   const SizedBox(width: 6),
@@ -1521,7 +1558,7 @@ class _ComposerState extends State<_Composer> {
                   icon: busy ? LucideIcons.zap : LucideIcons.arrowUp,
                   color: hasText ? PB.colors(context).accent : PB.bgActive,
                   iconColor: hasText ? Colors.white : PB.textQuaternary,
-                  tooltip: busy ? '发出去，它会看到 (Enter)' : '发送 (Enter)',
+                  tooltip: busy ? s.t('chat.sendBusy') : s.t('chat.send'),
                   onTap: onSend,
                 ),
               ],
@@ -1671,8 +1708,8 @@ class _RelayedFromState extends State<_RelayedFrom> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  '消息来自',
-                  style: TextStyle(
+                  L10n.s(context).t('chat.relayedFrom'),
+                  style: const TextStyle(
                     fontSize: PB.fsXxs,
                     color: PB.textQuaternary,
                   ),
@@ -1948,8 +1985,8 @@ class _MessageRow extends StatelessWidget {
                         // ★ 用户的新要求会让它**立刻停下**，不是排队等。
                         //   followUp 那种"排在后面"只发生在成员互相 @ 的场景。
                         msg.meta?['queued'] == 'followUp'
-                            ? '排在它后面，做完会看'
-                            : '已打断它，按这条重新开始',
+                            ? L10n.s(context).t('chat.steerQueued')
+                            : L10n.s(context).t('chat.steerInterrupted'),
                         style: TextStyle(
                           fontSize: PB.fsXxs,
                           color: PB.colors(context).link,
@@ -2012,11 +2049,11 @@ class _MessageRow extends StatelessWidget {
                             ),
                           ),
                           if (isLead)
-                            const Padding(
-                              padding: EdgeInsets.only(left: 6),
+                            Padding(
+                              padding: const EdgeInsets.only(left: 6),
                               child: Text(
-                                '负责人',
-                                style: TextStyle(
+                                L10n.s(context).t('chat.leadBadge'),
+                                style: const TextStyle(
                                   fontSize: PB.fsXxs,
                                   fontWeight: FontWeight.w600,
                                   color: PB.textQuaternary,
@@ -2224,6 +2261,7 @@ class _HoverLiftState extends State<_HoverLift> {
       onEnter: (_) => setState(() => _hover = true),
       onExit: (_) => setState(() => _hover = false),
       child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
         onTap: widget.onTap,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 140),

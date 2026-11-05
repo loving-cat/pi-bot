@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../l10n/l10n.dart';
 import '../models.dart';
 import '../model_group_capacity.dart';
 import '../scope.dart';
@@ -19,6 +20,7 @@ class ModelGroupsSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
+    final strings = L10n.s(context);
     final groups = state.modelGroups;
 
     return Column(
@@ -28,9 +30,9 @@ class ModelGroupsSection extends StatelessWidget {
           children: [
             const Icon(LucideIcons.boxes, size: 15, color: PB.textTertiary),
             const SizedBox(width: 8),
-            const Text(
-              '模型组',
-              style: TextStyle(
+            Text(
+              strings.t('model.groupTitle'),
+              style: const TextStyle(
                 fontSize: PB.fsSm,
                 fontWeight: FontWeight.w600,
                 color: PB.textSecondary,
@@ -40,7 +42,10 @@ class ModelGroupsSection extends StatelessWidget {
             TextButton.icon(
               onPressed: () => _openEditor(context),
               icon: const Icon(LucideIcons.plus, size: 15),
-              label: const Text('添加', style: TextStyle(fontSize: PB.fsXs)),
+              label: Text(
+                strings.t('common.add'),
+                style: const TextStyle(fontSize: PB.fsXs),
+              ),
             ),
           ],
         ),
@@ -54,9 +59,9 @@ class ModelGroupsSection extends StatelessWidget {
             border: Border.all(color: PB.borderTertiary),
           ),
           child: groups.isEmpty
-              ? const Text(
-                  '还没配。\n填一个 baseUrl + key + 模型名，就能在给 bot 选模型时用上。',
-                  style: TextStyle(
+              ? Text(
+                  strings.t('model.groupEmpty'),
+                  style: const TextStyle(
                     fontSize: PB.fsXs,
                     color: PB.textQuaternary,
                     height: 1.6,
@@ -76,6 +81,7 @@ class ModelGroupsSection extends StatelessWidget {
   }
 
   Widget _row(BuildContext context, ModelGroup g) {
+    final strings = L10n.s(context);
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -114,9 +120,12 @@ class ModelGroupsSection extends StatelessWidget {
                         color: PB.success.withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(PB.rFull),
                       ),
-                      child: const Text(
-                        '正在用',
-                        style: TextStyle(fontSize: PB.fsXxs, color: PB.success),
+                      child: Text(
+                        strings.t('model.inUse'),
+                        style: const TextStyle(
+                          fontSize: PB.fsXxs,
+                          color: PB.success,
+                        ),
                       ),
                     ),
                   ],
@@ -135,9 +144,12 @@ class ModelGroupsSection extends StatelessWidget {
               const SizedBox(height: 3),
               Text(
                 [
-                  '${g.models.length} 个模型',
-                  if (g.hasKey) 'key ${g.keyMasked}' else '没配 key',
-                  if (!g.enabled) '已停用',
+                  strings.tf('model.count', {'n': g.models.length}),
+                  if (g.hasKey)
+                    strings.tf('model.keyMasked', {'key': g.keyMasked})
+                  else
+                    strings.t('model.noKey'),
+                  if (!g.enabled) strings.t('model.groupDisabled'),
                 ].join(' · '),
                 style: const TextStyle(
                   fontSize: PB.fsXxs,
@@ -146,14 +158,18 @@ class ModelGroupsSection extends StatelessWidget {
               ),
               ModelGroupModelSummary(
                 group: g,
-                onEdit: (model) => _openEditor(context, group: g, modelId: model.id),
+                onEdit: (model) =>
+                    _openEditor(context, group: g, modelId: model.id),
               ),
             ],
           ),
         ),
         TextButton(
           onPressed: () => _openEditor(context, group: g),
-          child: const Text('编辑', style: TextStyle(fontSize: PB.fsXs)),
+          child: Text(
+            strings.t('common.edit'),
+            style: const TextStyle(fontSize: PB.fsXs),
+          ),
         ),
         // 内置组（从本机配置带出来的）不给删 —— 删了等于把自己踢下线
         if (!g.builtin)
@@ -165,12 +181,12 @@ class ModelGroupsSection extends StatelessWidget {
                 builder: (ctx) => AlertDialog(
                   backgroundColor: PB.bgElevated,
                   title: Text(
-                    '删掉「${g.name}」？',
+                    strings.tf('model.deleteTitle', {'name': g.name}),
                     style: const TextStyle(fontSize: PB.fsLg),
                   ),
-                  content: const Text(
-                    '用它跑着的 bot 会退回默认模型。',
-                    style: TextStyle(
+                  content: Text(
+                    strings.t('model.deleteBody'),
+                    style: const TextStyle(
                       fontSize: PB.fsSm,
                       color: PB.textSecondary,
                     ),
@@ -178,28 +194,32 @@ class ModelGroupsSection extends StatelessWidget {
                   actions: [
                     TextButton(
                       onPressed: () => Navigator.pop(ctx, false),
-                      child: const Text('取消'),
+                      child: Text(strings.t('common.cancel')),
                     ),
                     FilledButton(
                       style: FilledButton.styleFrom(backgroundColor: PB.danger),
                       onPressed: () => Navigator.pop(ctx, true),
-                      child: const Text('删除'),
+                      child: Text(strings.t('common.delete')),
                     ),
                   ],
                 ),
               );
               if (ok == true) await app.deleteModelGroup(g.id);
             },
-            child: const Text(
-              '删除',
-              style: TextStyle(fontSize: PB.fsXs, color: PB.danger),
+            child: Text(
+              strings.t('common.delete'),
+              style: const TextStyle(fontSize: PB.fsXs, color: PB.danger),
             ),
           ),
       ],
     );
   }
 
-  Future<void> _openEditor(BuildContext context, {ModelGroup? group, String? modelId}) async {
+  Future<void> _openEditor(
+    BuildContext context, {
+    ModelGroup? group,
+    String? modelId,
+  }) async {
     await showDialog<void>(
       context: context,
       builder: (ctx) => _Editor(group: group, modelId: modelId),
@@ -223,7 +243,9 @@ class _EditorState extends State<_Editor> {
     text: widget.group?.baseUrl ?? '',
   );
   final _key = TextEditingController();
-  late List<ModelCardDraft> _modelRows = modelCardDrafts(widget.group?.models ?? []);
+  late List<ModelCardDraft> _modelRows = modelCardDrafts(
+    widget.group?.models ?? [],
+  );
   int _nextRowId = 0;
   int? _focusedRowId;
   String _api = 'openai-completions';
@@ -263,9 +285,10 @@ class _EditorState extends State<_Editor> {
       _thinkingLevels = ((options['levels'] as List?) ?? const [])
           .map((e) => '$e')
           .toList();
-      _thinkingUpstreamValues = ((options['upstreamValues'] as List?) ?? const [])
-          .map((e) => '$e')
-          .toList();
+      _thinkingUpstreamValues =
+          ((options['upstreamValues'] as List?) ?? const [])
+              .map((e) => '$e')
+              .toList();
     });
   }
 
@@ -296,6 +319,30 @@ class _EditorState extends State<_Editor> {
     setState(() {
       _testing = false;
       _test = r;
+    });
+  }
+
+  /// 把服务端 /models 返回的模型一次性填进卡片。
+  ///
+  /// 合并规则（不改用户已经填过的内容）：
+  ///   · 已在卡片里的模型：保留它原来的容量、显示名和思考设置，只补进列表；
+  ///   · 新出现的模型：追加一张空容量卡片（容量交给服务端默认值）；
+  ///   · 已存在但这次没返回的模型：**保留**，不删 —— 探测接口偶尔少返回几个，
+  ///     不能因为一次探测就把用户配好的条目抹掉。
+  void _autoFillModels(List<String> ids) {
+    final existing = {for (final row in _modelRows) row.id.trim(): row};
+    final next = <ModelCardDraft>[];
+    for (final id in ids) {
+      final row = existing.remove(id);
+      next.add(row ?? ModelCardDraft(rowId: _nextRowId++, id: id));
+    }
+    // 剩下的：卡片里已有、但这次没探测到的，原样保留
+    for (final row in _modelRows) {
+      if (existing.containsKey(row.id.trim())) next.add(row);
+    }
+    setState(() {
+      _modelRows = next;
+      _error = null;
     });
   }
 
@@ -331,11 +378,12 @@ class _EditorState extends State<_Editor> {
 
   @override
   Widget build(BuildContext context) {
+    final strings = L10n.s(context);
     final isNew = widget.group == null;
     return AlertDialog(
       backgroundColor: PB.bgElevated,
       title: Text(
-        isNew ? '添加模型组' : '编辑模型组',
+        isNew ? strings.t('model.addGroup') : strings.t('model.editGroup'),
         style: const TextStyle(fontSize: PB.fsLg),
       ),
       content: SizedBox(
@@ -345,10 +393,16 @@ class _EditorState extends State<_Editor> {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              _field('名字', _name, '比如：我的中转站'),
+              _field(
+                strings.t('model.fieldName'),
+                _name,
+                strings.t('model.fieldNameHint'),
+              ),
               _field('baseUrl', _baseUrl, 'https://api.example.com/v1'),
               _field(
-                isNew ? 'API key' : 'API key（留空 = 不改）',
+                isNew
+                    ? strings.t('model.apiKey')
+                    : strings.t('model.apiKeyUnchanged'),
                 _key,
                 isNew
                     ? 'sk-…'
@@ -356,9 +410,12 @@ class _EditorState extends State<_Editor> {
                 obscure: true,
               ),
               const SizedBox(height: 6),
-              const Text(
-                '接口类型',
-                style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+              Text(
+                strings.t('model.apiType'),
+                style: const TextStyle(
+                  fontSize: PB.fsXs,
+                  color: PB.textTertiary,
+                ),
               ),
               const SizedBox(height: 4),
               DropdownButtonFormField<String>(
@@ -368,16 +425,16 @@ class _EditorState extends State<_Editor> {
                   fontSize: PB.fsSm,
                   color: PB.textPrimary,
                 ),
-                items: const [
+                items: [
                   DropdownMenuItem(
                     value: 'openai-completions',
-                    child: Text('OpenAI 兼容（绝大多数都用这个）'),
+                    child: Text(strings.t('model.openaiCompatible')),
                   ),
-                  DropdownMenuItem(
+                  const DropdownMenuItem(
                     value: 'openai-responses',
                     child: Text('OpenAI Responses'),
                   ),
-                  DropdownMenuItem(
+                  const DropdownMenuItem(
                     value: 'anthropic-messages',
                     child: Text('Anthropic Messages'),
                   ),
@@ -393,7 +450,10 @@ class _EditorState extends State<_Editor> {
                 thinkingLevels: _thinkingLevels,
                 thinkingUpstreamValues: _thinkingUpstreamValues,
                 onChanged: (id, update) => setState(() {
-                  _modelRows = [for (final old in _modelRows) old.rowId == id ? update(old) : old];
+                  _modelRows = [
+                    for (final old in _modelRows)
+                      old.rowId == id ? update(old) : old,
+                  ];
                 }),
                 onAdd: () => setState(() {
                   final row = ModelCardDraft(rowId: _nextRowId++);
@@ -401,7 +461,9 @@ class _EditorState extends State<_Editor> {
                   _focusedRowId = row.rowId;
                 }),
                 onRemove: (id) => setState(() {
-                  _modelRows = _modelRows.where((row) => row.rowId != id).toList();
+                  _modelRows = _modelRows
+                      .where((row) => row.rowId != id)
+                      .toList();
                 }),
               ),
               const SizedBox(height: 6),
@@ -416,13 +478,17 @@ class _EditorState extends State<_Editor> {
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
                         : const Icon(LucideIcons.plugZap, size: 15),
-                    label: Text(_testing ? '正在测…' : '测试连通性'),
+                    label: Text(
+                      _testing
+                          ? strings.t('model.testing')
+                          : strings.t('model.testConnection'),
+                    ),
                   ),
                   const SizedBox(width: 8),
-                  const Expanded(
+                  Expanded(
                     child: Text(
-                      '先测一下再保存，省得配错了还得回来查',
-                      style: TextStyle(
+                      strings.t('model.testHint'),
+                      style: const TextStyle(
                         fontSize: PB.fsXxs,
                         color: PB.textQuaternary,
                       ),
@@ -433,6 +499,11 @@ class _EditorState extends State<_Editor> {
               if (_test != null) ...[
                 const SizedBox(height: 8),
                 _testResult(_test!),
+              ],
+              // 探测到模型列表后给一键填入：省掉用户一个个手打模型 ID
+              if (_discoveredModels.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                _autoFillRow(),
               ],
               if (_error != null) ...[
                 const SizedBox(height: 10),
@@ -448,31 +519,67 @@ class _EditorState extends State<_Editor> {
       actions: [
         TextButton(
           onPressed: _saving ? null : () => Navigator.pop(context),
-          child: const Text('取消'),
+          child: Text(strings.t('common.cancel')),
         ),
         FilledButton(
           onPressed: _saving ? null : _save,
-          child: Text(_saving ? '保存中…' : '保存'),
+          child: Text(
+            _saving ? strings.t('common.saving') : strings.t('common.save'),
+          ),
         ),
       ],
     );
   }
 
+  /// 服务端 /models 探测回来的模型列表（没有则为空）。
+  List<String> get _discoveredModels {
+    final raw = _test?['models'];
+    if (raw is! List) return const [];
+    return [
+      for (final item in raw)
+        if (item is String && item.trim().isNotEmpty) item.trim(),
+    ];
+  }
+
+  /// 一键把探测到的模型填进卡片；全部已在卡片里时按钮变成「已填入」。
+  Widget _autoFillRow() {
+    final strings = L10n.s(context);
+    final discovered = _discoveredModels;
+    final existing = {for (final row in _modelRows) row.id.trim()};
+    final missing = discovered.where((id) => !existing.contains(id)).toList();
+    final done = missing.isEmpty;
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        key: const ValueKey('model-autofill'),
+        onPressed: done ? null : () => _autoFillModels(discovered),
+        icon: Icon(done ? LucideIcons.check : LucideIcons.listPlus, size: 15),
+        label: Text(
+          '${strings.t(done ? 'model.autoFillDone' : 'model.autoFill')}'
+          ' · ${strings.tf('model.count', {'n': discovered.length})}',
+          style: const TextStyle(fontSize: PB.fsXs),
+        ),
+      ),
+    );
+  }
+
   /// 测试结果 —— 成功/失败要给**不同的话**，不能让用户去猜该改哪儿
   Widget _testResult(Map<String, dynamic> r) {
+    final strings = L10n.s(context);
     final ok = r['ok'] == true;
     final ms = r['ms'];
     final lines = <String>[
       if (ok)
         [
-          '通了',
+          strings.t('model.connectionOk'),
           if (ms != null) '${ms}ms',
-          if (r['via'] != null) '经 ${r['via']}',
+          if (r['via'] != null)
+            strings.tf('model.connectionVia', {'via': '${r['via']}'}),
           if ((r['count'] as num?) != null && (r['count'] as num).toInt() > 0)
-            '发现 ${r['count']} 个模型',
+            strings.tf('model.foundCount', {'n': r['count']}),
         ].join(' · ')
       else
-        '${r['error'] ?? '没通'}',
+        '${r['error'] ?? strings.t('model.connectionFailed')}',
       if (r['note'] != null) '${r['note']}',
     ];
     return Container(

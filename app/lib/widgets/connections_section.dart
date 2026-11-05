@@ -7,6 +7,7 @@ import '../app_state.dart';
 import '../connections_controller.dart';
 import '../connections_filters.dart';
 import '../connections_models.dart';
+import '../l10n/l10n.dart';
 import '../scope.dart';
 import '../theme.dart';
 import 'connections_cards.dart';
@@ -88,16 +89,17 @@ class _ConnectionsSectionState extends State<ConnectionsSection> {
 
   Future<void> _edit({AppConnection? item, String type = 'http'}) async {
     final api = _state?.api;
+    final switched = L10n.s(context).t('conn.serverSwitched');
     await showConnectionEditor(
       context,
       server: item?.server,
       initialType: type,
       onSave: (patch) => identical(api, _state?.api)
           ? _controller!.save(patch)
-          : Future.value('服务端已切换，请重新打开配置'),
+          : Future.value(switched),
       onTest: (patch) => identical(api, _state?.api)
           ? _controller!.testDraft(patch)
-          : Future.value({'ok': false, 'error': '服务端已切换，请重新打开配置'}),
+          : Future.value({'ok': false, 'error': switched}),
     );
   }
 
@@ -120,11 +122,11 @@ class _ConnectionsSectionState extends State<ConnectionsSection> {
           final item = _controller!.connection(id);
           if (item == null)
             return AlertDialog(
-              title: const Text('连接已移除'),
+              title: Text(L10n.s(context).t('conn.deletedTitle')),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(context),
-                  child: const Text('关闭'),
+                  child: Text(L10n.s(context).t('common.close')),
                 ),
               ],
             );
@@ -143,16 +145,19 @@ class _ConnectionsSectionState extends State<ConnectionsSection> {
               final confirmed = await showDialog<bool>(
                 context: context,
                 builder: (ctx) => AlertDialog(
-                  title: const Text('删除连接？'),
-                  content: Text('删除「${item.server.name}」后，已分配的 Bot 将无法再使用它。'),
+                  title: Text(L10n.s(ctx).t('conn.deleteTitle')),
+                  content: Text(
+                    L10n.s(ctx)
+                        .tf('conn.deleteBody', {'name': item.server.name}),
+                  ),
                   actions: [
                     TextButton(
                       onPressed: () => Navigator.pop(ctx, false),
-                      child: const Text('取消'),
+                      child: Text(L10n.s(ctx).t('common.cancel')),
                     ),
                     FilledButton(
                       onPressed: () => Navigator.pop(ctx, true),
-                      child: const Text('删除'),
+                      child: Text(L10n.s(ctx).t('common.delete')),
                     ),
                   ],
                 ),
@@ -172,6 +177,7 @@ class _ConnectionsSectionState extends State<ConnectionsSection> {
   Widget build(BuildContext context) {
     final controller = _controller;
     if (controller == null) return const SizedBox.shrink();
+    final strings = L10n.s(context);
     return AnimatedBuilder(
       animation: controller,
       builder: (context, _) {
@@ -187,33 +193,38 @@ class _ConnectionsSectionState extends State<ConnectionsSection> {
             const SizedBox(height: 12),
             Row(
               children: [
-                const Expanded(
+                Expanded(
                   child: Text(
-                    '应用连接',
-                    style: TextStyle(
+                    strings.t('conn.title'),
+                    style: const TextStyle(
                       fontSize: PB.fsXxl,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
                 ),
                 Text(
-                  '${controller.snapshot.connections.length} 个已配置',
+                  strings.tf('conn.configuredCount', {
+                    'n': controller.snapshot.connections.length,
+                  }),
                   style: const TextStyle(
                     fontSize: PB.fsSm,
                     color: PB.textTertiary,
                   ),
                 ),
                 IconButton(
-                  tooltip: '刷新应用连接',
+                  tooltip: strings.t('conn.refresh'),
                   onPressed: controller.loading ? null : controller.load,
                   icon: const Icon(LucideIcons.refreshCw, size: 17),
                 ),
               ],
             ),
             const SizedBox(height: 6),
-            const Text(
-              '把工作工具连接给 Bot，按需要分配使用。',
-              style: TextStyle(color: PB.textSecondary, fontSize: PB.fsBase),
+            Text(
+              strings.t('conn.subtitle'),
+              style: const TextStyle(
+                color: PB.textSecondary,
+                fontSize: PB.fsBase,
+              ),
             ),
             const SizedBox(height: 20),
             TextField(
@@ -221,14 +232,14 @@ class _ConnectionsSectionState extends State<ConnectionsSection> {
               controller: _search,
               onChanged: (_) => setState(() {}),
               decoration: InputDecoration(
-                hintText: '搜索应用连接',
+                hintText: strings.t('conn.searchHint'),
                 prefixIcon: const Icon(LucideIcons.search, size: 17),
                 suffixIcon: _search.text.isEmpty
                     ? null
                     : IconButton(
-                        tooltip: '清空搜索',
+                        tooltip: strings.t('conn.clearSearch'),
                         onPressed: () => setState(_search.clear),
-                        icon: const Icon(Icons.close, size: 17),
+                        icon: const Icon(LucideIcons.x, size: 17),
                       ),
                 isDense: true,
               ),
@@ -240,7 +251,7 @@ class _ConnectionsSectionState extends State<ConnectionsSection> {
               children: [
                 for (final filter in ConnectionFilter.values)
                   ChoiceChip(
-                    label: Text(filter.label),
+                    label: Text(strings.t('conn.filter.${filter.name}')),
                     selected: _filter == filter,
                     showCheckmark: false,
                     backgroundColor: PB.bgElevated,
@@ -277,16 +288,16 @@ class _ConnectionsSectionState extends State<ConnectionsSection> {
                     ),
                     TextButton(
                       onPressed: controller.loading ? null : controller.load,
-                      child: const Text('重试'),
+                      child: Text(strings.t('common.retry')),
                     ),
                   ],
                 ),
               ),
             if (catalog.isNotEmpty) ...[
               const SizedBox(height: 24),
-              const Text(
-                '添加连接',
-                style: TextStyle(
+              Text(
+                strings.t('conn.addTitle'),
+                style: const TextStyle(
                   fontSize: PB.fsLg,
                   fontWeight: FontWeight.w600,
                 ),
@@ -312,9 +323,9 @@ class _ConnectionsSectionState extends State<ConnectionsSection> {
             ],
             if (connections.isNotEmpty) ...[
               const SizedBox(height: 26),
-              const Text(
-                '已配置应用',
-                style: TextStyle(
+              Text(
+                strings.t('conn.configuredTitle'),
+                style: const TextStyle(
                   fontSize: PB.fsLg,
                   fontWeight: FontWeight.w600,
                 ),
@@ -334,10 +345,10 @@ class _ConnectionsSectionState extends State<ConnectionsSection> {
                 padding: const EdgeInsets.symmetric(vertical: 30),
                 child: Text(
                   _search.text.trim().isNotEmpty
-                      ? '没有找到匹配的连接'
+                      ? strings.t('conn.noMatch')
                       : _filter == ConnectionFilter.configured
-                      ? '还没有配置连接。选择“全部”添加一个。'
-                      : '还没有这类连接。从上方选择一种接入方式开始。',
+                      ? strings.t('conn.emptyConfigured')
+                      : strings.t('conn.emptyFiltered'),
                   style: const TextStyle(
                     color: PB.textTertiary,
                     fontSize: PB.fsBase,

@@ -3,7 +3,9 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../models.dart';
 import '../scope.dart';
+import '../l10n/l10n.dart';
 import '../theme.dart';
+import '../window_chrome.dart';
 import 'toast.dart';
 import 'attachment_view.dart';
 import 'blob_avatar.dart';
@@ -26,7 +28,11 @@ Future<void> showRoomPanel(BuildContext context, Room room) async {
     PageRouteBuilder(
       opaque: false,
       barrierColor: Colors.black.withValues(alpha: 0.35),
-      pageBuilder: (ctx, _, __) => RoomPanel(room: room, width: 380),
+      pageBuilder: (ctx, _, __) => WindowChromeRegion(
+        leading: false,
+        trailing: true,
+        child: RoomPanel(room: room, width: 380),
+      ),
       transitionsBuilder: (ctx, anim, _, child) => SlideTransition(
         position: Tween(
           begin: const Offset(1, 0),
@@ -95,11 +101,11 @@ class _RoomPanelState extends State<RoomPanel> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               _header(context, room),
-              _tabs(isGroup, tab),
+              _tabs(context, isGroup, tab),
               Container(height: 1, color: PB.borderTertiary),
               Expanded(
                 child: switch (tab) {
-                  0 => _detail(room, ctxInfo),
+                  0 => _detail(context, room, ctxInfo),
                   1 => _Library(room: room),
                   2 when isGroup => _members(context, room),
                   _ => _MemoryTab(room: room),
@@ -113,76 +119,94 @@ class _RoomPanelState extends State<RoomPanel> {
   }
 
   Widget _header(BuildContext context, Room room) {
+    final s = L10n.s(context);
     final lead = room.leadName;
     final bot = _primaryBot(room);
-    return AvatarHoverScope(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 18, 10, 14),
-        child: Column(
+    return ChromeSafeHeader(
+      child: AvatarHoverScope(
+        child: Stack(
           children: [
-            Align(
-              alignment: Alignment.centerRight,
-              child: IconButton(
-                tooltip: '关闭',
-                // 宽屏是布局里的一栏 —— 关它要走 AppState；
-                // 窄屏是路由 —— 关它是 pop。两个都做，哪条路都成立。
-                onPressed: () {
-                  final st = AppScope.read(context);
-                  if (st.panelOpen) {
-                    st.closePanel();
-                  } else {
-                    Navigator.of(context).maybePop();
-                  }
-                },
-                icon: const Icon(LucideIcons.x, size: 18),
+            const Positioned.fill(child: WindowDragArea()),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 18, 10, 14),
+              child: Column(
+                children: [
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: IconButton(
+                      tooltip: s.t('common.close'),
+                      onPressed: () {
+                        final st = AppScope.read(context);
+                        if (st.panelOpen) {
+                          st.closePanel();
+                        } else {
+                          Navigator.of(context).maybePop();
+                        }
+                      },
+                      icon: const Icon(LucideIcons.x, size: 18),
+                    ),
+                  ),
+                  if (room.isGroup)
+                    GroupBlobAvatar(
+                      seeds: room.botIds,
+                      size: 64,
+                      animate: false,
+                    )
+                  else
+                    BlobAvatar(
+                      seed: room.botIds.isNotEmpty
+                          ? room.botIds.first
+                          : room.id,
+                      color: PB.colorFor(
+                        room.botIds.isNotEmpty ? room.botIds.first : room.id,
+                      ),
+                      size: 64,
+                      animate: false,
+                    ),
+                  const SizedBox(height: 12),
+                  Text(
+                    room.isGroup ? room.name : (lead ?? room.name),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: PB.fsLg,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  if (!room.isGroup && bot != null) ...[
+                    const SizedBox(height: 12),
+                    BotAppearanceSection(key: ValueKey(bot.id), bot: bot),
+                  ],
+                  if (room.topic.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      room.topic,
+                      textAlign: TextAlign.center,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: PB.fsXs,
+                        color: PB.textQuaternary,
+                        height: 1.5,
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
-            if (room.isGroup)
-              GroupBlobAvatar(seeds: room.botIds, size: 64, animate: false)
-            else
-              BlobAvatar(
-                seed: room.botIds.isNotEmpty ? room.botIds.first : room.id,
-                color: PB.colorFor(
-                  room.botIds.isNotEmpty ? room.botIds.first : room.id,
-                ),
-                size: 64,
-                animate: false,
-              ),
-            const SizedBox(height: 12),
-            Text(
-              room.isGroup ? room.name : (lead ?? room.name),
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: PB.fsLg,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            if (!room.isGroup && bot != null) ...[
-              const SizedBox(height: 12),
-              BotAppearanceSection(key: ValueKey(bot.id), bot: bot),
-            ],
-            if (room.topic.isNotEmpty) ...[
-              const SizedBox(height: 6),
-              Text(
-                room.topic,
-                textAlign: TextAlign.center,
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: PB.fsXs,
-                  color: PB.textQuaternary,
-                  height: 1.5,
-                ),
-              ),
-            ],
           ],
         ),
       ),
     );
   }
 
-  Widget _tabs(bool isGroup, int active) {
-    final tabs = <String>['详情', '资料库', if (isGroup) '成员', '记忆'];
+  Widget _tabs(BuildContext context, bool isGroup, int active) {
+    final s = L10n.s(context);
+    final tabs = <String>[
+      s.t('room.tab.detail'),
+      s.t('room.tab.library'),
+      if (isGroup) s.t('room.tab.members'),
+      s.t('room.tab.memory'),
+    ];
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 18),
       child: Row(
@@ -217,7 +241,8 @@ class _RoomPanelState extends State<RoomPanel> {
     );
   }
 
-  Widget _detail(Room room, ContextInfo? ctx) {
+  Widget _detail(BuildContext context, Room room, ContextInfo? ctx) {
+    final s = L10n.s(context);
     String k(int n) => n >= 1000 ? '${(n / 1000).round()}k' : '$n';
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(18, 16, 18, 24),
@@ -225,20 +250,23 @@ class _RoomPanelState extends State<RoomPanel> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (room.isGroup) ...[
-            _row('类型', '部门（群）'),
-            _row('人数', '${room.botIds.length} 人'),
-            _row('负责人', room.leadName ?? '—'),
+            _row(s.t('room.field.kind'), s.t('room.kind.group')),
+            _row(
+              s.t('room.field.members'),
+              s.tf('room.members', {'n': room.botIds.length}),
+            ),
+            _row(s.t('room.field.lead'), room.leadName ?? '—'),
           ] else
-            _row('类型', '私聊'),
+            _row(s.t('room.field.kind'), s.t('room.kind.dm')),
           if (room.lastMessageAt > 0)
-            _row('最后消息', _timeText(room.lastMessageAt)),
-          _row('消息条数', '${room.messageCount}'),
+            _row(s.t('room.field.lastMessage'), _timeText(room.lastMessageAt)),
+          _row(s.t('room.field.messageCount'), '${room.messageCount}'),
           if (ctx != null && ctx.known)
             _row(
-              '上下文',
+              s.t('room.field.context'),
               '${k(ctx.tokens ?? 0)} / ${k(ctx.contextWindow ?? 0)}'
-                  '（${(ctx.percent ?? 0).round()}%）'
-                  '${ctx.compacting ? ' · 正在压缩' : ''}',
+              '（${(ctx.percent ?? 0).round()}%）'
+              '${ctx.compacting ? ' · ${s.t('room.compacting')}' : ''}',
             ),
           // ★ 就地改运行参数（用户：“不是应该在胶囊点击后的右侧侧边栏 有一个
           //   可以调模型 上下文窗口 思考等级之类的吗？”）。
@@ -331,6 +359,7 @@ class _RoomPanelState extends State<RoomPanel> {
     Room room,
     List<Bot> candidates,
   ) async {
+    final s = L10n.s(context);
     final state = AppScope.read(context);
     final picked = <String>{};
     final q = TextEditingController();
@@ -352,7 +381,7 @@ class _RoomPanelState extends State<RoomPanel> {
           return AlertDialog(
             backgroundColor: PB.bgElevated,
             title: Text(
-              '往「${room.name}」里加谁',
+              s.tf('room.addWho', {'room': room.name}),
               style: const TextStyle(fontSize: PB.fsLg),
             ),
             content: SizedBox(
@@ -366,20 +395,20 @@ class _RoomPanelState extends State<RoomPanel> {
                       autofocus: true,
                       onChanged: (v) =>
                           setLocal(() => query = v.trim().toLowerCase()),
-                      decoration: const InputDecoration(
+                      decoration: InputDecoration(
                         isDense: true,
-                        hintText: '按名字 / 职责找',
+                        hintText: s.t('room.searchMembers'),
                       ),
                     ),
                     const SizedBox(height: 8),
                   ],
                   Flexible(
                     child: shown.isEmpty
-                        ? const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 18),
+                        ? Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 18),
                             child: Text(
-                              '没找到符合条件的 bot',
-                              style: TextStyle(
+                              s.t('room.noMatch'),
+                              style: const TextStyle(
                                 fontSize: PB.fsSm,
                                 color: PB.textTertiary,
                               ),
@@ -430,13 +459,17 @@ class _RoomPanelState extends State<RoomPanel> {
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('取消'),
+                child: Text(s.t('common.cancel')),
               ),
               FilledButton(
                 onPressed: picked.isEmpty
                     ? null
                     : () => Navigator.pop(ctx, true),
-                child: Text(picked.isEmpty ? '添加' : '添加 ${picked.length} 个'),
+                child: Text(
+                  picked.isEmpty
+                      ? s.t('common.add')
+                      : s.tf('room.addN', {'n': picked.length}),
+                ),
               ),
             ],
           );
@@ -448,25 +481,27 @@ class _RoomPanelState extends State<RoomPanel> {
     if (ok != true || picked.isEmpty) return;
     await state.addBotsToRoom(room.id, picked.toList());
     if (!context.mounted) return;
-    toast(context, '已加进「${room.name}」，下次说话它就接得上。');
+    toast(context, s.tf('room.added', {'room': room.name}));
   }
 
   Future<void> _confirmRemove(BuildContext context, Room room, Bot? bot) async {
     if (bot == null) return;
+    final s = L10n.s(context);
     final state = AppScope.read(context);
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: PB.bgElevated,
         title: Text(
-          '把 ${bot.emoji ?? ''}${bot.name} 移出「${room.name}」？',
+          s.tf('room.removeTitle', {
+            'name': '${bot.emoji ?? ''}${bot.name}',
+            'room': room.name,
+          }),
           style: const TextStyle(fontSize: PB.fsLg),
         ),
-        content: const Text(
-          '它会不再参与这个部门的活。\n\n'
-          'bot 本身还在花名册里，你和它的私聊、你教过它的东西都留着 —— '
-          '以后想加回来，跟主控说一声就行。',
-          style: TextStyle(
+        content: Text(
+          s.t('room.removeBody'),
+          style: const TextStyle(
             fontSize: PB.fsSm,
             color: PB.textSecondary,
             height: 1.6,
@@ -475,12 +510,12 @@ class _RoomPanelState extends State<RoomPanel> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
+            child: Text(s.t('common.cancel')),
           ),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: PB.danger),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('移出'),
+            child: Text(s.t('room.remove')),
           ),
         ],
       ),
@@ -488,7 +523,7 @@ class _RoomPanelState extends State<RoomPanel> {
     if (ok != true || !context.mounted) return;
     await state.removeBotFromRoom(room.id, bot.id);
     if (!context.mounted) return;
-    toast(context, '已把 ${bot.name} 移出这个群');
+    toast(context, s.tf('room.removed', {'name': bot.name}));
   }
 }
 
@@ -507,6 +542,7 @@ class _MemberRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = L10n.s(context);
     final b = bot;
     if (b == null) return const SizedBox.shrink();
     return AvatarHoverScope(
@@ -535,11 +571,11 @@ class _MemberRow extends StatelessWidget {
                   ),
                 ),
                 if (isLead)
-                  const Padding(
-                    padding: EdgeInsets.only(right: 8),
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
                     child: Text(
-                      '负责人',
-                      style: TextStyle(
+                      s.t('room.lead'),
+                      style: const TextStyle(
                         fontSize: PB.fsXxs,
                         color: PB.textQuaternary,
                       ),
@@ -548,9 +584,12 @@ class _MemberRow extends StatelessWidget {
                 if (canRemove)
                   TextButton(
                     onPressed: onRemove,
-                    child: const Text(
-                      '移除',
-                      style: TextStyle(fontSize: PB.fsXs, color: PB.danger),
+                    child: Text(
+                      s.t('common.remove'),
+                      style: const TextStyle(
+                        fontSize: PB.fsXs,
+                        color: PB.danger,
+                      ),
                     ),
                   ),
               ],
@@ -584,6 +623,7 @@ class _AddMemberButtonState extends State<_AddMemberButton> {
 
   @override
   Widget build(BuildContext context) {
+    final s = L10n.s(context);
     final enabled = widget.onTap != null;
     final fg = enabled
         ? (_hover ? PB.textPrimary : PB.textSecondary)
@@ -609,7 +649,7 @@ class _AddMemberButtonState extends State<_AddMemberButton> {
               Icon(LucideIcons.plus, size: 15, color: fg),
               const SizedBox(width: 7),
               Text(
-                enabled ? '添加成员' : '花名册里的人都在这儿了',
+                enabled ? s.t('room.addMember') : s.t('room.allMembersAdded'),
                 style: TextStyle(fontSize: PB.fsSm, color: fg),
               ),
             ],
@@ -635,6 +675,7 @@ class _Library extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = L10n.s(context);
     final state = AppScope.of(context);
     final msgs = state.messages[room.id] ?? const <Msg>[];
 
@@ -647,13 +688,13 @@ class _Library extends StatelessWidget {
     }
 
     if (fromUser.isEmpty && fromBot.isEmpty) {
-      return const Center(
+      return Center(
         child: Padding(
-          padding: EdgeInsets.all(24),
+          padding: const EdgeInsets.all(24),
           child: Text(
-            '这个会话里还没有文件。\n\n你发的、bot 产出的，都会收在这里。',
+            s.t('room.noFiles'),
             textAlign: TextAlign.center,
-            style: TextStyle(
+            style: const TextStyle(
               fontSize: PB.fsXs,
               color: PB.textQuaternary,
               height: 1.7,
@@ -667,12 +708,12 @@ class _Library extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
       children: [
         if (fromUser.isNotEmpty) ...[
-          _groupTitle('你发的', fromUser.length),
+          _groupTitle(s.t('room.fromUser'), fromUser.length),
           for (final a in fromUser) _item(context, a),
           const SizedBox(height: 16),
         ],
         if (fromBot.isNotEmpty) ...[
-          _groupTitle('bot 产出的', fromBot.length),
+          _groupTitle(s.t('room.fromBot'), fromBot.length),
           for (final a in fromBot) _item(context, a),
         ],
       ],
@@ -692,6 +733,7 @@ class _Library extends StatelessWidget {
   );
 
   Widget _item(BuildContext context, Attachment a) {
+    final s = L10n.s(context);
     final state = AppScope.of(context);
     final url = state.fileUrl(a.id);
     return Padding(
@@ -749,7 +791,7 @@ class _Library extends StatelessWidget {
               // 下载就在这儿 —— 不用点进去再找
               if (url != null)
                 IconButton(
-                  tooltip: '下载',
+                  tooltip: s.t('room.download'),
                   visualDensity: VisualDensity.compact,
                   onPressed: () =>
                       downloadAttachment(context, file: a, url: url),
@@ -834,17 +876,22 @@ class _MemoryTabState extends State<_MemoryTab> {
     _bootstrap();
   }
 
-  String _ago(int? ms) {
+  String _ago(AppStrings s, int? ms) {
     if (ms == null || ms <= 0) return '';
     final d = DateTime.fromMillisecondsSinceEpoch(ms);
     final diff = DateTime.now().difference(d);
-    if (diff.inMinutes < 1) return '刚刚';
-    if (diff.inHours < 1) return '${diff.inMinutes} 分钟前';
-    if (diff.inDays < 1) return '${diff.inHours} 小时前';
-    return '${diff.inDays} 天前';
+    if (diff.inMinutes < 1) return s.t('room.justNow');
+    if (diff.inHours < 1) {
+      return s.tf('room.minutesAgo', {'n': diff.inMinutes});
+    }
+    if (diff.inDays < 1) {
+      return s.tf('room.hoursAgo', {'n': diff.inHours});
+    }
+    return s.tf('room.daysAgo', {'n': diff.inDays});
   }
 
   Future<void> _showFull(MemorySummary m) async {
+    final s = L10n.s(context);
     final botName =
         AppScope.read(context).botById(_botId)?.name ?? widget.room.name;
     await showDialog<void>(
@@ -872,7 +919,7 @@ class _MemoryTabState extends State<_MemoryTab> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        '记忆摘要 · $botName',
+                        s.tf('room.memoryTitle', {'bot': botName}),
                         style: const TextStyle(
                           fontSize: PB.fsSm,
                           fontWeight: FontWeight.w600,
@@ -881,7 +928,7 @@ class _MemoryTabState extends State<_MemoryTab> {
                       ),
                     ),
                     IconButton(
-                      tooltip: '关闭',
+                      tooltip: s.t('common.close'),
                       onPressed: () => Navigator.of(ctx).pop(),
                       icon: const Icon(LucideIcons.x, size: 18),
                     ),
@@ -911,6 +958,7 @@ class _MemoryTabState extends State<_MemoryTab> {
 
   @override
   Widget build(BuildContext context) {
+    final s = L10n.s(context);
     final m = _data;
     final state = AppScope.of(context);
     final bots = widget.room.botIds
@@ -980,10 +1028,10 @@ class _MemoryTabState extends State<_MemoryTab> {
                 color: PB.textTertiary,
               ),
               const SizedBox(width: 8),
-              const Expanded(
+              Expanded(
                 child: Text(
-                  '记忆摘要',
-                  style: TextStyle(
+                  s.t('room.memory'),
+                  style: const TextStyle(
                     fontSize: PB.fsSm,
                     fontWeight: FontWeight.w600,
                     color: PB.textPrimary,
@@ -998,7 +1046,7 @@ class _MemoryTabState extends State<_MemoryTab> {
                 )
               else
                 IconButton(
-                  tooltip: '重新整理',
+                  tooltip: s.t('room.regenerate'),
                   onPressed: _refresh,
                   icon: const Icon(LucideIcons.refreshCw, size: 16),
                 ),
@@ -1006,11 +1054,14 @@ class _MemoryTabState extends State<_MemoryTab> {
           ),
           const SizedBox(height: 6),
           if (_loading && m == null)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 16),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 16),
               child: Text(
-                '正在读取记忆…',
-                style: TextStyle(fontSize: PB.fsXs, color: PB.textQuaternary),
+                s.t('room.readingMemory'),
+                style: const TextStyle(
+                  fontSize: PB.fsXs,
+                  color: PB.textQuaternary,
+                ),
               ),
             )
           else if (m == null || m.isEmpty)
@@ -1024,17 +1075,17 @@ class _MemoryTabState extends State<_MemoryTab> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    '还没有记忆摘要',
-                    style: TextStyle(
+                  Text(
+                    s.t('room.noMemory'),
+                    style: const TextStyle(
                       fontSize: PB.fsSm,
                       color: PB.textSecondary,
                     ),
                   ),
                   const SizedBox(height: 6),
-                  const Text(
-                    '整理之后，这里会显示它记住的关键结论、偏好和待办。',
-                    style: TextStyle(
+                  Text(
+                    s.t('room.memoryEmptyHint'),
+                    style: const TextStyle(
                       fontSize: PB.fsXs,
                       color: PB.textQuaternary,
                     ),
@@ -1054,7 +1105,9 @@ class _MemoryTabState extends State<_MemoryTab> {
                         border: Border.all(color: PB.borderSecondary),
                       ),
                       child: Text(
-                        _generating ? '正在整理…' : '生成记忆摘要',
+                        _generating
+                            ? s.t('room.generating')
+                            : s.t('room.generateMemory'),
                         style: const TextStyle(
                           fontSize: PB.fsXs,
                           color: PB.textSecondary,
@@ -1093,7 +1146,11 @@ class _MemoryTabState extends State<_MemoryTab> {
                       children: [
                         Expanded(
                           child: Text(
-                            m.stale ? '有新消息，摘要可能已过期' : '更新于 ${_ago(m.at)}',
+                            m.stale
+                                ? s.t('room.memoryStale')
+                                : s.tf('room.updatedAt', {
+                                    'when': _ago(s, m.at),
+                                  }),
                             style: TextStyle(
                               fontSize: PB.fsXxs,
                               color: m.stale
@@ -1103,7 +1160,7 @@ class _MemoryTabState extends State<_MemoryTab> {
                           ),
                         ),
                         Text(
-                          '查看完整摘要 →',
+                          s.t('room.viewFull'),
                           style: TextStyle(
                             fontSize: PB.fsXxs,
                             color: PB.colors(context).accentBright,

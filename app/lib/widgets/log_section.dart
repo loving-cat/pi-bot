@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../app_log.dart';
+import '../l10n/l10n.dart';
 import '../theme.dart';
 
 /// 设置里的「日志」：告诉用户日志在哪、一键打开目录。
@@ -13,6 +14,7 @@ class LogSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final strings = L10n.s(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -20,9 +22,9 @@ class LogSection extends StatelessWidget {
           children: [
             const Icon(LucideIcons.fileText, size: 15, color: PB.textTertiary),
             const SizedBox(width: 8),
-            const Text(
-              '日志',
-              style: TextStyle(
+            Text(
+              strings.t('log.title'),
+              style: const TextStyle(
                 fontSize: PB.fsSm,
                 fontWeight: FontWeight.w600,
                 color: PB.textSecondary,
@@ -32,7 +34,7 @@ class LogSection extends StatelessWidget {
             TextButton.icon(
               onPressed: openLogFolder,
               icon: const Icon(LucideIcons.folderOpen, size: 15),
-              label: const Text('打开目录'),
+              label: Text(strings.t('log.openFolder')),
             ),
           ],
         ),
@@ -48,10 +50,9 @@ class LogSection extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                '服务端日志 server.log 和界面日志 app.log 都在这里。'
-                '出问题时把目录里的文件贴给我们，比截图有用。',
-                style: TextStyle(
+              Text(
+                strings.t('log.note'),
+                style: const TextStyle(
                   fontSize: PB.fsXxs,
                   color: PB.textQuaternary,
                   height: 1.6,

@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../motion.dart';
 import '../theme.dart';
 
@@ -166,7 +167,9 @@ class _ThinkingSliderState extends State<ThinkingSlider>
     if (widget.levels.isEmpty) return const SizedBox.shrink();
     if (widget.levels.length == 1) {
       return Text(
-        '思考等级：${_label(widget.levels.first)}',
+        L10n.s(context).tf('think.levelWith', {
+          'level': _label(L10n.s(context), widget.levels.first),
+        }),
         style: const TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
       );
     }
@@ -197,14 +200,15 @@ class _ThinkingSliderState extends State<ThinkingSlider>
     );
   }
 
-  String _label(String level) => switch (level) {
-    'off' => '关',
-    'minimal' => '极低',
-    'low' => '低',
-    'medium' => '中',
-    'high' => '高',
-    'xhigh' => '很高',
-    'max' => '最高',
+  /// 档位标签；未知档位原样返回（服务端可能下发新档位）。
+  String _label(AppStrings strings, String level) => switch (level) {
+    'off' => strings.t('think.off'),
+    'minimal' => strings.t('think.minimal'),
+    'low' => strings.t('think.low'),
+    'medium' => strings.t('think.medium'),
+    'high' => strings.t('think.high'),
+    'xhigh' => strings.t('think.xhigh'),
+    'max' => strings.t('think.max'),
     _ => level,
   };
 
@@ -235,6 +239,7 @@ class _ThinkingSliderState extends State<ThinkingSlider>
   }
 
   Widget _labels() {
+    final strings = L10n.s(context);
     final n = widget.levels.length;
     final idx = _index;
     return Stack(
@@ -244,7 +249,7 @@ class _ThinkingSliderState extends State<ThinkingSlider>
             for (var i = 0; i < n; i++)
               Expanded(
                 child: Text(
-                  _label(widget.levels[i]),
+                  _label(strings, widget.levels[i]),
                   textAlign: i == 0
                       ? TextAlign.left
                       : (i == n - 1 ? TextAlign.right : TextAlign.center),
@@ -384,36 +389,40 @@ class ThinkingLevelField extends StatelessWidget {
   final ValueChanged<String> onChanged;
   final bool enabled;
 
-  static String labelOf(String level) => switch (level) {
-    'off' => '关',
-    'minimal' => '极低',
-    'low' => '低',
-    'medium' => '中',
-    'high' => '高',
-    'xhigh' => '很高',
-    'max' => '最高',
+  /// 档位标签：跟随当前语言，未知档位原样返回。
+  static String labelOf(AppStrings strings, String level) => switch (level) {
+    'off' => strings.t('think.off'),
+    'minimal' => strings.t('think.minimal'),
+    'low' => strings.t('think.low'),
+    'medium' => strings.t('think.medium'),
+    'high' => strings.t('think.high'),
+    'xhigh' => strings.t('think.xhigh'),
+    'max' => strings.t('think.max'),
     _ => level,
   };
 
   @override
   Widget build(BuildContext context) {
     if (levels.isEmpty) return const SizedBox.shrink();
-    final current = labelOf(value ?? levels.first);
+    final strings = L10n.s(context);
+    final current = labelOf(strings, value ?? levels.first);
     final isMax = value != null && levels.isNotEmpty && value == levels.last;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
-            const Text(
-              '思考等级',
-              style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+            Text(
+              strings.t('think.level'),
+              style: const TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
             ),
             const Spacer(),
             AnimatedSwitcher(
               duration: Motion.fast,
               child: Text(
-                isMax ? '$current · 顶格' : current,
+                isMax
+                    ? strings.tf('think.capped', {'level': current})
+                    : current,
                 key: ValueKey(current),
                 style: TextStyle(
                   fontSize: PB.fsXs,

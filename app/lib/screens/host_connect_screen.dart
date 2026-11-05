@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../l10n/l10n.dart';
 import '../models.dart';
 import '../platform.dart';
 import '../scope.dart';
@@ -69,6 +70,7 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
   @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
+    final s = L10n.s(context);
     final url = state.serverUrl ?? localServerUrl;
     final online = state.link == LinkState.online;
     final starting = state.serverStarting;
@@ -77,8 +79,8 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
     // 手动启动命令使用本机真实路径。
     final serverDir = state.serverDir;
     final manual = serverDir == null
-        ? 'cd <你解压的目录>\nnode src/index.js'
-        : 'cd "$serverDir"\nnode src/index.js';
+        ? s.t('host.manualCommand')
+        : s.tf('host.manualCommandWithDir', {'path': serverDir});
 
     return Scaffold(
       backgroundColor: PB.bgApp,
@@ -99,14 +101,14 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
                   const SizedBox(height: 22),
                   Text(
                     online
-                        ? '连上了'
+                        ? s.t('host.connected')
                         : starting
-                        ? '正在启动本机服务端…（第 $attempts 次）'
+                        ? s.tf('host.startingAttempt', {'n': attempts})
                         : state.localNeedsToken && state.localToken.isEmpty
-                        ? '需要服务端 token'
+                        ? s.t('host.needsToken')
                         : problem != null
-                        ? '服务端没起来'
-                        : '正在连接本机服务端…',
+                        ? s.t('host.failed')
+                        : s.t('host.connecting'),
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                       fontSize: PB.fsXl,
@@ -165,21 +167,25 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
                       obscureText: true,
                       enabled: !_savingToken,
                       onSubmitted: (_) => _saveToken(),
-                      decoration: const InputDecoration(
-                        labelText: '服务端 token（PI_BOT_TOKEN）',
+                      decoration: InputDecoration(
+                        labelText: s.t('host.tokenLabel'),
                         isDense: true,
                       ),
                     ),
                     const SizedBox(height: 8),
                     FilledButton(
                       onPressed: _savingToken ? null : _saveToken,
-                      child: Text(_savingToken ? '正在连接…' : '连接'),
+                      child: Text(
+                        _savingToken
+                            ? s.t('host.connectingShort')
+                            : s.t('host.connect'),
+                      ),
                     ),
                     const SizedBox(height: 12),
                   ],
                   TextButton(
                     onPressed: () => showServerConfigDialog(context),
-                    child: const Text('本机服务端设置'),
+                    child: Text(s.t('host.settings')),
                   ),
                   const SizedBox(height: 12),
                   if (state.serverLog.isNotEmpty) ...[
@@ -226,9 +232,9 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
                               color: PB.textTertiary,
                             ),
                             const SizedBox(width: 8),
-                            const Text(
-                              '正常情况不用管这里 —— 双击打开就会自己起。',
-                              style: TextStyle(
+                            Text(
+                              s.t('host.autoStartHint'),
+                              style: const TextStyle(
                                 fontSize: PB.fsXs,
                                 color: PB.textTertiary,
                               ),
@@ -261,9 +267,10 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
                         const SizedBox(height: 10),
                         Text(
                           serverDir == null
-                              ? '自己起也行：起来之后这里会自动连上，不用点任何东西。'
-                              : '自己起也行：起来之后这里会自动连上，不用点任何东西。\n'
-                                    '日志：${state.serverLogPath}',
+                              ? s.t('host.manualHint')
+                              : s.tf('host.manualHintWithLog', {
+                                  'path': state.serverLogPath,
+                                }),
                           style: const TextStyle(
                             fontSize: PB.fsXxs,
                             color: PB.textQuaternary,
@@ -281,10 +288,10 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
                     icon: const Icon(LucideIcons.refreshCw, size: 17),
                     label: Text(
                       state.serverStarting
-                          ? '正在启动…'
+                          ? s.t('host.startingShort')
                           : state.serverRetryPaused
-                          ? '重新启动服务端（自动重试已暂停）'
-                          : '重新启动服务端',
+                          ? s.t('host.restartPaused')
+                          : s.t('host.restart'),
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -292,10 +299,10 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
                   //   PC 是宿主：服务端就跑在本机上，它没有"去连别人"这个需求。
                   //   真正需要的是"把手机接进来" —— 那是「设置 → 远程连接」里的
                   //   二维码 + 配对码，扫一下就行，不用在这填任何东西。
-                  const Text(
-                    '要把手机接进来？去「设置 → 远程连接」，扫一下二维码就行，这里不用填。',
+                  Text(
+                    s.t('host.pairPhoneHint'),
                     textAlign: TextAlign.center,
-                    style: TextStyle(
+                    style: const TextStyle(
                       fontSize: PB.fsXs,
                       color: PB.textQuaternary,
                       height: 1.5,

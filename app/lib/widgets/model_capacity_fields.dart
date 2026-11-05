@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../model_group_capacity.dart';
 import '../models.dart';
 import '../theme.dart';
@@ -43,21 +44,24 @@ class ModelCardsEditor extends StatelessWidget {
     children: [
       Row(
         children: [
-          const Text(
-            '模型',
-            style: TextStyle(fontSize: PB.fsSm, fontWeight: FontWeight.w600),
+          Text(
+            L10n.s(context).t('model.cardsTitle'),
+            style: const TextStyle(
+              fontSize: PB.fsSm,
+              fontWeight: FontWeight.w600,
+            ),
           ),
           const Spacer(),
           TextButton(
             key: const ValueKey('add-model'),
             onPressed: enabled ? onAdd : null,
-            child: const Text('添加模型'),
+            child: Text(L10n.s(context).t('model.addModel')),
           ),
         ],
       ),
-      const Text(
-        '每个模型独立设置。单位：tokens。已有模型留空保留原值；新模型留空使用服务端默认值。',
-        style: TextStyle(
+      Text(
+        L10n.s(context).t('model.cardsHint'),
+        style: const TextStyle(
           fontSize: PB.fsXxs,
           color: PB.textQuaternary,
           height: 1.5,
@@ -68,110 +72,114 @@ class ModelCardsEditor extends StatelessWidget {
     ],
   );
 
-  Widget _card(
-    BuildContext context,
-    ModelCardDraft row,
-    int number,
-  ) => Container(
-    key: ValueKey('model-card-${row.rowId}'),
-    margin: const EdgeInsets.only(top: 12),
-    padding: const EdgeInsets.all(12),
-    decoration: BoxDecoration(
-      color: PB.bgPane,
-      borderRadius: BorderRadius.circular(PB.rLg),
-      border: Border.all(
-        color: row.rowId == focusedRowId
-            ? PB.colors(context).accent
-            : PB.borderTertiary,
+  Widget _card(BuildContext context, ModelCardDraft row, int number) {
+    final strings = L10n.s(context);
+    return Container(
+      key: ValueKey('model-card-${row.rowId}'),
+      margin: const EdgeInsets.only(top: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: PB.bgPane,
+        borderRadius: BorderRadius.circular(PB.rLg),
+        border: Border.all(
+          color: row.rowId == focusedRowId
+              ? PB.colors(context).accent
+              : PB.borderTertiary,
+        ),
       ),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Text(
-              '模型 $number',
-              style: const TextStyle(
-                fontSize: PB.fsXs,
-                color: PB.textSecondary,
-              ),
-            ),
-            const Spacer(),
-            TextButton(
-              key: ValueKey('remove-model-${row.rowId}'),
-              onPressed: enabled ? () => onRemove(row.rowId) : null,
-              child: const Text('移除'),
-            ),
-          ],
-        ),
-        _field(
-          'model-id-${row.rowId}',
-          '模型 ID',
-          row.id,
-          (value) =>
-              onChanged(row.rowId, (current) => current.copyWith(id: value)),
-          autofocus: row.rowId == focusedRowId,
-        ),
-        const SizedBox(height: 12),
-        _field(
-          'model-name-${row.rowId}',
-          '显示名（可选）',
-          row.name,
-          (value) =>
-              onChanged(row.rowId, (current) => current.copyWith(name: value)),
-          hint: '留空使用模型 ID',
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: _field(
-                'model-context-${row.rowId}',
-                '上下文窗口（tokens）',
-                row.capacity.contextWindow,
-                (value) => onChanged(
-                  row.rowId,
-                  (current) => current.copyWith(
-                    capacity: current.capacity.copyWith(contextWindow: value),
-                  ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                strings.tf('model.cardNumber', {'n': number}),
+                style: const TextStyle(
+                  fontSize: PB.fsXs,
+                  color: PB.textSecondary,
                 ),
-                numeric: true,
-                hint: row.retainedCapacity.contextWindow.isEmpty
-                    ? '服务端默认'
-                    : '保留原值',
               ),
+              const Spacer(),
+              TextButton(
+                key: ValueKey('remove-model-${row.rowId}'),
+                onPressed: enabled ? () => onRemove(row.rowId) : null,
+                child: Text(strings.t('common.remove')),
+              ),
+            ],
+          ),
+          _field(
+            'model-id-${row.rowId}',
+            strings.t('model.id'),
+            row.id,
+            (value) =>
+                onChanged(row.rowId, (current) => current.copyWith(id: value)),
+            autofocus: row.rowId == focusedRowId,
+          ),
+          const SizedBox(height: 12),
+          _field(
+            'model-name-${row.rowId}',
+            strings.t('model.nameOptional'),
+            row.name,
+            (value) => onChanged(
+              row.rowId,
+              (current) => current.copyWith(name: value),
             ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: _field(
-                'model-output-${row.rowId}',
-                '最大输出（tokens）',
-                row.capacity.maxTokens,
-                (value) => onChanged(
-                  row.rowId,
-                  (current) => current.copyWith(
-                    capacity: current.capacity.copyWith(maxTokens: value),
+            hint: strings.t('model.nameHint'),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: _field(
+                  'model-context-${row.rowId}',
+                  strings.t('model.contextTokensLabel'),
+                  row.capacity.contextWindow,
+                  (value) => onChanged(
+                    row.rowId,
+                    (current) => current.copyWith(
+                      capacity: current.capacity.copyWith(contextWindow: value),
+                    ),
                   ),
+                  numeric: true,
+                  hint: row.retainedCapacity.contextWindow.isEmpty
+                      ? strings.t('model.serverDefault')
+                      : strings.t('model.keepValue'),
                 ),
-                numeric: true,
-                hint: row.retainedCapacity.maxTokens.isEmpty ? '服务端默认' : '保留原值',
               ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        const Divider(height: 18),
-        _thinking(context, row),
-      ],
-    ),
-  );
+              const SizedBox(width: 10),
+              Expanded(
+                child: _field(
+                  'model-output-${row.rowId}',
+                  strings.t('model.outputTokensLabel'),
+                  row.capacity.maxTokens,
+                  (value) => onChanged(
+                    row.rowId,
+                    (current) => current.copyWith(
+                      capacity: current.capacity.copyWith(maxTokens: value),
+                    ),
+                  ),
+                  numeric: true,
+                  hint: row.retainedCapacity.maxTokens.isEmpty
+                      ? strings.t('model.serverDefault')
+                      : strings.t('model.keepValue'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          const Divider(height: 18),
+          _thinking(context, row),
+        ],
+      ),
+    );
+  }
 
   /// 思考强度：开不开启 + 上游格式 + 七个档位映射。
   ///
   /// 这里是**唯一**能决定"这个模型到底思不思考"的地方 —— 填错格式不会报错，
   /// 只会静默不思考，所以每项都要给出"留空 = 用默认"以外的明确含义。
   Widget _thinking(BuildContext context, ModelCardDraft row) {
+    final strings = L10n.s(context);
     // ★ 必须用 touched 而不是"是否为空"：用户主动关掉思考时
     //   reasoning=false、format/levels 都为空，旧逻辑会把它当成"没动过"
     //   又回退到已存的开状态，于是开关点了没反应、关了又弹回来。
@@ -253,7 +261,9 @@ class ModelCardsEditor extends StatelessWidget {
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  isOn ? '思考已开启' : '思考已关闭',
+                  isOn
+                      ? strings.t('model.thinkingOn')
+                      : strings.t('model.thinkingOff'),
                   style: TextStyle(
                     fontSize: PB.fsXs,
                     fontWeight: FontWeight.w600,
@@ -275,7 +285,9 @@ class ModelCardsEditor extends StatelessWidget {
         ),
         const SizedBox(height: 2),
         Text(
-          isOn ? '前台会给这个模型的 bot 展示思考档位；关掉后前台不再展示。' : '这个模型不思考，前台也不会展示思考档位。',
+          isOn
+              ? strings.t('model.thinkingOnHint')
+              : strings.t('model.thinkingOffHint'),
           style: const TextStyle(
             fontSize: PB.fsXxs,
             color: PB.textQuaternary,
@@ -286,11 +298,14 @@ class ModelCardsEditor extends StatelessWidget {
           const SizedBox(height: 10),
           Row(
             children: [
-              const SizedBox(
+              SizedBox(
                 width: 96,
                 child: Text(
-                  '上游格式',
-                  style: TextStyle(fontSize: PB.fsXxs, color: PB.textTertiary),
+                  strings.t('model.upstreamFormat'),
+                  style: const TextStyle(
+                    fontSize: PB.fsXxs,
+                    color: PB.textTertiary,
+                  ),
                 ),
               ),
               Expanded(
@@ -300,7 +315,10 @@ class ModelCardsEditor extends StatelessWidget {
                   isDense: true,
                   decoration: const InputDecoration(isDense: true),
                   items: [
-                    const DropdownMenuItem(value: '', child: Text('用默认（不指定）')),
+                    DropdownMenuItem(
+                      value: '',
+                      child: Text(strings.t('model.formatDefault')),
+                    ),
                     for (final format in {
                       ...thinkingFormats,
                       // 已存的格式即使不在选项里也要能显示，否则会静默丢失
@@ -346,8 +364,8 @@ class ModelCardsEditor extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             mapped.isEmpty
-                ? '当前没有任何档位映射，前台不会展示思考档位。'
-                : '前台只会展示映射过的 ${mapped.length} 个档位；要增减就展开微调。',
+                ? strings.t('model.noLevelMapped')
+                : strings.tf('model.levelsMapped', {'n': mapped.length}),
             style: const TextStyle(
               fontSize: PB.fsXxs,
               color: PB.textQuaternary,
@@ -403,11 +421,11 @@ class _LevelSummary extends StatelessWidget {
   Widget build(BuildContext context) => Row(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      const SizedBox(
+      SizedBox(
         width: 96,
         child: Text(
-          '档位映射',
-          style: TextStyle(fontSize: PB.fsXxs, color: PB.textTertiary),
+          L10n.s(context).t('model.levelMapping'),
+          style: const TextStyle(fontSize: PB.fsXxs, color: PB.textTertiary),
         ),
       ),
       Expanded(
@@ -427,11 +445,11 @@ class _LevelSummary extends StatelessWidget {
               key: ValueKey('model-thinking-reset-$rowId'),
               onTap: enabled ? onReset : null,
               borderRadius: BorderRadius.circular(PB.rSm),
-              child: const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
                 child: Text(
-                  '恢复同名',
-                  style: TextStyle(
+                  L10n.s(context).t('model.resetSameName'),
+                  style: const TextStyle(
                     fontSize: PB.fsXxs,
                     color: PB.textTertiary,
                     decoration: TextDecoration.underline,
@@ -525,7 +543,8 @@ class _LevelTunerState extends State<_LevelTuner> {
               ),
               const SizedBox(width: 4),
               Text(
-                _open ? '收起微调' : '微调单个档位',
+                L10n.s(context)
+                    .t(_open ? 'model.collapseTuner' : 'model.expandTuner'),
                 style: const TextStyle(
                   fontSize: PB.fsXxs,
                   color: PB.textTertiary,
@@ -559,9 +578,9 @@ class _LevelTunerState extends State<_LevelTuner> {
                     isDense: true,
                     decoration: const InputDecoration(isDense: true),
                     items: [
-                      const DropdownMenuItem(
+                      DropdownMenuItem(
                         value: '',
-                        child: Text('不传（这一档不生效）'),
+                        child: Text(L10n.s(context).t('model.levelSkip')),
                       ),
                       for (final value in {
                         ...widget.upstream,
@@ -598,48 +617,62 @@ class ModelGroupModelSummary extends StatelessWidget {
   final ModelGroup group;
   final ValueChanged<ModelSpec> onEdit;
 
-  String _tokens(int value) => value > 0 ? '$value tokens' : '服务端默认';
+  String _tokens(AppStrings strings, int value) =>
+      value > 0 ? '$value tokens' : strings.t('model.serverDefault');
 
   /// 摘要里的思考状态：不思考 / 格式 + 已映射档位数
-  String _thinking(ModelSpec model) {
-    if (!model.reasoning) return '不思考';
-    final format = model.thinkingFormat.isEmpty ? '默认格式' : model.thinkingFormat;
+  String _thinking(AppStrings strings, ModelSpec model) {
+    if (!model.reasoning) return strings.t('model.noReasoning');
+    final format = model.thinkingFormat.isEmpty
+        ? strings.t('model.defaultFormatLabel')
+        : model.thinkingFormat;
     final mapped = model.thinkingLevelMap.values.where((v) => v != null).length;
-    return mapped > 0 ? '$format · $mapped 档' : format;
+    return mapped > 0
+        ? strings.tf('model.levelSummary', {'format': format, 'n': mapped})
+        : format;
   }
 
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      for (final model in group.models)
-        TextButton(
-          key: ValueKey('model-summary-${group.id}-${model.id}'),
-          onPressed: () => onEdit(model),
-          style: TextButton.styleFrom(alignment: Alignment.centerLeft),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                model.name.isEmpty || model.name == model.id
-                    ? model.id
-                    : '${model.name}（${model.id}）',
-                style: const TextStyle(
-                  fontSize: PB.fsXs,
-                  color: PB.textSecondary,
+  Widget build(BuildContext context) {
+    final strings = L10n.s(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final model in group.models)
+          TextButton(
+            key: ValueKey('model-summary-${group.id}-${model.id}'),
+            onPressed: () => onEdit(model),
+            style: TextButton.styleFrom(alignment: Alignment.centerLeft),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  model.name.isEmpty || model.name == model.id
+                      ? model.id
+                      : strings.tf('model.nameWithId', {
+                          'name': model.name,
+                          'id': model.id,
+                        }),
+                  style: const TextStyle(
+                    fontSize: PB.fsXs,
+                    color: PB.textSecondary,
+                  ),
                 ),
-              ),
-              Text(
-                '上下文：${_tokens(model.contextWindow)} · 最大输出：${_tokens(model.maxTokens)}'
-                ' · 思考：${_thinking(model)}',
-                style: const TextStyle(
-                  fontSize: PB.fsXxs,
-                  color: PB.textQuaternary,
+                Text(
+                  strings.tf('model.summary', {
+                    'context': _tokens(strings, model.contextWindow),
+                    'output': _tokens(strings, model.maxTokens),
+                    'thinking': _thinking(strings, model),
+                  }),
+                  style: const TextStyle(
+                    fontSize: PB.fsXxs,
+                    color: PB.textQuaternary,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
-    ],
-  );
+      ],
+    );
+  }
 }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../app_state.dart';
+import '../l10n/l10n.dart';
 import '../models.dart';
 import '../motion.dart';
 import '../progress_messages.dart';
@@ -21,8 +22,9 @@ class ProgressNotice extends StatelessWidget {
   Widget build(BuildContext context) {
     if (messages.isEmpty) return const SizedBox.shrink();
     final state = AppScope.of(context);
+    final strings = L10n.s(context);
     final senders = progressSenders(messages);
-    final dept = _deptName(state, messages);
+    final dept = _deptName(state, messages, strings);
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
@@ -36,10 +38,10 @@ class ProgressNotice extends StatelessWidget {
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
             child: ConversationPeople(
-              prefix: '收到',
+              prefix: strings.t('dept.received'),
               people: senders,
-              fallback: '「$dept」',
-              suffix: '消息 · ${messages.length} 条',
+              fallback: strings.tf('misc.quoted', {'name': dept}),
+              suffix: strings.tf('dept.messageSuffix', {'n': messages.length}),
             ),
           ),
         ),
@@ -48,9 +50,10 @@ class ProgressNotice extends StatelessWidget {
   }
 }
 
-String _deptName(AppState state, List<Msg> messages) {
+String _deptName(AppState state, List<Msg> messages, AppStrings strings) {
   final rid = (messages.first.meta?['fromRoomId'] as String?) ?? '';
-  return state.rooms.where((r) => r.id == rid).firstOrNull?.name ?? '部门';
+  return state.rooms.where((r) => r.id == rid).firstOrNull?.name ??
+      strings.t('dept.unknown');
 }
 
 String _fmtTime(int ms) {
@@ -143,9 +146,10 @@ class _ProgressPeekLayerState extends State<_ProgressPeekLayer>
   }
 
   Widget _card(double w, double h) {
+    final strings = L10n.s(context);
     final state = AppScope.of(context);
     final senders = progressSenders(widget.messages);
-    final dept = _deptName(state, widget.messages);
+    final dept = _deptName(state, widget.messages, strings);
 
     return Material(
       type: MaterialType.transparency,
@@ -180,8 +184,12 @@ class _ProgressPeekLayerState extends State<_ProgressPeekLayer>
                     Expanded(
                       child: Text(
                         senders.isEmpty
-                            ? '「$dept」的消息'
-                            : '收到 ${senders.map((s) => s.name).join('、')} 的消息',
+                            ? strings.tf('dept.fromRoom', {'room': dept})
+                            : strings.tf('dept.fromPeople', {
+                                'names': senders
+                                    .map((s) => s.name)
+                                    .join(strings.t('misc.listSeparator')),
+                              }),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -193,7 +201,7 @@ class _ProgressPeekLayerState extends State<_ProgressPeekLayer>
                     ),
                     HoverIconButton(
                       icon: LucideIcons.x,
-                      tooltip: '关闭',
+                      tooltip: strings.t('common.close'),
                       onTap: widget.onClose,
                     ),
                   ],
@@ -218,14 +226,14 @@ class _ProgressPeekLayerState extends State<_ProgressPeekLayer>
                     pressColor: PB.bgActive,
                     borderRadius: BorderRadius.circular(PB.rFull),
                     onTap: widget.onClose,
-                    child: const Padding(
-                      padding: EdgeInsets.symmetric(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
                         horizontal: 20,
                         vertical: 8,
                       ),
                       child: Text(
-                        '关闭',
-                        style: TextStyle(
+                        strings.t('common.close'),
+                        style: const TextStyle(
                           fontSize: PB.fsSm,
                           color: PB.textSecondary,
                         ),
@@ -244,7 +252,7 @@ class _ProgressPeekLayerState extends State<_ProgressPeekLayer>
   Widget _receipt(AppState state, Msg m) {
     final fromId = (m.meta?['fromId'] as String?) ?? '';
     final fromName = ((m.meta?['fromName'] as String?) ?? '').trim();
-    final dept = _deptName(state, [m]);
+    final dept = _deptName(state, [m], L10n.s(context));
     final result = progressResult(m);
     final resultColor = switch (result) {
       ProgressResult.success => PB.success,

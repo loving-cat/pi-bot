@@ -30,6 +30,18 @@ List<String> mergeMemberIds(List<String> current, List<String> added) {
   return out;
 }
 
+/// 把经验库请求异常转成带状态码前缀的文本。
+///
+/// 界面层只判前缀里的数字，不猜服务端用的是哪种语言。
+/// 服务端对该资源返回 404 时，视为「这条已经不在了」。
+String lessonError(Object err) {
+  final status = err is ApiException ? err.status : null;
+  return status == null ? '$err' : '[$status] $err';
+}
+
+/// 该错误是否代表「资源已不存在」。
+bool isGoneError(String message) => message.startsWith('[404]');
+
 class AppState extends ChangeNotifier {
   static const _kUrl = 'server_url';
   static const _kToken = 'server_token';
@@ -955,9 +967,9 @@ class AppState extends ChangeNotifier {
       return null;
     } catch (err) {
       // 失败也刷一次：这条可能已经被删了（列表是旧的），不能让用户
-      // 对着一条不存在的经验反复点“停用/删除”。
+      // 对着一条不存在的经验反复点"停用/删除"。
       await loadLessons();
-      return '$err';
+      return lessonError(err);
     }
   }
 
@@ -969,7 +981,7 @@ class AppState extends ChangeNotifier {
       return null;
     } catch (err) {
       await loadLessons();
-      return '$err';
+      return lessonError(err);
     }
   }
 

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../l10n/l10n.dart';
 import '../platform.dart';
 import '../scope.dart';
 import '../theme.dart';
@@ -16,11 +17,18 @@ class ServerConfigSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (!isHostPlatform) return const SizedBox.shrink();
+    final strings = L10n.s(context);
     final state = AppScope.of(context);
 
-    final dataDir = state.serverDataDir.isEmpty ? '（自动）用户数据目录' : state.serverDataDir;
-    final entry = state.serverEntryPath.isEmpty ? '（自动）程序旁边的 server' : state.serverEntryPath;
-    final node = state.serverNodePath.isEmpty ? '（自动）查找 node 22+' : state.serverNodePath;
+    final dataDir = state.serverDataDir.isEmpty
+        ? strings.t('servercfg.autoDataDir')
+        : state.serverDataDir;
+    final entry = state.serverEntryPath.isEmpty
+        ? strings.t('servercfg.autoEntry')
+        : state.serverEntryPath;
+    final node = state.serverNodePath.isEmpty
+        ? strings.t('servercfg.autoNode')
+        : state.serverNodePath;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -29,9 +37,9 @@ class ServerConfigSection extends StatelessWidget {
           children: [
             const Icon(LucideIcons.serverCog, size: 15, color: PB.textTertiary),
             const SizedBox(width: 8),
-            const Text(
-              '本机服务端',
-              style: TextStyle(
+            Text(
+              strings.t('servercfg.title'),
+              style: const TextStyle(
                 fontSize: PB.fsSm,
                 fontWeight: FontWeight.w600,
                 color: PB.textSecondary,
@@ -41,7 +49,7 @@ class ServerConfigSection extends StatelessWidget {
             TextButton.icon(
               onPressed: () => showServerConfigDialog(context),
               icon: const Icon(LucideIcons.slidersHorizontal, size: 15),
-              label: const Text('修改启动配置'),
+              label: Text(strings.t('servercfg.edit')),
             ),
           ],
         ),
@@ -56,26 +64,23 @@ class ServerConfigSection extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                '桌面端会自己把服务端跑起来。默认什么都不用填 —— 它自己找 node、'
-                '自己找服务端程序；第一次会装依赖。下面这几项只在你的机器'
-                '跟默认不一样时才需要改。',
-                style: TextStyle(
+              Text(
+                strings.t('servercfg.intro'),
+                style: const TextStyle(
                   fontSize: PB.fsXxs,
                   color: PB.textQuaternary,
                   height: 1.6,
                 ),
               ),
               const SizedBox(height: 10),
-              _Row('端口', '${state.serverPort}'),
-              _Row('数据目录', dataDir),
-              _Row('服务端', entry),
+              _Row(strings.t('servercfg.port'), '${state.serverPort}'),
+              _Row(strings.t('servercfg.dataDir'), dataDir),
+              _Row(strings.t('servercfg.entry'), entry),
               _Row('node', node),
               const SizedBox(height: 6),
-              const Text(
-                '数据目录里有房间、会话、上传的附件和 bot 的工作目录 —— '
-                '换目录等于换一整套数据（旧目录不会被删）。',
-                style: TextStyle(
+              Text(
+                strings.t('servercfg.dataDirNote'),
+                style: const TextStyle(
                   fontSize: PB.fsXxs,
                   color: PB.textQuaternary,
                   height: 1.6,
@@ -111,7 +116,10 @@ Future<void> showServerConfigDialog(BuildContext context) async {
   );
   if (!context.mounted) return;
   final problem = state.serverProblem;
-  toast(context, problem ?? '已保存，本机服务端已启动');
+  toast(
+    context,
+    problem ?? L10n.s(context).t('servercfg.savedRestarted'),
+  );
 }
 
 class _Row extends StatelessWidget {
@@ -200,7 +208,7 @@ class _ServerConfigDialogState extends State<_ServerConfigDialog> {
   void _submit() {
     final port = int.tryParse(_port.text.trim());
     if (port == null || port < 1 || port > 65535) {
-      setState(() => _error = '端口要是 1–65535 之间的数字');
+      setState(() => _error = L10n.s(context).t('servercfg.portInvalid'));
       return;
     }
     Navigator.of(context).pop(
@@ -215,9 +223,13 @@ class _ServerConfigDialogState extends State<_ServerConfigDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final strings = L10n.s(context);
     return AlertDialog(
       backgroundColor: PB.bgPane,
-      title: const Text('本机服务端启动配置', style: TextStyle(fontSize: PB.fsLg)),
+      title: Text(
+        strings.t('servercfg.dialogTitle'),
+        style: const TextStyle(fontSize: PB.fsLg),
+      ),
       content: SizedBox(
         width: 520,
         child: SingleChildScrollView(
@@ -225,15 +237,31 @@ class _ServerConfigDialogState extends State<_ServerConfigDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                '留空 = 自动。改完会重启服务端（换数据目录不会搬旧数据，只换位置）。',
-                style: TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary, height: 1.6),
+              Text(
+                strings.t('servercfg.dialogIntro'),
+                style: const TextStyle(
+                  fontSize: PB.fsXxs,
+                  color: PB.textQuaternary,
+                  height: 1.6,
+                ),
               ),
               const SizedBox(height: 14),
-              _field(_port, '端口', '8787'),
-              _field(_entry, '服务端入口（server/src/index.js）', '留空自动查找'),
-              _field(_node, 'node 路径', '留空自动查找'),
-              _field(_dataDir, '数据目录', '留空 = 用户数据目录'),
+              _field(_port, strings.t('servercfg.port'), '8787'),
+              _field(
+                _entry,
+                strings.t('servercfg.entryLabel'),
+                strings.t('servercfg.autoFind'),
+              ),
+              _field(
+                _node,
+                strings.t('servercfg.nodePath'),
+                strings.t('servercfg.autoFind'),
+              ),
+              _field(
+                _dataDir,
+                strings.t('servercfg.dataDir'),
+                strings.t('servercfg.dataDirHint'),
+              ),
               if (_error != null) ...[
                 const SizedBox(height: 8),
                 Text(
@@ -248,9 +276,12 @@ class _ServerConfigDialogState extends State<_ServerConfigDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: Text(strings.t('common.cancel')),
         ),
-        FilledButton(onPressed: _submit, child: const Text('保存并重启')),
+        FilledButton(
+          onPressed: _submit,
+          child: Text(strings.t('servercfg.saveRestart')),
+        ),
       ],
     );
   }

@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../save_file.dart';
 import '../theme.dart';
 import '../update_info.dart';
@@ -45,6 +46,7 @@ Future<UpdateChoice> showUpdateDialog(
   BuildContext context,
   UpdateInfo info,
 ) async {
+  final strings = L10n.s(context);
   final choice = await showDialog<UpdateChoice>(
     context: context,
     barrierDismissible: false,
@@ -59,7 +61,7 @@ Future<UpdateChoice> showUpdateDialog(
           ),
           const SizedBox(width: 8),
           Text(
-            '发现新版本 ${info.latest}',
+            strings.tf('update.found', {'version': info.latest}),
             style: const TextStyle(fontSize: PB.fsLg),
           ),
         ],
@@ -71,7 +73,7 @@ Future<UpdateChoice> showUpdateDialog(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '当前版本 ${info.current}',
+              strings.tf('update.current', {'version': info.current}),
               style: const TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
             ),
             if (info.hasNotes) ...[
@@ -93,7 +95,7 @@ Future<UpdateChoice> showUpdateDialog(
             if (info.canDownload && info.sizeLabel.isNotEmpty) ...[
               const SizedBox(height: 10),
               Text(
-                '下载大小约 ${info.sizeLabel}',
+                strings.tf('update.size', {'size': info.sizeLabel}),
                 style: const TextStyle(
                   fontSize: PB.fsXs,
                   color: PB.textTertiary,
@@ -102,9 +104,9 @@ Future<UpdateChoice> showUpdateDialog(
             ],
             if (!info.canDownload) ...[
               const SizedBox(height: 10),
-              const Text(
-                '这个版本没有提供直链安装包，可以在发布页里手动下载。',
-                style: TextStyle(
+              Text(
+                strings.t('update.noDirectLinkPromo'),
+                style: const TextStyle(
                   fontSize: PB.fsXs,
                   color: PB.textTertiary,
                   height: 1.6,
@@ -117,17 +119,17 @@ Future<UpdateChoice> showUpdateDialog(
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(ctx, UpdateChoice.later),
-          child: const Text('以后再说'),
+          child: Text(strings.t('update.later')),
         ),
         if (info.pageUrl.isNotEmpty)
           TextButton(
             onPressed: () => Navigator.pop(ctx, UpdateChoice.openPage),
-            child: const Text('打开发布页'),
+            child: Text(strings.t('update.openPage')),
           ),
         if (info.canDownload)
           FilledButton(
             onPressed: () => Navigator.pop(ctx, UpdateChoice.download),
-            child: const Text('下载'),
+            child: Text(strings.t('common.download')),
           ),
       ],
     ),
@@ -164,11 +166,12 @@ Future<DownloadResult> downloadUpdate(
   })?
   fetch,
 }) async {
+  final strings = L10n.s(context);
   if (!info.canDownload) {
-    return const DownloadResult(error: '这个版本没有提供直链安装包');
+    return DownloadResult(error: strings.t('update.noDirectLink'));
   }
   if (!isSafeDownloadUrl(info.assetUrl)) {
-    return const DownloadResult(error: '下载地址不是 https，已拒绝');
+    return DownloadResult(error: strings.t('update.insecureUrl'));
   }
 
   final progress = ValueNotifier<double>(0);
@@ -182,7 +185,10 @@ Future<DownloadResult> downloadUpdate(
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
         backgroundColor: PB.bgElevated,
-        title: const Text('正在下载更新', style: TextStyle(fontSize: PB.fsLg)),
+        title: Text(
+          strings.t('update.downloading'),
+          style: const TextStyle(fontSize: PB.fsLg),
+        ),
         content: SizedBox(
           width: 380,
           child: Column(
@@ -197,7 +203,9 @@ Future<DownloadResult> downloadUpdate(
                     LinearProgressIndicator(value: v <= 0 ? null : v),
                     const SizedBox(height: 8),
                     Text(
-                      v <= 0 ? '连接中…' : '${(v * 100).toStringAsFixed(0)}%',
+                      v <= 0
+                          ? strings.t('update.connecting')
+                          : '${(v * 100).toStringAsFixed(0)}%',
                       style: const TextStyle(
                         fontSize: PB.fsXs,
                         color: PB.textTertiary,
@@ -228,7 +236,7 @@ Future<DownloadResult> downloadUpdate(
               if (!cancel.isCompleted) cancel.complete();
               Navigator.of(ctx).pop();
             },
-            child: const Text('取消'),
+            child: Text(strings.t('common.cancel')),
           ),
         ],
       ),
@@ -241,16 +249,23 @@ Future<DownloadResult> downloadUpdate(
       (p) => progress.value = p,
       cancelSignal: cancel.future,
     );
-    if (bytes.isEmpty) return const DownloadResult(error: '下载到的文件是空的');
+    if (bytes.isEmpty) {
+      return DownloadResult(error: strings.t('update.emptyFile'));
+    }
 
     final name = info.assetName.isNotEmpty
         ? info.assetName
         : 'pi-bot-${info.latest}${_extOf(info.assetUrl)}';
     final path = await saveAttachment(name: name, bytes: bytes);
-    if (path == null) return const DownloadResult(error: '已取消');
+    if (path == null)
+      return DownloadResult(error: strings.t('update.cancelled'));
     return DownloadResult(path: path);
   } on _DownloadCancelled {
-    return const DownloadResult(error: '已取消');
+    return DownloadResult(error: strings.t('update.cancelled'));
+  } on _UpdateHttpStatus catch (err) {
+    return DownloadResult(
+      error: strings.tf('update.downloadFailed', {'status': err.status}),
+    );
   } catch (err) {
     return DownloadResult(error: '$err');
   } finally {
@@ -266,6 +281,13 @@ Future<DownloadResult> downloadUpdate(
 
 /// 下载被用户取消（内部信号，不往外抛）
 class _DownloadCancelled implements Exception {}
+
+/// 服务端返回非 200（内部信号，界面按当前语言拼文案）
+class _UpdateHttpStatus implements Exception {
+  const _UpdateHttpStatus(this.status);
+
+  final int status;
+}
 
 /// 下载地址必须是 https：服务端理论上只会给 GitHub 链接，
 /// 但它是网络数据，客户端要有自己的底线（防降级 / 防被篡改指向内网）。
@@ -313,7 +335,7 @@ Future<List<int>> defaultUpdateFetcher(
     req.headers.set('user-agent', 'pi-bot-updater');
     final res = await req.close();
     if (res.statusCode != 200) {
-      throw '下载失败：HTTP ${res.statusCode}';
+      throw _UpdateHttpStatus(res.statusCode);
     }
     final total = res.contentLength;
     final chunks = <int>[];
@@ -341,18 +363,25 @@ Future<void> showDownloadDoneDialog(
   required String path,
   required UpdateInfo info,
 }) async {
+  final strings = L10n.s(context);
   final open = await showDialog<bool>(
     context: context,
     builder: (ctx) => AlertDialog(
       backgroundColor: PB.bgElevated,
-      title: const Text('下载完成', style: TextStyle(fontSize: PB.fsLg)),
+      title: Text(
+        strings.t('update.done'),
+        style: const TextStyle(fontSize: PB.fsLg),
+      ),
       content: SizedBox(
         width: 420,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('更新包已保存到：', style: TextStyle(fontSize: PB.fsSm)),
+            Text(
+              strings.t('update.savedTo'),
+              style: const TextStyle(fontSize: PB.fsSm),
+            ),
             const SizedBox(height: 6),
             SelectableText(
               path,
@@ -365,9 +394,8 @@ Future<void> showDownloadDoneDialog(
             const SizedBox(height: 10),
             Text(
               Platform.isMacOS && path.toLowerCase().endsWith('.dmg')
-                  ? '关闭 pi-bot，打开 DMG 并将 App 拖入 Applications；\n'
-                        '重新打开后，在设置中重启本机服务端。'
-                  : '关闭 pi-bot 后运行这个安装包完成更新。',
+                  ? strings.t('update.macInstructions')
+                  : strings.t('update.installInstructions'),
               style: const TextStyle(
                 fontSize: PB.fsXs,
                 color: PB.textTertiary,
@@ -380,11 +408,11 @@ Future<void> showDownloadDoneDialog(
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(ctx, false),
-          child: const Text('知道了'),
+          child: Text(strings.t('update.gotIt')),
         ),
         FilledButton(
           onPressed: () => Navigator.pop(ctx, true),
-          child: const Text('打开所在目录'),
+          child: Text(strings.t('update.openFolder')),
         ),
       ],
     ),

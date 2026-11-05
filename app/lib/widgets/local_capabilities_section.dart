@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../l10n/l10n.dart';
 import '../models.dart';
 import '../scope.dart';
 import '../theme.dart';
@@ -50,10 +51,17 @@ class _LocalCapabilitiesSectionState extends State<LocalCapabilitiesSection> {
     if (!mounted) return;
     setState(() => _busy = false);
 
+    final strings = L10n.s(context);
     final msg = [
       if (r.imported.isNotEmpty)
-        '导入了 ${r.imported.length} 个：${r.imported.join('、')}',
-      if (r.skipped.isNotEmpty) '跳过：${r.skipped.join('；')}',
+        strings.tf('skills.localImported', {
+          'n': r.imported.length,
+          'names': r.imported.join(strings.t('conn.listSeparator')),
+        }),
+      if (r.skipped.isNotEmpty)
+        strings.tf('skills.localSkipped', {
+          'names': r.skipped.join(strings.t('conn.listSeparator')),
+        }),
     ].join('\n');
     if (msg.isNotEmpty) {
       toast(context, msg, kind: ToastKind.success);
@@ -62,6 +70,7 @@ class _LocalCapabilitiesSectionState extends State<LocalCapabilitiesSection> {
 
   @override
   Widget build(BuildContext context) {
+    final strings = L10n.s(context);
     final state = AppScope.of(context);
     final caps = state.localCapabilities;
     if (caps == null) return const SizedBox.shrink();
@@ -82,8 +91,11 @@ class _LocalCapabilitiesSectionState extends State<LocalCapabilitiesSection> {
     // ★ 这里必须写 ${pending.length} 而不是 $pending.length —— 后者会插值整个
     // List 再拼上字面量 ".length"，一行能扫出一万多像素宽（真实事故）。
     final summary = pending.isEmpty
-        ? '${entries.length} 个，都导入了'
-        : '${entries.length} 个 · ${pending.length} 个可导入';
+        ? strings.tf('skills.localAllImported', {'n': entries.length})
+        : strings.tf('skills.localSummary', {
+            'total': entries.length,
+            'pending': pending.length,
+          });
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -120,14 +132,20 @@ class _LocalCapabilitiesSectionState extends State<LocalCapabilitiesSection> {
                   Expanded(
                     child: Tooltip(
                       message: pending.isEmpty
-                          ? '${entries.length} 个，都导入了'
-                          : '可导入（点击全部导入）：${pending.join('、')}',
+                          ? strings.tf('skills.localAllImported', {
+                              'n': entries.length,
+                            })
+                          : strings.tf('skills.localPendingTip', {
+                              'names': pending.join(
+                                strings.t('conn.listSeparator'),
+                              ),
+                            }),
                       waitDuration: const Duration(milliseconds: 500),
                       child: Row(
                         children: [
-                          const Text(
-                            '本机已装',
-                            style: TextStyle(
+                          Text(
+                            strings.t('skills.localInstalled'),
+                            style: const TextStyle(
                               fontSize: PB.fsXs,
                               fontWeight: FontWeight.w600,
                               color: PB.textSecondary,
@@ -153,7 +171,9 @@ class _LocalCapabilitiesSectionState extends State<LocalCapabilitiesSection> {
                     TextButton(
                       onPressed: _busy ? null : () => _import(pending),
                       child: Text(
-                        _busy ? '导入中…' : '全部导入',
+                        _busy
+                            ? strings.t('skills.localImporting')
+                            : strings.t('skills.localImportAll'),
                         style: const TextStyle(fontSize: PB.fsXs),
                       ),
                     ),
@@ -166,11 +186,10 @@ class _LocalCapabilitiesSectionState extends State<LocalCapabilitiesSection> {
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 10, 14, 4),
               child: Text(
-                isSkill
-                    ? '扫的是 $root。只读，不会改你终端里的 pi 配置；'
-                          '导入是复制一份过来，之后两边独立。'
-                    : '扫的是 $root。只读，不会改你终端里的 pi 配置；'
-                          '导入后默认**不启用**（MCP 会起进程）。',
+                strings.tf(
+                  isSkill ? 'skills.localScanSkill' : 'skills.localScanMcp',
+                  {'root': root},
+                ),
                 style: const TextStyle(
                   fontSize: PB.fsXxs,
                   color: PB.textQuaternary,
@@ -186,14 +205,17 @@ class _LocalCapabilitiesSectionState extends State<LocalCapabilitiesSection> {
                 summary: isSkill
                     ? (e as LocalSkillEntry).summary
                     : [
-                        if ((e as LocalMcpEntry).isHttp) 'HTTP' else '本地',
+                        if ((e as LocalMcpEntry).isHttp)
+                          'HTTP'
+                        else
+                          strings.t('skills.localLocal'),
                         e.target,
                       ].where((x) => x.isNotEmpty).join(' · '),
                 imported: isSkill
                     ? (e as LocalSkillEntry).imported
                     : (e as LocalMcpEntry).imported,
                 note: isSkill && (e as LocalSkillEntry).truncated
-                    ? '正文较长，已截断到上限'
+                    ? strings.t('skills.localTruncated')
                     : '',
               ),
             const SizedBox(height: 6),
@@ -257,14 +279,20 @@ class _LocalCapabilitiesSectionState extends State<LocalCapabilitiesSection> {
           if (!imported)
             TextButton(
               onPressed: _busy ? null : () => _import([title]),
-              child: const Text('导入', style: TextStyle(fontSize: PB.fsXs)),
+              child: Text(
+                L10n.s(context).t('skills.localImport'),
+                style: const TextStyle(fontSize: PB.fsXs),
+              ),
             )
           else
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
               child: Text(
-                '已导入',
-                style: TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
+                L10n.s(context).t('skills.localImportedBadge'),
+                style: const TextStyle(
+                  fontSize: PB.fsXxs,
+                  color: PB.textQuaternary,
+                ),
               ),
             ),
         ],

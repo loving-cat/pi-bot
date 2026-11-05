@@ -10,10 +10,12 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../browser_pane_state.dart';
+import '../l10n/l10n.dart';
 import '../browser_navigation.dart';
 import '../scope.dart';
 import '../browser_platform_policy.dart';
 import '../theme.dart';
+import '../window_chrome.dart';
 import 'attachment_actions.dart';
 import 'attachment_preview_content.dart';
 
@@ -131,7 +133,7 @@ class _BrowserPaneState extends State<BrowserPane> {
           identical(_controller?.platform, controller.platform) &&
           revision == _navigationRevision &&
           epoch == _navigation.epoch) {
-        setState(() => _error = '页面暂时无法加载，请重试或使用系统浏览器打开。');
+        setState(() => _error = L10n.s(context).t('browser.loadFailed'));
       }
     }
   }
@@ -222,14 +224,15 @@ class _BrowserPaneState extends State<BrowserPane> {
     if (!_isCurrent(controller, generation) || epoch != _navigation.epoch)
       return;
     setState(() {
+      final strings = L10n.s(context);
       if (status == 415) {
-        _error = '这个文件不能转成网页查看。\n用工具栏的「用系统浏览器打开」，或先下载再打开。';
+        _error = strings.t('browser.notConvertible');
       } else if (status != null) {
-        _error = '服务端返回 HTTP $status';
+        _error = strings.tf('browser.httpStatus', {'status': status});
       } else {
         _error = widget.state.nativeViewer
-            ? '这个 PDF 暂时无法打开。\n可以用工具栏的「用系统浏览器打开」，或先下载。'
-            : '页面暂时无法加载，请刷新或换一个地址。';
+            ? strings.t('browser.pdfFailed')
+            : strings.t('browser.loadFailedRefresh');
       }
     });
     _navigation.finished(url, epoch);
@@ -255,7 +258,7 @@ class _BrowserPaneState extends State<BrowserPane> {
     setState(() {
       _controller = null;
       _processFailed = true;
-      _error = '网页进程已停止，点击刷新可以重新打开。';
+      _error = L10n.s(context).t('browser.processStopped');
       _progress = 0;
     });
   }
@@ -292,134 +295,148 @@ class _BrowserPaneState extends State<BrowserPane> {
     );
   }
 
-  Widget _toolbar(BrowserPaneState state) => Container(
-    padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
-    decoration: const BoxDecoration(
-      border: Border(bottom: BorderSide(color: PB.borderTertiary)),
-    ),
-    child: Row(
-      children: [
-        if (widget.showNavigationControls) ...[
-          _iconButton(
-            key: const ValueKey('browser-back'),
-            icon: LucideIcons.chevronLeft,
-            tooltip: '后退',
-            enabled: state.canGoBack,
-            onTap: () => state.back(),
-          ),
-          _iconButton(
-            key: const ValueKey('browser-forward'),
-            icon: LucideIcons.chevronRight,
-            tooltip: '前进',
-            enabled: state.canGoForward,
-            onTap: () => state.forward(),
-          ),
-          _iconButton(
-            key: const ValueKey('browser-reload'),
-            icon: LucideIcons.rotateCw,
-            tooltip: '刷新',
-            enabled: state.url.isNotEmpty,
-            onTap: _reload,
-          ),
-          const SizedBox(width: 4),
-        ],
-        Expanded(
-          child: SizedBox(
-            height: 30,
-            // 文件模式不让人编辑地址：那不是网址，改它没有意义。
-            child: state.kind == PaneContentKind.file
-                ? Container(
-                    key: const ValueKey('browser-file-label'),
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    decoration: BoxDecoration(
-                      color: PB.bgElevated,
-                      borderRadius: BorderRadius.circular(PB.rSm),
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(
-                          LucideIcons.fileText,
-                          size: 14,
-                          color: PB.textTertiary,
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            // 只显示文件名，不让长路径把工具栏撑爆
-                            state.fileName.split('/').last.split(r'\').last,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+  Widget _toolbar(BrowserPaneState state) => ChromeSafeHeader(
+    child: DecoratedBox(
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: PB.borderTertiary)),
+      ),
+      child: Stack(
+        children: [
+          const Positioned.fill(child: WindowDragArea()),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+            child: Row(
+              children: [
+                if (widget.showNavigationControls) ...[
+                  _iconButton(
+                    key: const ValueKey('browser-back'),
+                    icon: LucideIcons.chevronLeft,
+                    tooltip: L10n.s(context).t('browser.back'),
+                    enabled: state.canGoBack,
+                    onTap: () => state.back(),
+                  ),
+                  _iconButton(
+                    key: const ValueKey('browser-forward'),
+                    icon: LucideIcons.chevronRight,
+                    tooltip: L10n.s(context).t('browser.forward'),
+                    enabled: state.canGoForward,
+                    onTap: () => state.forward(),
+                  ),
+                  _iconButton(
+                    key: const ValueKey('browser-reload'),
+                    icon: LucideIcons.rotateCw,
+                    tooltip: L10n.s(context).t('common.refresh'),
+                    enabled: state.url.isNotEmpty,
+                    onTap: _reload,
+                  ),
+                  const SizedBox(width: 4),
+                ],
+                Expanded(
+                  child: SizedBox(
+                    height: 30,
+                    child: state.kind == PaneContentKind.file
+                        ? Container(
+                            key: const ValueKey('browser-file-label'),
+                            padding: const EdgeInsets.symmetric(horizontal: 10),
+                            decoration: BoxDecoration(
+                              color: PB.bgElevated,
+                              borderRadius: BorderRadius.circular(PB.rSm),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(
+                                  LucideIcons.fileText,
+                                  size: 14,
+                                  color: PB.textTertiary,
+                                ),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    state.fileName
+                                        .split('/')
+                                        .last
+                                        .split(r'\')
+                                        .last,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: PB.fsXs,
+                                      color: PB.textSecondary,
+                                      fontFamily: PB.monoFamily,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )
+                        : TextField(
+                            key: const ValueKey('browser-address'),
+                            controller: _address,
+                            focusNode: _addressFocus,
                             style: const TextStyle(
                               fontSize: PB.fsXs,
                               color: PB.textSecondary,
                               fontFamily: PB.monoFamily,
                             ),
+                            decoration: InputDecoration(
+                              isDense: true,
+                              filled: true,
+                              fillColor: PB.bgElevated,
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 6,
+                              ),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(PB.rSm),
+                                borderSide: BorderSide.none,
+                              ),
+                              hintText: L10n.s(context)
+                                  .t('browser.addressHint'),
+                              hintStyle: const TextStyle(
+                                fontSize: PB.fsXs,
+                                color: PB.textQuaternary,
+                              ),
+                            ),
+                            textInputAction: TextInputAction.go,
+                            onSubmitted: _submit,
+                            onTap: () => state.touch(),
                           ),
-                        ),
-                      ],
-                    ),
-                  )
-                : TextField(
-                    key: const ValueKey('browser-address'),
-                    controller: _address,
-                    focusNode: _addressFocus,
-                    style: const TextStyle(
-                      fontSize: PB.fsXs,
-                      color: PB.textSecondary,
-                      fontFamily: PB.monoFamily,
-                    ),
-                    decoration: InputDecoration(
-                      isDense: true,
-                      filled: true,
-                      fillColor: PB.bgElevated,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 6,
-                      ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(PB.rSm),
-                        borderSide: BorderSide.none,
-                      ),
-                      hintText: '输入网址或搜索词',
-                      hintStyle: const TextStyle(
-                        fontSize: PB.fsXs,
-                        color: PB.textQuaternary,
-                      ),
-                    ),
-                    textInputAction: TextInputAction.go,
-                    onSubmitted: _submit,
-                    onTap: () => state.touch(),
                   ),
+                ),
+                const SizedBox(width: 4),
+                ...widget.toolbarActions,
+                if (state.fileRequest case final request?)
+                  AttachmentActionButtons(request: request)
+                else
+                  _iconButton(
+                    key: const ValueKey('browser-open-external'),
+                    icon: LucideIcons.externalLink,
+                    tooltip: L10n.s(context).t('browser.openExternal'),
+                    enabled: _currentUrl.isNotEmpty,
+                    onTap: () async {
+                      final uri = Uri.tryParse(_currentUrl);
+                      if (uri != null) {
+                        await launchUrl(
+                          uri,
+                          mode: LaunchMode.externalApplication,
+                        );
+                      }
+                    },
+                  ),
+                _iconButton(
+                  key: const ValueKey('browser-close'),
+                  icon: LucideIcons.x,
+                  tooltip: L10n.s(context).t('common.close'),
+                  enabled: true,
+                  onTap:
+                      widget.onClose ??
+                      () => AppScope.read(context).closeBrowserPane(),
+                ),
+              ],
+            ),
           ),
-        ),
-        const SizedBox(width: 4),
-        ...widget.toolbarActions,
-        if (state.fileRequest case final request?)
-          AttachmentActionButtons(request: request)
-        else
-          _iconButton(
-            key: const ValueKey('browser-open-external'),
-            icon: LucideIcons.externalLink,
-            tooltip: '用系统浏览器打开',
-            enabled: _currentUrl.isNotEmpty,
-            onTap: () async {
-              final uri = Uri.tryParse(_currentUrl);
-              if (uri != null) {
-                await launchUrl(uri, mode: LaunchMode.externalApplication);
-              }
-            },
-          ),
-        _iconButton(
-          key: const ValueKey('browser-close'),
-          icon: LucideIcons.x,
-          tooltip: '关闭',
-          enabled: true,
-          // ★ 走 AppState 而不是 state.close：
-          //   展示栏是布局里的一列，只有 AppState 的通知能读到 HomeShell。
-          onTap:
-              widget.onClose ?? () => AppScope.read(context).closeBrowserPane(),
-        ),
-      ],
+        ],
+      ),
     ),
   );
 
@@ -448,13 +465,14 @@ class _BrowserPaneState extends State<BrowserPane> {
         request: request,
       );
     }
+    final strings = L10n.s(context);
     if (kIsWeb || !supportsBrowserPane(_platform)) {
       return request == null
-          ? const _Hint('内置浏览器只在桌面端提供（Windows / macOS）。')
+          ? _Hint(strings.t('browser.desktopOnly'))
           : AttachmentPreviewContent(request: request);
     }
     if (state.url.isEmpty) {
-      return const _Hint('在聊天里点任何链接，都会在这里打开。');
+      return _Hint(strings.t('browser.emptyHint'));
     }
     final generation = _viewGeneration;
     if (_initialGeneration != generation) {
@@ -583,7 +601,10 @@ class _BrowserPaneState extends State<BrowserPane> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   _Hint(_error!),
-                  TextButton(onPressed: _reload, child: const Text('重试')),
+                  TextButton(
+                    onPressed: _reload,
+                    child: Text(strings.t('common.retry')),
+                  ),
                 ],
               ),
             ),

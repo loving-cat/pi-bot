@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../models.dart';
 import '../scope.dart';
 import '../theme.dart';
+import '../window_chrome.dart';
 import '../widgets/model_picker_field.dart';
 import '../widgets/thinking_slider.dart';
 import '../widgets/blob_avatar.dart';
@@ -73,17 +75,21 @@ class BotsScreen extends StatelessWidget {
     final state = AppScope.of(context);
     return Scaffold(
       backgroundColor: PB.bgApp,
-      appBar: AppBar(
-        toolbarHeight: 58,
-        title: const Text('花名册'),
-        actions: [
-          IconButton(
-            tooltip: '新建 bot',
-            onPressed: () => _createBot(context),
-            icon: const Icon(LucideIcons.plus, size: 20),
-          ),
-          const SizedBox(width: 8),
-        ],
+      appBar: chromeAppBar(
+        context,
+        AppBar(
+          flexibleSpace: const WindowDragArea(),
+          toolbarHeight: 58,
+          title: Text(L10n.s(context).t('bots.title')),
+          actions: [
+            IconButton(
+              tooltip: L10n.s(context).t('bots.newBot'),
+              onPressed: () => _createBot(context),
+              icon: const Icon(LucideIcons.plus, size: 20),
+            ),
+            const SizedBox(width: 8),
+          ],
+        ),
       ),
       body: Center(
         child: ConstrainedBox(
@@ -94,7 +100,7 @@ class BotsScreen extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 6, 12, 14),
                 child: Text(
-                  '${state.bots.length} 个 bot。总经理负责造人派活；点任意一个可以改人设、模型和思考等级。',
+                  L10n.s(context).tf('bots.intro', {'n': state.bots.length}),
                   style: const TextStyle(
                     fontSize: PB.fsXs,
                     color: PB.textQuaternary,
@@ -119,27 +125,31 @@ class BotsScreen extends StatelessWidget {
     final created = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('新建 bot'),
+        title: Text(L10n.s(ctx).t('bots.newBot')),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(
                 controller: emojiController,
-                decoration: const InputDecoration(labelText: '符号标记'),
+                decoration: InputDecoration(
+                  labelText: L10n.s(ctx).t('bots.emojiLabel'),
+                ),
               ),
               const SizedBox(height: 10),
               TextField(
                 controller: nameController,
                 autofocus: true,
-                decoration: const InputDecoration(labelText: '名字'),
+                decoration: InputDecoration(
+                  labelText: L10n.s(ctx).t('bots.nameLabel'),
+                ),
               ),
               const SizedBox(height: 10),
               TextField(
                 controller: personaController,
                 maxLines: 4,
-                decoration: const InputDecoration(
-                  labelText: '人设 / 职责',
+                decoration: InputDecoration(
+                  labelText: L10n.s(ctx).t('bots.personaLabel'),
                   alignLabelWithHint: true,
                 ),
               ),
@@ -149,11 +159,11 @@ class BotsScreen extends StatelessWidget {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
+            child: Text(L10n.s(ctx).t('common.cancel')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('创建'),
+            child: Text(L10n.s(ctx).t('bots.create')),
           ),
         ],
       ),
@@ -231,7 +241,7 @@ class _BotRow extends StatelessWidget {
                                   borderRadius: BorderRadius.circular(PB.rSm),
                                 ),
                                 child: Text(
-                                  '总经理',
+                                  L10n.s(context).t('bots.manager'),
                                   style: TextStyle(
                                     fontSize: 9.5,
                                     color: colors.link,
@@ -254,7 +264,12 @@ class _BotRow extends StatelessWidget {
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          '${bot.model ?? '默认模型'} · thinking ${bot.thinking ?? '-'}',
+                          L10n.s(context).tf('bots.modelSummary', {
+                            'model':
+                                bot.model ??
+                                L10n.s(context).t('bots.defaultModel'),
+                            'thinking': bot.thinking ?? '-',
+                          }),
                           style: const TextStyle(
                             fontSize: PB.fsXxs,
                             color: PB.textQuaternary,
@@ -268,7 +283,7 @@ class _BotRow extends StatelessWidget {
                     ),
                   ),
                   IconButton(
-                    tooltip: '私聊',
+                    tooltip: L10n.s(context).t('bots.dm'),
                     onPressed: () async {
                       final room = await state.ensureDm(bot.id);
                       if (room != null && context.mounted) {
@@ -344,7 +359,9 @@ class _BotRow extends StatelessWidget {
                               ),
                               const SizedBox(height: 3),
                               Text(
-                                bot.isMain ? '总经理' : bot.id,
+                                bot.isMain
+                                    ? L10n.s(ctx).t('bots.manager')
+                                    : bot.id,
                                 style: const TextStyle(
                                   fontSize: PB.fsXxs,
                                   color: PB.textQuaternary,
@@ -360,12 +377,16 @@ class _BotRow extends StatelessWidget {
                     const SizedBox(height: 20),
                     TextField(
                       controller: nameController,
-                      decoration: const InputDecoration(labelText: '名字'),
+                      decoration: InputDecoration(
+                        labelText: L10n.s(ctx).t('bots.nameLabel'),
+                      ),
                     ),
                     const SizedBox(height: 10),
                     TextField(
                       controller: emojiController,
-                      decoration: const InputDecoration(labelText: '符号标记'),
+                      decoration: InputDecoration(
+                        labelText: L10n.s(ctx).t('bots.emojiLabel'),
+                      ),
                       onChanged: (_) => setLocal(() {}),
                     ),
                     const SizedBox(height: 10),
@@ -393,12 +414,11 @@ class _BotRow extends StatelessWidget {
                       );
                       final levels = _levelsFor(spec);
                       if (levels.isEmpty) {
-                        return const <Widget>[
-                          SizedBox(height: 12),
+                        return <Widget>[
+                          const SizedBox(height: 12),
                           Text(
-                            '当前模型没有开启思考（在「设置 → 模型组」里打开思考强度后，'
-                            '这里才能选思考等级）',
-                            style: TextStyle(
+                            L10n.s(ctx).t('bots.thinkingOff'),
+                            style: const TextStyle(
                               fontSize: PB.fsXxs,
                               color: PB.textQuaternary,
                               height: 1.5,
@@ -425,19 +445,18 @@ class _BotRow extends StatelessWidget {
                           .where((s) => s.enabled)
                           .toList();
                       if (available.isEmpty) {
-                        return const <Widget>[
+                        return <Widget>[
                           Text(
-                            'MCP 能力',
-                            style: TextStyle(
+                            L10n.s(ctx).t('bots.mcpSkills'),
+                            style: const TextStyle(
                               fontSize: PB.fsXs,
                               color: PB.textTertiary,
                             ),
                           ),
-                          SizedBox(height: 6),
+                          const SizedBox(height: 6),
                           Text(
-                            '还没有启用的 MCP 服务。去「设置 → 应用连接」加一个并打开开关，'
-                            '这里就能给这个人挂上额外能力。',
-                            style: TextStyle(
+                            L10n.s(ctx).t('bots.mcpNone'),
+                            style: const TextStyle(
                               fontSize: PB.fsXxs,
                               color: PB.textQuaternary,
                               height: 1.5,
@@ -448,9 +467,9 @@ class _BotRow extends StatelessWidget {
                       return <Widget>[
                         Row(
                           children: [
-                            const Text(
-                              'MCP 能力',
-                              style: TextStyle(
+                            Text(
+                              L10n.s(ctx).t('bots.mcpSkills'),
+                              style: const TextStyle(
                                 fontSize: PB.fsXs,
                                 color: PB.textTertiary,
                               ),
@@ -458,8 +477,10 @@ class _BotRow extends StatelessWidget {
                             const SizedBox(width: 6),
                             Text(
                               pickedMcp.isEmpty
-                                  ? '（没挂）'
-                                  : '已挂 ${pickedMcp.length} 个',
+                                  ? L10n.s(ctx).t('bots.mcpNonePicked')
+                                  : L10n.s(ctx).tf('bots.mcpPickedCount', {
+                                      'n': pickedMcp.length,
+                                    }),
                               style: const TextStyle(
                                 fontSize: PB.fsXxs,
                                 color: PB.textQuaternary,
@@ -503,9 +524,9 @@ class _BotRow extends StatelessWidget {
                           ],
                         ),
                         const SizedBox(height: 4),
-                        const Text(
-                          '每个 MCP 都会起进程吃内存，只挂这个人真正需要的。',
-                          style: TextStyle(
+                        Text(
+                          L10n.s(ctx).t('bots.mcpMemoryHint'),
+                          style: const TextStyle(
                             fontSize: PB.fsXxs,
                             color: PB.textQuaternary,
                             height: 1.5,
@@ -517,8 +538,8 @@ class _BotRow extends StatelessWidget {
                     TextField(
                       controller: personaController,
                       maxLines: 8,
-                      decoration: const InputDecoration(
-                        labelText: '人设 / 职责',
+                      decoration: InputDecoration(
+                        labelText: L10n.s(ctx).t('bots.personaLabel'),
                         alignLabelWithHint: true,
                       ),
                     ),
@@ -542,9 +563,9 @@ class _BotRow extends StatelessWidget {
                                       Navigator.pop(ctx, false);
                                       await state.deleteBot(bot.id);
                                     },
-                              child: const Text(
-                                '删除',
-                                style: TextStyle(color: PB.danger),
+                              child: Text(
+                                L10n.s(ctx).t('common.delete'),
+                                style: const TextStyle(color: PB.danger),
                               ),
                             ),
                           ),
@@ -575,7 +596,8 @@ class _BotRow extends StatelessWidget {
                                         if (ctx.mounted) {
                                           setLocal(() {
                                             saving = false;
-                                            saveError = '保存失败，请检查连接后重试。';
+                                            saveError = L10n.s(ctx)
+                                                .t('bots.saveFailed');
                                           });
                                         }
                                         return;
@@ -585,19 +607,24 @@ class _BotRow extends StatelessWidget {
                                       if (ctx.mounted)
                                         setLocal(() {
                                           saving = false;
-                                          saveError = '保存失败，请检查连接后重试。';
+                                          saveError = L10n.s(ctx)
+                                              .t('bots.saveFailed');
                                         });
                                     }
                                   },
-                            child: Text(saving ? '保存中…' : '保存'),
+                            child: Text(
+                              saving
+                                  ? L10n.s(ctx).t('common.saving')
+                                  : L10n.s(ctx).t('common.save'),
+                            ),
                           ),
                         ),
                       ],
                     ),
                     const SizedBox(height: 6),
-                    const Text(
-                      '改模型或思考等级会自动重开这个 bot 的会话（旧记录文件保留）。',
-                      style: TextStyle(
+                    Text(
+                      L10n.s(ctx).t('bots.modelChangeHint'),
+                      style: const TextStyle(
                         fontSize: PB.fsXxs,
                         color: PB.textQuaternary,
                       ),

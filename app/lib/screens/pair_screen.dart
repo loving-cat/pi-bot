@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'scan_screen.dart';
 
 import '../api.dart';
+import '../l10n/l10n.dart';
 import '../scope.dart';
 import '../theme.dart';
 import '../widgets/app_logo.dart';
@@ -22,7 +23,7 @@ class PairScreen extends StatefulWidget {
 class _PairScreenState extends State<PairScreen> {
   final _urlController = TextEditingController();
   final _secretController = TextEditingController();
-  final _deviceController = TextEditingController(text: '我的手机');
+  final _deviceController = TextEditingController();
   bool _useToken = false;
   bool _busy = false;
   String? _error;
@@ -107,6 +108,7 @@ class _PairScreenState extends State<PairScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final s = L10n.s(context);
     return Scaffold(
       backgroundColor: PB.bgApp,
       body: SafeArea(
@@ -133,10 +135,10 @@ class _PairScreenState extends State<PairScreen> {
                     ),
                   ),
                   const SizedBox(height: 6),
-                  const Text(
-                    '连上你自己的 pi agent',
+                  Text(
+                    s.t('pair.tagline'),
                     textAlign: TextAlign.center,
-                    style: TextStyle(
+                    style: const TextStyle(
                       fontSize: PB.fsSm,
                       color: PB.textQuaternary,
                     ),
@@ -153,7 +155,7 @@ class _PairScreenState extends State<PairScreen> {
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 12),
                           child: Text(
-                            '或者手动填',
+                            s.t('pair.orManual'),
                             style: TextStyle(
                               fontSize: PB.fsXxs,
                               color: PB.textQuaternary,
@@ -176,8 +178,8 @@ class _PairScreenState extends State<PairScreen> {
                     controller: _urlController,
                     keyboardType: TextInputType.url,
                     autocorrect: false,
-                    decoration: const InputDecoration(
-                      labelText: '服务器地址',
+                    decoration: InputDecoration(
+                      labelText: s.t('pair.serverUrl'),
                       hintText: 'http://192.168.1.100:8787',
                     ),
                   ),
@@ -189,14 +191,16 @@ class _PairScreenState extends State<PairScreen> {
                         : TextInputType.number,
                     autocorrect: false,
                     decoration: InputDecoration(
-                      labelText: _useToken ? 'token' : '6 位配对码',
+                      labelText: _useToken ? 'token' : s.t('pair.codeLabel'),
                       hintText: _useToken ? 'test-token' : '123456',
                     ),
                   ),
                   const SizedBox(height: 10),
                   TextField(
                     controller: _deviceController,
-                    decoration: const InputDecoration(labelText: '这台手机的名字'),
+                    decoration: InputDecoration(
+                      labelText: s.t('pair.deviceName'),
+                    ),
                   ),
                   const SizedBox(height: 20),
                   FilledButton(
@@ -210,7 +214,7 @@ class _PairScreenState extends State<PairScreen> {
                               color: Colors.white,
                             ),
                           )
-                        : const Text('连接'),
+                        : Text(s.t('pair.connect')),
                   ),
                   if (_error != null) ...[
                     const SizedBox(height: 14),
@@ -257,17 +261,17 @@ class _PairScreenState extends State<PairScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Row(
+                        Row(
                           children: [
-                            Icon(
+                            const Icon(
                               LucideIcons.zap,
                               size: 15,
                               color: PB.textTertiary,
                             ),
-                            SizedBox(width: 7),
+                            const SizedBox(width: 7),
                             Text(
-                              '三步搞定',
-                              style: TextStyle(
+                              s.t('pair.stepsTitle'),
+                              style: const TextStyle(
                                 fontSize: PB.fsSm,
                                 fontWeight: FontWeight.w500,
                                 color: PB.textSecondary,
@@ -276,26 +280,18 @@ class _PairScreenState extends State<PairScreen> {
                           ],
                         ),
                         const SizedBox(height: 12),
-                        const _Step(
-                          index: '1',
-                          text: '电脑上启动服务端（终端会直接打印地址和配对码）',
-                        ),
+                        _Step(index: '1', text: s.t('pair.step1')),
                         // ★ 示例用中性路径，不要写开发机的绝对路径：
                         //   这个字符串会被编进 app.so，等于把本机目录随发行包发出去，
                         //   打包扫描会拦（真实拦截过一次）。
-                        const _Code('cd <你解压的目录>/server\nnode src/index.js'),
-                        const _Step(index: '2', text: '把它打印的地址和配对码填到上面（就在这一页）'),
-                        const _Code(
-                          'http://192.168.1.100:8787  (以太网)\n★ 配对码：482913',
-                        ),
-                        const _Step(
-                          index: '3',
-                          text: '手机和电脑连同一个 WiFi，把上面两行填进来',
-                        ),
+                        _Code(s.t('pair.step1Command')),
+                        _Step(index: '2', text: s.t('pair.step2')),
+                        _Code(s.t('pair.step2Sample')),
+                        _Step(index: '3', text: s.t('pair.step3')),
                         const SizedBox(height: 4),
-                        const Text(
-                          '地址和配对码都在电脑终端里；也可以在电脑浏览器打开\nhttp://<你的IP>:8787/pair 看。\n想在外面也能用，就把服务端放到云服务器上。',
-                          style: TextStyle(
+                        Text(
+                          s.t('pair.hint'),
+                          style: const TextStyle(
                             fontSize: PB.fsXs,
                             color: PB.textQuaternary,
                             height: 1.5,
@@ -352,9 +348,9 @@ class _ScanButton extends StatelessWidget {
               children: [
                 const Icon(LucideIcons.scanLine, size: 21, color: Colors.white),
                 const SizedBox(width: 10),
-                const Text(
-                  '扫码配对',
-                  style: TextStyle(
+                Text(
+                  L10n.s(context).t('pair.scanTitle'),
+                  style: const TextStyle(
                     fontSize: PB.fsLg,
                     fontWeight: FontWeight.w600,
                     color: Colors.white,
@@ -371,9 +367,9 @@ class _ScanButton extends StatelessWidget {
                     color: Colors.white.withValues(alpha: 0.18),
                     borderRadius: BorderRadius.circular(PB.rFull),
                   ),
-                  child: const Text(
-                    '推荐',
-                    style: TextStyle(
+                  child: Text(
+                    L10n.s(context).t('pair.recommended'),
+                    style: const TextStyle(
                       fontSize: PB.fsXxs,
                       color: Colors.white,
                       fontWeight: FontWeight.w600,
@@ -423,6 +419,7 @@ class _Segmented extends StatelessWidget {
       );
     }
 
+    final s = L10n.s(context);
     return Container(
       padding: const EdgeInsets.all(3),
       decoration: BoxDecoration(
@@ -430,7 +427,12 @@ class _Segmented extends StatelessWidget {
         borderRadius: BorderRadius.circular(PB.rXl),
         border: Border.all(color: PB.borderTertiary),
       ),
-      child: Row(children: [item('配对码', false), item('固定 token', true)]),
+      child: Row(
+        children: [
+          item(s.t('pair.modeCode'), false),
+          item(s.t('pair.modeToken'), true),
+        ],
+      ),
     );
   }
 }

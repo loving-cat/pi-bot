@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../l10n/l10n.dart';
 import '../theme.dart';
 
 /// 外观选择的保存进度、结果和重试入口。
@@ -23,6 +24,7 @@ class BotAppearanceFeedback extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final strings = L10n.s(context);
     final hasError = error != null && error!.isNotEmpty;
     final busy = saving || waiting;
     return Semantics(
@@ -48,12 +50,14 @@ class BotAppearanceFeedback extends StatelessWidget {
           Expanded(
             child: Text(
               busy
-                  ? (waiting ? '等待保存…' : '保存中…')
+                  ? (waiting
+                        ? strings.t('appearance.waiting')
+                        : strings.t('common.saving'))
                   : hasError
-                  ? '保存失败：$error'
+                  ? strings.tf('appearance.saveFailed', {'error': error})
                   : saved
-                  ? '已保存'
-                  : '选择后自动保存',
+                  ? strings.t('common.saved')
+                  : strings.t('avatar.autoSaved'),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
@@ -63,7 +67,10 @@ class BotAppearanceFeedback extends StatelessWidget {
             ),
           ),
           if (hasError && canRetry && !busy)
-            TextButton(onPressed: onRetry, child: const Text('重试')),
+            TextButton(
+              onPressed: onRetry,
+              child: Text(strings.t('common.retry')),
+            ),
         ],
       ),
     );

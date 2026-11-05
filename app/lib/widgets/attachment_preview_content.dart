@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import '../attachment_preview_request.dart';
+import '../l10n/l10n.dart';
 import '../theme.dart';
 import 'html_attachment_preview.dart';
 import 'md_text.dart';
@@ -59,10 +60,12 @@ class _AttachmentPreviewContentState extends State<AttachmentPreviewContent> {
     final client = http.Client();
     _client = client;
     _loading = true;
+    final strings = L10n.s(context);
     try {
       final text = await _readText(
         client,
         request.sourceUrl,
+        strings,
       ).timeout(const Duration(seconds: 30));
       if (!mounted || generation != _generation) return;
       setState(() {
@@ -72,7 +75,7 @@ class _AttachmentPreviewContentState extends State<AttachmentPreviewContent> {
     } catch (_) {
       if (!mounted || generation != _generation) return;
       setState(() {
-        _error = '暂时无法读取附件，请重新打开或下载后查看。';
+        _error = strings.t('preview.readFailed');
         _loading = false;
       });
     } finally {
@@ -81,7 +84,11 @@ class _AttachmentPreviewContentState extends State<AttachmentPreviewContent> {
     }
   }
 
-  Future<String> _readText(http.Client client, String sourceUrl) async {
+  Future<String> _readText(
+    http.Client client,
+    String sourceUrl,
+    AppStrings strings,
+  ) async {
     final response = await client.send(
       http.Request('GET', Uri.parse(sourceUrl))..followRedirects = false,
     );
@@ -99,11 +106,12 @@ class _AttachmentPreviewContentState extends State<AttachmentPreviewContent> {
       bytes.addAll(chunk);
     }
     final text = utf8.decode(bytes, allowMalformed: true);
-    return truncated ? '$text\n\n…（内容太长，只显示了前 512KB，要看全部请下载）' : text;
+    return truncated ? '$text\n\n${strings.t('preview.truncated')}' : text;
   }
 
   @override
   Widget build(BuildContext context) {
+    final strings = L10n.s(context);
     final request = widget.request;
     if (request.kind == AttachmentPreviewKind.html) {
       return HtmlAttachmentPreview(
@@ -124,7 +132,7 @@ class _AttachmentPreviewContentState extends State<AttachmentPreviewContent> {
               request.sourceUrl,
               fit: BoxFit.contain,
               errorBuilder: (_, _, _) =>
-                  const _PreviewMessage('图片暂时无法显示，请下载后查看。'),
+                  _PreviewMessage(strings.t('preview.imageFailed')),
             ),
           ),
         ),
@@ -165,7 +173,7 @@ class _AttachmentPreviewContentState extends State<AttachmentPreviewContent> {
               ),
       );
     }
-    return const _PreviewMessage('当前格式暂不能直接预览，请使用上方的下载或系统打开按钮。');
+    return _PreviewMessage(strings.t('preview.unsupported'));
   }
 }
 

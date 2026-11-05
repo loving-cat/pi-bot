@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../l10n/l10n.dart';
 import '../scope.dart';
 import '../theme.dart';
 import 'toast.dart';
@@ -55,7 +56,7 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
     if (!mounted) return;
     toast(
       context,
-      '已生效（正在跑的会话下次跑就用新规矩）',
+      L10n.s(context).t('limits.savedRunning'),
       kind: ToastKind.success,
     );
   }
@@ -75,11 +76,12 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
       _saving = false;
       _dirty = false;
     });
-    toast(context, '已生效（不用重启）');
+    toast(context, L10n.s(context).t('limits.saved'));
   }
 
   @override
   Widget build(BuildContext context) {
+    final strings = L10n.s(context);
     final state = AppScope.of(context);
     _fill(state.groupLimits);
     final policy = state.policy;
@@ -95,9 +97,9 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
               color: PB.textTertiary,
             ),
             const SizedBox(width: 8),
-            const Text(
-              '群聊轮次',
-              style: TextStyle(
+            Text(
+              strings.t('limits.title'),
+              style: const TextStyle(
                 fontSize: PB.fsSm,
                 fontWeight: FontWeight.w600,
                 color: PB.textSecondary,
@@ -107,7 +109,11 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
             if (_dirty)
               FilledButton(
                 onPressed: _saving ? null : _save,
-                child: Text(_saving ? '保存中…' : '保存'),
+                child: Text(
+                  _saving
+                      ? strings.t('common.saving')
+                      : strings.t('common.save'),
+                ),
               ),
           ],
         ),
@@ -122,10 +128,9 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'bot 之间用 @ 互相派活，谁也没规定什么时候停 —— 解不了的活它们会一直聊。'
-                '这几个数就是闸门。改完立刻生效。',
-                style: TextStyle(
+              Text(
+                strings.t('limits.intro'),
+                style: const TextStyle(
                   fontSize: PB.fsXxs,
                   color: PB.textQuaternary,
                   height: 1.6,
@@ -134,32 +139,31 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
               const SizedBox(height: 12),
               Row(
                 children: [
-                  _num('老大最多几轮', _lead, '4'),
+                  _num(strings.t('limits.leadTurns'), _lead, '4'),
                   const SizedBox(width: 10),
-                  _num('成员最多几轮', _member, '2'),
+                  _num(strings.t('limits.memberTurns'), _member, '2'),
                 ],
               ),
               const SizedBox(height: 10),
               Row(
                 children: [
-                  _num('一条消息最多跑几次', _runs, '10'),
+                  _num(strings.t('limits.runsPerMessage'), _runs, '10'),
                   const SizedBox(width: 10),
-                  _num('单次最多来回几轮', _steps, '30'),
+                  _num(strings.t('limits.stepsPerRun'), _steps, '30'),
                 ],
               ),
               const SizedBox(height: 10),
               Row(
                 children: [
-                  _num('单轮最长几分钟', _turnMin, '10'),
+                  _num(strings.t('limits.turnMinutes'), _turnMin, '10'),
                   const SizedBox(width: 10),
                   const Expanded(child: SizedBox()),
                 ],
               ),
               const SizedBox(height: 6),
-              const Text(
-                '一个成员一轮最多跑这么久，到点收住交给别人 —— 防止一个人把整个部门卡住。'
-                '写代码这类慢活可以调大（比如 20）。',
-                style: TextStyle(
+              Text(
+                strings.t('limits.turnHint'),
+                style: const TextStyle(
                   fontSize: PB.fsXxs,
                   color: PB.textQuaternary,
                   height: 1.6,
@@ -168,18 +172,18 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
               const SizedBox(height: 16),
               const Divider(height: 1, color: PB.borderTertiary),
               const SizedBox(height: 14),
-              const Text(
-                '部门规矩',
-                style: TextStyle(
+              Text(
+                strings.t('limits.rulesTitle'),
+                style: const TextStyle(
                   fontSize: PB.fsXs,
                   fontWeight: FontWeight.w600,
                   color: PB.textSecondary,
                 ),
               ),
               const SizedBox(height: 4),
-              const Text(
-                '预算管的是"能跑多久"；规矩管的是"能不能拆家"。',
-                style: TextStyle(
+              Text(
+                strings.t('limits.rulesHint'),
+                style: const TextStyle(
                   fontSize: PB.fsXxs,
                   color: PB.textQuaternary,
                   height: 1.6,
@@ -188,17 +192,29 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
               const SizedBox(height: 10),
               Row(
                 children: [
-                  const Expanded(
+                  Expanded(
                     child: Text(
-                      '改文件 / 跑命令',
-                      style: TextStyle(fontSize: PB.fsSm, color: PB.textPrimary),
+                      strings.t('limits.fileAndCommand'),
+                      style: const TextStyle(
+                        fontSize: PB.fsSm,
+                        color: PB.textPrimary,
+                      ),
                     ),
                   ),
                   SegmentedButton<String>(
-                    segments: const [
-                      ButtonSegment(value: 'allow', label: Text('允许')),
-                      ButtonSegment(value: 'ask', label: Text('需批准')),
-                      ButtonSegment(value: 'deny', label: Text('只读')),
+                    segments: [
+                      ButtonSegment(
+                        value: 'allow',
+                        label: Text(strings.t('limits.allow')),
+                      ),
+                      ButtonSegment(
+                        value: 'ask',
+                        label: Text(strings.t('limits.ask')),
+                      ),
+                      ButtonSegment(
+                        value: 'deny',
+                        label: Text(strings.t('limits.deny')),
+                      ),
                     ],
                     selected: {
                       policy['dangerous'] == 'deny'
@@ -207,16 +223,15 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
                           ? 'ask'
                           : 'allow',
                     },
-                    onSelectionChanged: (v) => _savePolicy({'dangerous': v.first}),
+                    onSelectionChanged: (v) =>
+                        _savePolicy({'dangerous': v.first}),
                   ),
                 ],
               ),
               const SizedBox(height: 6),
-              const Text(
-                '需批准 = 工具照给，但每一次改文件/跑命令都先弹一张卡片让你点。'
-                '只读 = 直接不给这些工具（看还是能看的）。'
-                '两种都是真拦得住 —— 靠提示词里写"请先问"是拦不住的。',
-                style: TextStyle(
+              Text(
+                strings.t('limits.policyHint'),
+                style: const TextStyle(
                   fontSize: PB.fsXxs,
                   color: PB.textQuaternary,
                   height: 1.6,
@@ -227,13 +242,19 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
                 dense: true,
                 value: policy['requireProof'] == true,
                 onChanged: (v) => _savePolicy({'requireProof': v}),
-                title: const Text(
-                  '交付要附证据',
-                  style: TextStyle(fontSize: PB.fsSm, color: PB.textPrimary),
+                title: Text(
+                  strings.t('limits.requireProof'),
+                  style: const TextStyle(
+                    fontSize: PB.fsSm,
+                    color: PB.textPrimary,
+                  ),
                 ),
-                subtitle: const Text(
-                  '交活时必须带上命令输出 / 文件路径 / 测试结果，不许只说"改好了"',
-                  style: TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
+                subtitle: Text(
+                  strings.t('limits.requireProofHint'),
+                  style: const TextStyle(
+                    fontSize: PB.fsXxs,
+                    color: PB.textQuaternary,
+                  ),
                 ),
               ),
             ],

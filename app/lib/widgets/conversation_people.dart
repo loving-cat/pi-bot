@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../theme.dart';
 import 'blob_avatar.dart';
 
@@ -29,7 +30,9 @@ class ConversationPeople extends StatelessWidget {
         return Tooltip(
           message: people.isEmpty
               ? fallback
-              : people.map((person) => person.name).join('、'),
+              : people
+                    .map((person) => person.name)
+                    .join(L10n.s(context).t('misc.listSeparator')),
           child: Wrap(
             alignment: WrapAlignment.center,
             crossAxisAlignment: WrapCrossAlignment.center,

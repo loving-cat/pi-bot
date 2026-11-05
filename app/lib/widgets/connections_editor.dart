@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../connections_draft.dart';
+import '../l10n/l10n.dart';
 import '../models.dart';
 import '../theme.dart';
 
@@ -152,19 +154,20 @@ class _ConnectionsEditorState extends State<ConnectionsEditor> {
     if (type == null || type == _type || _busy) return;
     if (widget.server?.hasCredentials == true ||
         _credentials.any((r) => r.value.text.isNotEmpty)) {
+      final strings = L10n.s(context);
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
-          title: const Text('更换连接方式？'),
-          content: const Text('已填写和已保存的凭据会在保存时清除。请为新的连接方式重新填写。'),
+          title: Text(strings.t('conn.changeTypeTitle')),
+          content: Text(strings.t('conn.changeTypeBody')),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消'),
+              child: Text(strings.t('common.cancel')),
             ),
             FilledButton(
               onPressed: () => Navigator.pop(context, true),
-              child: const Text('更换'),
+              child: Text(strings.t('conn.change')),
             ),
           ],
         ),
@@ -183,12 +186,29 @@ class _ConnectionsEditorState extends State<ConnectionsEditor> {
     });
   }
 
+  /// 验证结果摘要：成功时带上工具数，零工具单独说明协议正常。
+  String _resultText(AppStrings strings, Map<String, dynamic> result) {
+    if (result['ok'] != true) {
+      return '${result['error'] ?? strings.t('conn.testFailed')}';
+    }
+    final count = result['toolCount'] ?? 0;
+    return count == 0
+        ? strings.t('conn.testOkNoTools')
+        : strings.tf('conn.testOk', {'n': count});
+  }
+
   @override
   Widget build(BuildContext context) {
+    final strings = L10n.s(context);
     final server = widget.server;
+    final savedKeys = server == null
+        ? ''
+        : server.credentialKeys.join(strings.t('conn.listSeparator'));
     return AlertDialog(
       title: Text(
-        server == null ? '添加应用连接' : '编辑 ${server.name}',
+        server == null
+            ? strings.t('conn.editorAddTitle')
+            : strings.tf('conn.editorEditTitle', {'name': server.name}),
         style: const TextStyle(fontSize: PB.fsXl),
       ),
       content: SizedBox(
@@ -198,44 +218,71 @@ class _ConnectionsEditorState extends State<ConnectionsEditor> {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              _field('连接名称', _name, hint: 'my_tools', enabled: server == null),
+              _field(
+                strings.t('conn.name'),
+                _name,
+                hint: 'my_tools',
+                enabled: server == null,
+              ),
               if (server != null)
-                const Padding(
-                  padding: EdgeInsets.only(top: 5),
+                Padding(
+                  padding: const EdgeInsets.only(top: 5),
                   child: Text(
-                    '名称用于 Bot 分配，保存后保持不变。',
-                    style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+                    strings.t('conn.nameHint'),
+                    style: const TextStyle(
+                      fontSize: PB.fsXs,
+                      color: PB.textTertiary,
+                    ),
                   ),
                 ),
               const SizedBox(height: 14),
-              _field('用途说明', _description, hint: '说明这个连接能做什么'),
+              _field(
+                strings.t('conn.description'),
+                _description,
+                hint: strings.t('conn.descriptionHint'),
+              ),
               const SizedBox(height: 14),
               DropdownButtonFormField<String>(
                 key: ValueKey(_type),
                 initialValue: _type,
-                decoration: const InputDecoration(
-                  labelText: '连接方式',
+                decoration: InputDecoration(
+                  labelText: strings.t('conn.type'),
                   isDense: true,
                 ),
-                items: const [
-                  DropdownMenuItem(value: 'http', child: Text('远程工具服务')),
-                  DropdownMenuItem(value: 'stdio', child: Text('本地工具服务')),
+                items: [
+                  DropdownMenuItem(
+                    value: 'http',
+                    child: Text(strings.t('conn.remoteService')),
+                  ),
+                  DropdownMenuItem(
+                    value: 'stdio',
+                    child: Text(strings.t('conn.localService')),
+                  ),
                 ],
                 onChanged: _busy ? null : _changeType,
               ),
               const SizedBox(height: 14),
               if (_type == 'http')
-                _field('服务地址', _url, hint: 'https://example.com/mcp')
+                _field(
+                  strings.t('conn.url'),
+                  _url,
+                  hint: 'https://example.com/mcp',
+                )
               else ...[
-                _field('启动命令', _command, hint: 'node'),
+                _field(strings.t('conn.command'), _command, hint: 'node'),
                 const SizedBox(height: 14),
-                _field('参数（每行一项）', _args, hint: 'tool-server.mjs', maxLines: 3),
+                _field(
+                  strings.t('conn.args'),
+                  _args,
+                  hint: 'tool-server.mjs',
+                  maxLines: 3,
+                ),
                 const SizedBox(height: 14),
-                _field('工作目录（可选）', _cwd),
+                _field(strings.t('conn.cwd'), _cwd),
               ],
               const SizedBox(height: 18),
               Text(
-                _type == 'http' ? '请求头与密钥' : '环境变量与密钥',
+                strings.t(_type == 'http' ? 'conn.headers' : 'conn.env'),
                 style: const TextStyle(
                   fontWeight: FontWeight.w600,
                   fontSize: PB.fsBase,
@@ -244,8 +291,8 @@ class _ConnectionsEditorState extends State<ConnectionsEditor> {
               const SizedBox(height: 6),
               Text(
                 server?.hasCredentials == true
-                    ? '已保存：${server!.credentialKeys.join('、')}。留空保留原值；填写同名项目会替换。'
-                    : '按服务要求添加；无需认证时可留空。',
+                    ? strings.tf('conn.credentialsSaved', {'keys': savedKeys})
+                    : strings.t('conn.credentialsHint'),
                 style: const TextStyle(
                   fontSize: PB.fsSm,
                   color: PB.textTertiary,
@@ -264,9 +311,9 @@ class _ConnectionsEditorState extends State<ConnectionsEditor> {
                           _clearCredentials = value == true;
                           _changed();
                         }),
-                  title: const Text(
-                    '保存时清除全部已存凭据',
-                    style: TextStyle(fontSize: PB.fsSm),
+                  title: Text(
+                    strings.t('conn.clearCredentials'),
+                    style: const TextStyle(fontSize: PB.fsSm),
                   ),
                 ),
               for (final row in _credentials)
@@ -276,14 +323,24 @@ class _ConnectionsEditorState extends State<ConnectionsEditor> {
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(flex: 2, child: _field('名称', row.name)),
+                      Expanded(
+                        flex: 2,
+                        child: _field(
+                          strings.t('conn.credentialName'),
+                          row.name,
+                        ),
+                      ),
                       const SizedBox(width: 8),
                       Expanded(
                         flex: 3,
-                        child: _field('值', row.value, obscure: true),
+                        child: _field(
+                          strings.t('conn.credentialValue'),
+                          row.value,
+                          obscure: true,
+                        ),
                       ),
                       IconButton(
-                        tooltip: '移除本次输入',
+                        tooltip: strings.t('conn.removeCredential'),
                         onPressed: _busy
                             ? null
                             : () => setState(() {
@@ -291,7 +348,7 @@ class _ConnectionsEditorState extends State<ConnectionsEditor> {
                                 row.dispose();
                                 _changed();
                               }),
-                        icon: const Icon(Icons.close, size: 18),
+                        icon: const Icon(LucideIcons.x, size: 18),
                       ),
                     ],
                   ),
@@ -300,18 +357,21 @@ class _ConnectionsEditorState extends State<ConnectionsEditor> {
                 onPressed: _busy || _credentials.length >= 30
                     ? null
                     : () => setState(() => _credentials.add(_CredentialRow())),
-                child: const Text('添加凭据项'),
+                child: Text(strings.t('conn.addCredential')),
               ),
               const SizedBox(height: 6),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
-                title: const Text(
-                  '允许 Bot 使用',
-                  style: TextStyle(fontSize: PB.fsBase),
+                title: Text(
+                  strings.t('conn.allowBots'),
+                  style: const TextStyle(fontSize: PB.fsBase),
                 ),
-                subtitle: const Text(
-                  '启用后，还需分配给指定 Bot。',
-                  style: TextStyle(fontSize: PB.fsSm, color: PB.textTertiary),
+                subtitle: Text(
+                  strings.t('conn.allowBotsHint'),
+                  style: const TextStyle(
+                    fontSize: PB.fsSm,
+                    color: PB.textTertiary,
+                  ),
                 ),
                 value: _enabled,
                 onChanged: _busy
@@ -325,9 +385,7 @@ class _ConnectionsEditorState extends State<ConnectionsEditor> {
                 Padding(
                   padding: const EdgeInsets.only(top: 12),
                   child: Text(
-                    _result!['ok'] == true
-                        ? '验证通过 · ${_result!['toolCount'] ?? 0} 个工具${_result!['toolCount'] == 0 ? '（协议正常，未发现工具）' : ''}'
-                        : '${_result!['error'] ?? '验证失败'}',
+                    _resultText(strings, _result!),
                     style: TextStyle(
                       fontSize: PB.fsSm,
                       color: _result!['ok'] == true ? PB.success : PB.danger,
@@ -349,15 +407,21 @@ class _ConnectionsEditorState extends State<ConnectionsEditor> {
       actions: [
         TextButton(
           onPressed: _busy ? null : () => _run(save: false),
-          child: Text(_testing ? '验证中…' : '验证连接'),
+          child: Text(
+            _testing
+                ? strings.t('conn.verifying')
+                : strings.t('conn.testConnection'),
+          ),
         ),
         TextButton(
           onPressed: _saving ? null : () => Navigator.pop(context, false),
-          child: const Text('取消'),
+          child: Text(strings.t('common.cancel')),
         ),
         FilledButton(
           onPressed: _busy ? null : () => _run(save: true),
-          child: Text(_saving ? '保存中…' : '保存'),
+          child: Text(
+            _saving ? strings.t('common.saving') : strings.t('common.save'),
+          ),
         ),
       ],
     );

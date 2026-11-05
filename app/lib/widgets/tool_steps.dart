@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../l10n/l10n.dart';
 import '../models.dart';
 import '../theme.dart';
 import '../scope.dart';
@@ -39,6 +40,7 @@ class _ToolStepsState extends State<ToolSteps> {
 
   @override
   Widget build(BuildContext context) {
+    final strings = L10n.s(context);
     final steps = widget.steps;
     if (steps.isEmpty) return const SizedBox.shrink();
 
@@ -67,9 +69,12 @@ class _ToolStepsState extends State<ToolSteps> {
               ),
             ),
             const SizedBox(width: 7),
-            const Text(
-              '正在干活…',
-              style: TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
+            Text(
+              strings.t('tools.working'),
+              style: const TextStyle(
+                fontSize: PB.fsXxs,
+                color: PB.textQuaternary,
+              ),
             ),
           ],
         ),
@@ -114,7 +119,9 @@ class _ToolStepsState extends State<ToolSteps> {
                     ),
                     const SizedBox(width: 5),
                     Text(
-                      running ? '正在调用工具…' : '工具调用 · ${steps.length} 步',
+                      running
+                          ? strings.t('tools.calling')
+                          : strings.tf('tools.callsCount', {'n': steps.length}),
                       style: TextStyle(
                         fontSize: PB.fsXxs,
                         fontWeight: FontWeight.w600,
@@ -127,7 +134,7 @@ class _ToolStepsState extends State<ToolSteps> {
                     const SizedBox(width: 6),
                     Flexible(
                       child: Text(
-                        '${current.tool}${_open ? '' : ' · 点开看明细'}',
+                        '${current.tool}${_open ? '' : ' · ${strings.t('tools.openHint')}'}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -159,7 +166,9 @@ class _ToolStepsState extends State<ToolSteps> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(10, 0, 10, 4),
                 child: Text(
-                  '还有 ${failed.length - shownFailed.length} 步失败（点开看）',
+                  strings.tf('tools.failedMore', {
+                    'n': failed.length - shownFailed.length,
+                  }),
                   style: const TextStyle(fontSize: PB.fsXxs, color: PB.danger),
                 ),
               ),

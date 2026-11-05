@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../l10n/l10n.dart';
 import '../scope.dart';
 import '../ime_guard.dart';
 import '../theme.dart';
@@ -33,11 +34,12 @@ class _UserNameSectionState extends State<UserNameSection> {
     await AppScope.read(context).saveUserName(_c.text.trim());
     if (!mounted) return;
     setState(() => _dirty = false);
-    toast(context, '已保存，bot 下一轮起会这么称呼你');
+    toast(context, L10n.s(context).t('user.saved'));
   }
 
   @override
   Widget build(BuildContext context) {
+    final strings = L10n.s(context);
     final state = AppScope.of(context);
     if (!_dirty && _c.text != state.userName) _c.text = state.userName;
 
@@ -48,16 +50,20 @@ class _UserNameSectionState extends State<UserNameSection> {
           children: [
             const Icon(LucideIcons.userRound, size: 15, color: PB.textTertiary),
             const SizedBox(width: 8),
-            const Text(
-              '我是谁',
-              style: TextStyle(
+            Text(
+              strings.t('user.title'),
+              style: const TextStyle(
                 fontSize: PB.fsSm,
                 fontWeight: FontWeight.w600,
                 color: PB.textSecondary,
               ),
             ),
             const Spacer(),
-            if (_dirty) FilledButton(onPressed: _save, child: const Text('保存')),
+            if (_dirty)
+              FilledButton(
+                onPressed: _save,
+                child: Text(strings.t('common.save')),
+              ),
           ],
         ),
         const SizedBox(height: 4),
@@ -71,10 +77,9 @@ class _UserNameSectionState extends State<UserNameSection> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'bot 会用这个名字称呼你。设一次就行 —— 不用往每个人的人设里写'
-                '"用户叫 XX"。群里它也知道哪条是你发的（其余都是同事）。',
-                style: TextStyle(
+              Text(
+                strings.t('user.explain'),
+                style: const TextStyle(
                   fontSize: PB.fsXxs,
                   color: PB.textQuaternary,
                   height: 1.6,
@@ -89,7 +94,7 @@ class _UserNameSectionState extends State<UserNameSection> {
                 onSubmitted: submitUnlessComposing(_c, _save),
                 style: const TextStyle(fontSize: PB.fsSm),
                 decoration: InputDecoration(
-                  hintText: '比如：小陈 / Boss / 老板',
+                  hintText: strings.t('user.hint'),
                   isDense: true,
                   contentPadding: const EdgeInsets.symmetric(
                     horizontal: 10,

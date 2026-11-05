@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../highlight.dart';
+import '../l10n/l10n.dart';
 import '../markdown_inline.dart';
 import '../theme.dart';
 import 'toast.dart';
@@ -94,7 +95,7 @@ class _MdTextState extends State<MdText> {
       'copy:$url',
       () => TapGestureRecognizerHandle.custom(() {
         Clipboard.setData(ClipboardData(text: url));
-        toast(context, '链接已复制');
+        toast(context, L10n.s(context).t('copy.link'));
       }),
     );
   }
@@ -105,9 +106,19 @@ class _MdTextState extends State<MdText> {
       () => TapGestureRecognizerHandle.custom(() async {
         try {
           await Clipboard.setData(ClipboardData(text: email));
-          if (mounted) toast(context, '邮箱已复制', kind: ToastKind.success);
+          if (mounted)
+            toast(
+              context,
+              L10n.s(context).t('copy.email'),
+              kind: ToastKind.success,
+            );
         } catch (_) {
-          if (mounted) toast(context, '复制失败，请重试', kind: ToastKind.error);
+          if (mounted)
+            toast(
+              context,
+              L10n.s(context).t('copy.failed'),
+              kind: ToastKind.error,
+            );
         }
       }),
     );
@@ -633,7 +644,11 @@ class _CodeBlock extends StatelessWidget {
                 InkWell(
                   onTap: () {
                     Clipboard.setData(ClipboardData(text: code));
-                    toast(context, '代码已复制', kind: ToastKind.success);
+                    toast(
+                      context,
+                      L10n.s(context).t('copy.code'),
+                      kind: ToastKind.success,
+                    );
                   },
                   borderRadius: BorderRadius.circular(PB.rSm),
                   child: const Padding(

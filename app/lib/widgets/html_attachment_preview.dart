@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../html_preview_document.dart';
+import '../l10n/l10n.dart';
 import '../html_preview_loader.dart';
 import '../theme.dart';
 import 'offline_html_view.dart';
@@ -105,7 +106,7 @@ class _HtmlAttachmentPreviewState extends State<HtmlAttachmentPreview> {
     } catch (_) {
       if (!mounted || generation != _generation) return;
       setState(() {
-        _loadError = '无法读取这个附件，请重试或下载文件。';
+        _loadError = L10n.s(context).t('html.readFailed');
         _loading = false;
       });
     }
@@ -118,7 +119,7 @@ class _HtmlAttachmentPreviewState extends State<HtmlAttachmentPreview> {
     _renderError = null;
     _renderTimer = Timer(
       widget.renderTimeout,
-      () => _rendererError(generation, '网页未能完成加载，可以查看源码或下载文件。'),
+      () => _rendererError(generation, L10n.s(context).t('html.renderTimeout')),
     );
   }
 
@@ -160,7 +161,7 @@ class _HtmlAttachmentPreviewState extends State<HtmlAttachmentPreview> {
       final target = await showDialog<Uri>(
         context: context,
         builder: (context) => AlertDialog(
-          title: const Text('报告中的外部链接'),
+          title: Text(L10n.s(context).t('html.externalLinksTitle')),
           content: SizedBox(
             width: 520,
             height: 320,
@@ -180,7 +181,7 @@ class _HtmlAttachmentPreviewState extends State<HtmlAttachmentPreview> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('关闭'),
+              child: Text(L10n.s(context).t('common.close')),
             ),
           ],
         ),
@@ -193,18 +194,18 @@ class _HtmlAttachmentPreviewState extends State<HtmlAttachmentPreview> {
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
-          title: const Text('在浏览器中打开？'),
+          title: Text(L10n.s(context).t('html.openInBrowser')),
           content: SingleChildScrollView(
             child: SelectableText(target.toString()),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消'),
+              child: Text(L10n.s(context).t('common.cancel')),
             ),
             FilledButton(
               onPressed: () => Navigator.pop(context, true),
-              child: const Text('打开链接'),
+              child: Text(L10n.s(context).t('html.openLink')),
             ),
           ],
         ),
@@ -221,9 +222,9 @@ class _HtmlAttachmentPreviewState extends State<HtmlAttachmentPreview> {
       }
     } catch (_) {
       if (mounted && generation == _generation) {
-        ScaffoldMessenger.maybeOf(
-          context,
-        )?.showSnackBar(const SnackBar(content: Text('无法打开浏览器，请复制链接后手动打开。')));
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          SnackBar(content: Text(L10n.s(context).t('html.browserFailed'))),
+        );
       }
     } finally {
       if (mounted && generation == _generation) {
@@ -257,20 +258,23 @@ class _HtmlAttachmentPreviewState extends State<HtmlAttachmentPreview> {
             children: [
               Row(
                 children: [
-                  _tab('预览', false),
+                  _tab(L10n.s(context).t('html.previewTab'), false),
                   const SizedBox(width: 4),
-                  _tab('源码', true),
+                  _tab(L10n.s(context).t('html.sourceTab'), true),
                   const Spacer(),
                   if (_links.isNotEmpty)
                     TextButton(
                       onPressed: _openLinks,
-                      child: const Text('外部链接'),
+                      child: Text(L10n.s(context).t('html.externalLinks')),
                     ),
                 ],
               ),
-              const Text(
-                '离线预览，外部资源不会加载',
-                style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+              Text(
+                L10n.s(context).t('html.offlineNote'),
+                style: const TextStyle(
+                  fontSize: PB.fsXs,
+                  color: PB.textTertiary,
+                ),
               ),
             ],
           ),
@@ -342,7 +346,8 @@ class _HtmlAttachmentPreviewState extends State<HtmlAttachmentPreview> {
       padding: const EdgeInsets.all(16),
       child: SelectableText(
         capped
-            ? '${html.substring(0, limit)}\n\n…（源码较长，仅展示前 512K 字符，请下载查看完整源码）'
+            ? '${html.substring(0, limit)}\n\n'
+                  '${L10n.s(context).t('html.truncated')}'
             : html,
         style: const TextStyle(
           fontFamily: PB.monoFamily,
@@ -371,11 +376,15 @@ class _HtmlAttachmentPreviewState extends State<HtmlAttachmentPreview> {
             style: const TextStyle(color: PB.textSecondary, height: 1.5),
           ),
           const SizedBox(height: 12),
-          if (retry) TextButton(onPressed: _load, child: const Text('重试')),
+          if (retry)
+            TextButton(
+              onPressed: _load,
+              child: Text(L10n.s(context).t('common.retry')),
+            ),
           if (source)
             TextButton(
               onPressed: () => _selectSource(true),
-              child: const Text('查看源码'),
+              child: Text(L10n.s(context).t('html.viewSource')),
             ),
         ],
       ),

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../app_state.dart';
+import '../l10n/l10n.dart';
 import '../models.dart';
 import '../motion.dart';
 import '../scope.dart';
@@ -13,8 +14,8 @@ import 'toast.dart';
 /// 用户填网址 + 账号 + 口令，先探测能不能连、登录字段叫什么，
 /// 确认后再存下来，并可以一键为它建一个团队。
 ///
-/// 为什么必须先探测：不同系统的登录接口/字段名不一样，
-/// 直接存进去会出现"保存成功但永远连不上"，用户完全不知道错在哪。
+/// 之所以必须先探测：不同系统的登录接口/字段名不一样，
+/// 直接存进去会出现「保存成功但永远连不上」，用户完全不知道错在哪。
 class SitesSection extends StatefulWidget {
   const SitesSection({super.key});
 
@@ -33,6 +34,7 @@ class _SitesSectionState extends State<SitesSection> {
 
   @override
   Widget build(BuildContext context) {
+    final strings = L10n.s(context);
     final state = AppScope.of(context);
     final list = state.sites;
 
@@ -44,8 +46,8 @@ class _SitesSectionState extends State<SitesSection> {
             Expanded(
               child: Text(
                 list.isEmpty
-                    ? '把你在用的 Web 系统接进来，bot 就能直接查它的数据'
-                    : '已接入 ${list.length} 个系统',
+                    ? strings.t('sites.hint')
+                    : strings.tf('sites.connectedCount', {'n': list.length}),
                 style: const TextStyle(
                   fontSize: PB.fsXs,
                   color: PB.textTertiary,
@@ -55,7 +57,10 @@ class _SitesSectionState extends State<SitesSection> {
             FilledButton.icon(
               onPressed: () => _addSite(context, state),
               icon: const Icon(LucideIcons.plus, size: 14),
-              label: const Text('添加系统', style: TextStyle(fontSize: PB.fsXs)),
+              label: Text(
+                strings.t('sites.add'),
+                style: const TextStyle(fontSize: PB.fsXs),
+              ),
               style: FilledButton.styleFrom(
                 minimumSize: const Size(0, 34),
                 padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -100,14 +105,17 @@ class _SitesSectionState extends State<SitesSection> {
     AppState state,
     SiteSystem site,
   ) async {
+    final strings = L10n.s(context);
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: PB.bgElevated,
-        title: const Text('移除这个系统？', style: TextStyle(fontSize: PB.fsLg)),
+        title: Text(
+          strings.t('sites.removeTitle'),
+          style: const TextStyle(fontSize: PB.fsLg),
+        ),
         content: Text(
-          '「${site.name}」会被移除，凭证也一起删掉。\n'
-          '它对应的团队（如果建过）不会删 —— 里面的聊天记录还在。',
+          strings.tf('sites.removeBody', {'name': site.name}),
           style: const TextStyle(
             fontSize: PB.fsSm,
             color: PB.textSecondary,
@@ -117,12 +125,12 @@ class _SitesSectionState extends State<SitesSection> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
+            child: Text(strings.t('common.cancel')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: FilledButton.styleFrom(backgroundColor: PB.danger),
-            child: const Text('移除'),
+            child: Text(strings.t('common.remove')),
           ),
         ],
       ),
@@ -130,7 +138,7 @@ class _SitesSectionState extends State<SitesSection> {
     if (ok != true || !context.mounted) return;
     final err = await state.removeSite(site.id);
     if (!context.mounted) return;
-    _toast(context, err ?? '已移除');
+    _toast(context, err ?? strings.t('sites.removed'));
   }
 
   Future<void> _testSite(
@@ -138,12 +146,17 @@ class _SitesSectionState extends State<SitesSection> {
     AppState state,
     SiteSystem site,
   ) async {
-    _toast(context, '正在连接 ${site.name}…');
+    final strings = L10n.s(context);
+    _toast(context, strings.tf('sites.connecting', {'name': site.name}));
     final r = await state.testSite(site.id);
     if (!context.mounted) return;
     _toast(
       context,
-      r['ok'] == true ? '${site.name} 连接正常' : '连不上：${r['reason'] ?? '未知原因'}',
+      r['ok'] == true
+          ? strings.tf('sites.connectOk', {'name': site.name})
+          : strings.tf('sites.connectFailed', {
+              'reason': r['reason'] ?? strings.t('sites.unknownReason'),
+            }),
     );
     await state.loadSites();
   }
@@ -154,12 +167,18 @@ class _SitesSectionState extends State<SitesSection> {
     AppState state,
     SiteSystem site,
   ) async {
-    final name = TextEditingController(text: '${site.name} 团队');
+    final strings = L10n.s(context);
+    final name = TextEditingController(
+      text: strings.tf('sites.teamName', {'name': site.name}),
+    );
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: PB.bgElevated,
-        title: const Text('为它建一个团队', style: TextStyle(fontSize: PB.fsLg)),
+        title: Text(
+          strings.t('sites.createTeamTitle'),
+          style: const TextStyle(fontSize: PB.fsLg),
+        ),
         content: SizedBox(
           width: 420,
           child: Column(
@@ -167,8 +186,7 @@ class _SitesSectionState extends State<SitesSection> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                '会给「${site.name}」建一个部门，部门里的人都能查这个系统的数据。\n'
-                '以后你直接对它们说"帮我看看 xx"，它们就去查。',
+                strings.tf('sites.createTeamBody', {'name': site.name}),
                 style: const TextStyle(
                   fontSize: PB.fsXs,
                   color: PB.textTertiary,
@@ -179,7 +197,9 @@ class _SitesSectionState extends State<SitesSection> {
               TextField(
                 controller: name,
                 autofocus: true,
-                decoration: const InputDecoration(labelText: '团队名字'),
+                decoration: InputDecoration(
+                  labelText: strings.t('sites.teamNameLabel'),
+                ),
               ),
             ],
           ),
@@ -187,11 +207,11 @@ class _SitesSectionState extends State<SitesSection> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
+            child: Text(strings.t('common.cancel')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('创建'),
+            child: Text(strings.t('sites.create')),
           ),
         ],
       ),
@@ -199,7 +219,7 @@ class _SitesSectionState extends State<SitesSection> {
     name.dispose();
     if (ok != true || !context.mounted) return;
 
-    // 交给主控去建（它会按站点定制人设与技能），比自己硬编码一套更符合"主控统一调度"
+    // 交给主控去建（它会按站点定制人设与技能），比自己硬编码一套更符合「主控统一调度」
     final err = await state.bindSiteTeam(site.id, site.name);
     if (!context.mounted) return;
     if (err != null) {
@@ -208,11 +228,12 @@ class _SitesSectionState extends State<SitesSection> {
     }
     await state.loadSites();
     if (!context.mounted) return;
-    _toast(context, '已交给主控，它会在「${site.name}」里安排人');
+    _toast(context, strings.tf('sites.teamCreated', {'name': site.name}));
   }
 
   /// 添加系统：填 → 探测 → 保存
   Future<void> _addSite(BuildContext context, AppState state) async {
+    final strings = L10n.s(context);
     final url = TextEditingController();
     final account = TextEditingController();
     final password = TextEditingController();
@@ -231,7 +252,7 @@ class _SitesSectionState extends State<SitesSection> {
           Future<void> doProbe() async {
             setLocal(() {
               probing = true;
-              status = '正在尝试连接…';
+              status = strings.t('sites.probing');
               probeOk = null;
             });
             final r = await state.probeSite(
@@ -245,14 +266,21 @@ class _SitesSectionState extends State<SitesSection> {
             setLocal(() {
               probing = false;
               probeOk = r['ok'] == true;
-              status = r['reason']?.toString() ?? (probeOk! ? '连接成功' : '连接失败');
+              status =
+                  r['reason']?.toString() ??
+                  (probeOk!
+                      ? strings.t('sites.probeOk')
+                      : strings.t('sites.probeFailed'));
               auth = (r['auth'] as Map?)?.cast<String, dynamic>();
             });
           }
 
           return AlertDialog(
             backgroundColor: PB.bgElevated,
-            title: const Text('接入一个系统', style: TextStyle(fontSize: PB.fsLg)),
+            title: Text(
+              strings.t('sites.addTitle'),
+              style: const TextStyle(fontSize: PB.fsLg),
+            ),
             content: SizedBox(
               width: 480,
               child: SingleChildScrollView(
@@ -260,10 +288,9 @@ class _SitesSectionState extends State<SitesSection> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      '填上系统的网址和登录信息，我们会先试着连一次，'
-                      '确认能连上再存下来。',
-                      style: TextStyle(
+                    Text(
+                      strings.t('sites.addBody'),
+                      style: const TextStyle(
                         fontSize: PB.fsXs,
                         color: PB.textTertiary,
                         height: 1.7,
@@ -273,21 +300,25 @@ class _SitesSectionState extends State<SitesSection> {
                     TextField(
                       controller: url,
                       autofocus: true,
-                      decoration: const InputDecoration(
-                        labelText: '网址',
+                      decoration: InputDecoration(
+                        labelText: strings.t('sites.url'),
                         hintText: 'https://your-system.com',
                       ),
                     ),
                     const SizedBox(height: 10),
                     TextField(
                       controller: account,
-                      decoration: const InputDecoration(labelText: '账号'),
+                      decoration: InputDecoration(
+                        labelText: strings.t('sites.account'),
+                      ),
                     ),
                     const SizedBox(height: 10),
                     TextField(
                       controller: password,
                       obscureText: true,
-                      decoration: const InputDecoration(labelText: '密码'),
+                      decoration: InputDecoration(
+                        labelText: strings.t('sites.password'),
+                      ),
                     ),
                     const SizedBox(height: 8),
                     // 高级：探测不出来时手填字段名
@@ -305,9 +336,9 @@ class _SitesSectionState extends State<SitesSection> {
                               color: PB.textQuaternary,
                             ),
                             const SizedBox(width: 4),
-                            const Text(
-                              '连不上？手动指定登录字段',
-                              style: TextStyle(
+                            Text(
+                              strings.t('sites.manualFields'),
+                              style: const TextStyle(
                                 fontSize: PB.fsXxs,
                                 color: PB.textTertiary,
                               ),
@@ -324,16 +355,16 @@ class _SitesSectionState extends State<SitesSection> {
                           children: [
                             TextField(
                               controller: accField,
-                              decoration: const InputDecoration(
-                                labelText: '账号字段名（选填）',
+                              decoration: InputDecoration(
+                                labelText: strings.t('sites.accountField'),
                                 hintText: 'account / email / username',
                               ),
                             ),
                             const SizedBox(height: 8),
                             TextField(
                               controller: pwdField,
-                              decoration: const InputDecoration(
-                                labelText: '密码字段名（选填）',
+                              decoration: InputDecoration(
+                                labelText: strings.t('sites.passwordField'),
                                 hintText: 'password / passwd / pwd',
                               ),
                             ),
@@ -393,11 +424,15 @@ class _SitesSectionState extends State<SitesSection> {
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('取消'),
+                child: Text(strings.t('common.cancel')),
               ),
               OutlinedButton(
                 onPressed: probing ? null : doProbe,
-                child: Text(probing ? '连接中…' : '试连接'),
+                child: Text(
+                  probing
+                      ? strings.t('sites.connectingShort')
+                      : strings.t('sites.testConnection'),
+                ),
               ),
               FilledButton(
                 // 探测通过才能保存：没连上就存，等于存一条永远用不了的配置
@@ -420,7 +455,7 @@ class _SitesSectionState extends State<SitesSection> {
                         Navigator.pop(ctx, true);
                       }
                     : null,
-                child: const Text('保存'),
+                child: Text(strings.t('common.save')),
               ),
             ],
           );
@@ -433,7 +468,9 @@ class _SitesSectionState extends State<SitesSection> {
     password.dispose();
     accField.dispose();
     pwdField.dispose();
-    if (saved == true && context.mounted) _toast(context, '已接入');
+    if (saved == true && context.mounted) {
+      _toast(context, strings.t('sites.added'));
+    }
   }
 }
 
@@ -444,6 +481,7 @@ class _EmptySites extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final strings = L10n.s(context);
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(vertical: 34, horizontal: 20),
@@ -456,15 +494,18 @@ class _EmptySites extends StatelessWidget {
         children: [
           const Icon(LucideIcons.plug, size: 26, color: PB.textQuaternary),
           const SizedBox(height: 12),
-          const Text(
-            '还没有接入系统',
-            style: TextStyle(fontSize: PB.fsSm, color: PB.textSecondary),
+          Text(
+            strings.t('sites.empty'),
+            style: const TextStyle(fontSize: PB.fsSm, color: PB.textSecondary),
           ),
           const SizedBox(height: 14),
           FilledButton.icon(
             onPressed: onAdd,
             icon: const Icon(LucideIcons.plus, size: 15),
-            label: const Text('接入第一个系统', style: TextStyle(fontSize: PB.fsXs)),
+            label: Text(
+              strings.t('sites.connectFirst'),
+              style: const TextStyle(fontSize: PB.fsXs),
+            ),
             style: FilledButton.styleFrom(minimumSize: const Size(0, 34)),
           ),
         ],
@@ -496,6 +537,7 @@ class _SiteCardState extends State<_SiteCard> {
 
   @override
   Widget build(BuildContext context) {
+    final strings = L10n.s(context);
     final s = widget.site;
     return MouseRegion(
       onEnter: (_) => setState(() => _hover = true),
@@ -544,9 +586,9 @@ class _SiteCardState extends State<_SiteCard> {
                             color: PB.bgActive,
                             borderRadius: BorderRadius.circular(4),
                           ),
-                          child: const Text(
-                            '已建团队',
-                            style: TextStyle(
+                          child: Text(
+                            strings.t('sites.teamBadge'),
+                            style: const TextStyle(
                               fontSize: 10,
                               color: PB.textTertiary,
                             ),
@@ -583,17 +625,17 @@ class _SiteCardState extends State<_SiteCard> {
             if (_hover) ...[
               _SiteAction(
                 icon: LucideIcons.plugZap,
-                tooltip: '测试连接',
+                tooltip: strings.t('sites.test'),
                 onTap: widget.onTest,
               ),
               _SiteAction(
                 icon: LucideIcons.users,
-                tooltip: '建团队',
+                tooltip: strings.t('sites.createTeam'),
                 onTap: widget.onTeam,
               ),
               _SiteAction(
                 icon: LucideIcons.trash2,
-                tooltip: '移除',
+                tooltip: strings.t('common.remove'),
                 onTap: widget.onDelete,
                 danger: true,
               ),

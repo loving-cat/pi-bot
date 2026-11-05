@@ -1,4 +1,5 @@
 import 'models.dart';
+import 'token_count.dart';
 
 /// 模型容量输入；空白保留已有值，新模型空白交由服务端采用默认值。
 class ModelCapacityInput {
@@ -213,15 +214,21 @@ List<ModelCardDraft> modelCardDrafts(Iterable<ModelSpec> models) {
   return rows;
 }
 
-int? _capacityValue(String raw, int? previous, String id, String label) {
+/// 容量输入：支持 128000 / 256K / 1M 三种写法，留空沿用已有值。
+///
+/// 判错信息带上模型 ID 和字段名，用户不用猜是哪一张卡片填错了。
+int? capacityValue(String raw, int? previous, String id, String label) {
   final text = raw.trim();
   if (text.isEmpty) return (previous ?? 0) > 0 ? previous : null;
-  final parsed = RegExp(r'^\d+$').hasMatch(text) ? int.tryParse(text) : null;
-  if (parsed == null || parsed <= 0 || parsed > 9007199254740991) {
-    throw FormatException('模型 $id 的$label要填正整数 tokens，或留空');
+  final parsed = parseTokenCount(text);
+  if (parsed == null) {
+    throw FormatException('模型 $id 的$label要填正整数 tokens（可写 1M / 256K），或留空');
   }
   return parsed;
 }
+
+int? _capacityValue(String raw, int? previous, String id, String label) =>
+    capacityValue(raw, previous, id, label);
 
 Map<String, dynamic> _modelWithCapacity(
   String id,
