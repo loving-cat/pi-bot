@@ -1,0 +1,21 @@
+docs/MACOS.md
+  s_06973911ad2cd6::t_1ccb28fa6ef104 71-76
+docs/MODULE-MAP.md
+  s_06973911ad2cd6::t_1ccb28fa6ef104 133-136
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b8b0c25c46ba8df8cfc31dd99956c11fdf2cff03",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
