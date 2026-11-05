@@ -229,9 +229,15 @@ class PB {
         },
       ),
       dividerColor: borderTertiary,
+      // ★ 选区底色用**固定的中性高亮**，不跟主控色走。
+      //
+      //   原先用 colors.accentSoft（主控色 14%）。主控色换成蓝色之后，
+      //   蓝色 14% 叠在深色背景上几乎和背景同色 —— 用户拖选半天
+      //   看不到自己选中了哪一段。选区是"可见性"而非"品牌色"，
+      //   所以这里用与主题无关的浅色，任何主控色下都够清楚。
       textSelectionTheme: TextSelectionThemeData(
         cursorColor: colors.accentBright,
-        selectionColor: colors.accentSoft,
+        selectionColor: const Color(0x668AA6FF),
         selectionHandleColor: colors.accentBright,
       ),
       splashFactory: InkSparkle.splashFactory,

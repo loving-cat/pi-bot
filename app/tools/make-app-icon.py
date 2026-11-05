@@ -7,6 +7,7 @@ pi-bot 应用图标生成器。
   · 只用两个颜色：玫红 HOT + 电光柠檬绿 LIME，深靛底
   · 黑洞 + 斜穿吸积盘，整体倾斜 26° 制造动势
   · 所有几何用数学椭圆，不引入位图素材，随时可重生成
+  · 外层为超椭圆圆角（近似 Apple squircle），与 Dock 其他应用一致
 
 用法：python3 app/tools/make-app-icon.py
 输出：Flutter 资产 + macOS / Windows / Android 各尺寸
@@ -59,6 +60,21 @@ RXI, RYI = 212.0, 202.0
 DRX, DRY = 492.0, 88.0
 
 
+def round_mask(size, n=5.0, ss=4):
+    """超椭圆的圆角蒙版，近似 macOS squircle。
+
+    n 越大越接近直角方形；n=5 观感与系统图标一致。
+    """
+    import numpy as np
+    w = size * ss
+    yy, xx = np.mgrid[0:w, 0:w].astype(np.float32)
+    half = w / 2.0
+    u = (xx - half) / half
+    v = (yy - half) / half
+    inside = (np.abs(u) ** n + np.abs(v) ** n) <= 1.0
+    return Image.fromarray((inside * 255).astype("uint8"), "L").resize((size, size), Image.LANCZOS)
+
+
 def render():
     img = Image.new("RGB", (W, W), BG).convert("RGBA")
 
@@ -96,7 +112,11 @@ def render():
     d.polygon(P(rot(ell(CX, CY, DRX, DRY, 0, 180), TILT, CX, CY)), fill=LIME + (255,))
     add(front)
 
-    return img.convert("RGB").resize((S, S), Image.LANCZOS)
+    flat = img.convert("RGB").resize((S, S), Image.LANCZOS)
+    # 套圆角：外部透明，Dock / 启动台里和别的应用一致
+    rounded = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    rounded.paste(flat, (0, 0), round_mask(S))
+    return rounded
 
 
 def main():

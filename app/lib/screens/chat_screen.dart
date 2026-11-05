@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:desktop_drop/desktop_drop.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
@@ -1772,6 +1773,38 @@ class _TimeLabel extends StatelessWidget {
   }
 }
 
+/// 长按菜单包装：只在**触屏**上参与手势竞争。
+///
+/// 为什么不直接用 GestureDetector(onLongPress:)：
+///   Flutter 的 SelectableRegion 在桌面端是用 TapAndPanGestureRecognizer
+///   处理鼠标拖动选区的。外层再挂一个 LongPressGestureRecognizer，
+///   两者会同时进手势竞技场：长按计时器 500ms 一到就把竞技场赢走，
+///   正在进行的拖动随之中断 —— 表现就是"文字拖不动、选不上"。
+///
+///   长按本来是移动端交互（桌面有右键菜单和 ⌘C）。所以这里把长按
+///   限定在 touch/stylus 设备上：鼠标拖动归选区，手指长按归菜单，
+///   两者不再抢同一个指针。
+Widget _longPressWrapper(VoidCallback? onLongPress, Widget child) {
+  if (onLongPress == null) return child;
+  return RawGestureDetector(
+    gestures: <Type, GestureRecognizerFactory>{
+      LongPressGestureRecognizer:
+          GestureRecognizerFactoryWithHandlers<LongPressGestureRecognizer>(
+            () => LongPressGestureRecognizer(),
+            (instance) => instance
+              ..onLongPress = onLongPress
+              // 桌面鼠标不参与：把拖动让给文字选区
+              ..supportedDevices = const <PointerDeviceKind>{
+                PointerDeviceKind.touch,
+                PointerDeviceKind.stylus,
+                PointerDeviceKind.invertedStylus,
+              },
+          ),
+    },
+    child: child,
+  );
+}
+
 class _MessageRow extends StatelessWidget {
   const _MessageRow({
     required this.msg,
@@ -1917,9 +1950,9 @@ class _MessageRow extends StatelessWidget {
                       ),
                     ),
                   if (msg.text.trim().isNotEmpty)
-                    GestureDetector(
-                      onLongPress: onLongPress,
-                      child: Container(
+                    _longPressWrapper(
+                      onLongPress,
+                      Container(
                         constraints: BoxConstraints(
                           maxWidth: math.min(available * 0.74, 560),
                         ),
@@ -2091,9 +2124,14 @@ class _MessageRow extends StatelessWidget {
                     ),
                   if (msg.text.trim().isNotEmpty ||
                       (streaming && msg.text.isEmpty))
-                    GestureDetector(
-                      onLongPress: onLongPress,
-                      child: Container(
+                    // ★ 桌面端不挂 onLongPress。
+                    //
+                    //   长按是移动端交互；桌面上它注册的指针手势会和
+                    //   SelectionArea 抢事件 —— 表现就是"文字拖不动、选不上"。
+                    //   桌面端有右键菜单与 ⌘C，不需要长按。
+                    _longPressWrapper(
+                      onLongPress,
+                      Container(
                         constraints: BoxConstraints(maxWidth: maxBubble),
                         padding: const EdgeInsets.fromLTRB(15, 13, 15, 13),
                         decoration: BoxDecoration(

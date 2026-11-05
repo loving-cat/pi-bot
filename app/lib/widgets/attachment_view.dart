@@ -117,7 +117,11 @@ class AttachmentList extends StatelessWidget {
 
     return ConstrainedBox(
       constraints: BoxConstraints(maxWidth: maxWidth),
-      child: GestureDetector(onLongPress: onLongPress, child: content),
+      // 没有长按回调时不挂 GestureDetector：空的手势器仍会进命中测试队列，
+      // 在桌面端会和文字选区抢指针事件。
+      child: onLongPress == null
+          ? content
+          : GestureDetector(onLongPress: onLongPress, child: content),
     );
   }
 }
