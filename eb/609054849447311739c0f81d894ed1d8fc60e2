@@ -1,0 +1,32 @@
+app/lib/main.dart
+  h_c2e638ff76b3b9 77-78,321-327,330-335,382-398,401-403,412
+app/lib/screens/home_shell.dart
+  h_c2e638ff76b3b9 261-264,267
+app/lib/theme_colors.dart
+  h_c2e638ff76b3b9 24-30,33-35
+app/lib/widgets/connections_detail.dart
+  h_c2e638ff76b3b9 196,240
+app/lib/widgets/local_capabilities_section.dart
+  h_c2e638ff76b3b9 185
+app/lib/widgets/model_capacity_fields.dart
+  h_c2e638ff76b3b9 170
+app/lib/widgets/model_group_editor.dart
+  h_c2e638ff76b3b9 73
+app/lib/widgets/theme_toggle_button.dart
+  h_c2e638ff76b3b9 106-109,112-113
+server/src/tools.js
+  h_c2e638ff76b3b9 106-118,122,1180,1185,1216-1217
+server/tests/model-assign-health.mjs
+  h_c2e638ff76b3b9 1-68
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "eb609054849447311739c0f81d894ed1d8fc60e2",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
