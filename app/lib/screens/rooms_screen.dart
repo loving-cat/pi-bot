@@ -344,12 +344,12 @@ class _RoomsScreenState extends State<RoomsScreen> {
     final mainBot = state.mainBot;
 
     final items = <AnchoredMenuItem>[
+      // 浮层已经有「新建」标题了，这里不再重复一个同样的分组标签
       AnchoredMenuItem(
         icon: LucideIcons.users,
         title: s.t('rooms.askMainTitle'),
         subtitle: s.t('rooms.askMainSubtitle'),
         highlight: true,
-        sectionLabel: s.t('rooms.newSection'),
         onTap: () => _talkToMain(context, s.t('rooms.askMainPrefill')),
       ),
       AnchoredMenuItem(
@@ -361,7 +361,7 @@ class _RoomsScreenState extends State<RoomsScreen> {
       AnchoredMenuItem(
         icon: LucideIcons.bot,
         title: s.t('bots.title'),
-        subtitle: s.tf('rooms.rosterSubtitle', {'n': '${state.bots.length}'}),
+        subtitle: s.tf('rooms.membersSubtitle', {'n': '${state.bots.length}'}),
         onTap: () => Navigator.push(
           context,
           MaterialPageRoute(builder: (_) => const BotsScreen()),

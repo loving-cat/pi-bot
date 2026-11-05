@@ -40,7 +40,7 @@ const areaPanel = StringArea(
     'sites.teamName': '{name} 团队',
     'sites.teamNameLabel': '团队名字',
     'sites.create': '创建',
-    'sites.teamCreated': '已交给主控，它会在「{name}」里安排人',
+    'sites.teamCreated': '已交给助手，它会在「{name}」里安排人',
 
     // ---- 技能库（skills_library / local_capabilities_section） ----
     'skills.title': '技能',
@@ -50,7 +50,7 @@ const areaPanel = StringArea(
     'skills.createTitle': '新建技能',
     'skills.editTitle': '编辑技能',
     'skills.formIntro':
-        '技能是给 bot 看的「做法」：什么时候用、具体怎么做。\n存进库之后，主控会按任务挑相关的几条交给干活的 bot。',
+        '技能是给 bot 看的「做法」：什么时候用、具体怎么做。\n存进库之后，助手会按任务挑相关的几条交给干活的 bot。',
     'skills.fieldTitle': '标题',
     'skills.fieldTitleHint': '如：线上排查三步',
     'skills.fieldSummary': '一句话说明（选填）',
@@ -69,7 +69,7 @@ const areaPanel = StringArea(
     'skills.importTooltip': '导入 SKILL.md（可多选）',
     'skills.new': '新建',
     'skills.empty': '还没有技能',
-    'skills.emptyBody': '技能是一套做法：什么时候用、具体怎么做。\n存进来之后，主控会按任务挑相关的交给干活的 bot。\n也可以直接导入现成的 SKILL.md 文件。',
+    'skills.emptyBody': '技能是一套做法：什么时候用、具体怎么做。\n存进来之后，助手会按任务挑相关的交给干活的 bot。\n也可以直接导入现成的 SKILL.md 文件。',
     'skills.createFirst': '建第一条',
     'skills.noHowto': '（还没写做法）',
     'skills.listSeparator': '、',

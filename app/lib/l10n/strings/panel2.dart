@@ -5,7 +5,7 @@ import 'area.dart';
 const areaPanel2 = StringArea(
   zh: {
     // ---- 通用小词 ----
-    'misc.mainBot': '主控',
+    'misc.mainBot': '助手',
     'misc.default': '默认',
     'misc.enable': '启用',
     'misc.disable': '停用',
@@ -74,7 +74,7 @@ const areaPanel2 = StringArea(
     'limits.savedRunning': '已生效（正在跑的会话下次跑就用新规矩）',
     'limits.saved': '已生效（不用重启）',
     'limits.title': '群聊轮次',
-    'limits.intro': 'bot 之间用 @ 互相派活，谁也没规定什么时候停 —— 解不了的活它们会一直聊。这几个数就是闸门。改完立刻生效。',
+    'limits.intro': 'bot 之间用 @ 互相分工协作，谁也没规定什么时候停 —— 解不了的活它们会一直聊。这几个数就是闸门。改完立刻生效。',
     'limits.leadTurns': '老大最多几轮',
     'limits.memberTurns': '成员最多几轮',
     'limits.runsPerMessage': '一条消息最多跑几次',
@@ -123,7 +123,7 @@ const areaPanel2 = StringArea(
     'task.title': '任务 · {room}',
     'task.openCount': '{n} 个未完成',
     'task.newHint': '加一条任务（回车添加）',
-    'task.empty': '还没有任务。部门里派的活会自动出现在这里。',
+    'task.empty': '还没有任务。分配给团队成员的活会自动出现在这里。',
     'task.doing': '进行中',
     'task.todo': '待办',
     'task.doneCount': '已完成 {n}',
@@ -173,13 +173,13 @@ const areaPanel2 = StringArea(
 
     // ---- 经验 ----
     'lesson.title': '经验',
-    'lesson.intro': '只有启用的会进主控提示词，一次最多 3 条 / 600 字',
+    'lesson.intro': '只有启用的会被助手参考，一次最多 3 条 / 600 字',
     'lesson.candidateCount': '待确认 {n}',
     'lesson.activeCount': '已启用 {n}',
     'lesson.all': '全部',
     'lesson.emptyCandidates': '还没有待确认的经验。群聊收尾后会自动复盘出候选，你在这里决定要不要让它记住。',
     'lesson.noCandidates': '没有待确认的经验',
-    'lesson.emptyActive': '还没有启用的经验。候选条目点「启用」后，主控派活时才会参考它。',
+    'lesson.emptyActive': '还没有启用的经验。候选条目点「启用」后，助手安排任务时才会参考它。',
     'lesson.noActive': '没有启用的经验',
     'lesson.emptyAll': '还没有经验。群聊收尾后会自动复盘出候选。',
     'lesson.deleteTitle': '删掉这条经验？',
@@ -351,7 +351,7 @@ const areaPanel2 = StringArea(
   },
   en: {
     // ---- common small words ----
-    'misc.mainBot': 'Main bot',
+    'misc.mainBot': 'Assistant',
     'misc.default': 'Default',
     'misc.enable': 'Enable',
     'misc.disable': 'Disable',

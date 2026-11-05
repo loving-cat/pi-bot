@@ -7,7 +7,7 @@ const areaAvatar = StringArea(
     'avatar.shape': '形象',
     'avatar.color': '颜色',
     'avatar.autoSaved': '选择后自动保存',
-    'avatar.themeNote': '主控颜色会同步用于消息气泡、按钮和重点信息。',
+    'avatar.themeNote': '这个颜色会同步用于消息气泡、按钮和重点信息。',
     'avatar.colorDefault': '默认颜色',
     'avatar.colorCustom': '自定义',
     'avatar.shapeDefault': '默认轮廓',
@@ -38,7 +38,7 @@ const areaAvatar = StringArea(
     'avatar.color': 'Color',
     'avatar.autoSaved': 'Saved automatically after choosing',
     'avatar.themeNote':
-        'The main bot color also drives message bubbles, buttons and highlights.',
+        'This color also drives message bubbles, buttons and highlights.',
     'avatar.colorDefault': 'Default color',
     'avatar.colorCustom': 'Custom',
     'avatar.shapeDefault': 'Default shape',
