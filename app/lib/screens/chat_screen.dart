@@ -22,6 +22,7 @@ import '../desktop_shortcuts.dart';
 import '../theme.dart';
 import '../window_chrome.dart';
 import '../widgets/toast.dart';
+import '../widgets/anchored_menu.dart';
 import '../widgets/attachment_view.dart';
 import '../widgets/avatar_life.dart';
 import '../widgets/ask_card.dart';
@@ -73,6 +74,9 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// 任务按钮的锚点：任务浮层要贴着它弹出。
   final _taskAnchor = GlobalKey();
+
+  /// 三个点按钮的锚点：更多菜单要贴着它弹出。
+  final _moreAnchor = GlobalKey();
 
   final _scroll = ScrollController();
   final _input = TextEditingController();
@@ -447,6 +451,68 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     toast(context, message);
   }
 
+  /// 「更多」菜单：停止 / 开新会话 / 定时任务 / 重新拉取。
+  ///
+  /// 用锚定浮层而不是 PopupMenuButton：后者的落点不受控制，
+  /// 会盖住触发它的按钮，也和其它浮层不统一。
+  Future<void> _showMoreMenu(
+    BuildContext context,
+    AppState state,
+    Room room,
+    bool busy,
+    AppStrings s,
+  ) async {
+    await showAnchoredMenu(
+      context: context,
+      anchorKey: _moreAnchor,
+      items: [
+        if (busy)
+          AnchoredMenuItem(
+            icon: LucideIcons.square,
+            title: s.t('chat.stopTurn'),
+            onTap: () => state.abort(room.id),
+          ),
+        AnchoredMenuItem(
+          icon: LucideIcons.refreshCw,
+          title: s.t('chat.resetMenu'),
+          onTap: () async {
+            final ok = await showDialog<bool>(
+              context: context,
+              builder: (ctx) => AlertDialog(
+                title: Text(L10n.s(ctx).t('chat.newSession')),
+                content: Text(L10n.s(ctx).t('chat.newSessionBody')),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: Text(L10n.s(ctx).t('common.cancel')),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.pop(ctx, true),
+                    child: Text(L10n.s(ctx).t('chat.newSession')),
+                  ),
+                ],
+              ),
+            );
+            if (ok == true) await state.resetSession(room.id);
+          },
+        ),
+        AnchoredMenuItem(
+          icon: LucideIcons.clock,
+          title: s.t('chat.automations'),
+          onTap: () => showAutomationSheet(context, state, room),
+        ),
+        AnchoredMenuItem(
+          icon: LucideIcons.download,
+          title: s.t('chat.reloadMessages'),
+          onTap: () async {
+            await state.loadMessages(room.id, force: true);
+            _scrollFollow.resume();
+          },
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final s = L10n.s(context);
@@ -628,61 +694,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 );
               },
             ),
-            PopupMenuButton<String>(
-              icon: const Icon(LucideIcons.ellipsis, size: 18),
-              padding: EdgeInsets.zero,
-              // 紧贴右边的让位块，别在中间再挤出一段空白
-              iconSize: 18,
-              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-              onSelected: (value) async {
-                switch (value) {
-                  case 'abort':
-                    await state.abort(room.id);
-                  case 'automations':
-                    await showAutomationSheet(context, state, room);
-                  case 'reset':
-                    final ok = await showDialog<bool>(
-                      context: context,
-                      builder: (ctx) => AlertDialog(
-                        title: Text(L10n.s(ctx).t('chat.newSession')),
-                        content: Text(L10n.s(ctx).t('chat.newSessionBody')),
-                        actions: [
-                          TextButton(
-                            onPressed: () => Navigator.pop(ctx, false),
-                            child: Text(L10n.s(ctx).t('common.cancel')),
-                          ),
-                          FilledButton(
-                            onPressed: () => Navigator.pop(ctx, true),
-                            child: Text(L10n.s(ctx).t('chat.newSession')),
-                          ),
-                        ],
-                      ),
-                    );
-                    if (ok == true) await state.resetSession(room.id);
-                  case 'reload':
-                    await state.loadMessages(room.id, force: true);
-                    _scrollFollow.resume();
-                }
-              },
-              itemBuilder: (ctx) => [
-                if (busy)
-                  PopupMenuItem(
-                    value: 'abort',
-                    child: Text(s.t('chat.stopTurn')),
-                  ),
-                PopupMenuItem(
-                  value: 'reset',
-                  child: Text(s.t('chat.resetMenu')),
-                ),
-                PopupMenuItem(
-                  value: 'automations',
-                  child: Text(s.t('chat.automations')),
-                ),
-                PopupMenuItem(
-                  value: 'reload',
-                  child: Text(s.t('chat.reloadMessages')),
-                ),
-              ],
+            // ★ 用锚定浮层，不用 PopupMenuButton。
+            //
+            //   原生 PopupMenuButton 的定位不受我们控制：它会从图标下方
+            //   直接铺开，实测会盖住触发它的那颗三个点按钮，也和「新建」
+            //   浮层的视觉语言不一致。这里统一走 showAnchoredMenu，
+            //   落点由 menuPlacement 算（会避开按钮本身）。
+            KeyedSubtree(
+              key: _moreAnchor,
+              child: IconButton(
+                padding: EdgeInsets.zero,
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                tooltip: s.t('chat.more'),
+                onPressed: () => _showMoreMenu(context, state, room, busy, s),
+                icon: const Icon(LucideIcons.ellipsis, size: 18),
+              ),
             ),
             const SizedBox(width: 6),
           ],

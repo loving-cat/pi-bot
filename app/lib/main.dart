@@ -78,23 +78,26 @@ Future<void> main() async {
     if (saved?.maximized == true) await windowManager.maximize();
     await windowManager.focus();
 
-    // ★ 尺寸必须在**首帧之后**再设一次。
+    // ★ 尺寸只需在**首帧之后**设一次，别反复设。
     //
-    //   刚 show 出来的那一瞬间 Flutter 引擎还没接管窗口，此时设的尺寸会被
-    //   引擎按内容布局覆盖掉 —— 实测窗口会缩成 90~200px 不等，每次都不一样，
-    //   取决于当时内容算出来的固有尺寸。
-    //   `flutter run` 下看不到这个问题，因为它在引擎就绪后才显示窗口；
-    //   直接 `open` 正式包才会暴露。
+    //   为什么必须在首帧之后：刚 show 出来那一瞬间引擎还没接管窗口，
+    //   此时设的尺寸会被它按内容布局覆盖掉 —— 实测会缩成一百多像素。
+    //   `flutter run` 下看不到这个问题（它在引擎就绪后才显示窗口），
+    //   只有直接 `open` 正式包才会暴露。
     //
-    //   等第一帧真的画完再设，引擎已经稳定，尺寸就立得住了。
+    //   为什么不能反复设：试过循环监测、不对就重设 setBounds，
+    //   结果更糟 —— 窗口 frame 确实是 1181x756，但渲染表面被压到 130x130，
+    //   整个界面完整地缩小成一团（截图确认过内容本身没问题）。
+    //   反复改窗口尺寸会让引擎的渲染缓冲区跟不上窗口本身。
+    //
+    //   结论：设一次，然后交给引擎自己 layout。
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      final wanted = target?.size ?? const Size(1180, 760);
       try {
         await windowManager.setMinimumSize(kWindowMinSize);
         if (target != null) {
           await windowManager.setBounds(target);
         } else {
-          await windowManager.setSize(wanted);
+          await windowManager.setSize(const Size(1180, 760));
           await windowManager.center();
         }
       } catch (_) {
@@ -128,6 +131,15 @@ class _WindowSaver with WindowListener {
     try {
       if (await windowManager.isFullScreen()) return;
       final bounds = await windowManager.getBounds();
+      // ★ 不存明显不合理的尺寸。
+      //
+      //   启动期引擎可能把窗口压到 130x133 这种大小，这时如果顺手存下来，
+      //   下次启动就会读到一个坏值，越用越小、再也回不到正常尺寸。
+      //   宁可保留上一次的好值，也不要存一个用户不可能想要的尺寸。
+      if (bounds.width < kWindowMinSize.width ||
+          bounds.height < kWindowMinSize.height) {
+        return;
+      }
       final maxed = await windowManager.isMaximized();
       await prefs.setString(
         _kWindowBounds,
