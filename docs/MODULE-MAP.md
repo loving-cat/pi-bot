@@ -112,7 +112,7 @@
 | `widgets/server_config_section.dart` | 共用本机启动配置对话框，保存后调用状态层重启并报告结果 |
 | `screens/host_connect_screen.dart` | 宿主启动与失败页；重试、查看日志和打开启动配置 |
 | `screens/` | 页面：home_shell / chat_screen / rooms_screen / bots_screen / settings / pair / scan |
-| `widgets/` | 可复用组件：`tool_steps`、`changed_files`、`task_board`、`automation_sheet`、`ask_card`、**`approval_card`**、`md_text`、`attachment_view`、`avatar*`、`window_title_bar`… |
+| `widgets/` | 可复用组件：`tool_steps`、`changed_files`、`task_board`、`automation_sheet`、`ask_card`、**`approval_card`**、`md_text`、`attachment_view`、`avatar*`、`desktop_window_frame`… |
 | `widgets/avatar_character.dart` / `widgets/avatar_character_painter.dart` | 稳定角色参数与缓存的伪三维绘制；不管理交互或动画资源 |
 | `widgets/avatar_projection.dart` | 视线到yaw/pitch的透视变换，供前脸、眼睛与侧壁共用（纯逻辑） |
 | `widgets/avatar_solid.dart` | 连续侧壁网格、顶点颜色及同向实体覆盖面，按深度排列三角面 |
@@ -124,7 +124,16 @@
 | `widgets/bot_appearance_section.dart` / `widgets/bot_appearance_controls.dart` | 头像下的形象和颜色入口，连接保存状态；私聊详情、群聊成员与花名册共用 |
 | `markdown_inline.dart` / `widgets/md_quote.dart` | 共用行内文本解析、邮箱识别、引用正文复制和引用块展示；选择范围由 `md_text` 统一管理 |
 | `clipboard_image.dart` / `clipboard_image_macos.dart` | 剪贴板图片平台分流；Windows PowerShell、macOS PNG/TIFF 读取与临时文件清理 |
+| `l10n/` | 界面文案：区域化扁平 key 词表（中英同放）、语言切换与查询；`L10n.s(context).t(key)` 取值，`tf` 做插值 |
+| `token_count.dart` | 容量单位换算：`1M` / `256K` / 纯数字三种写法等价；裸小数不合法 |
+| `paste_paths.dart` | 粘贴文本里的文件路径识别：整段路径与「文字+路径」两种形态，只认真实存在的文件 |
+| `error_text.dart` | 服务端错误码 → 当前语言文案；词表缺该 code 时退回服务端原文 |
+| `widgets/model_setup_gate.dart` / `widgets/default_model_picker.dart` | 无模型组时的配置引导与默认模型选择 |
 | `window_state.dart` | 窗口位置/大小记忆：编码、解析、夹回可见区（纯函数） |
+| `window_actions.dart` | 共用窗口动作控制器，处理原生放大/还原、最小化、关闭、拖动及全屏状态 |
+| `window_chrome.dart` | 分栏边缘归属、标题工具区局部避让和空白拖拽区，不预留全宽标题行 |
+| `widgets/desktop_window_frame.dart` / `widgets/window_buttons.dart` | 全高页面与角落自绘窗口控制簇；Mac 左侧、Windows 右侧，共用主题和操作符 |
+| `widgets/window_resize_overlay.dart` | Windows/Linux 原生缩放热区和几何函数；Mac 不挂载此覆盖层 |
 | `browser_pane_state.dart` | 右侧通用展示栏状态：开关、历史、网页/文件模式与交互活动记录 |
 | `browser_navigation.dart` | 同一 WebView 内的导航序号、主框架地址链和错误归属判定，规范化空根路径并保留查询区别 |
 | `desktop_pane_layout.dart` | 桌面实际栏宽分配、偏好压缩与附件内联预览的可用空间判定（纯逻辑） |
