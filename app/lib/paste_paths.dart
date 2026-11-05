@@ -69,6 +69,12 @@ File? asExistingFile(String raw) {
   return file.existsSync() ? file : null;
 }
 
+/// 是不是 Windows 盘符（C / D / … 大小写都算）。
+bool _isDriveLetter(String ch) {
+  final c = ch.codeUnitAt(0);
+  return (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A);
+}
+
 /// 从一行里抽出所有真实存在的文件路径，把抽中的 File 追加进 [out]，
 /// 返回剩下的文字。
 String extractInlinePaths(String line, List<File> out) {
@@ -96,7 +102,23 @@ String extractInlinePaths(String line, List<File> out) {
       continue;
     }
 
-    final startsPath = ch == '/' || (ch == '~' && i + 1 < line.length && line[i + 1] == '/');
+    // 路径可能从哪儿开始：
+    //   · POSIX：/ 开头，或 ~/ 开头
+    //   · Windows 盘符：C:\ 或 C:/ （字母 + 冒号 + 分隔符）
+    //   · Windows UNC：\\server\share
+    //
+    // 早先只认 POSIX 开头，Windows 上"文字里夹路径"一条都识别不出来 ——
+    // 单元测试在 macOS 上全绿，CI 跑 Windows 才暴露。
+    final startsPath =
+        ch == '/' ||
+        ch == '\\' ||
+        (ch == '~' &&
+            i + 2 < line.length &&
+            (line[i + 1] == '/' || line[i + 1] == '\\')) ||
+        (_isDriveLetter(ch) &&
+            i + 2 < line.length &&
+            line[i + 1] == ':' &&
+            (line[i + 2] == '\\' || line[i + 2] == '/'));
     if (startsPath) {
       // 逐个可能的结束位置试，取最长能命中真实文件的片段。
       //
