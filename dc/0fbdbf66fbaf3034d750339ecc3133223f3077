@@ -1,0 +1,16 @@
+app/lib/paste_paths.dart
+  h_c2e638ff76b3b9 72-77,105-121
+app/test/paste_paths_platform_test.dart
+  h_c2e638ff76b3b9 1-86
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dc0fbdbf66fbaf3034d750339ecc3133223f3077",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
