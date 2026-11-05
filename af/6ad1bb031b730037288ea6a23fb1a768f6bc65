@@ -1,0 +1,30 @@
+docs/MODULE-MAP.md
+  h_c2e638ff76b3b9 48-49
+server/src/ego-browser.js
+  h_c2e638ff76b3b9 1-186
+server/src/mcp-capability.js
+  h_c2e638ff76b3b9 1-178
+server/src/session-factory.js
+  h_c2e638ff76b3b9 29,133-141
+server/src/tools.js
+  h_c2e638ff76b3b9 22,304-356
+server/tests/all.mjs
+  h_c2e638ff76b3b9 25-26
+server/tests/ask-guard.mjs
+  h_c2e638ff76b3b9 100-104,107
+server/tests/ego-browser.mjs
+  h_c2e638ff76b3b9 1-58
+server/tests/mcp-capability.mjs
+  h_c2e638ff76b3b9 1-87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "af6ad1bb031b730037288ea6a23fb1a768f6bc65",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
