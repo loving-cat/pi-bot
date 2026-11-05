@@ -117,7 +117,7 @@ class _ChatInputGalleryState extends State<ChatInputGallery> {
                   '合成输入验证 · 不连接服务端\n发送次数：${state.sendCount}'
                   '\n平台：${defaultTargetPlatform.name} · 输入动作：${chatInputAction.name}'
                   '\n最近发送：${state.lastText.replaceAll('\n', ' ↵ ')}',
-                  style: const TextStyle(color: PB.textPrimary, height: 1.5),
+                  style: TextStyle(color: PB.textPrimary, height: 1.5),
                 ),
               ),
             ),
@@ -125,7 +125,7 @@ class _ChatInputGalleryState extends State<ChatInputGallery> {
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Text(
                 '硬件按键（只读记录）\n${_keyEvents.isEmpty ? '等待按键' : _keyEvents.join('\n')}',
-                style: const TextStyle(
+                style: TextStyle(
                   color: PB.textSecondary,
                   fontSize: PB.fsXs,
                   height: 1.2,
