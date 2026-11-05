@@ -62,7 +62,12 @@ import { selectSkillsFor, skillsPromptLines } from './skills.js';
 import { selectLessonsFor, lessonsPromptLines } from './lessons.js';
 import { availableThinkingLevels } from './model-thinking.js';
 import { createLessonReflector } from './lesson-reflect.js';
-import { decideRetry, retryHint, failureNote } from './retry-policy.js';
+import {
+  decideRetry,
+  retryHint,
+  failureNote,
+  transientBackoffMs,
+} from './retry-policy.js';
 import { createSessionBuilder } from './session-factory.js';
 import { createBuildInput } from './prompt-input.js';
 import { collectNewImages, snapshotImages } from './image-watch.js';
@@ -1175,6 +1180,11 @@ export class PiRunner {
             });
             let attempt = 1;
             let lastError = res.ok ? '' : String(res.error ?? '未知原因');
+            // 上游状态码：错误文案是脱敏的，只有它能让重试策略分辨
+            // "429 限流"和"任务本身做不成"
+            let lastStatus = res.ok ? null : (res.status ?? null);
+            // 最后一次失败的类型：循环外写"失败回执"时要用它来决定文案
+            let lastKind = '';
             const retries = [];
 
             while (!res.ok) {
@@ -1184,9 +1194,11 @@ export class PiRunner {
                 error: lastError,
                 attempt,
                 aborting: this.aborting.has(roomId),
+                status: lastStatus,
               });
               if (!decision.retry) {
                 log(`【${room.name}】${bot.name} 不再重试：${decision.why}`);
+                lastKind = decision.kind;
                 break;
               }
               attempt++;
@@ -1203,6 +1215,7 @@ export class PiRunner {
                     reason: lastError,
                     attempt: attempt - 1,
                     willRetry: true,
+                    kind: decision.kind,
                   }),
                   status: 'done',
                   meta: { via: 'retry', attempt: attempt - 1 },
@@ -1210,8 +1223,13 @@ export class PiRunner {
                 { beforeStreaming: true },
               );
               log(`【${room.name}】${bot.name} 第 ${attempt} 次尝试（${decision.kind}）`);
-              // 隔一会儿再试：立刻重发大概率撞上同样的偶发问题
-              await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+              // 隔一会儿再试：立刻重发大概率撞上同样的偶发问题。
+              // 接口抖动类按指数退避 —— 限流时固定 3 秒重发会一直撞同一堵墙。
+              const waitMs =
+                decision.kind === 'transient'
+                  ? transientBackoffMs(attempt - 1)
+                  : RETRY_DELAY_MS;
+              await new Promise((r) => setTimeout(r, waitMs));
               if (this.aborting.has(roomId)) break;
               // ★ 重试等待期间用户插话 → 旧任务作废，别再起跑
               if (stale()) break;
@@ -1221,7 +1239,10 @@ export class PiRunner {
                 groupTurn: true,
                 attachments,
               });
-              if (!res.ok) lastError = String(res.error ?? '未知原因');
+              if (!res.ok) {
+                lastError = String(res.error ?? '未知原因');
+                lastStatus = res.status ?? null;
+              }
             }
 
             // ★ 用户插话 = 这一条属于旧需求，作废。
@@ -1271,6 +1292,7 @@ export class PiRunner {
                 reason: lastError,
                 attempt,
                 willRetry: false,
+                kind: lastKind,
               }),
               status: 'done',
               meta: { via: 'failed', attempts: attempt },
@@ -2312,7 +2334,21 @@ export class PiRunner {
         msg,
       });
       log(`模型本轮出错：${message}`);
-      return { ok: false, text: partial, ms: Date.now() - started, error: message, messageId: botMsg.id };
+      // ★ 把 status 一起带出去。
+      //
+      //   message 是给用户看的（"接口详情已隐藏"），里面**不含** HTTP 状态码。
+      //   重试策略如果只看 message，就分不出"429 限流"和"任务本身做不成"，
+      //   于是把可恢复的临时故障当成永久失败，只试一次就放弃 ——
+      //   用户的 key 一不稳，整条链路就卡在报错里跑不完。
+      //   带上 status，让 decideRetry 能按真实类型判断。
+      return {
+        ok: false,
+        text: partial,
+        ms: Date.now() - started,
+        error: message,
+        status: failure.status ?? null,
+        messageId: botMsg.id,
+      };
     } finally {
       if (timeoutHandle) clearTimeout(timeoutHandle);
       unsubscribe?.();

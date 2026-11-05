@@ -30,6 +30,7 @@ const TESTS = [
   'sites',
   'secrets',
   'retry-policy',
+  'retry-transient',
   'update-check',
   'update-checker',
   'session-resources',

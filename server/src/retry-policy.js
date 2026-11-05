@@ -16,6 +16,29 @@
 export const MAX_RETRIES = 2;
 
 /**
+ * 临时故障（限流 / 上游抖动）可以多试几次。
+ *
+ * 为什么要区别对待：用户配的 key 不稳时，模型接口会间歇性返回
+ * 429 或 5xx —— 这不是"任务做不成"，只是"这一刻没排上"。
+ * 按普通失败只给 1 次重试，等于把偶发抖动当成了永久失败，
+ * 用户看到的就是整条链路一直报错、跑不完。
+ */
+export const MAX_RETRIES_TRANSIENT = 5;
+
+/**
+ * 临时故障的退避时间（毫秒）。
+ *
+ * 限流类错误立刻重发大概率再撞一次墙，所以按指数退避：
+ * 2s → 4s → 8s → 16s → 32s（封顶 30s，别让用户干等太久）。
+ * 带抖动，避免多个 bot 同时重试形成新的洪峰。
+ */
+export function transientBackoffMs(attempt = 1) {
+  const base = Math.min(2000 * Math.pow(2, Math.max(0, attempt - 1)), 30000);
+  const jitter = Math.floor(Math.random() * 800);
+  return base + jitter;
+}
+
+/**
  * 这次失败能不能重试。
  *
  * 不重试的情况分两类：
@@ -34,20 +57,69 @@ export function decideRetry({
   attempt = 1,
   aborting = false,
   maxRetries = MAX_RETRIES,
+
+  /// 上游返回的 HTTP 状态码（如果拿得到）。
+  ///
+  /// 为什么需要它：给用户看的错误文案是脱敏过的
+  ///（"接口详情已隐藏"），里面不含状态码。只看文案的话，
+  /// 429 限流和"任务做不成"长得一模一样，重试策略就废了。
+  status = null,
 } = {}) {
   if (aborting) return { retry: false, why: '用户已终止，不再重试', kind: 'aborted' };
-  if (attempt > maxRetries) {
-    return { retry: false, why: `已经试了 ${attempt} 次`, kind: 'exhausted' };
-  }
 
   const text = String(error ?? '');
   // 「忙」不是失败：它只是还在干上一件事，重试只会继续撞墙
   if (/already processing|正在处理|在忙/i.test(text)) {
     return { retry: false, why: '它还在处理上一件事，等它空了再说', kind: 'busy' };
   }
-  // 鉴权 / 配置类：重试一百次也一样
-  if (/401|403|unauthorized|forbidden|invalid api key|鉴权|未授权/i.test(text)) {
+  // 鉴权 / 配置类：重试一百次也一样。
+  //
+  //   要同时看 status：错误文案是脱敏的，401 那条长这样 ——
+  //   "模型请求认证失败"。如果文案里恰好没写 401 三个字，
+  //   就得靠 status 认，否则会被后面的临时故障分支误判成"可重试"。
+  const authCode = Number(status);
+  if (
+    authCode === 401 ||
+    authCode === 403 ||
+    /401|403|unauthorized|forbidden|invalid api key|鉴权|未授权/i.test(text)
+  ) {
     return { retry: false, why: '鉴权或配置有问题，重试也没用', kind: 'auth' };
+  }
+
+  // ★ 临时故障：限流 / 上游抖动 / 网关错误。
+  //
+  //   这类失败的共同点是「不是任务做不成，只是这一刻没排上」。
+  //   用户的 key 不稳时它们会间歇出现 —— 按普通失败只给 1 次重试，
+  //   等于把偶发抖动当成永久失败，整条链路就卡在报错里跑不完。
+  //   所以单独给更多次数和更长的退避（见 transientBackoffMs）。
+  const code = Number(status) || null;
+  if (
+    code === 429 ||
+    code === 500 ||
+    code === 502 ||
+    code === 503 ||
+    code === 504 ||
+    /\b429\b|rate[ _-]?limit|too many requests|限流|请求过于频繁/i.test(text) ||
+    /\b(500|502|503|504)\b|bad gateway|service unavailable|gateway timeout|上游|服务暂不可用/i.test(
+      text,
+    )
+  ) {
+    if (attempt > MAX_RETRIES_TRANSIENT) {
+      return {
+        retry: false,
+        why: `接口连续 ${attempt} 次不稳定，先停下（可能是 key 额度或上游故障）`,
+        kind: 'transient-exhausted',
+      };
+    }
+    return {
+      retry: true,
+      why: '接口临时不稳定（限流或上游抖动），等一会儿再试',
+      kind: 'transient',
+    };
+  }
+
+  if (attempt > maxRetries) {
+    return { retry: false, why: `已经试了 ${attempt} 次`, kind: 'exhausted' };
   }
   // 用户主动中止（"已被终止""这一轮已中止"这类都要认出来）
   if (/已.{0,2}(终止|中止)|aborted|cancelled/i.test(text)) {
@@ -92,7 +164,10 @@ export function retryHint({ attempt = 1, error = '', kind = 'unknown' } = {}) {
       ? '上次你没有输出任何内容。这次直接给结论，不要只调工具不说话。'
       : kind === 'timeout'
         ? '上次超时了。这次先做最关键的那一步，别一次做太多。'
-        : '换个做法再试：如果上次卡在某个命令/工具上，换个方式达成同样的结果。';
+        : kind === 'transient'
+          ? // 接口抖动跟做法无关，让它别乱改方案
+            '刚才接口临时不稳定（不是你的问题）。保持原来的做法再试一次即可。'
+          : '换个做法再试：如果上次卡在某个命令/工具上，换个方式达成同样的结果。';
 
   return `${head}\n${advice}\n\n`;
 }
@@ -133,9 +208,27 @@ export function giveUpNote({ botName = '', task = '', attempts = 0, reason = '' 
  * @param {boolean} p.willRetry
  * @returns {string}
  */
-export function failureNote({ botName = '', reason = '', attempt = 1, willRetry = false } = {}) {
+export function failureNote({
+  botName = '',
+  reason = '',
+  attempt = 1,
+  willRetry = false,
+  kind = '',
+} = {}) {
   const r = String(reason ?? '').slice(0, 160);
-  return willRetry
-    ? `${botName} 这次没跑成（${r}），正在重试第 ${attempt} 次…`
-    : `${botName} 没能完成（${r}）`;
+  if (willRetry) {
+    // 接口抖动时说清楚"不是活干不了"，否则用户会以为任务本身有问题
+    return kind === 'transient'
+      ? `${botName} 在等接口恢复（${r}），第 ${attempt} 次重试…`
+      : `${botName} 这次没跑成（${r}），正在重试第 ${attempt} 次…`;
+  }
+  // 临时故障耗尽：告诉用户下一步该查什么，而不是只丢一句失败
+  if (kind === 'transient-exhausted') {
+    return (
+      `${botName} 没能完成：模型接口连续 ${attempt} 次不稳定（${r}）。` +
+      '\n这种情况通常不是任务本身的问题，建议检查模型组的 key 是否还有额度、' +
+      '接口地址是否正常，恢复后让它重跑即可。'
+    );
+  }
+  return `${botName} 没能完成（${r}）`;
 }
