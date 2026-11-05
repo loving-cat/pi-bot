@@ -1,0 +1,34 @@
+app/lib/l10n/app_strings.dart
+  h_c2e638ff76b3b9 1-118
+app/lib/l10n/l10n.dart
+  h_c2e638ff76b3b9 1-85
+app/lib/l10n/strings/area.dart
+  h_c2e638ff76b3b9 1-18
+app/lib/l10n/strings/avatar.dart
+  h_c2e638ff76b3b9 1-67
+app/lib/l10n/strings/common.dart
+  h_c2e638ff76b3b9 1-101
+app/lib/l10n/strings/model.dart
+  h_c2e638ff76b3b9 1-58
+app/lib/l10n/strings/registry.dart
+  h_c2e638ff76b3b9 1-18
+app/lib/l10n/strings/settings.dart
+  h_c2e638ff76b3b9 1-28
+app/lib/token_count.dart
+  h_c2e638ff76b3b9 1-45
+app/lib/widgets/language_card.dart
+  h_c2e638ff76b3b9 1-89
+app/test/token_count_test.dart
+  h_c2e638ff76b3b9 1-193
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "65a9b3fb1d5d964e18c41abb4878bfccc8118499",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
