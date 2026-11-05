@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../theme.dart';
 
@@ -27,10 +28,12 @@ class AppLogo extends StatelessWidget {
         borderRadius: BorderRadius.circular(radius),
         boxShadow: glow
             ? [
+                // 发光取主控色：图标本身是暖冷双色，外面再套固定橙色
+                // 会和它打架，也和新主题切换对不上。
                 BoxShadow(
-                  color: const Color(0xFFFF9A4A).withValues(alpha: 0.28),
-                  blurRadius: size * 0.5,
-                  spreadRadius: -size * 0.1,
+                  color: PB.colors(context).accentBright.withValues(alpha: .30),
+                  blurRadius: size * 0.45,
+                  spreadRadius: -size * 0.12,
                 ),
               ]
             : null,
@@ -45,7 +48,7 @@ class AppLogo extends StatelessWidget {
           color: PB.bgBubble,
           alignment: Alignment.center,
           child: Icon(
-            Icons.circle,
+            LucideIcons.circle,
             size: 10,
             color: PB.colors(context).accentBright,
           ),
