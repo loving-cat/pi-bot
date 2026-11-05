@@ -1,0 +1,14 @@
+docs/COMPACTION-AND-BUDGET.md
+  h_c2e638ff76b3b9 1-112
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1eeb2f026aa7160ff6dd476309b59c72735d0760",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
