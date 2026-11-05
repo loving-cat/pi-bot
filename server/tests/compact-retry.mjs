@@ -112,3 +112,59 @@ test('退避是递增的且封顶 —— 压缩重试不能把用户拖十几分
   assert.ok(a99 <= 12_600, `封顶失效：${a99}`);
   assert.ok(a99 >= 12_000, `封顶下限不对：${a9}`);
 });
+
+// ---------------------------------------------------------------- 压缩期间不算"忙"
+
+/**
+ * ⑥ 群聊压缩期间 entry.busy=true，用户一说话就 #interruptRoundForUser 把全群 abort。
+ *
+ * 修法：压缩期间打 compactingOnly 标记，isRoomBusy 与 #interruptRoundForUser
+ * 都跳过这种条目。这里用最小桩验证判定语义 —— 不启动真的 PiRunner
+ * （构造函数会去读配置和模型清单）。
+ */
+function makeRoomBusy(entries, roomId = 'r1') {
+  // 直接复用原型方法，把 this.sessions 换成受控的 Map
+  return PiRunner.prototype.isRoomBusy.call({ sessions: entries }, roomId);
+}
+
+test('只有压缩中的会话 → 房间不算忙（用户插话不打断全群）', () => {
+  const entries = new Map([
+    ['r1:b1', { busy: true, compactingOnly: true }],
+    ['r1:b2', { busy: true, compactingOnly: true }],
+  ]);
+  assert.equal(makeRoomBusy(entries), false);
+});
+
+test('压缩中有、但也有真在跑的 → 房间忙（原有语义不变）', () => {
+  const entries = new Map([
+    ['r1:b1', { busy: true, compactingOnly: true }],
+    ['r1:b2', { busy: true, compactingOnly: false }],
+  ]);
+  assert.equal(makeRoomBusy(entries), true);
+});
+
+test('空闲的会话不影响判定', () => {
+  const entries = new Map([
+    ['r1:b1', { busy: false, compactingOnly: false }],
+    ['r1:b2', { busy: false }],
+  ]);
+  assert.equal(makeRoomBusy(entries), false);
+});
+
+test('别的房间的忙不算这个房间的', () => {
+  const entries = new Map([
+    ['r1:b1', { busy: false }],
+    ['r2:b9', { busy: true, compactingOnly: false }],
+  ]);
+  assert.equal(makeRoomBusy(entries), false);
+});
+
+test('没有会话时是空闲', () => {
+  assert.equal(makeRoomBusy(new Map()), false);
+});
+
+test('★ 回归：压缩结束（compactingOnly=false）后必须恢复"忙"', () => {
+  const entries = new Map([['r1:b1', { busy: true, compactingOnly: false }]]);
+  assert.equal(makeRoomBusy(entries), true,
+    '压缩后忘了清标记会让用户在整轮过程中都插不了话');
+});

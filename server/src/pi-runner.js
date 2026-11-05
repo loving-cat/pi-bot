@@ -365,6 +365,9 @@ export class PiRunner {
     for (const [key, entry] of this.sessions) {
       if (!key.startsWith(`${roomId}:`)) continue;
       if (!entry?.session || !entry.busy) continue;
+      // 只在压缩：不必打断它，让它压完。
+      // 打断压缩等于让下一轮又从满上下文开始，只会更糟。
+      if (entry.compactingOnly) continue;
       botIds.push(key.slice(roomId.length + 1));
       try {
         entry.turnController?.abort();
@@ -743,9 +746,24 @@ export class PiRunner {
     return Boolean(this.sessions.get(key)?.busy);
   }
 
+  /**
+   * 房间里有没有人在**为用户干活**。
+   *
+   * ★ 只在压缩的会话不算 —— 压缩是这一轮开始前的准备动作，
+   *   它没有在产出任何用户可见的东西。把它算成"忙"的后果是：
+   *   用户一说话就判定"这轮作废"、打断全群，压缩被打断、下次从 0 重来，
+   *   而用户的实际诉求只是"我又说了一句"。
+   *
+   *   真正在跑的（有会话、有 turnController、在流式输出）仍然算忙，
+   *   那条路径上的插话语义不变。
+   */
   isRoomBusy(roomId) {
     for (const [key, entry] of this.sessions) {
-      if (key.startsWith(`${roomId}:`) && entry.busy) return true;
+      if (!key.startsWith(`${roomId}:`)) continue;
+      if (!entry.busy) continue;
+      // 只在压缩、还没开始产出 → 不算忙
+      if (entry.compactingOnly) continue;
+      return true;
     }
     return false;
   }
@@ -1850,6 +1868,13 @@ export class PiRunner {
       return { compacted: false, failed: false, attempts: 0, why: plan.why };
     }
 
+    // ★ 压缩期间打一个显式标记。
+    //
+    //   这一轮从 reserveSession 起 entry.busy 就是 true，于是
+    //   #interruptRoundForUser / isRoomBusy 会把「正在压缩」当成「正在干活」——
+    //   用户一说话就把全群 abort，连压缩也一起打断，下次进来又从 0 开始压，
+    //   永远压不完。压缩不是「在为用户干活」，它是在为下一轮做准备。
+    entry.compactingOnly = true;
     // 压缩可能跑好几分钟：续心跳 + 5 分钟硬上限（否则这个 bot 永远轮不到）
     const beat = setInterval(() => {
       entry.progressAt = Date.now();
@@ -1892,6 +1917,7 @@ export class PiRunner {
       }
     } finally {
       clearInterval(beat);
+      entry.compactingOnly = false;
       try {
         await session.abort?.();
       } catch {
@@ -2169,6 +2195,10 @@ export class PiRunner {
     //   顺序：先建占位消息 + 订阅 + 发 typing，再做压缩。
     //   这样用户立刻看到"正在处理"，压缩开始/结束都能正常广播和留痕。
     await this.#compactIfNeeded(entry, bot, roomId);
+
+    // 压缩结束，这一轮马上要真正产出内容了。
+    // 之后它就是"在为用户干活"，插话语义恢复原样（该打断就打断）。
+    entry.compactingOnly = false;
 
     // 用户带的图 -> 喂给模型（视觉模型能直接看）
     const images = [];
