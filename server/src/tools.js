@@ -103,13 +103,23 @@ function checkModel(runner, slug, health) {
     ] };
     return { ok: false, suggestions: ['请从当前启用的模型组中选择：', ...menuText(health).split('\n')] };
   }
-  if (!picked.alive) {
-    return { ok: false, suggestions: [`${picked.entry.alias} 当前的线路实测不可用（${picked.slug}）`] };
-  }
+  // ★ 线路暂时不通**不该**阻止分配。
+  //
+  //   健康检查回答的是"这一刻这条路通不通"，而分配模型回答的是
+  //   "这个活该用哪个模型" —— 两件事。线路抖一下（限流、上游临时故障、
+  //   24h 内的旧记录）就硬拒绝，用户会遇到"模型明明在组里，主控却说
+  //   分配不了"，而且他刚配好的新 key 可能还没被重新探测过。
+  //
+  //   这里改成放行 + 提醒：分配照做，同时在返回里带一句警告，
+  //   让主控知道"现在是配上了，但这条路当前探测不通，跑起来可能失败"。
+  const warning = picked.alive
+    ? null
+    : `${picked.entry.alias} 当前的线路实测不可用（${picked.slug}），已照常分配，` +
+      '但运行可能失败 —— 建议检查该模型组的 key 与接口。';
   if (!runner.resolveModel(picked.slug)) {
     return { ok: false, suggestions: [`${picked.slug} 尚未注册成功，请检查模型组配置`] };
   }
-  return { ok: true, resolved: picked.slug };
+  return { ok: true, resolved: picked.slug, warning };
 }
 
 function modelError(slug, suggestions) {
@@ -1167,10 +1177,12 @@ export function buildChiefTools({ runner, health, roomId, botId }) {
       }),
       execute: async (_toolCallId, params) => {
         const { botId: target, ...patch } = params;
+        let modelWarning = null;
         if (patch.model !== undefined && patch.model !== '') {
           const check = checkModel(runner, patch.model, health);
           if (!check.ok) return modelError(patch.model, check.suggestions);
           patch.model = check.resolved;
+          if (check.warning) modelWarning = check.warning;
         }
         // MCP 名字必须真在库里存在，否则配上去也连不上，模型会以为配好了
         if (Array.isArray(patch.mcpServers) && patch.mcpServers.length) {
@@ -1201,7 +1213,8 @@ export function buildChiefTools({ runner, health, roomId, botId }) {
           ? `，MCP：${bot.mcpServers.join(', ')}`
           : '';
         return ok(
-          `已更新 ${bot.emoji ?? ''}${bot.name}。«内部：${bot.model ?? '默认'}/${bot.thinking}${mcpNote}»`,
+          `已更新 ${bot.emoji ?? ''}${bot.name}。«内部：${bot.model ?? '默认'}/${bot.thinking}${mcpNote}»` +
+            (modelWarning ? `\n\n⚠️ ${modelWarning}` : ''),
         );
       },
     }),

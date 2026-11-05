@@ -21,16 +21,18 @@ abstract final class PBNeutral {
   //
   // 背景用略带蓝的灰白（纯白长时间阅读偏刺眼）；
   // 层级越"高"越白，靠 1-2%% 的明度差区分，不靠阴影堆叠。
-  // 浅色的层次逻辑和深色相反：深色靠"越亮越靠前"，
-  // 浅色靠"越白越靠前 + 边框兜底"。纯白气泡落在浅灰背景上要有边界，
-  // 所以背景压得比纯白低一档，气泡才是纯白。
-  static const lightBgApp = Color(0xFFEDEFF3);
-  static const lightBgPane = Color(0xFFF6F7F9);
+  // 浅色不是深色的反相，而是一套独立的配色。
+  //
+  // 思路：背景带一点冷蓝的色相（不是中性灰），这样和主控的强调色
+  // 是同一族的、不打架；气泡用接近纯白，靠明度差 + 边框浮起来。
+  // 太灰会显得脏，太白会刺眼 —— 取中间那个"纸上带一点天光"的感觉。
+  static const lightBgApp = Color(0xFFE8EDF7);
+  static const lightBgPane = Color(0xFFF2F5FB);
   static const lightBgElevated = Color(0xFFFFFFFF);
   static const lightBgBubble = Color(0xFFFFFFFF);
-  static const lightBgHover = Color(0xFFE6E9EE);
-  static const lightBgActive = Color(0xFFDDE1E8);
-  static const lightBgInput = Color(0xFFF1F3F6);
+  static const lightBgHover = Color(0xFFDEE5F2);
+  static const lightBgActive = Color(0xFFCFD9EC);
+  static const lightBgInput = Color(0xFFEDF1F9);
   static const lightTextPrimary = Color(0xFF16171A);
   static const lightTextSecondary = Color(0xFF474A52);
   static const lightTextTertiary = Color(0xFF62656E);

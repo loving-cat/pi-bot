@@ -258,9 +258,13 @@ class _HomeShellState extends State<HomeShell> {
                           ),
                         ),
                       if (layout.pairedOverlay)
-                        const VerticalDivider(
+                        // 显式传颜色 + 不用 const：
+                        // const 实例在编译期固化，切换明暗时不会重新求值，
+                        // 中间这条分隔线会一直停在旧颜色上。
+                        VerticalDivider(
                           width: paneDividerWidth,
                           thickness: 1,
+                          color: PB.borderTertiary,
                         ),
                       if (layout.overlayPanelWidth > 0)
                         SizedBox(

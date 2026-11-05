@@ -74,6 +74,8 @@ Future<void> main() async {
     //   所以要先把窗口显示出来，再在首帧之后强制设一次尺寸（见下面的回调）。
     await windowManager.setAsFrameless();
     await windowManager.setHasShadow(true);
+    // 窗口底色跟随明暗（切换时会在 _onColorModeChanged 里再更新）
+    await windowManager.setBackgroundColor(PB.bgApp);
     await windowManager.show();
     if (saved?.maximized == true) await windowManager.maximize();
     await windowManager.focus();
@@ -316,8 +318,21 @@ class _PiBotThemedApplicationState extends State<PiBotThemedApplication> {
 
   void _onColorModeChanged() {
     if (!mounted) return;
+    // ★ 窗口本体也要换底色。
+    //
+    //   界面内容之间是有缝隙的（分栏之间的拖拽条、圆角外沿等），
+    //   那些地方透出来的是 **macOS 窗口自己的背景色**，不是 Flutter 画的。
+    //   只换 Flutter 主题的话，切到浅色后这些缝里还是黑的 ——
+    //   表现就是侧栏和聊天区之间夹着一条深色竖条，怎么切都不掉。
+    windowManager.setBackgroundColor(PB.bgApp);
     setState(() {
       _theme = PB.theme(seed: _currentSeed(), light: isLightMode);
+      // 丢掉缓存的 MaterialApp 实例，强制重建。
+      //
+      // 只换 _theme 不够：MaterialApp 会把 ThemeData 通过 InheritedWidget
+      // 往下传，而很多子组件（分割线、输入框、按钮）是在
+      // Theme.of(context) 里取的。若实例被复用，那层 Inherited 可能
+      // 认为"没变"而不通知子树，表现就是切换后个别控件仍是旧色。
       _application = null;
     });
   }
@@ -364,9 +379,28 @@ class _PiBotThemedApplicationState extends State<PiBotThemedApplication> {
     // 各分栏占满窗口高度，角落窗口按钮独立叠加。
     builder: (context, child) => AvatarLife.watchPointer(
       child: DesktopWindowFrame(
-        child: Stack(
+        // ★ 整个内容树跟着明暗模式重建。
+        //
+        //   只重建 MaterialApp 不够：它下面的页面（侧栏、聊天页、右侧面板）
+        //   是由 Navigator 持有、并且用 const 构造的，Flutter 认为
+        //   "widget 实例没变"就跳过重建 —— 于是切换后有的栏变了、有的没变，
+        //   界面处于半新半旧的错乱状态。
+        //
+        //   这里用 ValueListenableBuilder 把 pbColorMode 作为 key 的一部分，
+        //   模式一变整棵子树换新实例。代价是页面状态（滚动位置等）会重置，
+        //   但明暗切换本来就该是一次完整的重绘，重置是符合预期的。
+        child: ValueListenableBuilder<PBColorMode>(
+          valueListenable: pbColorMode,
+          builder: (context, mode, inner) => KeyedSubtree(
+            key: ValueKey('theme-${mode.name}'),
+            child: inner!,
+          ),
+          child: Stack(
           fit: StackFit.expand,
           children: [
+            // 铺一层不透明底色，别让缝隙透出窗口本体
+            //（分栏间的拖拽条、圆角外沿会露缝，透出来的是 macOS 窗口背景）。
+            ColoredBox(color: PB.bgApp),
             child ?? const SizedBox.shrink(),
             if (WindowResizeOverlay.isSupported)
               const Positioned.fill(
@@ -375,6 +409,7 @@ class _PiBotThemedApplicationState extends State<PiBotThemedApplication> {
                 ),
               ),
           ],
+          ),
         ),
       ),
     ),

@@ -182,7 +182,7 @@ class _LocalCapabilitiesSectionState extends State<LocalCapabilitiesSection> {
             ),
           ),
           if (_expanded) ...[
-            const Divider(height: 1),
+            Divider(height: 1, color: PB.borderTertiary),
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 10, 14, 4),
               child: Text(

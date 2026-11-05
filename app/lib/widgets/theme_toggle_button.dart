@@ -101,14 +101,16 @@ class _ThemeToggleButtonState extends State<ThemeToggleButton>
                     ),
                     child: Center(
                       child: Transform.rotate(
-                        // 转 180°：太阳转到背面就成了月亮，语义上刚好
                         angle: _t.value * math.pi,
                         child: Icon(
-                          LucideIcons.sun,
+                          // 深色显示月亮、浅色显示太阳 —— 图标直接表达"当前是什么"，
+                          // 而不是画一个太阳靠旋转暗示"换成了另一样"。
+                          // 在 t=0.5 附近切换：两半各占一半，视觉上像翻转。
+                          _t.value < 0.5 ? LucideIcons.moon : LucideIcons.sun,
                           size: widget.size * 0.52,
                           color: Color.lerp(
-                            const Color(0xFFB8C4FF),
-                            const Color(0xFFFFB020),
+                            const Color(0xFFC8D2FF),
+                            const Color(0xFFFFA726),
                             _t.value,
                           ),
                         ),

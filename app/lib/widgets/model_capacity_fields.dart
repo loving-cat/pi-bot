@@ -167,7 +167,7 @@ class ModelCardsEditor extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
-          const Divider(height: 18),
+          Divider(height: 18, color: PB.borderTertiary),
           _thinking(context, row),
         ],
       ),

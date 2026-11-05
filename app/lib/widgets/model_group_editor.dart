@@ -70,7 +70,7 @@ class ModelGroupsSection extends StatelessWidget {
               : Column(
                   children: [
                     for (var i = 0; i < groups.length; i++) ...[
-                      if (i > 0) const Divider(height: 18),
+                      if (i > 0) Divider(height: 18, color: PB.borderTertiary),
                       _row(context, groups[i]),
                     ],
                   ],

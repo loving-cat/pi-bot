@@ -193,7 +193,7 @@ class _ConnectionsDetailState extends State<ConnectionsDetail> {
                     ? null
                     : (value) => _run(() => widget.onEnabled(value)),
               ),
-              const Divider(height: 24),
+              Divider(height: 24, color: PB.borderTertiary),
               Text(
                 evidence.toolCount == null
                     ? strings.t('conn.tools')
@@ -237,7 +237,7 @@ class _ConnectionsDetailState extends State<ConnectionsDetail> {
                       ],
                     ),
                   ),
-              const Divider(height: 24),
+              Divider(height: 24, color: PB.borderTertiary),
               Text(
                 strings.t('conn.assignTitle'),
                 style: const TextStyle(
