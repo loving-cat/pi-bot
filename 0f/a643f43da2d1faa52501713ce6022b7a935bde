@@ -1,0 +1,20 @@
+app/lib/screens/chat_screen.dart
+  h_c2e638ff76b3b9 78-93,553-561,564
+server/src/pi-runner.js
+  h_c2e638ff76b3b9 70,1238-1243,2320-2327,2332-2338,2341-2345,2350,2352
+server/src/retry-policy.js
+  h_c2e638ff76b3b9 26,36-40,117-120,123-125,127,155-210,224-229,232-241
+server/tests/retry-transient.mjs
+  h_c2e638ff76b3b9 6,42-45,57-76,87-90,92-96,136-171
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0fa643f43da2d1faa52501713ce6022b7a935bde",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
