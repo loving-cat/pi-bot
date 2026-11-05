@@ -1,0 +1,19 @@
+app/lib/screens/chat_screen.dart
+  s_8631552e8c960b::t_cceb27016af6ef 25,78-80,454-515,697-712
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7ece39dbf92249220e4dec8de2589dc8083b0455",
+  "prompts": {},
+  "sessions": {
+    "s_8631552e8c960b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a09f10-35bf-7163-af83-9efa585a553d",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
