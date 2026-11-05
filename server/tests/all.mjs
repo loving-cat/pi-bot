@@ -74,6 +74,7 @@ const TESTS = [
   'memory-policy',
   'policy-version',
   'run-slots',
+  'compact-retry',
 ];
 
 let failed = 0;

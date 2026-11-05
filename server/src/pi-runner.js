@@ -39,6 +39,18 @@ import { PRIORITY, RunSlots } from './run-slots.js';
  * 那是两件事，不该合并；差几百毫秒紧挨着发的，才是一段话被拆开。
  */
 const MERGE_BURST_MS = MERGE_QUIET_MS + 900;
+
+/**
+ * 主动压缩的失败重试上限与放弃后的冷却时间。
+ *
+ * 2 次：首次 + 退避后一次。压缩本身很贵（要把几十万 tokens 读一遍），
+ * 跟着 retry-policy 的 10 次重试会把用户拖上十几分钟。
+ * 冷却 10 分钟：压缩失败通常是上下文真的太满或接口持续不可用，
+ * 连着每轮都试只会把每一轮都拖慢。
+ */
+const COMPACT_MAX_ATTEMPTS = 2;
+const COMPACT_COOLDOWN_MS = 10 * 60 * 1000;
+
 import { ModelHealth } from './model-health.js';
 import { buildChiefTools, buildCommonTools } from './tools.js';
 import { defaultMenuSlug, logMenu, menuSlugs, resolveMenu } from './model-menu.js';
@@ -83,6 +95,9 @@ import {
   openingSpeakers,
   transcriptFor,
 } from './group-prompt.js';
+
+/** 退避等待。压缩重试要用，但没有别的地方需要，就地定义。 */
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const MAX_STEP_TEXT = 200;
 
@@ -1750,56 +1765,157 @@ export class PiRunner {
    *   「99% → 压缩 → 读一下 → 100% → 再压缩」的死循环。
    *   这里提前到 80% 触发，压完通常只剩 5% 左右，能撑很多轮。
    */
-  async #compactIfNeeded(entry, bot) {
+  /**
+   * 压缩用的摘要指令。抽成常量，测试能直接比对，也不用来回复制。
+   */
+  static COMPACT_PROMPT =
+    '把这段工作压缩成一份"接着干"的摘要，只保留：\n' +
+    '1) 当前任务目标与约束；\n' +
+    '2) 已经得出的结论/关键数据（保留数字与口径）；\n' +
+    '3) 还没做完的待办与下一步；\n' +
+    '4) 关键文件路径。\n' +
+    '删掉寒暄、重复和过程细节，用要点式中文，尽量短。';
+
+  /**
+   * 主动压缩前的**判定**：该不该压、压几次。纯函数，便于单测。
+   *
+   * 判定与执行分开，是因为"压不压"和"压失败怎么办"是两套逻辑：
+   * 前者只看上下文水位和重试冷却，后者才涉及会话状态。
+   *
+   * @param {object} p
+   * @param {number|null} p.percent    当前上下文占用百分比
+   * @param {number} p.threshold       触发阈值（百分比）
+   * @param {number} p.now
+   * @param {number} [p.retryAfter]    上次失败后的冷却截止时间
+   * @param {boolean} [p.compacting]   会话是否正在压缩
+   * @param {boolean} [p.autoCompact]  总开关
+   * @returns {{compact:boolean, why:string}}
+   */
+  static planCompaction({
+    percent = null,
+    threshold = 80,
+    now = Date.now(),
+    retryAfter = 0,
+    compacting = false,
+    autoCompact = true,
+  } = {}) {
+    if (!autoCompact) return { compact: false, why: '自动压缩已关闭' };
+    if (compacting) return { compact: false, why: '已在压缩中' };
+    if (typeof percent !== 'number') return { compact: false, why: '拿不到上下文占用' };
+    if (percent < threshold) return { compact: false, why: `未到阈值 ${threshold}%` };
+    // 上次失败后的冷却期：立刻重试大概率再撞一次墙，白烧一轮 token
+    if (retryAfter > now) {
+      const left = Math.ceil((retryAfter - now) / 1000);
+      return { compact: false, why: `上次压缩失败，冷却中（还剩 ${left}s）` };
+    }
+    return { compact: true, why: `${percent.toFixed(0)}% ≥ ${threshold}%` };
+  }
+
+  /**
+   * 主动压缩：上下文到 config.compactAtPercent 就先收成摘要。
+   *
+   * 为什么要自己做，不交给 pi 的自动压缩：
+   *   pi 的触发线是 contextWindow - reserveTokens（1M 窗口 / 16k reserve ≈ 98.4%），
+   *   压完只剩 1.6% 余量 —— 随便读一份数据又满了，群聊长任务就进入
+   *   「99% → 压缩 → 读一下 → 100% → 再压缩」的死循环。
+   *   这里提前到 80% 触发，压完通常只剩 5% 左右，能撑很多轮。
+   *
+   * 失败不再"记一行日志就放行"：
+   *   放行的后果是这一轮带着 85%+ 的上下文继续跑，很快撞到 pi 的 98% 线，
+   *   在那里再压一次 —— 用户经历**两段**卡顿，而且第二段他完全不知道为什么。
+   *   现在按指数退避重试（复用 retry-policy 的 transientBackoffMs），
+   *   退避期间放行本轮（不无限拖住用户），但把失败记在条目上，
+   *   下次进来先等冷却结束再压。
+   *
+   * @returns {Promise<{compacted:boolean, failed:boolean, attempts:number, why:string}>}
+   */
+  async #compactIfNeeded(entry, bot, roomId = null) {
     const session = entry?.session;
-    if (!session || session.isCompacting) return;
-    // 关掉自动压缩时这里也要停 —— 否则 PI_BOT_AUTO_COMPACT=0 只关掉了 pi
-    // 自己的压缩，这段主动压缩照跑，用户会发现"开关不起作用"。
-    if (!config.autoCompact) return;
-    try {
-      const usage = session.getContextUsage?.();
-      const percent = usage?.percent;
-      if (typeof percent !== 'number') return;
-      const threshold = Math.min(0.95, Math.max(0.5, config.compactAtPercent || 0.8));
-      if (percent < threshold * 100) return;
-      entry.startedAt = Date.now();
-      entry.progressAt = entry.startedAt;
-      log(
-        `【${bot.name}】上下文 ${percent.toFixed(0)}% ≥ ${Math.round(threshold * 100)}% → 先压缩成摘要`,
-      );
-      // 压缩可能跑好几分钟（要把几十万 tokens 读一遍）：期间每 15s 续一次心跳，
-      // 否则 watchdog 会以为这一轮卡死、把会话 abort 掉。
-      const beat = setInterval(() => {
-        entry.progressAt = Date.now();
-      }, 15_000);
-      try {
-        await Promise.race([
-          session.compact(
-            '把这段工作压缩成一份"接着干"的摘要，只保留：\n' +
-              '1) 当前任务目标与约束；\n' +
-              '2) 已经得出的结论/关键数据（保留数字与口径）；\n' +
-              '3) 还没做完的待办与下一步；\n' +
-              '4) 关键文件路径。\n' +
-              '删掉寒暄、重复和过程细节，用要点式中文，尽量短。',
-          ),
-          // 兜底：压缩本身也不能无限卡住（否则这个 bot 永远轮不到）
-          new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('压缩超时（5 分钟）')), 5 * 60 * 1000),
-          ),
-        ]);
-      } finally {
-        clearInterval(beat);
+    if (!session) return { compacted: false, failed: false, attempts: 0, why: '没有会话' };
+
+    const usage = session.getContextUsage?.();
+    const threshold = Math.min(0.95, Math.max(0.5, config.compactAtPercent || 0.8)) * 100;
+    const plan = PiRunner.planCompaction({
+      percent: typeof usage?.percent === 'number' ? usage.percent : null,
+      threshold,
+      retryAfter: entry.compactRetryAfter ?? 0,
+      compacting: Boolean(session.isCompacting),
+      autoCompact: config.autoCompact,
+    });
+    if (!plan.compact) {
+      // 冷却中不是错误：用户不需要知道，但排查时值得留一条
+      if (entry.compactRetryAfter > Date.now()) {
+        log(`【${bot.name}】跳过主动压缩：${plan.why}`);
       }
+      return { compacted: false, failed: false, attempts: 0, why: plan.why };
+    }
+
+    // 压缩可能跑好几分钟：续心跳 + 5 分钟硬上限（否则这个 bot 永远轮不到）
+    const beat = setInterval(() => {
       entry.progressAt = Date.now();
-    } catch (err) {
-      // 压缩失败不能挡住这一轮 —— pi 自己的 98% 自动压缩还在兜底
-      log(`【${bot.name}】主动压缩失败（继续本轮）：`, err?.message || err);
+    }, 15_000);
+
+    let attempts = 0;
+    let lastError = null;
+    try {
+      for (let i = 0; i < COMPACT_MAX_ATTEMPTS; i++) {
+        if (roomId && this.aborting.has(roomId)) {
+          return { compacted: false, failed: false, attempts, why: '用户已终止' };
+        }
+        attempts = i + 1;
+        entry.startedAt = entry.startedAt ?? Date.now();
+        entry.progressAt = Date.now();
+        try {
+          await Promise.race([
+            session.compact(PiRunner.COMPACT_PROMPT),
+            new Promise((_, reject) =>
+              setTimeout(() => reject(new Error('压缩超时（5 分钟）')), 5 * 60 * 1000),
+            ),
+          ]);
+          entry.compactRetryAfter = 0;
+          entry.progressAt = Date.now();
+          return { compacted: true, failed: false, attempts, why: plan.why };
+        } catch (err) {
+          lastError = err;
+          const msg = String(err?.message || err);
+          // 超时属于"这一轮别再试了"：再来一次大概率还是 5 分钟
+          if (/压缩超时/.test(msg)) break;
+          // 鉴权/配置错、用户终止：重试没有意义
+          if (!isRecoverableFailure({ error: msg })) break;
+          if (i === COMPACT_MAX_ATTEMPTS - 1) break;
+          const wait = transientBackoffMs(attempts);
+          const sec = Math.round(wait / 1000);
+          log(`【${bot.name}】主动压缩失败（第 ${attempts}/${COMPACT_MAX_ATTEMPTS} 次），${sec}s 后重试：${msg}`);
+          // 退避期间也要续心跳，否则 watchdog 以为卡死
+          await sleep(wait);
+        }
+      }
+    } finally {
+      clearInterval(beat);
       try {
         await session.abort?.();
       } catch {
-        // 中断压缩失败也不影响本轮继续
+        // 中断压缩失败不影响本轮继续
       }
     }
+
+    // 走到这里说明放弃了：记冷却，避免下一轮立刻又撞同一堵墙
+    entry.compactRetryAfter = Date.now() + COMPACT_COOLDOWN_MS;
+    const msg = String(lastError?.message || lastError || '未知原因');
+    log(
+      `【${bot.name}】主动压缩放弃（试了 ${attempts} 次），` +
+        `${Math.round(COMPACT_COOLDOWN_MS / 1000)}s 内不再重试；本轮继续跑：${msg}`,
+    );
+    // 压缩失败仍要告诉用户：否则他看到的是"上下文一直 90%+"，
+    // 却不知道系统试过并且暂时放弃了
+    if (roomId) bus.emit('event', {
+      t: 'bot.compactFailed',
+      roomId,
+      botId: bot.id,
+      attempts,
+      error: modelFailure(msg).error,
+    });
+    return { compacted: false, failed: true, attempts, why: msg };
   }
 
 
@@ -2052,7 +2168,7 @@ export class PiRunner {
     //
     //   顺序：先建占位消息 + 订阅 + 发 typing，再做压缩。
     //   这样用户立刻看到"正在处理"，压缩开始/结束都能正常广播和留痕。
-    await this.#compactIfNeeded(entry, bot);
+    await this.#compactIfNeeded(entry, bot, roomId);
 
     // 用户带的图 -> 喂给模型（视觉模型能直接看）
     const images = [];
