@@ -229,7 +229,7 @@ class _ConnectionsEditorState extends State<ConnectionsEditor> {
                   padding: const EdgeInsets.only(top: 5),
                   child: Text(
                     strings.t('conn.nameHint'),
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: PB.fsXs,
                       color: PB.textTertiary,
                     ),
@@ -293,7 +293,7 @@ class _ConnectionsEditorState extends State<ConnectionsEditor> {
                 server?.hasCredentials == true
                     ? strings.tf('conn.credentialsSaved', {'keys': savedKeys})
                     : strings.t('conn.credentialsHint'),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsSm,
                   color: PB.textTertiary,
                   height: 1.5,
@@ -368,7 +368,7 @@ class _ConnectionsEditorState extends State<ConnectionsEditor> {
                 ),
                 subtitle: Text(
                   strings.t('conn.allowBotsHint'),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: PB.fsSm,
                     color: PB.textTertiary,
                   ),

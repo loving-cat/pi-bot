@@ -60,7 +60,7 @@ class ConnectionsCatalogCard extends StatelessWidget {
                   item.description,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: PB.fsSm,
                     color: PB.textTertiary,
                     height: 1.5,
@@ -70,7 +70,7 @@ class ConnectionsCatalogCard extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          const Icon(
+          Icon(
             LucideIcons.chevronRight,
             size: 16,
             color: PB.textTertiary,
@@ -137,7 +137,7 @@ class ConnectionsCard extends StatelessWidget {
                           : item.server.description,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: PB.fsSm,
                         color: PB.textTertiary,
                       ),
@@ -158,7 +158,7 @@ class ConnectionsCard extends StatelessWidget {
           const SizedBox(height: 4),
           Text(
             _checkedAtLabel(strings, item.verification.checkedAt),
-            style: const TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+            style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
           ),
           const SizedBox(height: 8),
           Row(
@@ -169,7 +169,7 @@ class ConnectionsCard extends StatelessWidget {
                     'state': enabledLabel,
                     'n': item.assignedBotIds.length,
                   }),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: PB.fsSm,
                     color: PB.textTertiary,
                   ),
@@ -197,7 +197,7 @@ class _CardFrame extends StatelessWidget {
     color: PB.bgElevated,
     shape: RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(PB.rXl),
-      side: const BorderSide(color: PB.borderSecondary),
+      side: BorderSide(color: PB.borderSecondary),
     ),
     clipBehavior: Clip.antiAlias,
     child: InkWell(

@@ -101,7 +101,7 @@ class BotsScreen extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(12, 6, 12, 14),
                 child: Text(
                   L10n.s(context).tf('bots.intro', {'n': state.bots.length}),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: PB.fsXs,
                     color: PB.textQuaternary,
                     height: 1.5,
@@ -223,7 +223,7 @@ class _BotRow extends StatelessWidget {
                           children: [
                             Text(
                               bot.name,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: PB.fsBase,
                                 fontWeight: FontWeight.w500,
                                 color: PB.textPrimary,
@@ -257,7 +257,7 @@ class _BotRow extends StatelessWidget {
                           shortText(bot.persona.replaceAll('\n', ' '), 52),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: PB.fsXs,
                             color: PB.textTertiary,
                           ),
@@ -270,7 +270,7 @@ class _BotRow extends StatelessWidget {
                                 L10n.s(context).t('bots.defaultModel'),
                             'thinking': bot.thinking ?? '-',
                           }),
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: PB.fsXxs,
                             color: PB.textQuaternary,
                             fontFamily: PB.monoFamily,
@@ -362,7 +362,7 @@ class _BotRow extends StatelessWidget {
                                 bot.isMain
                                     ? L10n.s(ctx).t('bots.manager')
                                     : bot.id,
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontSize: PB.fsXxs,
                                   color: PB.textQuaternary,
                                 ),
@@ -418,7 +418,7 @@ class _BotRow extends StatelessWidget {
                           const SizedBox(height: 12),
                           Text(
                             L10n.s(ctx).t('bots.thinkingOff'),
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: PB.fsXxs,
                               color: PB.textQuaternary,
                               height: 1.5,
@@ -448,7 +448,7 @@ class _BotRow extends StatelessWidget {
                         return <Widget>[
                           Text(
                             L10n.s(ctx).t('bots.mcpSkills'),
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: PB.fsXs,
                               color: PB.textTertiary,
                             ),
@@ -456,7 +456,7 @@ class _BotRow extends StatelessWidget {
                           const SizedBox(height: 6),
                           Text(
                             L10n.s(ctx).t('bots.mcpNone'),
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: PB.fsXxs,
                               color: PB.textQuaternary,
                               height: 1.5,
@@ -469,7 +469,7 @@ class _BotRow extends StatelessWidget {
                           children: [
                             Text(
                               L10n.s(ctx).t('bots.mcpSkills'),
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: PB.fsXs,
                                 color: PB.textTertiary,
                               ),
@@ -481,7 +481,7 @@ class _BotRow extends StatelessWidget {
                                   : L10n.s(ctx).tf('bots.mcpPickedCount', {
                                       'n': pickedMcp.length,
                                     }),
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: PB.fsXxs,
                                 color: PB.textQuaternary,
                               ),
@@ -511,7 +511,7 @@ class _BotRow extends StatelessWidget {
                                 }),
                                 backgroundColor: PB.bgPane,
                                 selectedColor: PB.colors(ctx).accentSoft,
-                                side: const BorderSide(
+                                side: BorderSide(
                                   color: PB.borderTertiary,
                                 ),
                                 labelStyle: TextStyle(
@@ -526,7 +526,7 @@ class _BotRow extends StatelessWidget {
                         const SizedBox(height: 4),
                         Text(
                           L10n.s(ctx).t('bots.mcpMemoryHint'),
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: PB.fsXxs,
                             color: PB.textQuaternary,
                             height: 1.5,
@@ -624,7 +624,7 @@ class _BotRow extends StatelessWidget {
                     const SizedBox(height: 6),
                     Text(
                       L10n.s(ctx).t('bots.modelChangeHint'),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: PB.fsXxs,
                         color: PB.textQuaternary,
                       ),

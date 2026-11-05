@@ -633,7 +633,7 @@ class _CodeBlock extends StatelessWidget {
                 Expanded(
                   child: Text(
                     language.isEmpty ? 'code' : language,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: PB.fsXxs,
                       color: PB.textQuaternary,
                       fontFamily: PB.monoFamily,
@@ -651,7 +651,7 @@ class _CodeBlock extends StatelessWidget {
                     );
                   },
                   borderRadius: BorderRadius.circular(PB.rSm),
-                  child: const Padding(
+                  child: Padding(
                     padding: EdgeInsets.all(5),
                     child: Icon(
                       LucideIcons.copy,
@@ -804,7 +804,7 @@ class _TableView extends StatelessWidget {
         columnWidths: widths,
         defaultVerticalAlignment: TableCellVerticalAlignment.middle,
         border: TableBorder.symmetric(
-          inside: const BorderSide(color: PB.borderTertiary),
+          inside: BorderSide(color: PB.borderTertiary),
         ),
         children: [
           TableRow(
@@ -898,7 +898,7 @@ class _MentionChip extends StatelessWidget {
           const SizedBox(width: 5),
           Text(
             name,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: PB.fsXs,
               fontWeight: FontWeight.w600,
               color: PB.textPrimary,

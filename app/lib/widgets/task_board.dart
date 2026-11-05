@@ -68,7 +68,7 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
           children: [
             Row(
               children: [
-                const Icon(
+                Icon(
                   LucideIcons.listChecks,
                   size: 16,
                   color: PB.textSecondary,
@@ -76,7 +76,7 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
                 const SizedBox(width: 8),
                 Text(
                   strings.tf('task.title', {'room': widget.roomName}),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: PB.fsLg,
                     fontWeight: FontWeight.w600,
                     color: PB.textPrimary,
@@ -87,7 +87,7 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
                   strings.tf('task.openCount', {
                     'n': doing.length + open.length,
                   }),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: PB.fsXs,
                     color: PB.textQuaternary,
                   ),
@@ -105,7 +105,7 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
                     onSubmitted: submitUnlessComposing(_input, _add),
                     decoration: InputDecoration(
                       hintText: strings.t('task.newHint'),
-                      hintStyle: const TextStyle(
+                      hintStyle: TextStyle(
                         fontSize: PB.fsXs,
                         color: PB.textQuaternary,
                       ),
@@ -142,7 +142,7 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
                         padding: const EdgeInsets.symmetric(vertical: 18),
                         child: Text(
                           strings.t('task.empty'),
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: PB.fsXs,
                             color: PB.textQuaternary,
                           ),
@@ -178,7 +178,7 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
                                 strings.tf('task.doneCount', {
                                   'n': done.length,
                                 }),
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontSize: PB.fsXs,
                                   color: PB.textTertiary,
                                 ),
@@ -203,7 +203,7 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
     padding: const EdgeInsets.only(top: 4, bottom: 4),
     child: Text(
       title,
-      style: const TextStyle(
+      style: TextStyle(
         fontSize: PB.fsXxs,
         fontWeight: FontWeight.w600,
         letterSpacing: 0.4,
@@ -290,7 +290,7 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
                   }),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: PB.fsXxs,
                     color: PB.textQuaternary,
                   ),
@@ -308,7 +308,7 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
               }
             },
             tooltip: strings.tf('task.deleteAll', {'n': group.length}),
-            icon: const Icon(
+            icon: Icon(
               LucideIcons.trash2,
               size: 14,
               color: PB.textQuaternary,
@@ -373,7 +373,7 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
                 if (task.ownerName != null)
                   Text(
                     task.ownerName!,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: PB.fsXxs,
                       color: PB.textQuaternary,
                     ),
@@ -401,7 +401,7 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
             constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
             onPressed: () => widget.onDelete(task),
             tooltip: strings.t('common.delete'),
-            icon: const Icon(
+            icon: Icon(
               LucideIcons.trash2,
               size: 14,
               color: PB.textQuaternary,
@@ -467,7 +467,7 @@ Future<void> showTaskBoard(
         insetPadding: const EdgeInsets.all(24),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(PB.rXl),
-          side: const BorderSide(color: PB.borderTertiary),
+          side: BorderSide(color: PB.borderTertiary),
         ),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 560, maxHeight: 560),

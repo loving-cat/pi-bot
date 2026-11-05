@@ -297,7 +297,7 @@ class _BrowserPaneState extends State<BrowserPane> {
 
   Widget _toolbar(BrowserPaneState state) => ChromeSafeHeader(
     child: DecoratedBox(
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         border: Border(bottom: BorderSide(color: PB.borderTertiary)),
       ),
       child: Stack(
@@ -344,7 +344,7 @@ class _BrowserPaneState extends State<BrowserPane> {
                             ),
                             child: Row(
                               children: [
-                                const Icon(
+                                Icon(
                                   LucideIcons.fileText,
                                   size: 14,
                                   color: PB.textTertiary,
@@ -359,7 +359,7 @@ class _BrowserPaneState extends State<BrowserPane> {
                                         .last,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       fontSize: PB.fsXs,
                                       color: PB.textSecondary,
                                       fontFamily: PB.monoFamily,
@@ -373,7 +373,7 @@ class _BrowserPaneState extends State<BrowserPane> {
                             key: const ValueKey('browser-address'),
                             controller: _address,
                             focusNode: _addressFocus,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: PB.fsXs,
                               color: PB.textSecondary,
                               fontFamily: PB.monoFamily,
@@ -392,7 +392,7 @@ class _BrowserPaneState extends State<BrowserPane> {
                               ),
                               hintText: L10n.s(context)
                                   .t('browser.addressHint'),
-                              hintStyle: const TextStyle(
+                              hintStyle: TextStyle(
                                 fontSize: PB.fsXs,
                                 color: PB.textQuaternary,
                               ),
@@ -625,7 +625,7 @@ class _Hint extends StatelessWidget {
     child: Text(
       text,
       textAlign: TextAlign.center,
-      style: const TextStyle(
+      style: TextStyle(
         fontSize: PB.fsXs,
         color: PB.textQuaternary,
         height: 1.6,

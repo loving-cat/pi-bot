@@ -175,7 +175,7 @@ class _ProgressPeekLayerState extends State<_ProgressPeekLayer>
                 padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
                 child: Row(
                   children: [
-                    const Icon(
+                    Icon(
                       LucideIcons.inbox,
                       size: 15,
                       color: PB.textTertiary,
@@ -192,7 +192,7 @@ class _ProgressPeekLayerState extends State<_ProgressPeekLayer>
                               }),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: PB.fsSm,
                           fontWeight: FontWeight.w600,
                           color: PB.textPrimary,
@@ -233,7 +233,7 @@ class _ProgressPeekLayerState extends State<_ProgressPeekLayer>
                       ),
                       child: Text(
                         strings.t('common.close'),
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: PB.fsSm,
                           color: PB.textSecondary,
                         ),
@@ -283,7 +283,7 @@ class _ProgressPeekLayerState extends State<_ProgressPeekLayer>
                     who,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: PB.fsXs,
                       fontWeight: FontWeight.w600,
                       color: PB.textSecondary,
@@ -315,7 +315,7 @@ class _ProgressPeekLayerState extends State<_ProgressPeekLayer>
                     dept,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: PB.fsXxs,
                       color: PB.textQuaternary,
                     ),
@@ -325,7 +325,7 @@ class _ProgressPeekLayerState extends State<_ProgressPeekLayer>
               const SizedBox(width: 8),
               Text(
                 _fmtTime(m.createdAt),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsXxs,
                   color: PB.textQuaternary,
                 ),
@@ -346,7 +346,7 @@ class _ProgressPeekLayerState extends State<_ProgressPeekLayer>
               selectable: true,
               compact: true,
               mentions: const [],
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: PB.fsXs,
                 height: 1.5,
                 color: PB.textPrimary,

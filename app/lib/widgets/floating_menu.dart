@@ -336,7 +336,7 @@ class _FloatingMenuLayerState extends State<_FloatingMenuLayer>
             if (e.hint != null)
               Text(
                 e.hint!,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsXxs,
                   color: PB.textQuaternary,
                 ),
@@ -381,7 +381,7 @@ class PlusTriggerButton extends StatelessWidget {
         child: SizedBox(
           width: size,
           height: size,
-          child: const Center(
+          child: Center(
             child: Icon(LucideIcons.plus, size: 19, color: PB.textSecondary),
           ),
         ),

@@ -1,6 +1,15 @@
 import 'package:flutter/material.dart';
 
 import 'theme_colors.dart';
+import 'theme_mode.dart';
+
+export 'theme_mode.dart'
+    show
+        PBColorMode,
+        isLightMode,
+        loadColorMode,
+        pbColorMode,
+        saveColorMode;
 
 export 'theme_colors.dart' show PBThemeColors;
 
@@ -17,33 +26,60 @@ const double kChatContentMax = 1180;
 const Size kWindowMinSize = Size(760, 520);
 
 class PB {
-  // 中性背景与文字保持固定，Bot 个性色只影响强调元素。
-  static const bgApp = PBNeutral.bgApp;
-  static const bgPane = PBNeutral.bgPane;
-  static const bgElevated = PBNeutral.bgElevated;
-  static const bgBubble = PBNeutral.bgBubble;
-  static const bgHover = PBNeutral.bgHover;
-  static const bgActive = PBNeutral.bgActive;
-  static const bgInput = PBNeutral.bgInput;
+  // 中性背景与文字跟着明暗模式走；Bot 个性色只影响强调元素。
+  //
+  // ★ 这些从 const 改成了 getter，是为了让浅色模式能切换。
+  //   815 处调用点（PB.bgApp 这种写法）一个字都不用改，
+  //   只有原本写在 const 构造里的那 72 处要去掉外层 const。
+  static Color get bgApp =>
+      isLightMode ? PBNeutral.lightBgApp : PBNeutral.bgApp;
+  static Color get bgPane =>
+      isLightMode ? PBNeutral.lightBgPane : PBNeutral.bgPane;
+  static Color get bgElevated =>
+      isLightMode ? PBNeutral.lightBgElevated : PBNeutral.bgElevated;
+  static Color get bgBubble =>
+      isLightMode ? PBNeutral.lightBgBubble : PBNeutral.bgBubble;
+  static Color get bgHover =>
+      isLightMode ? PBNeutral.lightBgHover : PBNeutral.bgHover;
+  static Color get bgActive =>
+      isLightMode ? PBNeutral.lightBgActive : PBNeutral.bgActive;
+  static Color get bgInput =>
+      isLightMode ? PBNeutral.lightBgInput : PBNeutral.bgInput;
 
-  // 四级正文颜色在最亮的常用中性面上均保持至少 4.5:1 的对比度。
-  static const textPrimary = PBNeutral.textPrimary;
-  static const textSecondary = PBNeutral.textSecondary;
-  static const textTertiary = PBNeutral.textTertiary;
-  static const textQuaternary = PBNeutral.textQuaternary;
+  // 四级正文颜色在各自模式的常用中性面上均保持至少 4.5:1 的对比度。
+  static Color get textPrimary =>
+      isLightMode ? PBNeutral.lightTextPrimary : PBNeutral.textPrimary;
+  static Color get textSecondary =>
+      isLightMode ? PBNeutral.lightTextSecondary : PBNeutral.textSecondary;
+  static Color get textTertiary =>
+      isLightMode ? PBNeutral.lightTextTertiary : PBNeutral.textTertiary;
+  static Color get textQuaternary =>
+      isLightMode ? PBNeutral.lightTextQuaternary : PBNeutral.textQuaternary;
 
-  static const quoteBorder = PBNeutral.quoteBorder;
-  static const quoteBackground = PBNeutral.quoteBackground;
-  static const quoteText = PBNeutral.quoteText;
-  static const link = Color(0xFF77B4FF);
+  static Color get quoteBorder =>
+      isLightMode ? PBNeutral.lightQuoteBorder : PBNeutral.quoteBorder;
+  static Color get quoteBackground =>
+      isLightMode ? PBNeutral.lightQuoteBackground : PBNeutral.quoteBackground;
+  static Color get quoteText =>
+      isLightMode ? PBNeutral.lightQuoteText : PBNeutral.quoteText;
+  static Color get link =>
+      isLightMode ? const Color(0xFF1A6FD4) : const Color(0xFF77B4FF);
 
   // ---- 描边
-  static const borderPrimary = Color(0x3DF2F2F2);
-  static const borderSecondary = Color(0x1FF2F2F2);
-  static const borderTertiary = Color(0x12F2F2F2);
+  // ★ 边框必须跟着模式反转。
+  //
+  //   深色下用白色半透明（在深底上是"提亮"），浅色下必须换成深色半透明 ——
+  //   白线画在浅灰背景上等于没有，气泡和卡片会失去轮廓。
+  static Color get borderPrimary =>
+      isLightMode ? const Color(0x2E1A1C21) : const Color(0x3DF2F2F2);
+  static Color get borderSecondary =>
+      isLightMode ? const Color(0x1F1A1C21) : const Color(0x1FF2F2F2);
+  static Color get borderTertiary =>
+      isLightMode ? const Color(0x141A1C21) : const Color(0x12F2F2F2);
 
   /// 气泡顶部那一道极淡的高光，让平面有厚度
-  static const borderHighlight = Color(0x0DFFFFFF);
+  static Color get borderHighlight =>
+      isLightMode ? const Color(0x0A000000) : const Color(0x0DFFFFFF);
 
   // ---- 强调色
   static const accent = Color(0xFF2E8CF6);
@@ -176,9 +212,11 @@ class PB {
   static PBThemeColors colors(BuildContext context) =>
       Theme.of(context).extension<PBThemeColors>() ?? _defaultColors;
 
-  static ThemeData theme({Color? seed}) {
+  static ThemeData theme({Color? seed, bool light = false}) {
     final colors = PBThemeColors.derive(seed ?? accent);
-    final scheme = ColorScheme.dark(
+    // colorScheme 必须跟着明暗走：输入框、按钮、弹窗用的是它，
+    // 只改 PB.xxx 的话这些组件会停在旧配色上。
+    final scheme = (light ? ColorScheme.light : ColorScheme.dark)(
       primary: colors.accent,
       onPrimary: colors.onAccent,
       secondary: colors.accent,
@@ -191,7 +229,7 @@ class PB {
     );
 
     final base = ThemeData(
-      brightness: Brightness.dark,
+      brightness: light ? Brightness.light : Brightness.dark,
       colorScheme: scheme,
       useMaterial3: true,
       fontFamily: fontFamily,
@@ -255,7 +293,7 @@ class PB {
         labelMedium: t(fsXs, FontWeight.w500, spacing: 0.2),
         labelSmall: t(fsXxs, FontWeight.w500, spacing: 0.3),
       ),
-      appBarTheme: const AppBarTheme(
+      appBarTheme: AppBarTheme(
         backgroundColor: bgApp,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
@@ -277,7 +315,7 @@ class PB {
         margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(r2xl),
-          side: const BorderSide(color: borderTertiary),
+          side: BorderSide(color: borderTertiary),
         ),
       ),
       dialogTheme: DialogThemeData(
@@ -287,23 +325,23 @@ class PB {
         shadowColor: Colors.black.withValues(alpha: 0.6),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(r3xl),
-          side: const BorderSide(color: borderSecondary),
+          side: BorderSide(color: borderSecondary),
         ),
-        titleTextStyle: const TextStyle(
+        titleTextStyle: TextStyle(
           fontFamily: fontFamily,
           color: textPrimary,
           fontSize: fsLg,
           fontWeight: FontWeight.w600,
           letterSpacing: -0.1,
         ),
-        contentTextStyle: const TextStyle(
+        contentTextStyle: TextStyle(
           fontFamily: fontFamily,
           color: textSecondary,
           fontSize: fsSm,
           height: 1.55,
         ),
       ),
-      bottomSheetTheme: const BottomSheetThemeData(
+      bottomSheetTheme: BottomSheetThemeData(
         backgroundColor: bgElevated,
         surfaceTintColor: Colors.transparent,
         modalBarrierColor: Color(0x99000000),
@@ -313,7 +351,7 @@ class PB {
       ),
       snackBarTheme: SnackBarThemeData(
         backgroundColor: bgActive,
-        contentTextStyle: const TextStyle(
+        contentTextStyle: TextStyle(
           fontFamily: fontFamily,
           color: textPrimary,
           fontSize: fsSm,
@@ -322,7 +360,7 @@ class PB {
         elevation: 8,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(rXl),
-          side: const BorderSide(color: borderSecondary),
+          side: BorderSide(color: borderSecondary),
         ),
         insetPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
       ),
@@ -330,17 +368,17 @@ class PB {
         filled: true,
         fillColor: bgInput,
         isDense: true,
-        hintStyle: const TextStyle(
+        hintStyle: TextStyle(
           fontFamily: fontFamily,
           color: textQuaternary,
           fontSize: fsBase,
         ),
-        labelStyle: const TextStyle(
+        labelStyle: TextStyle(
           fontFamily: fontFamily,
           color: textTertiary,
           fontSize: fsSm,
         ),
-        floatingLabelStyle: const TextStyle(
+        floatingLabelStyle: TextStyle(
           fontFamily: fontFamily,
           color: textSecondary,
           fontSize: fsSm,
@@ -351,11 +389,11 @@ class PB {
         ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(rXl),
-          borderSide: const BorderSide(color: borderSecondary),
+          borderSide: BorderSide(color: borderSecondary),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(rXl),
-          borderSide: const BorderSide(color: borderSecondary),
+          borderSide: BorderSide(color: borderSecondary),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(rXl),
@@ -405,9 +443,9 @@ class PB {
         shadowColor: Colors.black.withValues(alpha: 0.5),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(r2xl),
-          side: const BorderSide(color: borderSecondary),
+          side: BorderSide(color: borderSecondary),
         ),
-        textStyle: const TextStyle(
+        textStyle: TextStyle(
           fontFamily: fontFamily,
           color: textPrimary,
           fontSize: fsSm,
@@ -440,7 +478,7 @@ class PB {
                 ? textPrimary
                 : textTertiary,
           ),
-          side: const WidgetStatePropertyAll(
+          side: WidgetStatePropertyAll(
             BorderSide(color: borderSecondary),
           ),
           textStyle: const WidgetStatePropertyAll(
@@ -451,7 +489,7 @@ class PB {
           ),
         ),
       ),
-      listTileTheme: const ListTileThemeData(
+      listTileTheme: ListTileThemeData(
         iconColor: textTertiary,
         textColor: textPrimary,
         contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 2),
@@ -462,7 +500,7 @@ class PB {
           borderRadius: BorderRadius.circular(rLg),
           border: Border.all(color: borderSecondary),
         ),
-        textStyle: const TextStyle(
+        textStyle: TextStyle(
           fontFamily: fontFamily,
           color: textPrimary,
           fontSize: fsXxs,

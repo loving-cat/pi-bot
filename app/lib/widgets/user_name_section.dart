@@ -48,11 +48,11 @@ class _UserNameSectionState extends State<UserNameSection> {
       children: [
         Row(
           children: [
-            const Icon(LucideIcons.userRound, size: 15, color: PB.textTertiary),
+            Icon(LucideIcons.userRound, size: 15, color: PB.textTertiary),
             const SizedBox(width: 8),
             Text(
               strings.t('user.title'),
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: PB.fsSm,
                 fontWeight: FontWeight.w600,
                 color: PB.textSecondary,
@@ -79,7 +79,7 @@ class _UserNameSectionState extends State<UserNameSection> {
             children: [
               Text(
                 strings.t('user.explain'),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsXxs,
                   color: PB.textQuaternary,
                   height: 1.6,
@@ -102,7 +102,7 @@ class _UserNameSectionState extends State<UserNameSection> {
                   ),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(PB.rLg),
-                    borderSide: const BorderSide(color: PB.borderSecondary),
+                    borderSide: BorderSide(color: PB.borderSecondary),
                   ),
                 ),
               ),

@@ -138,7 +138,7 @@ class _PairScreenState extends State<PairScreen> {
                   Text(
                     s.t('pair.tagline'),
                     textAlign: TextAlign.center,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: PB.fsSm,
                       color: PB.textQuaternary,
                     ),
@@ -149,7 +149,7 @@ class _PairScreenState extends State<PairScreen> {
                     const SizedBox(height: 18),
                     Row(
                       children: [
-                        const Expanded(
+                        Expanded(
                           child: Divider(color: PB.borderTertiary),
                         ),
                         Padding(
@@ -162,7 +162,7 @@ class _PairScreenState extends State<PairScreen> {
                             ),
                           ),
                         ),
-                        const Expanded(
+                        Expanded(
                           child: Divider(color: PB.borderTertiary),
                         ),
                       ],
@@ -263,7 +263,7 @@ class _PairScreenState extends State<PairScreen> {
                       children: [
                         Row(
                           children: [
-                            const Icon(
+                            Icon(
                               LucideIcons.zap,
                               size: 15,
                               color: PB.textTertiary,
@@ -271,7 +271,7 @@ class _PairScreenState extends State<PairScreen> {
                             const SizedBox(width: 7),
                             Text(
                               s.t('pair.stepsTitle'),
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: PB.fsSm,
                                 fontWeight: FontWeight.w500,
                                 color: PB.textSecondary,
@@ -291,7 +291,7 @@ class _PairScreenState extends State<PairScreen> {
                         const SizedBox(height: 4),
                         Text(
                           s.t('pair.hint'),
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: PB.fsXs,
                             color: PB.textQuaternary,
                             height: 1.5,
@@ -460,7 +460,7 @@ class _Step extends StatelessWidget {
             ),
             child: Text(
               index,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 10,
                 fontWeight: FontWeight.w600,
                 color: PB.textTertiary,
@@ -471,7 +471,7 @@ class _Step extends StatelessWidget {
           Expanded(
             child: Text(
               text,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: PB.fsXs,
                 color: PB.textTertiary,
                 height: 1.4,
@@ -502,7 +502,7 @@ class _Code extends StatelessWidget {
       ),
       child: Text(
         text,
-        style: const TextStyle(
+        style: TextStyle(
           fontFamily: PB.monoFamily,
           fontFamilyFallback: PB.monoFallback,
           fontSize: PB.fsXxs,

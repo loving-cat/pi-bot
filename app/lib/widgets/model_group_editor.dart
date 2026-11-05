@@ -28,11 +28,11 @@ class ModelGroupsSection extends StatelessWidget {
       children: [
         Row(
           children: [
-            const Icon(LucideIcons.boxes, size: 15, color: PB.textTertiary),
+            Icon(LucideIcons.boxes, size: 15, color: PB.textTertiary),
             const SizedBox(width: 8),
             Text(
               strings.t('model.groupTitle'),
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: PB.fsSm,
                 fontWeight: FontWeight.w600,
                 color: PB.textSecondary,
@@ -61,7 +61,7 @@ class ModelGroupsSection extends StatelessWidget {
           child: groups.isEmpty
               ? Text(
                   strings.t('model.groupEmpty'),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: PB.fsXs,
                     color: PB.textQuaternary,
                     height: 1.6,
@@ -103,7 +103,7 @@ class ModelGroupsSection extends StatelessWidget {
                   Flexible(
                     child: Text(
                       g.name,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: PB.fsSm,
                         color: PB.textPrimary,
                       ),
@@ -136,7 +136,7 @@ class ModelGroupsSection extends StatelessWidget {
                 g.baseUrl,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsXxs,
                   color: PB.textQuaternary,
                 ),
@@ -151,7 +151,7 @@ class ModelGroupsSection extends StatelessWidget {
                     strings.t('model.noKey'),
                   if (!g.enabled) strings.t('model.groupDisabled'),
                 ].join(' · '),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsXxs,
                   color: PB.textTertiary,
                 ),
@@ -186,7 +186,7 @@ class ModelGroupsSection extends StatelessWidget {
                   ),
                   content: Text(
                     strings.t('model.deleteBody'),
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: PB.fsSm,
                       color: PB.textSecondary,
                     ),
@@ -419,7 +419,7 @@ class _EditorState extends State<_Editor> {
               const SizedBox(height: 6),
               Text(
                 strings.t('model.apiType'),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsXs,
                   color: PB.textTertiary,
                 ),
@@ -428,7 +428,7 @@ class _EditorState extends State<_Editor> {
               DropdownButtonFormField<String>(
                 initialValue: _api,
                 dropdownColor: PB.bgElevated,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsSm,
                   color: PB.textPrimary,
                 ),
@@ -495,7 +495,7 @@ class _EditorState extends State<_Editor> {
                   Expanded(
                     child: Text(
                       strings.t('model.testHint'),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: PB.fsXxs,
                         color: PB.textQuaternary,
                       ),
@@ -643,7 +643,7 @@ class _EditorState extends State<_Editor> {
         children: [
           Text(
             label,
-            style: const TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+            style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
           ),
           const SizedBox(height: 4),
           TextField(
@@ -653,7 +653,7 @@ class _EditorState extends State<_Editor> {
             style: const TextStyle(fontSize: PB.fsSm),
             decoration: InputDecoration(
               hintText: hint,
-              hintStyle: const TextStyle(
+              hintStyle: TextStyle(
                 fontSize: PB.fsSm,
                 color: PB.textQuaternary,
               ),
@@ -664,7 +664,7 @@ class _EditorState extends State<_Editor> {
               ),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(PB.rLg),
-                borderSide: const BorderSide(color: PB.borderSecondary),
+                borderSide: BorderSide(color: PB.borderSecondary),
               ),
             ),
           ),

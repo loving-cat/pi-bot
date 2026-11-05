@@ -48,7 +48,7 @@ class _SitesSectionState extends State<SitesSection> {
                 list.isEmpty
                     ? strings.t('sites.hint')
                     : strings.tf('sites.connectedCount', {'n': list.length}),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsXs,
                   color: PB.textTertiary,
                 ),
@@ -116,7 +116,7 @@ class _SitesSectionState extends State<SitesSection> {
         ),
         content: Text(
           strings.tf('sites.removeBody', {'name': site.name}),
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: PB.fsSm,
             color: PB.textSecondary,
             height: 1.6,
@@ -187,7 +187,7 @@ class _SitesSectionState extends State<SitesSection> {
             children: [
               Text(
                 strings.tf('sites.createTeamBody', {'name': site.name}),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsXs,
                   color: PB.textTertiary,
                   height: 1.7,
@@ -290,7 +290,7 @@ class _SitesSectionState extends State<SitesSection> {
                   children: [
                     Text(
                       strings.t('sites.addBody'),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: PB.fsXs,
                         color: PB.textTertiary,
                         height: 1.7,
@@ -338,7 +338,7 @@ class _SitesSectionState extends State<SitesSection> {
                             const SizedBox(width: 4),
                             Text(
                               strings.t('sites.manualFields'),
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: PB.fsXxs,
                                 color: PB.textTertiary,
                               ),
@@ -492,11 +492,11 @@ class _EmptySites extends StatelessWidget {
       ),
       child: Column(
         children: [
-          const Icon(LucideIcons.plug, size: 26, color: PB.textQuaternary),
+          Icon(LucideIcons.plug, size: 26, color: PB.textQuaternary),
           const SizedBox(height: 12),
           Text(
             strings.t('sites.empty'),
-            style: const TextStyle(fontSize: PB.fsSm, color: PB.textSecondary),
+            style: TextStyle(fontSize: PB.fsSm, color: PB.textSecondary),
           ),
           const SizedBox(height: 14),
           FilledButton.icon(
@@ -570,7 +570,7 @@ class _SiteCardState extends State<_SiteCard> {
                     children: [
                       Text(
                         s.name,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: PB.fsSm,
                           color: PB.textPrimary,
                         ),
@@ -588,7 +588,7 @@ class _SiteCardState extends State<_SiteCard> {
                           ),
                           child: Text(
                             strings.t('sites.teamBadge'),
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 10,
                               color: PB.textTertiary,
                             ),
@@ -602,7 +602,7 @@ class _SiteCardState extends State<_SiteCard> {
                     '${s.baseUrl}  ·  ${s.account}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: PB.fsXxs,
                       color: PB.textTertiary,
                     ),

@@ -183,7 +183,7 @@ class _RoomPanelState extends State<RoomPanel> {
                       textAlign: TextAlign.center,
                       maxLines: 3,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: PB.fsXs,
                         color: PB.textQuaternary,
                         height: 1.5,
@@ -301,13 +301,13 @@ class _RoomPanelState extends State<RoomPanel> {
           width: 72,
           child: Text(
             label,
-            style: const TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+            style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
           ),
         ),
         Expanded(
           child: Text(
             value,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: PB.fsXs,
               color: PB.textSecondary,
               height: 1.5,
@@ -408,7 +408,7 @@ class _RoomPanelState extends State<RoomPanel> {
                             padding: const EdgeInsets.symmetric(vertical: 18),
                             child: Text(
                               s.t('room.noMatch'),
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: PB.fsSm,
                                 color: PB.textTertiary,
                               ),
@@ -444,7 +444,7 @@ class _RoomPanelState extends State<RoomPanel> {
                                           b.tagline.trim(),
                                           maxLines: 1,
                                           overflow: TextOverflow.ellipsis,
-                                          style: const TextStyle(
+                                          style: TextStyle(
                                             fontSize: PB.fsXs,
                                             color: PB.textTertiary,
                                           ),
@@ -501,7 +501,7 @@ class _RoomPanelState extends State<RoomPanel> {
         ),
         content: Text(
           s.t('room.removeBody'),
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: PB.fsSm,
             color: PB.textSecondary,
             height: 1.6,
@@ -564,7 +564,7 @@ class _MemberRow extends StatelessWidget {
                 Expanded(
                   child: Text(
                     b.name,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: PB.fsSm,
                       color: PB.textPrimary,
                     ),
@@ -575,7 +575,7 @@ class _MemberRow extends StatelessWidget {
                     padding: const EdgeInsets.only(right: 8),
                     child: Text(
                       s.t('room.lead'),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: PB.fsXxs,
                         color: PB.textQuaternary,
                       ),
@@ -753,7 +753,7 @@ class _LibraryState extends State<_Library> {
           width: 360,
           child: Text(
             body,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: PB.fsSm,
               color: PB.textSecondary,
               height: 1.6,
@@ -803,7 +803,7 @@ class _LibraryState extends State<_Library> {
           child: Text(
             s.t('room.noFiles'),
             textAlign: TextAlign.center,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: PB.fsXs,
               color: PB.textQuaternary,
               height: 1.7,
@@ -887,7 +887,7 @@ class _LibraryState extends State<_Library> {
           ),
           Text(
             s.tf('room.selectedCount', {'n': '${_selected.length}'}),
-            style: const TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
+            style: TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
           ),
           const Spacer(),
           TextButton(
@@ -907,7 +907,7 @@ class _LibraryState extends State<_Library> {
             tooltip: s.t('common.cancel'),
             visualDensity: VisualDensity.compact,
             onPressed: _toggleSelecting,
-            icon: const Icon(LucideIcons.x, size: 14, color: PB.textTertiary),
+            icon: Icon(LucideIcons.x, size: 14, color: PB.textTertiary),
           ),
         ],
       ),
@@ -930,7 +930,7 @@ class _LibraryState extends State<_Library> {
     padding: const EdgeInsets.only(bottom: 8),
     child: Text(
       '$text（$n）',
-      style: const TextStyle(
+      style: TextStyle(
         fontSize: PB.fsXxs,
         fontWeight: FontWeight.w600,
         color: PB.textTertiary,
@@ -1008,7 +1008,7 @@ class _LibraryState extends State<_Library> {
                       a.name,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: PB.fsXs,
                         color: PB.textPrimary,
                       ),
@@ -1016,7 +1016,7 @@ class _LibraryState extends State<_Library> {
                     if (a.sizeText.isNotEmpty)
                       Text(
                         a.sizeText,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: PB.fsXxs,
                           color: PB.textQuaternary,
                         ),
@@ -1030,7 +1030,7 @@ class _LibraryState extends State<_Library> {
                   visualDensity: VisualDensity.compact,
                   onPressed: () =>
                       downloadAttachment(context, file: a, url: url),
-                  icon: const Icon(
+                  icon: Icon(
                     LucideIcons.download,
                     size: 15,
                     color: PB.textTertiary,
@@ -1042,7 +1042,7 @@ class _LibraryState extends State<_Library> {
                   tooltip: s.t('common.delete'),
                   visualDensity: VisualDensity.compact,
                   onPressed: () => _deleteOne(context, a),
-                  icon: const Icon(
+                  icon: Icon(
                     LucideIcons.trash2,
                     size: 15,
                     color: PB.textQuaternary,
@@ -1147,7 +1147,7 @@ class _MemoryTabState extends State<_MemoryTab> {
         backgroundColor: PB.bgPane,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(PB.r3xl),
-          side: const BorderSide(color: PB.borderSecondary),
+          side: BorderSide(color: PB.borderSecondary),
         ),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 640, maxHeight: 560),
@@ -1158,7 +1158,7 @@ class _MemoryTabState extends State<_MemoryTab> {
                 padding: const EdgeInsets.fromLTRB(18, 14, 10, 10),
                 child: Row(
                   children: [
-                    const Icon(
+                    Icon(
                       LucideIcons.fileText,
                       size: 15,
                       color: PB.textTertiary,
@@ -1167,7 +1167,7 @@ class _MemoryTabState extends State<_MemoryTab> {
                     Expanded(
                       child: Text(
                         s.tf('room.memoryTitle', {'bot': botName}),
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: PB.fsSm,
                           fontWeight: FontWeight.w600,
                           color: PB.textPrimary,
@@ -1188,7 +1188,7 @@ class _MemoryTabState extends State<_MemoryTab> {
                   padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
                   child: SelectableText(
                     m.summary,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: PB.fsSm,
                       height: 1.7,
                       color: PB.textPrimary,
@@ -1269,7 +1269,7 @@ class _MemoryTabState extends State<_MemoryTab> {
           ],
           Row(
             children: [
-              const Icon(
+              Icon(
                 LucideIcons.fileText,
                 size: 15,
                 color: PB.textTertiary,
@@ -1278,7 +1278,7 @@ class _MemoryTabState extends State<_MemoryTab> {
               Expanded(
                 child: Text(
                   s.t('room.memory'),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: PB.fsSm,
                     fontWeight: FontWeight.w600,
                     color: PB.textPrimary,
@@ -1305,7 +1305,7 @@ class _MemoryTabState extends State<_MemoryTab> {
               padding: const EdgeInsets.symmetric(vertical: 16),
               child: Text(
                 s.t('room.readingMemory'),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsXs,
                   color: PB.textQuaternary,
                 ),
@@ -1324,7 +1324,7 @@ class _MemoryTabState extends State<_MemoryTab> {
                 children: [
                   Text(
                     s.t('room.noMemory'),
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: PB.fsSm,
                       color: PB.textSecondary,
                     ),
@@ -1332,7 +1332,7 @@ class _MemoryTabState extends State<_MemoryTab> {
                   const SizedBox(height: 6),
                   Text(
                     s.t('room.memoryEmptyHint'),
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: PB.fsXs,
                       color: PB.textQuaternary,
                     ),
@@ -1355,7 +1355,7 @@ class _MemoryTabState extends State<_MemoryTab> {
                         _generating
                             ? s.t('room.generating')
                             : s.t('room.generateMemory'),
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: PB.fsXs,
                           color: PB.textSecondary,
                         ),
@@ -1382,7 +1382,7 @@ class _MemoryTabState extends State<_MemoryTab> {
                       m.summary,
                       maxLines: 10,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: PB.fsXs,
                         height: 1.7,
                         color: PB.textPrimary,

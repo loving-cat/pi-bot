@@ -206,7 +206,7 @@ class _ConnectionsSectionState extends State<ConnectionsSection> {
                   strings.tf('conn.configuredCount', {
                     'n': controller.snapshot.connections.length,
                   }),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: PB.fsSm,
                     color: PB.textTertiary,
                   ),
@@ -221,7 +221,7 @@ class _ConnectionsSectionState extends State<ConnectionsSection> {
             const SizedBox(height: 6),
             Text(
               strings.t('conn.subtitle'),
-              style: const TextStyle(
+              style: TextStyle(
                 color: PB.textSecondary,
                 fontSize: PB.fsBase,
               ),
@@ -261,7 +261,7 @@ class _ConnectionsSectionState extends State<ConnectionsSection> {
                           ? PB.textPrimary
                           : PB.textSecondary,
                     ),
-                    side: const BorderSide(color: PB.borderTertiary),
+                    side: BorderSide(color: PB.borderTertiary),
                     onSelected: (_) => setState(() => _filter = filter),
                   ),
               ],
@@ -349,7 +349,7 @@ class _ConnectionsSectionState extends State<ConnectionsSection> {
                       : _filter == ConnectionFilter.configured
                       ? strings.t('conn.emptyConfigured')
                       : strings.t('conn.emptyFiltered'),
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: PB.textTertiary,
                     fontSize: PB.fsBase,
                   ),

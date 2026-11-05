@@ -74,7 +74,7 @@ Future<UpdateChoice> showUpdateDialog(
           children: [
             Text(
               strings.tf('update.current', {'version': info.current}),
-              style: const TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+              style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
             ),
             if (info.hasNotes) ...[
               const SizedBox(height: 12),
@@ -83,7 +83,7 @@ Future<UpdateChoice> showUpdateDialog(
                 child: SingleChildScrollView(
                   child: Text(
                     info.notes,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: PB.fsSm,
                       color: PB.textSecondary,
                       height: 1.6,
@@ -96,7 +96,7 @@ Future<UpdateChoice> showUpdateDialog(
               const SizedBox(height: 10),
               Text(
                 strings.tf('update.size', {'size': info.sizeLabel}),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsXs,
                   color: PB.textTertiary,
                 ),
@@ -106,7 +106,7 @@ Future<UpdateChoice> showUpdateDialog(
               const SizedBox(height: 10),
               Text(
                 strings.t('update.noDirectLinkPromo'),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsXs,
                   color: PB.textTertiary,
                   height: 1.6,
@@ -206,7 +206,7 @@ Future<DownloadResult> downloadUpdate(
                       v <= 0
                           ? strings.t('update.connecting')
                           : '${(v * 100).toStringAsFixed(0)}%',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: PB.fsXs,
                         color: PB.textTertiary,
                       ),
@@ -220,7 +220,7 @@ Future<DownloadResult> downloadUpdate(
                   info.assetName.isEmpty
                       ? info.sizeLabel
                       : '${info.assetName} · ${info.sizeLabel}',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: PB.fsXs,
                     color: PB.textTertiary,
                   ),
@@ -385,7 +385,7 @@ Future<void> showDownloadDoneDialog(
             const SizedBox(height: 6),
             SelectableText(
               path,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: PB.fsXs,
                 color: PB.textTertiary,
                 height: 1.5,
@@ -396,7 +396,7 @@ Future<void> showDownloadDoneDialog(
               Platform.isMacOS && path.toLowerCase().endsWith('.dmg')
                   ? strings.t('update.macInstructions')
                   : strings.t('update.installInstructions'),
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: PB.fsXs,
                 color: PB.textTertiary,
                 height: 1.6,

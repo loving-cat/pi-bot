@@ -93,7 +93,7 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
       children: [
         Row(
           children: [
-            const Icon(
+            Icon(
               LucideIcons.usersRound,
               size: 15,
               color: PB.textTertiary,
@@ -101,7 +101,7 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
             const SizedBox(width: 8),
             Text(
               strings.t('limits.title'),
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: PB.fsSm,
                 fontWeight: FontWeight.w600,
                 color: PB.textSecondary,
@@ -132,7 +132,7 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
             children: [
               Text(
                 strings.t('limits.intro'),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsXxs,
                   color: PB.textQuaternary,
                   height: 1.6,
@@ -199,18 +199,18 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
               const SizedBox(height: 8),
               Text(
                 strings.t('limits.turnHint'),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsXxs,
                   color: PB.textQuaternary,
                   height: 1.6,
                 ),
               ),
               const SizedBox(height: 16),
-              const Divider(height: 1, color: PB.borderTertiary),
+              Divider(height: 1, color: PB.borderTertiary),
               const SizedBox(height: 14),
               Text(
                 strings.t('limits.rulesTitle'),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsXs,
                   fontWeight: FontWeight.w600,
                   color: PB.textSecondary,
@@ -219,7 +219,7 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
               const SizedBox(height: 4),
               Text(
                 strings.t('limits.rulesHint'),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsXxs,
                   color: PB.textQuaternary,
                   height: 1.6,
@@ -231,7 +231,7 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
                   Expanded(
                     child: Text(
                       strings.t('limits.fileAndCommand'),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: PB.fsSm,
                         color: PB.textPrimary,
                       ),
@@ -267,7 +267,7 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
               const SizedBox(height: 6),
               Text(
                 strings.t('limits.policyHint'),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsXxs,
                   color: PB.textQuaternary,
                   height: 1.6,
@@ -280,14 +280,14 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
                 onChanged: (v) => _savePolicy({'requireProof': v}),
                 title: Text(
                   strings.t('limits.requireProof'),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: PB.fsSm,
                     color: PB.textPrimary,
                   ),
                 ),
                 subtitle: Text(
                   strings.t('limits.requireProofHint'),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: PB.fsXxs,
                     color: PB.textQuaternary,
                   ),
@@ -303,7 +303,7 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
   /// 分组标题：把"单个 bot 能跑多久"和"整个任务的兜底上限"分开。
   Widget _groupTitle(String text) => Text(
     text,
-    style: const TextStyle(
+    style: TextStyle(
       fontSize: PB.fsXxs,
       fontWeight: FontWeight.w600,
       color: PB.textTertiary,
@@ -326,7 +326,7 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
         children: [
           Text(
             label,
-            style: const TextStyle(fontSize: PB.fsXxs, color: PB.textTertiary),
+            style: TextStyle(fontSize: PB.fsXxs, color: PB.textTertiary),
           ),
           const SizedBox(height: 4),
           TextField(
@@ -345,7 +345,7 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
               ),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(PB.rLg),
-                borderSide: const BorderSide(color: PB.borderSecondary),
+                borderSide: BorderSide(color: PB.borderSecondary),
               ),
             ),
           ),
@@ -353,7 +353,7 @@ class _GroupLimitsSectionState extends State<GroupLimitsSection> {
             const SizedBox(height: 4),
             Text(
               desc,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: PB.fsXxs,
                 color: PB.textQuaternary,
                 height: 1.45,

@@ -170,7 +170,7 @@ class _ThinkingSliderState extends State<ThinkingSlider>
         L10n.s(context).tf('think.levelWith', {
           'level': _label(L10n.s(context), widget.levels.first),
         }),
-        style: const TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+        style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
       );
     }
 
@@ -414,7 +414,7 @@ class ThinkingLevelField extends StatelessWidget {
           children: [
             Text(
               strings.t('think.level'),
-              style: const TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+              style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
             ),
             const Spacer(),
             AnimatedSwitcher(

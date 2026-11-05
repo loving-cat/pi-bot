@@ -126,9 +126,9 @@ class _BotAppearanceControlsState extends State<BotAppearanceControls> {
       onClose: controller == _colorMenu
           ? () => scheduleMicrotask(_flushColor)
           : null,
-      style: const MenuStyle(
+      style: MenuStyle(
         backgroundColor: WidgetStatePropertyAll(PB.bgElevated),
-        padding: WidgetStatePropertyAll(EdgeInsets.zero),
+        padding: const WidgetStatePropertyAll(EdgeInsets.zero),
       ),
       menuChildren: [
         SizedBox(
@@ -172,7 +172,7 @@ class _BotAppearanceControlsState extends State<BotAppearanceControls> {
         style: OutlinedButton.styleFrom(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
           foregroundColor: PB.textPrimary,
-          side: const BorderSide(color: PB.borderSecondary),
+          side: BorderSide(color: PB.borderSecondary),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(PB.rLg),
           ),
@@ -190,7 +190,7 @@ class _BotAppearanceControlsState extends State<BotAppearanceControls> {
                     value,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: PB.fsXxs,
                       color: PB.textTertiary,
                     ),
@@ -198,7 +198,7 @@ class _BotAppearanceControlsState extends State<BotAppearanceControls> {
                 ],
               ),
             ),
-            const Icon(
+            Icon(
               LucideIcons.chevronDown,
               size: 12,
               color: PB.textTertiary,
@@ -295,7 +295,7 @@ class _BotAppearanceControlsState extends State<BotAppearanceControls> {
             padding: const EdgeInsets.only(top: 3),
             child: Text(
               strings.t('avatar.themeNote'),
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: PB.fsXxs,
                 color: PB.textTertiary,
               ),

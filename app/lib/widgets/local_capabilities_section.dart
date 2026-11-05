@@ -145,7 +145,7 @@ class _LocalCapabilitiesSectionState extends State<LocalCapabilitiesSection> {
                         children: [
                           Text(
                             strings.t('skills.localInstalled'),
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: PB.fsXs,
                               fontWeight: FontWeight.w600,
                               color: PB.textSecondary,
@@ -157,7 +157,7 @@ class _LocalCapabilitiesSectionState extends State<LocalCapabilitiesSection> {
                               summary,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: PB.fsXxs,
                                 color: PB.textQuaternary,
                               ),
@@ -190,7 +190,7 @@ class _LocalCapabilitiesSectionState extends State<LocalCapabilitiesSection> {
                   isSkill ? 'skills.localScanSkill' : 'skills.localScanMcp',
                   {'root': root},
                 ),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsXxs,
                   color: PB.textQuaternary,
                   height: 1.6,
@@ -259,7 +259,7 @@ class _LocalCapabilitiesSectionState extends State<LocalCapabilitiesSection> {
                     summary,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: PB.fsXxs,
                       color: PB.textQuaternary,
                       height: 1.5,
@@ -289,7 +289,7 @@ class _LocalCapabilitiesSectionState extends State<LocalCapabilitiesSection> {
               padding: const EdgeInsets.symmetric(horizontal: 12),
               child: Text(
                 L10n.s(context).t('skills.localImportedBadge'),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsXxs,
                   color: PB.textQuaternary,
                 ),

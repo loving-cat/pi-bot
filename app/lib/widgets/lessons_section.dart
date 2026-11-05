@@ -67,7 +67,7 @@ class _LessonsSectionState extends State<LessonsSection> {
               const SizedBox(width: 7),
               Text(
                 strings.t('lesson.title'),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsSm,
                   fontWeight: FontWeight.w600,
                   color: PB.textSecondary,
@@ -79,7 +79,7 @@ class _LessonsSectionState extends State<LessonsSection> {
                   strings.t('lesson.intro'),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: PB.fsXxs,
                     color: PB.textQuaternary,
                   ),
@@ -187,7 +187,7 @@ class _LessonsSectionState extends State<LessonsSection> {
       ),
       child: Text(
         text,
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: PB.fsXs,
           color: PB.textQuaternary,
           height: 1.6,
@@ -208,7 +208,7 @@ class _LessonsSectionState extends State<LessonsSection> {
         ),
         content: Text(
           strings.tf('lesson.deleteBody', {'cue': lesson.cue}),
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: PB.fsSm,
             color: PB.textSecondary,
             height: 1.6,
@@ -295,7 +295,7 @@ class _LessonCard extends StatelessWidget {
               Expanded(
                 child: Text(
                   lesson.cue,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: PB.fsXs,
                     fontWeight: FontWeight.w600,
                     color: PB.textPrimary,
@@ -320,7 +320,7 @@ class _LessonCard extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             lesson.lesson,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: PB.fsXs,
               color: PB.textSecondary,
               height: 1.6,
@@ -339,7 +339,7 @@ class _LessonCard extends StatelessWidget {
                 children: [
                   Text(
                     L10n.s(context).t('lesson.evidence'),
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 9,
                       color: PB.textQuaternary,
                     ),
@@ -350,7 +350,7 @@ class _LessonCard extends StatelessWidget {
                       lesson.evidence.first.quote,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: PB.fsXxs,
                         color: PB.textTertiary,
                       ),
@@ -366,7 +366,7 @@ class _LessonCard extends StatelessWidget {
               if (lesson.dept.isNotEmpty)
                 Text(
                   lesson.dept,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: PB.fsXxs,
                     color: PB.textQuaternary,
                   ),
@@ -375,7 +375,7 @@ class _LessonCard extends StatelessWidget {
                 const SizedBox(width: 8),
                 Text(
                   L10n.s(context).tf('lesson.hits', {'n': lesson.hits}),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: PB.fsXxs,
                     color: PB.textQuaternary,
                   ),

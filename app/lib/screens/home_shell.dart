@@ -374,7 +374,7 @@ class _NoSelection extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Icon(
+          Icon(
             LucideIcons.messageSquare,
             size: 36,
             color: PB.textQuaternary,
@@ -382,7 +382,7 @@ class _NoSelection extends StatelessWidget {
           const SizedBox(height: 14),
           Text(
             L10n.s(context).t('shell.noSelection'),
-            style: const TextStyle(fontSize: PB.fsSm, color: PB.textTertiary),
+            style: TextStyle(fontSize: PB.fsSm, color: PB.textTertiary),
           ),
         ],
       ),

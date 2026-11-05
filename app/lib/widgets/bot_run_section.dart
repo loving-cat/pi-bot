@@ -223,7 +223,7 @@ class _BotRunSectionState extends State<BotRunSection> {
         const SizedBox(height: 6),
         Row(
           children: [
-            const Icon(
+            Icon(
               LucideIcons.slidersHorizontal,
               size: 14,
               color: PB.textTertiary,
@@ -231,7 +231,7 @@ class _BotRunSectionState extends State<BotRunSection> {
             const SizedBox(width: 6),
             Text(
               strings.t('think.runSettings'),
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: PB.fsXs,
                 fontWeight: FontWeight.w600,
                 color: PB.textSecondary,
@@ -240,7 +240,7 @@ class _BotRunSectionState extends State<BotRunSection> {
             const Spacer(),
             Text(
               bot.isMain ? strings.t('misc.mainBot') : bot.name,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: PB.fsXs,
                 color: PB.textQuaternary,
               ),
@@ -274,7 +274,7 @@ class _BotRunSectionState extends State<BotRunSection> {
         if (modelSave.saving)
           Text(
             strings.t('think.switchingModel'),
-            style: const TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+            style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
           ),
         if (modelSave.failed)
           Row(
@@ -297,7 +297,7 @@ class _BotRunSectionState extends State<BotRunSection> {
             !_modelDraft)
           Text(
             strings.t('think.switchApplied'),
-            style: const TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+            style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
           ),
 
         // 思考等级：滑条（从关到 max 一档一档拖过去）
@@ -318,12 +318,12 @@ class _BotRunSectionState extends State<BotRunSection> {
         // 上下文预算
         Text(
           strings.t('think.contextBudget'),
-          style: const TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+          style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
         ),
         const SizedBox(height: 4),
         Text(
           strings.t('think.budgetHint'),
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: PB.fsXxs,
             color: PB.textQuaternary,
             height: 1.5,

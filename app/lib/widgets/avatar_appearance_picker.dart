@@ -65,7 +65,7 @@ class _AvatarAppearancePickerState extends State<AvatarAppearancePicker> {
             padding: const EdgeInsets.only(bottom: 10),
             child: Text(
               strings.t('avatar.saveNote'),
-              style: const TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+              style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
             ),
           ),
         Row(

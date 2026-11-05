@@ -81,7 +81,7 @@ class _AutomationSheetState extends State<AutomationSheet> {
           children: [
             Row(
               children: [
-                const Icon(
+                Icon(
                   LucideIcons.clock,
                   size: 16,
                   color: PB.textSecondary,
@@ -89,7 +89,7 @@ class _AutomationSheetState extends State<AutomationSheet> {
                 const SizedBox(width: 8),
                 Text(
                   strings.tf('auto.title', {'room': widget.roomName}),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: PB.fsLg,
                     fontWeight: FontWeight.w600,
                     color: PB.textPrimary,
@@ -100,7 +100,7 @@ class _AutomationSheetState extends State<AutomationSheet> {
                   strings.tf('auto.runningCount', {
                     'n': widget.items.where((a) => a.enabled).length,
                   }),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: PB.fsXs,
                     color: PB.textQuaternary,
                   ),
@@ -167,7 +167,7 @@ class _AutomationSheetState extends State<AutomationSheet> {
                         padding: const EdgeInsets.symmetric(vertical: 14),
                         child: Text(
                           strings.t('auto.empty'),
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: PB.fsXs,
                             color: PB.textQuaternary,
                           ),
@@ -222,7 +222,7 @@ class _AutomationSheetState extends State<AutomationSheet> {
                 ),
                 Text(
                   '${a.scheduleLabel}$nextLabel',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: PB.fsXxs,
                     color: PB.textQuaternary,
                   ),
@@ -266,7 +266,7 @@ class _AutomationSheetState extends State<AutomationSheet> {
     style: const TextStyle(fontSize: PB.fsSm),
     decoration: InputDecoration(
       hintText: hint,
-      hintStyle: const TextStyle(fontSize: PB.fsXs, color: PB.textQuaternary),
+      hintStyle: TextStyle(fontSize: PB.fsXs, color: PB.textQuaternary),
       isDense: true,
       filled: true,
       fillColor: PB.bgApp,

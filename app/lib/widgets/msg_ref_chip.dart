@@ -218,7 +218,7 @@ class _PeekLayerState extends State<_PeekLayer>
                         ),
                         child: Text(
                           L10n.s(context).t('ref.closeChat'),
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: PB.fsSm,
                             color: PB.textSecondary,
                           ),
@@ -258,7 +258,7 @@ class _PeekLayerState extends State<_PeekLayer>
               widget.botNameOf(botId),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: PB.fsSm,
                 fontWeight: FontWeight.w600,
                 color: PB.textPrimary,
@@ -280,7 +280,7 @@ class _PeekLayerState extends State<_PeekLayer>
                     children: [
                       if (widget.senderBotId != null) ...[
                         Expanded(child: botTag(widget.senderBotId!)),
-                        const Padding(
+                        Padding(
                           padding: EdgeInsets.symmetric(horizontal: 10),
                           child: Icon(
                             LucideIcons.arrowLeftRight,
@@ -296,7 +296,7 @@ class _PeekLayerState extends State<_PeekLayer>
                     strings.tf('ref.sentToBots', {'n': refs.length}),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: PB.fsSm,
                       fontWeight: FontWeight.w600,
                       color: PB.textPrimary,
@@ -344,7 +344,7 @@ class _PeekLayerState extends State<_PeekLayer>
                     widget.botNameOf(ref.botId),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: PB.fsXs,
                       fontWeight: FontWeight.w600,
                       color: PB.textSecondary,
@@ -360,7 +360,7 @@ class _PeekLayerState extends State<_PeekLayer>
           padding: const EdgeInsets.symmetric(vertical: 16),
           child: Text(
             L10n.s(context).t('ref.empty'),
-            style: const TextStyle(fontSize: PB.fsXs, color: PB.textQuaternary),
+            style: TextStyle(fontSize: PB.fsXs, color: PB.textQuaternary),
           ),
         )
       else
@@ -399,7 +399,7 @@ class _PeekLayerState extends State<_PeekLayer>
                     padding: const EdgeInsets.only(bottom: 4, left: 2),
                     child: Text(
                       name,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: PB.fsXxs,
                         color: PB.textQuaternary,
                       ),
@@ -420,7 +420,7 @@ class _PeekLayerState extends State<_PeekLayer>
                       selectable: true,
                       compact: true,
                       mentions: const [],
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: PB.fsXs,
                         height: 1.5,
                         color: PB.textPrimary,

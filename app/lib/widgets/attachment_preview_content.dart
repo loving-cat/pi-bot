@@ -155,7 +155,7 @@ class _AttachmentPreviewContentState extends State<AttachmentPreviewContent> {
             ? MdText(
                 _text!,
                 selectable: true,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsSm,
                   height: 1.6,
                   color: PB.textPrimary,
@@ -163,7 +163,7 @@ class _AttachmentPreviewContentState extends State<AttachmentPreviewContent> {
               )
             : SelectableText(
                 _text!,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsXs,
                   height: 1.5,
                   fontFamily: PB.monoFamily,
@@ -187,7 +187,7 @@ class _PreviewMessage extends StatelessWidget {
       child: Text(
         message,
         textAlign: TextAlign.center,
-        style: const TextStyle(fontSize: PB.fsXs, color: PB.textSecondary),
+        style: TextStyle(fontSize: PB.fsXs, color: PB.textSecondary),
       ),
     ),
   );

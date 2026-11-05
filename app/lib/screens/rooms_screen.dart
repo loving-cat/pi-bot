@@ -11,6 +11,7 @@ import '../window_chrome.dart';
 import '../widgets/toast.dart';
 import '../widgets/avatar_life.dart';
 import '../widgets/anchored_menu.dart';
+import '../widgets/theme_toggle_button.dart';
 import '../widgets/blob_avatar.dart';
 import '../widgets/floating_menu.dart';
 import '../widgets/skeleton.dart';
@@ -71,7 +72,7 @@ class _RoomsScreenState extends State<RoomsScreen> {
             const SizedBox(height: 12),
             Text(
               s.t('rooms.hiddenTitle'),
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: PB.fsSm,
                 color: PB.textSecondary,
               ),
@@ -160,6 +161,9 @@ class _RoomsScreenState extends State<RoomsScreen> {
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
+                        const SizedBox(width: 8),
+                        // 明暗切换：放在用户名旁边，一进来就能看到
+                        const ThemeToggleButton(),
                       ],
                     ),
                     const SizedBox(height: 3),
@@ -190,7 +194,7 @@ class _RoomsScreenState extends State<RoomsScreen> {
                                 : (state.link == LinkState.connecting
                                       ? s.t('rooms.connecting')
                                       : s.t('rooms.offline')),
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: PB.fsXs,
                               color: PB.textQuaternary,
                             ),
@@ -275,7 +279,7 @@ class _RoomsScreenState extends State<RoomsScreen> {
                             borderRadius: BorderRadius.circular(20),
                             border: Border.all(color: PB.borderTertiary),
                           ),
-                          child: const Icon(
+                          child: Icon(
                             LucideIcons.sparkles,
                             size: 26,
                             color: PB.textQuaternary,
@@ -286,7 +290,7 @@ class _RoomsScreenState extends State<RoomsScreen> {
                           _query.isEmpty
                               ? s.t('rooms.empty')
                               : s.tf('rooms.noMatch', {'query': _query}),
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: PB.textSecondary,
                             fontSize: PB.fsSm,
                             fontWeight: FontWeight.w500,
@@ -295,7 +299,7 @@ class _RoomsScreenState extends State<RoomsScreen> {
                         const SizedBox(height: 6),
                         Text(
                           s.t('rooms.emptyHint'),
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: PB.textQuaternary,
                             fontSize: PB.fsXs,
                           ),
@@ -461,7 +465,7 @@ class _RoomsScreenState extends State<RoomsScreen> {
                 const SizedBox(height: 16),
                 Text(
                   s.t('rooms.addWho'),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: PB.fsXs,
                     color: PB.textTertiary,
                   ),
@@ -583,7 +587,7 @@ class _Banner extends StatelessWidget {
           Expanded(
             child: Text(
               text,
-              style: const TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+              style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
             ),
           ),
         ],
@@ -754,7 +758,7 @@ class _RoomRowState extends State<_RoomRow> {
                                   Expanded(
                                     child: Text(
                                       room.name,
-                                      style: const TextStyle(
+                                      style: TextStyle(
                                         fontSize: PB.fsBase,
                                         fontWeight: FontWeight.w600,
                                         letterSpacing: -0.1,
@@ -766,7 +770,7 @@ class _RoomRowState extends State<_RoomRow> {
                                   const SizedBox(width: 8),
                                   Text(
                                     formatTime(room.lastMessageAt),
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       fontSize: PB.fsXxs,
                                       color: PB.textQuaternary,
                                       fontFeatures: [
@@ -851,7 +855,7 @@ class _RoomRowState extends State<_RoomRow> {
             children: [
               Text(
                 s.t('rooms.saveTemplateBody'),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsXs,
                   color: PB.textTertiary,
                   height: 1.6,
@@ -999,7 +1003,7 @@ class _RoomRowState extends State<_RoomRow> {
         ),
         content: Text(
           s.t('rooms.deleteBotBody'),
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: PB.fsSm,
             color: PB.textSecondary,
             height: 1.6,
@@ -1040,7 +1044,7 @@ class _RoomRowState extends State<_RoomRow> {
         ),
         content: Text(
           isGroup ? s.t('rooms.disbandBody') : s.t('rooms.deleteChatBody'),
-          style: const TextStyle(fontSize: PB.fsSm, color: PB.textSecondary),
+          style: TextStyle(fontSize: PB.fsSm, color: PB.textSecondary),
         ),
         actions: [
           TextButton(
@@ -1108,7 +1112,7 @@ class _HiddenRow extends StatelessWidget {
           padding: const EdgeInsets.symmetric(vertical: 9),
           child: Row(
             children: [
-              const Icon(
+              Icon(
                 LucideIcons.eyeOff,
                 size: 16,
                 color: PB.textQuaternary,
@@ -1116,7 +1120,7 @@ class _HiddenRow extends StatelessWidget {
               const SizedBox(width: 8),
               Text(
                 L10n.s(context).tf('rooms.hiddenCount', {'n': count}),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsXs,
                   color: PB.textQuaternary,
                 ),

@@ -1049,7 +1049,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           SizedBox(height: 8),
                           Text(
                             s.t('chat.dropHint'),
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: PB.fsSm,
                               color: PB.textSecondary,
                             ),
@@ -1113,7 +1113,7 @@ class _EmptyHint extends StatelessWidget {
                         ? s.t('chat.emptyGroupHint')
                         : s.t('chat.emptyDmHint')),
               textAlign: TextAlign.center,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: PB.fsSm,
                 color: PB.textQuaternary,
                 height: 1.6,
@@ -1152,7 +1152,7 @@ class _EmptyHint extends StatelessWidget {
                               i < room.botNames.length
                                   ? room.botNames[i]
                                   : room.botIds[i],
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: PB.fsXs,
                                 color: PB.textTertiary,
                               ),
@@ -1364,7 +1364,7 @@ class _ComposerState extends State<_Composer> {
                       queuedCount > 0
                           ? s.tf('chat.busyQueued', {'n': queuedCount})
                           : s.t('chat.busyHint'),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: PB.fsXxs,
                         color: PB.textTertiary,
                       ),
@@ -1420,13 +1420,13 @@ class _ComposerState extends State<_Composer> {
                                       AppScope.read(context).fileUrl(att.id) ??
                                           '',
                                       fit: BoxFit.cover,
-                                      errorBuilder: (c, e, s) => const Icon(
+                                      errorBuilder: (c, e, s) => Icon(
                                         LucideIcons.image,
                                         size: 18,
                                         color: PB.textQuaternary,
                                       ),
                                     )
-                                  : const Icon(
+                                  : Icon(
                                       LucideIcons.fileText,
                                       size: 18,
                                       color: PB.textSecondary,
@@ -1439,11 +1439,11 @@ class _ComposerState extends State<_Composer> {
                                 onTap: () => widget.onRemovePending(att),
                                 child: Container(
                                   padding: const EdgeInsets.all(2),
-                                  decoration: const BoxDecoration(
+                                  decoration: BoxDecoration(
                                     color: PB.bgActive,
                                     shape: BoxShape.circle,
                                   ),
-                                  child: const Icon(
+                                  child: Icon(
                                     LucideIcons.x,
                                     size: 12,
                                     color: PB.textSecondary,
@@ -1567,7 +1567,7 @@ class _ComposerState extends State<_Composer> {
                             ),
                             decoration: InputDecoration(
                               hintText: s.t('chat.composerHint'),
-                              hintStyle: const TextStyle(
+                              hintStyle: TextStyle(
                                 color: PB.textQuaternary,
                                 fontSize: PB.fsBase,
                               ),
@@ -1767,7 +1767,7 @@ class _RelayedFromState extends State<_RelayedFrom> {
               children: [
                 Text(
                   L10n.s(context).t('chat.relayedFrom'),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: PB.fsXxs,
                     color: PB.textQuaternary,
                   ),
@@ -1822,7 +1822,7 @@ class _TimeLabel extends StatelessWidget {
       alignment: alignEnd ? Alignment.centerRight : Alignment.centerLeft,
       child: Text(
         text,
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 9,
           color: PB.textQuaternary,
           letterSpacing: 0.2,
@@ -2143,7 +2143,7 @@ class _MessageRow extends StatelessWidget {
                               padding: const EdgeInsets.only(left: 6),
                               child: Text(
                                 L10n.s(context).t('chat.leadBadge'),
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontSize: PB.fsXxs,
                                   fontWeight: FontWeight.w600,
                                   color: PB.textQuaternary,
@@ -2219,7 +2219,7 @@ class _MessageRow extends StatelessWidget {
                                     AppScope.read(context).openInBrowser(url),
                                 mentionOf: mentionOf,
                                 mentions: mentions,
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontSize: PB.fsBase,
                                   height: 1.5,
                                   color: PB.textPrimary,
@@ -2295,7 +2295,7 @@ class _TypingDotsState extends State<_TypingDots>
                 child: Container(
                   width: 6,
                   height: 6,
-                  decoration: const BoxDecoration(
+                  decoration: BoxDecoration(
                     color: PB.textSecondary,
                     shape: BoxShape.circle,
                   ),
@@ -2378,7 +2378,7 @@ class _HoverLiftState extends State<_HoverLift> {
                 duration: const Duration(milliseconds: 140),
                 width: _hover ? 16 : 0,
                 child: _hover
-                    ? const Icon(
+                    ? Icon(
                         LucideIcons.chevronRight,
                         size: 14,
                         color: PB.textTertiary,

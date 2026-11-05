@@ -4,6 +4,8 @@ import 'area.dart';
 
 const areaCommon = StringArea(
   zh: {
+    'theme.toLight': '切到浅色',
+    'theme.toDark': '切到深色',
     'common.cancel': '取消',
     'common.save': '保存',
     'common.saving': '保存中…',
@@ -40,6 +42,8 @@ const areaCommon = StringArea(
     'common.retryLater': '稍后重试',
   },
   en: {
+    'theme.toLight': 'Switch to light',
+    'theme.toDark': 'Switch to dark',
     'common.cancel': 'Cancel',
     'common.save': 'Save',
     'common.saving': 'Saving…',

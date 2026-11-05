@@ -210,7 +210,7 @@ class _ScanScreenState extends State<ScanScreen> {
                         if (_perm != null &&
                             !_perm!.isGranted &&
                             !_perm!.isLimited) ...[
-                          const Icon(
+                          Icon(
                             LucideIcons.cameraOff,
                             size: 38,
                             color: PB.textTertiary,
@@ -221,7 +221,7 @@ class _ScanScreenState extends State<ScanScreen> {
                                 ? s.t('scan.permPermanentlyDenied')
                                 : s.t('scan.permNeeded'),
                             textAlign: TextAlign.center,
-                            style: const TextStyle(
+                            style: TextStyle(
                               color: PB.textSecondary,
                               fontSize: PB.fsSm,
                               height: 1.7,
@@ -269,7 +269,7 @@ class _ScanScreenState extends State<ScanScreen> {
                             _slow
                                 ? s.t('scan.cameraSlow')
                                 : s.t('scan.cameraStarting'),
-                            style: const TextStyle(
+                            style: TextStyle(
                               color: PB.textSecondary,
                               fontSize: PB.fsBase,
                             ),
@@ -277,13 +277,13 @@ class _ScanScreenState extends State<ScanScreen> {
                           const SizedBox(height: 8),
                           Text(
                             s.t('scan.firstUseHint'),
-                            style: const TextStyle(
+                            style: TextStyle(
                               color: PB.textQuaternary,
                               fontSize: PB.fsXs,
                             ),
                           ),
                         ] else ...[
-                          const Icon(
+                          Icon(
                             LucideIcons.cameraOff,
                             size: 38,
                             color: PB.textTertiary,
@@ -304,7 +304,7 @@ class _ScanScreenState extends State<ScanScreen> {
                               }),
                             },
                             textAlign: TextAlign.center,
-                            style: const TextStyle(
+                            style: TextStyle(
                               color: PB.textSecondary,
                               fontSize: PB.fsSm,
                               height: 1.7,

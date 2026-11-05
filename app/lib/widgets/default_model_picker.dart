@@ -54,7 +54,7 @@ class _DefaultModelPickerState extends State<_DefaultModelPicker> {
           children: [
             Text(
               strings.t('onboard.pickSubtitle'),
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: PB.fsXs,
                 color: PB.textTertiary,
                 height: 1.55,
@@ -66,7 +66,7 @@ class _DefaultModelPickerState extends State<_DefaultModelPicker> {
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 child: Text(
                   strings.t('onboard.noModelsInGroup'),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: PB.fsSm,
                     color: PB.textSecondary,
                   ),
@@ -85,7 +85,7 @@ class _DefaultModelPickerState extends State<_DefaultModelPicker> {
                             alignment: Alignment.centerLeft,
                             child: Text(
                               group.name,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: PB.fsXxs,
                                 color: PB.textQuaternary,
                               ),
@@ -159,7 +159,7 @@ class _DefaultModelPickerState extends State<_DefaultModelPicker> {
                   if (subtitle != label)
                     Text(
                       subtitle,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: PB.fsXxs,
                         color: PB.textQuaternary,
                       ),

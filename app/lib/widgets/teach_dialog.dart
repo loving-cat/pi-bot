@@ -107,7 +107,7 @@ class _TeachDialogState extends State<_TeachDialog> {
                   Expanded(
                     child: Text(
                       strings.tf('teach.title', {'bot': widget.bot.name}),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: PB.fsLg,
                         fontWeight: FontWeight.w600,
                         color: PB.textPrimary,
@@ -119,7 +119,7 @@ class _TeachDialogState extends State<_TeachDialog> {
               const SizedBox(height: 6),
               Text(
                 strings.t('teach.intro'),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsXs,
                   color: PB.textTertiary,
                 ),
@@ -154,7 +154,7 @@ class _TeachDialogState extends State<_TeachDialog> {
                       ),
                       child: Text(
                         strings.t('common.cancel'),
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: PB.fsSm,
                           color: PB.textSecondary,
                         ),
@@ -205,7 +205,7 @@ class _TeachDialogState extends State<_TeachDialog> {
       children: [
         Text(
           label,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: PB.fsXs,
             color: PB.textTertiary,
             fontWeight: FontWeight.w500,
@@ -223,13 +223,13 @@ class _TeachDialogState extends State<_TeachDialog> {
             controller: controller,
             maxLines: maxLines,
             minLines: maxLines > 1 ? 3 : 1,
-            style: const TextStyle(fontSize: PB.fsSm, color: PB.textPrimary),
+            style: TextStyle(fontSize: PB.fsSm, color: PB.textPrimary),
             decoration: InputDecoration(
               border: InputBorder.none,
               isDense: true,
               contentPadding: const EdgeInsets.symmetric(vertical: 10),
               hintText: hint,
-              hintStyle: const TextStyle(
+              hintStyle: TextStyle(
                 fontSize: PB.fsSm,
                 color: PB.textQuaternary,
               ),

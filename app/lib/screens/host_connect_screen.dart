@@ -131,7 +131,7 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
                   SelectableText(
                     url,
                     textAlign: TextAlign.center,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: PB.monoFamily,
                       fontFamilyFallback: PB.monoFallback,
                       fontSize: PB.fsXs,
@@ -152,7 +152,7 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
                       ),
                       child: SelectableText(
                         problem,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: PB.fsXs,
                           color: PB.textSecondary,
                           height: 1.6,
@@ -203,7 +203,7 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
                       child: SelectableText(
                         state.serverLog.take(10).join('\n'),
                         maxLines: 10,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontFamily: PB.monoFamily,
                           fontFamilyFallback: PB.monoFallback,
                           fontSize: PB.fsXxs,
@@ -226,7 +226,7 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
                       children: [
                         Row(
                           children: [
-                            const Icon(
+                            Icon(
                               LucideIcons.terminal,
                               size: 15,
                               color: PB.textTertiary,
@@ -234,7 +234,7 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
                             const SizedBox(width: 8),
                             Text(
                               s.t('host.autoStartHint'),
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: PB.fsXs,
                                 color: PB.textTertiary,
                               ),
@@ -255,7 +255,7 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
                           ),
                           child: SelectableText(
                             manual,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontFamily: PB.monoFamily,
                               fontFamilyFallback: PB.monoFallback,
                               fontSize: PB.fsXs,
@@ -271,7 +271,7 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
                               : s.tf('host.manualHintWithLog', {
                                   'path': state.serverLogPath,
                                 }),
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: PB.fsXxs,
                             color: PB.textQuaternary,
                             height: 1.5,
@@ -302,7 +302,7 @@ class _HostConnectScreenState extends State<HostConnectScreen> {
                   Text(
                     s.t('host.pairPhoneHint'),
                     textAlign: TextAlign.center,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: PB.fsXs,
                       color: PB.textQuaternary,
                       height: 1.5,

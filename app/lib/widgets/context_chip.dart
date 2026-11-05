@@ -133,7 +133,7 @@ class _ContextChipState extends State<ContextChip> {
             const SizedBox(height: 10),
             Text(
               strings.t('ctx.compactNote'),
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: PB.fsXxs,
                 color: PB.textQuaternary,
                 height: 1.5,
@@ -160,13 +160,13 @@ class _ContextChipState extends State<ContextChip> {
           width: 64,
           child: Text(
             label,
-            style: const TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+            style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
           ),
         ),
         Expanded(
           child: Text(
             value,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: PB.fsXs,
               color: PB.textSecondary,
               height: 1.5,
@@ -245,7 +245,7 @@ class CompactNotice extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(
+              Icon(
                 LucideIcons.minimize2,
                 size: 13,
                 color: PB.textQuaternary,
@@ -263,7 +263,7 @@ class CompactNotice extends StatelessWidget {
                             : strings.tf('ctx.compactedFrom', {
                                 'before': before ~/ 1000,
                               })),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: PB.fsXxs,
                     color: PB.textTertiary,
                   ),

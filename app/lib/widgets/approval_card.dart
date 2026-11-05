@@ -93,7 +93,7 @@ class _ApprovalCardState extends State<ApprovalCard> {
                     const SizedBox(width: 6),
                     Text(
                       tool,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: PB.monoFamily,
                         fontFamilyFallback: PB.monoFallback,
                         fontSize: PB.fsXxs,
@@ -108,7 +108,7 @@ class _ApprovalCardState extends State<ApprovalCard> {
                 summary,
                 maxLines: 4,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   fontFamily: PB.monoFamily,
                   fontFamilyFallback: PB.monoFallback,
                   fontSize: PB.fsXs,
@@ -151,7 +151,7 @@ class _ApprovalCardState extends State<ApprovalCard> {
                           ? 'approval.approvedHint'
                           : 'approval.rejectedHint',
                     ),
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: PB.fsXxs,
                       color: PB.textQuaternary,
                     ),

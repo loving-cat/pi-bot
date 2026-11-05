@@ -125,7 +125,7 @@ class _ConnectionsDetailState extends State<ConnectionsDetail> {
               if (item.server.description.isNotEmpty) ...[
                 Text(
                   item.server.description,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: PB.textSecondary,
                     fontSize: PB.fsBase,
                   ),
@@ -144,7 +144,7 @@ class _ConnectionsDetailState extends State<ConnectionsDetail> {
               const SizedBox(height: 4),
               Text(
                 _checkedAtLabel(strings, evidence.checkedAt),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsSm,
                   color: PB.textTertiary,
                 ),
@@ -207,7 +207,7 @@ class _ConnectionsDetailState extends State<ConnectionsDetail> {
               if (evidence.tools.isEmpty)
                 Text(
                   _toolsEmptyHint(strings, evidence),
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: PB.textTertiary,
                     fontSize: PB.fsSm,
                   ),
@@ -228,7 +228,7 @@ class _ConnectionsDetailState extends State<ConnectionsDetail> {
                             tool.description,
                             maxLines: 3,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
+                            style: TextStyle(
                               color: PB.textTertiary,
                               fontSize: PB.fsSm,
                               height: 1.4,
@@ -248,7 +248,7 @@ class _ConnectionsDetailState extends State<ConnectionsDetail> {
               const SizedBox(height: 6),
               Text(
                 _policyHint(strings),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsSm,
                   color: PB.textTertiary,
                   height: 1.5,
@@ -259,7 +259,7 @@ class _ConnectionsDetailState extends State<ConnectionsDetail> {
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   child: Text(
                     strings.t('conn.noBots'),
-                    style: const TextStyle(color: PB.textTertiary),
+                    style: TextStyle(color: PB.textTertiary),
                   ),
                 ),
               for (final bot in widget.bots)

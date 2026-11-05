@@ -96,7 +96,7 @@ class _SkillsLibrarySectionState extends State<SkillsLibrarySection> {
             padding: const EdgeInsets.symmetric(vertical: 24),
             child: Text(
               strings.tf('skills.noMatch', {'query': _query}),
-              style: const TextStyle(fontSize: PB.fsSm, color: PB.textTertiary),
+              style: TextStyle(fontSize: PB.fsSm, color: PB.textTertiary),
             ),
           )
         else
@@ -135,7 +135,7 @@ class _SkillsLibrarySectionState extends State<SkillsLibrarySection> {
         ),
         content: Text(
           L10n.s(ctx).tf('skills.deleteBody', {'title': skill.title}),
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: PB.fsSm,
             color: PB.textSecondary,
             height: 1.6,
@@ -194,7 +194,7 @@ class _SkillsLibrarySectionState extends State<SkillsLibrarySection> {
                 children: [
                   Text(
                     strings.t('skills.formIntro'),
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: PB.fsXs,
                       color: PB.textTertiary,
                       height: 1.6,
@@ -387,7 +387,7 @@ class _Toolbar extends StatelessWidget {
                 hintText: total == 0
                     ? strings.t('skills.searchEmptyHint')
                     : strings.tf('skills.searchHint', {'n': total}),
-                hintStyle: const TextStyle(
+                hintStyle: TextStyle(
                   fontSize: PB.fsXs,
                   color: PB.textQuaternary,
                 ),
@@ -450,7 +450,7 @@ class _SmallButton extends StatelessWidget {
               minimumSize: const Size(0, 34),
               padding: const EdgeInsets.symmetric(horizontal: 12),
               foregroundColor: PB.textSecondary,
-              side: const BorderSide(color: PB.borderSecondary),
+              side: BorderSide(color: PB.borderSecondary),
             ),
           );
     return tooltip == null ? btn : Tooltip(message: tooltip!, child: btn);
@@ -476,17 +476,17 @@ class _EmptyHint extends StatelessWidget {
       ),
       child: Column(
         children: [
-          const Icon(LucideIcons.sparkles, size: 26, color: PB.textQuaternary),
+          Icon(LucideIcons.sparkles, size: 26, color: PB.textQuaternary),
           const SizedBox(height: 12),
           Text(
             strings.t('skills.empty'),
-            style: const TextStyle(fontSize: PB.fsSm, color: PB.textSecondary),
+            style: TextStyle(fontSize: PB.fsSm, color: PB.textSecondary),
           ),
           const SizedBox(height: 6),
           Text(
             strings.t('skills.emptyBody'),
             textAlign: TextAlign.center,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: PB.fsXs,
               color: PB.textTertiary,
               height: 1.7,
@@ -560,7 +560,7 @@ class _SkillCardState extends State<_SkillCard> {
                       turns: _open ? 0.25 : 0,
                       duration: Motion.fast,
                       curve: Motion.inC,
-                      child: const Icon(
+                      child: Icon(
                         LucideIcons.chevronRight,
                         size: 15,
                         color: PB.textQuaternary,
@@ -608,7 +608,7 @@ class _SkillCardState extends State<_SkillCard> {
                               s.summary,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: PB.fsXxs,
                                 color: PB.textTertiary,
                               ),
@@ -652,7 +652,7 @@ class _SkillCardState extends State<_SkillCard> {
                 child: s.howto.isEmpty
                     ? SelectableText(
                         strings.t('skills.noHowto'),
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: PB.fsXs,
                           color: PB.textQuaternary,
                           height: 1.7,
@@ -662,7 +662,7 @@ class _SkillCardState extends State<_SkillCard> {
                         s.howto,
                         selectable: true,
                         compact: true,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: PB.fsXs,
                           color: PB.textSecondary,
                           height: 1.7,
@@ -697,7 +697,7 @@ class _Tag extends StatelessWidget {
       ),
       child: Text(
         text,
-        style: const TextStyle(fontSize: 10, color: PB.textTertiary),
+        style: TextStyle(fontSize: 10, color: PB.textTertiary),
       ),
     );
   }

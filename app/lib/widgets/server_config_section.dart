@@ -35,11 +35,11 @@ class ServerConfigSection extends StatelessWidget {
       children: [
         Row(
           children: [
-            const Icon(LucideIcons.serverCog, size: 15, color: PB.textTertiary),
+            Icon(LucideIcons.serverCog, size: 15, color: PB.textTertiary),
             const SizedBox(width: 8),
             Text(
               strings.t('servercfg.title'),
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: PB.fsSm,
                 fontWeight: FontWeight.w600,
                 color: PB.textSecondary,
@@ -66,7 +66,7 @@ class ServerConfigSection extends StatelessWidget {
             children: [
               Text(
                 strings.t('servercfg.intro'),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsXxs,
                   color: PB.textQuaternary,
                   height: 1.6,
@@ -80,7 +80,7 @@ class ServerConfigSection extends StatelessWidget {
               const SizedBox(height: 6),
               Text(
                 strings.t('servercfg.dataDirNote'),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsXxs,
                   color: PB.textQuaternary,
                   height: 1.6,
@@ -138,13 +138,13 @@ class _Row extends StatelessWidget {
             width: 76,
             child: Text(
               label,
-              style: const TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+              style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
             ),
           ),
           Expanded(
             child: SelectableText(
               value,
-              style: const TextStyle(
+              style: TextStyle(
                 fontFamily: PB.monoFamily,
                 fontFamilyFallback: PB.monoFallback,
                 fontSize: PB.fsXs,
@@ -239,7 +239,7 @@ class _ServerConfigDialogState extends State<_ServerConfigDialog> {
             children: [
               Text(
                 strings.t('servercfg.dialogIntro'),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsXxs,
                   color: PB.textQuaternary,
                   height: 1.6,
@@ -292,7 +292,7 @@ class _ServerConfigDialogState extends State<_ServerConfigDialog> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: const TextStyle(fontSize: PB.fsXs, color: PB.textTertiary)),
+          Text(label, style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary)),
           const SizedBox(height: 6),
           TextField(
             controller: c,
@@ -303,7 +303,7 @@ class _ServerConfigDialogState extends State<_ServerConfigDialog> {
             ),
             decoration: InputDecoration(
               hintText: hint,
-              hintStyle: const TextStyle(fontSize: PB.fsXs, color: PB.textQuaternary),
+              hintStyle: TextStyle(fontSize: PB.fsXs, color: PB.textQuaternary),
               isDense: true,
               filled: true,
               fillColor: PB.bgApp,

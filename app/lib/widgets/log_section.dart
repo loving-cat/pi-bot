@@ -20,11 +20,11 @@ class LogSection extends StatelessWidget {
       children: [
         Row(
           children: [
-            const Icon(LucideIcons.fileText, size: 15, color: PB.textTertiary),
+            Icon(LucideIcons.fileText, size: 15, color: PB.textTertiary),
             const SizedBox(width: 8),
             Text(
               strings.t('log.title'),
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: PB.fsSm,
                 fontWeight: FontWeight.w600,
                 color: PB.textSecondary,
@@ -52,7 +52,7 @@ class LogSection extends StatelessWidget {
             children: [
               Text(
                 strings.t('log.note'),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsXxs,
                   color: PB.textQuaternary,
                   height: 1.6,
@@ -61,7 +61,7 @@ class LogSection extends StatelessWidget {
               const SizedBox(height: 8),
               SelectableText(
                 appLogDir,
-                style: const TextStyle(
+                style: TextStyle(
                   fontFamily: PB.monoFamily,
                   fontFamilyFallback: PB.monoFallback,
                   fontSize: PB.fsXs,

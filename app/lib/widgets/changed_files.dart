@@ -62,7 +62,7 @@ class _ChangedFilesViewState extends State<ChangedFilesView> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(
+                    Icon(
                       LucideIcons.fileText,
                       size: 11,
                       color: PB.textQuaternary,
@@ -70,7 +70,7 @@ class _ChangedFilesViewState extends State<ChangedFilesView> {
                     const SizedBox(width: 5),
                     Text(
                       strings.tf('files.total', {'n': s.total}),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: PB.fsXxs,
                         fontWeight: FontWeight.w600,
                         letterSpacing: 0.3,
@@ -87,7 +87,7 @@ class _ChangedFilesViewState extends State<ChangedFilesView> {
                               }),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: PB.fsXxs,
                           color: PB.textQuaternary,
                         ),
@@ -133,7 +133,7 @@ class _ChangedFilesViewState extends State<ChangedFilesView> {
                           file.path,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontFamily: PB.monoFamily,
                             fontFamilyFallback: PB.monoFallback,
                             fontSize: PB.fsTinyCjk,
@@ -152,7 +152,7 @@ class _ChangedFilesViewState extends State<ChangedFilesView> {
                           'n': rows.length - shown.length,
                         }) +
                         (s.truncated ? strings.t('files.truncated') : ''),
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: PB.fsXxs,
                       color: PB.textQuaternary,
                     ),

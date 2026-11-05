@@ -186,6 +186,8 @@ class _PiBotAppState extends State<PiBotApp> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _loadLocale();
+    // 明暗偏好要在第一帧之前读回来，否则会先闪一下深色再变浅
+    loadColorMode();
     Notifier.init();
     // 点通知 → 直接进那个会话
     Notifier.onTap = (roomId) {
@@ -295,15 +297,45 @@ class _PiBotThemedApplicationState extends State<PiBotThemedApplication> {
   Widget? _application;
 
   @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
+  void initState() {
+    super.initState();
+    // 明暗切换时重建主题。
+    //
+    // 颜色是全局 PB.xxx getter 读的，理论上不重建也能拿到新值；
+    // 但 MaterialApp 的 ThemeData 是缓存的，里面还压着一份 colorScheme
+    // 和文字样式（输入框、按钮那些组件用的是它）。不重建的话，
+    // 聊天区变了色、输入框和按钮却还是旧的。
+    pbColorMode.addListener(_onColorModeChanged);
+  }
+
+  @override
+  void dispose() {
+    pbColorMode.removeListener(_onColorModeChanged);
+    super.dispose();
+  }
+
+  void _onColorModeChanged() {
+    if (!mounted) return;
+    setState(() {
+      _theme = PB.theme(seed: _currentSeed(), light: isLightMode);
+      _application = null;
+    });
+  }
+
+  Color _currentSeed() {
     final mainBot = AppScope.of(context).mainBot;
-    final seed = mainBot == null
+    return mainBot == null
         ? PB.accent
         : parseAvatarColor(mainBot.avatarColor) ?? PB.colorFor(mainBot.id);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final seed = _currentSeed();
     if (_seedValue != seed.toARGB32()) {
       _seedValue = seed.toARGB32();
-      _theme = PB.theme(seed: seed);
+      _theme = PB.theme(seed: seed, light: isLightMode);
       _application = null;
     }
   }
@@ -319,7 +351,14 @@ class _PiBotThemedApplicationState extends State<PiBotThemedApplication> {
     navigatorKey: widget.navigatorKey,
     title: 'pi-bot',
     debugShowCheckedModeBanner: false,
-    themeMode: ThemeMode.dark,
+    // ★ themeMode 必须跟着当前模式走。
+    //
+    //   原来写死 ThemeMode.dark，于是即使 _theme 已经按浅色算好，
+    //   MaterialApp 也只会去取 darkTheme —— 切换看起来"没反应"。
+    //   现在两套都指向同一个 _theme（它自己含明暗），选哪套都一样，
+    //   但 themeMode 要给出正确的值，组件才会走对应的默认分支配色。
+    themeMode: isLightMode ? ThemeMode.light : ThemeMode.dark,
+    theme: _theme,
     darkTheme: _theme,
     themeAnimationDuration: Duration.zero,
     // 各分栏占满窗口高度，角落窗口按钮独立叠加。

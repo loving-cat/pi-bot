@@ -71,7 +71,7 @@ class _ToolStepsState extends State<ToolSteps> {
             const SizedBox(width: 7),
             Text(
               strings.t('tools.working'),
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: PB.fsXxs,
                 color: PB.textQuaternary,
               ),
@@ -137,7 +137,7 @@ class _ToolStepsState extends State<ToolSteps> {
                         '${current.tool}${_open ? '' : ' · ${strings.t('tools.openHint')}'}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontFamily: PB.monoFamily,
                           fontFamilyFallback: PB.monoFallback,
                           fontSize: PB.fsXxs,

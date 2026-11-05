@@ -85,7 +85,7 @@ class ModelPickerField extends StatelessWidget {
                 if (groups.isEmpty)
                   Text(
                     strings.t('model.emptyGroups'),
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: PB.fsXs,
                       color: PB.textQuaternary,
                       height: 1.7,
@@ -97,7 +97,7 @@ class ModelPickerField extends StatelessWidget {
                       padding: const EdgeInsets.only(top: 6, bottom: 4),
                       child: Text(
                         g.name,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: PB.fsXs,
                           fontWeight: FontWeight.w600,
                           color: PB.textTertiary,
@@ -110,7 +110,7 @@ class ModelPickerField extends StatelessWidget {
                         contentPadding: EdgeInsets.zero,
                         title: Text(
                           m.id,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: PB.fsSm,
                             color: PB.textPrimary,
                           ),
@@ -126,7 +126,7 @@ class ModelPickerField extends StatelessWidget {
                                 'n': m.maxTokens,
                               }),
                           ].join(' · '),
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: PB.fsXxs,
                             color: PB.textQuaternary,
                           ),

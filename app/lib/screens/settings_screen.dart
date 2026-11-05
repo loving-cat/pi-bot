@@ -168,7 +168,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               //   **地址**和**配对码**，手机上照着填就行。
               Row(
                 children: [
-                  const Icon(
+                  Icon(
                     LucideIcons.link,
                     size: 14,
                     color: PB.textTertiary,
@@ -177,7 +177,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   Expanded(
                     child: Text(
                       base,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: PB.monoFamily,
                         fontFamilyFallback: PB.monoFallback,
                         fontSize: PB.fsSm,
@@ -218,7 +218,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       );
                       toast(context, s.t('settings.connect.codeCopied'));
                     },
-                    child: const Icon(
+                    child: Icon(
                       LucideIcons.copy,
                       size: 15,
                       color: PB.textQuaternary,
@@ -231,7 +231,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 remaining > 0
                     ? s.tf('settings.connect.codeRefreshIn', {'n': remaining})
                     : s.t('settings.connect.codeRefreshing'),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsXs,
                   color: PB.textQuaternary,
                 ),
@@ -244,7 +244,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     children: [
                       Text(
                         s.t('settings.connect.connectedServer'),
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: PB.fsXs,
                           color: PB.textTertiary,
                         ),
@@ -256,7 +256,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             child: Text(
                               state.serverUrl ??
                                   s.t('settings.connect.unknownServer'),
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontFamily: PB.monoFamily,
                                 fontFamilyFallback: PB.monoFallback,
                                 fontSize: PB.fsSm,
@@ -264,7 +264,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               ),
                             ),
                           ),
-                          const Icon(
+                          Icon(
                             LucideIcons.smartphone,
                             size: 16,
                             color: PB.textQuaternary,
@@ -274,7 +274,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       const SizedBox(height: 4),
                       Text(
                         s.t('settings.connect.remoteHint'),
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: PB.fsXxs,
                           color: PB.textQuaternary,
                           height: 1.6,
@@ -300,7 +300,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     subtitle: Text(
                       s.t('settings.connect.rescanSubtitle'),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: PB.fsXxs,
                         color: PB.textQuaternary,
                       ),
@@ -324,7 +324,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             children: [
               Text(
                 s.t('settings.connect.manualAddress'),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsXs,
                   fontWeight: FontWeight.w600,
                   color: PB.textTertiary,
@@ -336,7 +336,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   padding: const EdgeInsets.only(bottom: 6),
                   child: Row(
                     children: [
-                      const Icon(
+                      Icon(
                         LucideIcons.network,
                         size: 14,
                         color: PB.textQuaternary,
@@ -345,7 +345,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       Expanded(
                         child: SelectableText(
                           '${(addr as Map)['url']}',
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontFamily: PB.monoFamily,
                             fontFamilyFallback: PB.monoFallback,
                             fontSize: PB.fsXs,
@@ -355,7 +355,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                       Text(
                         '${addr['name']}',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: PB.fsXxs,
                           color: PB.textQuaternary,
                         ),
@@ -411,7 +411,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       padding: const EdgeInsets.symmetric(vertical: 4),
                       child: Row(
                         children: [
-                          const Icon(
+                          Icon(
                             LucideIcons.smartphone,
                             size: 16,
                             color: PB.textTertiary,
@@ -423,7 +423,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               children: [
                                 Text(
                                   '${d['name']}',
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                     fontSize: PB.fsSm,
                                     color: PB.textPrimary,
                                   ),
@@ -434,7 +434,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                       (d['lastSeenAt'] as num?)?.toInt() ?? 0,
                                     ),
                                   }),
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                     fontSize: PB.fsXxs,
                                     color: PB.textQuaternary,
                                   ),
@@ -542,7 +542,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 10),
               Text(
                 s.t('settings.notify.romHint'),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsXxs,
                   color: PB.textQuaternary,
                   height: 1.5,
@@ -578,7 +578,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 subtitle: Text(
                   s.t('settings.actions.reconnectLocalSubtitle'),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: PB.fsXxs,
                     color: PB.textQuaternary,
                   ),
@@ -748,7 +748,7 @@ class _SectionTitle extends StatelessWidget {
           const SizedBox(width: 8),
           Text(
             title,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: PB.fsSm,
               fontWeight: FontWeight.w600,
               color: PB.textSecondary,
@@ -759,7 +759,7 @@ class _SectionTitle extends StatelessWidget {
             Expanded(
               child: Text(
                 subtitle!,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsXxs,
                   color: PB.textQuaternary,
                 ),
@@ -803,7 +803,7 @@ class _Hint extends StatelessWidget {
     return Text(
       text,
       textAlign: TextAlign.center,
-      style: const TextStyle(
+      style: TextStyle(
         fontSize: PB.fsXs,
         color: PB.textQuaternary,
         height: 1.7,
@@ -927,7 +927,7 @@ class _InfoRow extends StatelessWidget {
             width: 72,
             child: Text(
               label,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: PB.fsXs,
                 color: PB.textQuaternary,
               ),
@@ -936,7 +936,7 @@ class _InfoRow extends StatelessWidget {
           Expanded(
             child: SelectableText(
               value,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: PB.fsXs,
                 color: PB.textSecondary,
                 fontFamily: PB.monoFamily,

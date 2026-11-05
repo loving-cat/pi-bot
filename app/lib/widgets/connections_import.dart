@@ -66,7 +66,7 @@ class _ConnectionsImportState extends State<ConnectionsImport> {
                   ] else if (!state.scanning && state.localEntries.isEmpty)
                     Text(
                       strings.t('conn.importEmpty'),
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: PB.textTertiary,
                         fontSize: PB.fsSm,
                       ),
@@ -101,7 +101,7 @@ class _ConnectionsImportState extends State<ConnectionsImport> {
                   if (state.importResult != null)
                     Text(
                       state.importResult!,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: PB.fsSm,
                         color: PB.textSecondary,
                       ),

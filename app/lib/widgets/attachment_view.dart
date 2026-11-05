@@ -72,7 +72,7 @@ class AttachmentList extends StatelessWidget {
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(
+              Icon(
                 LucideIcons.paperclip,
                 size: 11,
                 color: PB.textQuaternary,
@@ -80,7 +80,7 @@ class AttachmentList extends StatelessWidget {
               const SizedBox(width: 5),
               Text(
                 L10n.s(context).tf('attach.count', {'n': files.length}),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsXxs,
                   fontWeight: FontWeight.w600,
                   letterSpacing: 0.3,
@@ -166,7 +166,7 @@ class _Thumb extends StatelessWidget {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Icon(
+                    Icon(
                       LucideIcons.imageOff,
                       size: 18,
                       color: PB.textQuaternary,
@@ -174,7 +174,7 @@ class _Thumb extends StatelessWidget {
                     const SizedBox(height: 4),
                     Text(
                       name,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: PB.fsXxs,
                         color: PB.textQuaternary,
                       ),
@@ -288,8 +288,8 @@ class _FileChipState extends State<FileChip> {
     final file = widget.file;
     final url = widget.url;
     final fullWidth = widget.fullWidth;
-    const fg = PB.textPrimary;
-    const dim = PB.textQuaternary;
+    final fg = PB.textPrimary;
+    final dim = PB.textQuaternary;
 
     final nameCol = Column(
       crossAxisAlignment: CrossAxisAlignment.start,

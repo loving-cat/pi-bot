@@ -25,7 +25,7 @@ class LanguageCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Icon(LucideIcons.languages, size: 18, color: PB.textSecondary),
+              Icon(LucideIcons.languages, size: 18, color: PB.textSecondary),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
@@ -38,7 +38,7 @@ class LanguageCard extends StatelessWidget {
           const SizedBox(height: 4),
           Text(
             strings.t('settings.languageSubtitle'),
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: PB.fsXxs,
               color: PB.textQuaternary,
               height: 1.5,

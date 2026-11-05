@@ -212,7 +212,7 @@ class _Card extends StatelessWidget {
                         Expanded(
                           child: Text(
                             title!,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: PB.fsXxs,
                               fontWeight: FontWeight.w600,
                               color: PB.textTertiary,
@@ -228,7 +228,7 @@ class _Card extends StatelessWidget {
                           ),
                           visualDensity: VisualDensity.compact,
                           onPressed: close,
-                          icon: const Icon(
+                          icon: Icon(
                             LucideIcons.x,
                             size: 13,
                             color: PB.textQuaternary,
@@ -248,7 +248,7 @@ class _Card extends StatelessWidget {
                       ),
                       child: Text(
                         items[i].sectionLabel!,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: PB.fsXxs,
                           fontWeight: FontWeight.w600,
                           color: PB.textTertiary,
@@ -326,7 +326,7 @@ class _RowState extends State<_Row> {
                       it.title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: PB.fsSm,
                         fontWeight: FontWeight.w500,
                         color: PB.textPrimary,
@@ -339,7 +339,7 @@ class _RowState extends State<_Row> {
                           it.subtitle!,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: PB.fsXxs,
                             color: PB.textQuaternary,
                             height: 1.35,

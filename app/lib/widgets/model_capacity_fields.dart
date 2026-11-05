@@ -61,7 +61,7 @@ class ModelCardsEditor extends StatelessWidget {
       ),
       Text(
         L10n.s(context).t('model.cardsHint'),
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: PB.fsXxs,
           color: PB.textQuaternary,
           height: 1.5,
@@ -94,7 +94,7 @@ class ModelCardsEditor extends StatelessWidget {
             children: [
               Text(
                 strings.tf('model.cardNumber', {'n': number}),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsXs,
                   color: PB.textSecondary,
                 ),
@@ -273,7 +273,7 @@ class ModelCardsEditor extends StatelessWidget {
                 const Spacer(),
                 Text(
                   isOn ? 'on' : 'off',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: PB.fsXxs,
                     color: PB.textQuaternary,
                     fontFamily: PB.monoFamily,
@@ -288,7 +288,7 @@ class ModelCardsEditor extends StatelessWidget {
           isOn
               ? strings.t('model.thinkingOnHint')
               : strings.t('model.thinkingOffHint'),
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: PB.fsXxs,
             color: PB.textQuaternary,
             height: 1.5,
@@ -302,7 +302,7 @@ class ModelCardsEditor extends StatelessWidget {
                 width: 96,
                 child: Text(
                   strings.t('model.upstreamFormat'),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: PB.fsXxs,
                     color: PB.textTertiary,
                   ),
@@ -366,7 +366,7 @@ class ModelCardsEditor extends StatelessWidget {
             mapped.isEmpty
                 ? strings.t('model.noLevelMapped')
                 : strings.tf('model.levelsMapped', {'n': mapped.length}),
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: PB.fsXxs,
               color: PB.textQuaternary,
               height: 1.5,
@@ -425,7 +425,7 @@ class _LevelSummary extends StatelessWidget {
         width: 96,
         child: Text(
           L10n.s(context).t('model.levelMapping'),
-          style: const TextStyle(fontSize: PB.fsXxs, color: PB.textTertiary),
+          style: TextStyle(fontSize: PB.fsXxs, color: PB.textTertiary),
         ),
       ),
       Expanded(
@@ -449,7 +449,7 @@ class _LevelSummary extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
                 child: Text(
                   L10n.s(context).t('model.resetSameName'),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: PB.fsXxs,
                     color: PB.textTertiary,
                     decoration: TextDecoration.underline,
@@ -545,7 +545,7 @@ class _LevelTunerState extends State<_LevelTuner> {
               Text(
                 L10n.s(context)
                     .t(_open ? 'model.collapseTuner' : 'model.expandTuner'),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsXxs,
                   color: PB.textTertiary,
                 ),
@@ -564,7 +564,7 @@ class _LevelTunerState extends State<_LevelTuner> {
                   width: 78,
                   child: Text(
                     level,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: PB.fsXxs,
                       fontFamily: PB.monoFamily,
                       color: PB.textTertiary,
@@ -653,7 +653,7 @@ class ModelGroupModelSummary extends StatelessWidget {
                           'name': model.name,
                           'id': model.id,
                         }),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: PB.fsXs,
                     color: PB.textSecondary,
                   ),
@@ -664,7 +664,7 @@ class ModelGroupModelSummary extends StatelessWidget {
                     'output': _tokens(strings, model.maxTokens),
                     'thinking': _thinking(strings, model),
                   }),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: PB.fsXxs,
                     color: PB.textQuaternary,
                   ),

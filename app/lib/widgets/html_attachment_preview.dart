@@ -271,7 +271,7 @@ class _HtmlAttachmentPreviewState extends State<HtmlAttachmentPreview> {
               ),
               Text(
                 L10n.s(context).t('html.offlineNote'),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: PB.fsXs,
                   color: PB.textTertiary,
                 ),
@@ -349,7 +349,7 @@ class _HtmlAttachmentPreviewState extends State<HtmlAttachmentPreview> {
             ? '${html.substring(0, limit)}\n\n'
                   '${L10n.s(context).t('html.truncated')}'
             : html,
-        style: const TextStyle(
+        style: TextStyle(
           fontFamily: PB.monoFamily,
           fontFamilyFallback: PB.monoFallback,
           fontSize: PB.fsXs,
@@ -373,7 +373,7 @@ class _HtmlAttachmentPreviewState extends State<HtmlAttachmentPreview> {
           Text(
             message,
             textAlign: TextAlign.center,
-            style: const TextStyle(color: PB.textSecondary, height: 1.5),
+            style: TextStyle(color: PB.textSecondary, height: 1.5),
           ),
           const SizedBox(height: 12),
           if (retry)

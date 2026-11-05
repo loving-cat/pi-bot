@@ -241,7 +241,7 @@ class _ToastViewState extends State<_ToastView>
                     Flexible(
                       child: Text(
                         widget.handle.message,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: PB.fsXs,
                           color: PB.textPrimary,
                           height: 1.5,

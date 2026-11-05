@@ -23,7 +23,7 @@ class ConversationPeople extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const style = TextStyle(fontSize: PB.fsXs, color: PB.textQuaternary);
+    final style = TextStyle(fontSize: PB.fsXs, color: PB.textQuaternary);
     return LayoutBuilder(
       builder: (context, constraints) {
         final maxNameWidth = math.min(160.0, constraints.maxWidth);

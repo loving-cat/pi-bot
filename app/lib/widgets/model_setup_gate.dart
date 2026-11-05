@@ -67,7 +67,7 @@ class ModelSetupGate extends StatelessWidget {
                 const SizedBox(height: 14),
                 Text(
                   strings.t('onboard.subtitle'),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: PB.fsSm,
                     color: PB.textSecondary,
                     height: 1.6,
@@ -131,14 +131,14 @@ class ModelSetupGate extends StatelessWidget {
           ),
           child: Text(
             '$n',
-            style: const TextStyle(fontSize: PB.fsXxs, color: PB.textSecondary),
+            style: TextStyle(fontSize: PB.fsXxs, color: PB.textSecondary),
           ),
         ),
         const SizedBox(width: 10),
         Expanded(
           child: Text(
             text,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: PB.fsSm,
               color: PB.textSecondary,
               height: 1.55,

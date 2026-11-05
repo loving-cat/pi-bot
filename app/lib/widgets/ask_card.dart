@@ -174,7 +174,7 @@ class _AskCardState extends State<AskCard> with SingleTickerProviderStateMixin {
               if (msg.text.isNotEmpty)
                 Text(
                   msg.text,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: PB.fsSm,
                     color: PB.textPrimary,
                     height: 1.5,
@@ -241,7 +241,7 @@ class _CollapsedAsk extends StatelessWidget {
               }),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: PB.fsXxs,
                 color: PB.textQuaternary,
               ),
@@ -339,7 +339,7 @@ class _OptionButtonState extends State<_OptionButton> {
                   children: [
                     Text(
                       widget.label,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: PB.fsSm,
                         color: PB.textPrimary,
                         fontWeight: FontWeight.w500,
@@ -349,7 +349,7 @@ class _OptionButtonState extends State<_OptionButton> {
                       const SizedBox(height: 2),
                       Text(
                         widget.detail,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: PB.fsXxs,
                           color: PB.textQuaternary,
                           height: 1.4,
@@ -412,7 +412,7 @@ class _CustomAnswerState extends State<_CustomAnswer> {
             style: const TextStyle(fontSize: PB.fsSm),
             decoration: InputDecoration(
               hintText: L10n.s(context).t('ask.customHint'),
-              hintStyle: const TextStyle(
+              hintStyle: TextStyle(
                 fontSize: PB.fsSm,
                 color: PB.textQuaternary,
               ),
@@ -423,7 +423,7 @@ class _CustomAnswerState extends State<_CustomAnswer> {
               ),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(PB.rLg),
-                borderSide: const BorderSide(color: PB.borderSecondary),
+                borderSide: BorderSide(color: PB.borderSecondary),
               ),
             ),
           ),
