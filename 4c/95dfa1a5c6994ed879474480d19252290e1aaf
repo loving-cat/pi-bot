@@ -1,0 +1,28 @@
+app/lib/chat_scroll_follow.dart
+  h_c2e638ff76b3b9 21-26,67,69-78
+app/lib/l10n/strings/chat.dart
+  h_c2e638ff76b3b9 63,118,120,239
+app/lib/l10n/strings/panel.dart
+  h_c2e638ff76b3b9 72,191,196,273,397,401
+app/lib/l10n/strings/panel2.dart
+  h_c2e638ff76b3b9 20,77,84,91,180,223,271,297,366,427,441,581,655
+app/lib/l10n/strings/room.dart
+  h_c2e638ff76b3b9 27
+app/lib/l10n/strings/settings2.dart
+  h_c2e638ff76b3b9 44
+app/test/chat_scroll_follow_test.dart
+  h_c2e638ff76b3b9 269-303
+app/test/lessons_section_test.dart
+  h_c2e638ff76b3b9 102,106-107
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4c95dfa1a5c6994ed879474480d19252290e1aaf",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
