@@ -256,6 +256,30 @@ class AppState extends ChangeNotifier {
   String? lastError;
   bool ready = false;
 
+  /// 用户是否已在本次会话里跳过首次模型配置。
+  ///
+  /// 只存在内存：下次启动如果模型组仍然为空，还会再引导一次 ——
+  /// 没模型时的 bot 等于不会说话，这件事值得反复提醒。
+  bool modelSetupSkipped = false;
+
+  /// 是否应该挡住主界面去配置模型。
+  bool get needsModelSetup =>
+      modelGroups.isEmpty && !modelSetupSkipped && !localModeSkippedSetup;
+
+  /// 本机模式下服务端还没起来的过渡态不算"没配模型"，避免启动瞬间闪一下引导页。
+  bool localModeSkippedSetup = false;
+
+  void dismissModelSetup() {
+    modelSetupSkipped = true;
+    notifyListeners();
+  }
+
+  /// 让引导页重新出现（配置好后由 UI 调用，或用户手动重开引导）。
+  void resetModelSetup() {
+    modelSetupSkipped = false;
+    notifyListeners();
+  }
+
   WebSocketChannel? _channel;
   StreamSubscription<dynamic>? _sub;
   Timer? _reconnectTimer;

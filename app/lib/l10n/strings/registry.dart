@@ -6,6 +6,7 @@ import 'chat.dart';
 import 'common.dart';
 import 'errors.dart';
 import 'model.dart';
+import 'onboarding.dart';
 import 'panel.dart';
 import 'panel2.dart';
 import 'room.dart';
@@ -21,6 +22,7 @@ const allStringAreas = <StringArea>[
   areaCommon,
   areaErrors,
   areaModel,
+  areaOnboarding,
   areaPanel,
   areaPanel2,
   areaRoom,

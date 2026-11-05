@@ -219,12 +219,19 @@ class ModelGroupsSection extends StatelessWidget {
     BuildContext context, {
     ModelGroup? group,
     String? modelId,
-  }) async {
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => _Editor(group: group, modelId: modelId),
-    );
-  }
+  }) => openModelGroupEditor(context, group: group, modelId: modelId);
+}
+
+/// 打开模型组编辑弹窗。设置页与首次配置引导共用同一个入口。
+Future<void> openModelGroupEditor(
+  BuildContext context, {
+  ModelGroup? group,
+  String? modelId,
+}) async {
+  await showDialog<void>(
+    context: context,
+    builder: (ctx) => _Editor(group: group, modelId: modelId),
+  );
 }
 
 class _Editor extends StatefulWidget {

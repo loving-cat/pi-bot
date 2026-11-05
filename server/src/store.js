@@ -81,8 +81,14 @@ export const POLICY_DEFAULT = {
    * （"需要批准"那一档要接审批闸门，等有真实需求再做。）
    */
   dangerous: 'allow',
-  /** 交付必须附证据：命令输出 / 文件路径 / 测试结果，而不是一句"改好了" */
-  requireProof: false,
+  /**
+   * 交付必须附证据：命令输出 / 文件路径 / 测试结果，而不是一句"改好了"。
+   *
+   * 默认开启：没有证据的交付等于不可核对，用户只能选择相信或重跑一遍。
+   * 代价是模型要在答复里带一段输出，多花几十个 token —— 比事后返工便宜。
+   * 用户仍可在「部门预算 → 规矩」里关掉。
+   */
+  requireProof: true,
   /**
    * 命令级规则：禁止执行的命令。
    *
@@ -956,6 +962,21 @@ export class Store {
 
   /** 当前的部门规矩 */
   policy() {
+    // ★ 一次性迁移：`requireProof` 的默认值从 false 改成 true 之后，
+    //   老用户的 state.json 里仍存着显式的 false —— 不迁移的话，
+    //   只有新装的机器享受到新默认值，老用户永远是"不强求证据"。
+    //
+    //   只迁移一次（requireProofMigrated），之后用户自己关掉就不再动它：
+    //   不能每次读都强行改回 true，那等于用户关不掉这个开关。
+    if (
+      this.state.requireProofMigrated !== true &&
+      this.state.policy?.requireProof === false
+    ) {
+      this.state.policy = { ...this.state.policy, requireProof: true };
+      this.state.requireProofMigrated = true;
+      this.scheduleSave();
+      bus.emit('event', { t: 'policy.updated', policy: normalizePolicy(this.state.policy, POLICY_DEFAULT) });
+    }
     return normalizePolicy(this.state.policy ?? {}, POLICY_DEFAULT);
   }
 

@@ -14,6 +14,7 @@ import '../l10n/l10n.dart';
 import '../chat_scroll_follow.dart';
 import '../clipboard_image.dart';
 import '../models.dart';
+import '../paste_paths.dart';
 import '../progress_messages.dart';
 import '../scope.dart';
 import '../desktop_shortcuts.dart';
@@ -314,33 +315,30 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
-  /// 粘贴进来的路径 → 收成附件（图片、PDF、Word 都行；一次粘多个也认）
+  /// 粘贴进来的路径 → 收成附件（图片、PDF、Word 都行；一次粘多个也认）。
+  ///
+  /// 两种形态：整段就是路径（Finder 复制文件后粘贴），或路径混在文字里
+  /// （"看下 /Users/x/a.pdf 这个"）。后者只摘出真实存在的文件，其余文字留在输入框。
+  /// 解析逻辑在 paste_paths.dart，那边能单独测。
   void _absorbPastedPaths() {
     if (_convertingPaste) return;
-    final text = _input.text.trim();
-    if (text.isEmpty || text.length > 2000) return;
-    // 多行（从资源管理器一次复制多个文件）也支持，每条一个路径
-    final lines = text
-        .split(RegExp(r'[\r\n]+'))
-        .map((l) => l.trim().replaceAll('"', ''))
-        .where((l) => l.isNotEmpty)
-        .toList();
-    if (lines.isEmpty || lines.length > 20) return;
-    final files = <File>[];
-    for (final line in lines) {
-      // 只认“整段就是一个存在的文件”的形态，不碰正常打字内容
-      if (line.contains(' ') && !File(line).existsSync()) return;
-      final f = File(line);
-      if (!f.existsSync()) return;
-      files.add(f);
-    }
-    if (files.isEmpty) return;
+    final result = extractPastedFiles(_input.text);
+    if (!result.hasFiles) return;
+
     _convertingPaste = true;
-    _input.clear();
+    final kept = result.remainingText;
+    if (kept.isEmpty) {
+      _input.clear();
+    } else {
+      _input.text = kept;
+      _input.selection = TextSelection.collapsed(offset: kept.length);
+    }
     _convertingPaste = false;
+
     unawaited(
       _uploadAll([
-        for (final f in files) (f.uri.pathSegments.last, () => f.readAsBytes()),
+        for (final f in result.files)
+          (f.uri.pathSegments.last, () => f.readAsBytes()),
       ]),
     );
   }

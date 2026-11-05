@@ -26,6 +26,7 @@ import 'widgets/toast.dart';
 import 'update_info.dart';
 import 'widgets/update_prompt.dart';
 import 'l10n/l10n.dart';
+import 'widgets/model_setup_gate.dart';
 import 'window_state.dart';
 
 /// 开发用：`--dart-define=PI_BOT_URL=http://127.0.0.1:8787 --dart-define=PI_BOT_TOKEN=test-token`
@@ -342,6 +343,13 @@ class _Root extends StatelessWidget {
       if (stillBooting) return const HostConnectScreen();
     }
     if (!state.paired) return const PairScreen();
+
+    // ★ 没有任何模型组时先挡一下。
+    //
+    //   没有模型时 bot 收到消息只会静默失败 —— 用户看到的是"它不理我"，
+    //   而不是"我还没配模型"。与其让人去猜，不如在进主界面前讲清楚并给出入口。
+    //   用户可以点"稍后再说"跳过，不强制。
+    if (state.needsModelSetup) return const ModelSetupGate();
 
     if (_devOpen.isNotEmpty) {
       final match = state.rooms.where(
