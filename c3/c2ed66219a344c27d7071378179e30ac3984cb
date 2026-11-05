@@ -1,0 +1,14 @@
+app/test/locale_switch_test.dart
+  h_c2e638ff76b3b9 1-53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c3c2ed66219a344c27d7071378179e30ac3984cb",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
