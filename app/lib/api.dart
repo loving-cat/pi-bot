@@ -136,6 +136,15 @@ class Api {
   }
 
   /// 上传附件（图片/文档），返回服务端附件元信息
+  /// 删一个附件。资料库里点删除走这里。
+  Future<void> deleteFile(String id) =>
+      delete('/api/files/${Uri.encodeComponent(id)}');
+
+  /// 批量删附件。勾选多个一起删走这里 ——
+  /// 不用 DELETE + body：部分客户端和代理会丢掉 DELETE 的请求体。
+  Future<Map<String, dynamic>> deleteFiles(List<String> ids) =>
+      post('/api/files/delete', {'ids': ids});
+
   Future<Map<String, dynamic>> upload(List<int> bytes, String name) async {
     final res = await http
         .post(

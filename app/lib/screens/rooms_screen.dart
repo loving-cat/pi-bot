@@ -10,6 +10,7 @@ import '../theme.dart';
 import '../window_chrome.dart';
 import '../widgets/toast.dart';
 import '../widgets/avatar_life.dart';
+import '../widgets/anchored_menu.dart';
 import '../widgets/blob_avatar.dart';
 import '../widgets/floating_menu.dart';
 import '../widgets/skeleton.dart';
@@ -40,6 +41,9 @@ class RoomsScreen extends StatefulWidget {
 }
 
 class _RoomsScreenState extends State<RoomsScreen> {
+  /// 「新建」按钮的锚点：浮层要贴着它弹出。
+  final _createAnchor = GlobalKey();
+
   bool _searching = false;
   final _searchController = TextEditingController();
   String _query = '';
@@ -212,10 +216,15 @@ class _RoomsScreenState extends State<RoomsScreen> {
               }),
             ),
             const SizedBox(width: 10),
-            _CircleIcon(
-              icon: LucideIcons.plus,
-              filled: true,
-              onTap: () => _showCreateSheet(context),
+            // KeyedSubtree 挂锚点：_CircleIcon 没有 key 参数，
+            // 而浮层需要它的位置，包一层就能拿到 RenderBox。
+            KeyedSubtree(
+              key: _createAnchor,
+              child: _CircleIcon(
+                icon: LucideIcons.plus,
+                filled: true,
+                onTap: () => _showCreateSheet(context),
+              ),
             ),
             const SizedBox(width: 10),
             _CircleIcon(
@@ -325,156 +334,82 @@ class _RoomsScreenState extends State<RoomsScreen> {
     );
   }
 
+  /// 「新建」浮层：贴着加号按钮弹出，不是从屏幕底部滑上来。
+  ///
+  /// 原来的 showModalBottomSheet 在桌面上会从屏幕最底下窜到中间，
+  /// 和点的那颗加号隔着大半个屏幕，既不好看也不符合就近反馈。
   Future<void> _showCreateSheet(BuildContext context) async {
     final s = L10n.s(context);
     final state = AppScope.read(context);
     final mainBot = state.mainBot;
 
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: PB.bgElevated,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(PB.r3xl)),
+    final items = <AnchoredMenuItem>[
+      AnchoredMenuItem(
+        icon: LucideIcons.users,
+        title: s.t('rooms.askMainTitle'),
+        subtitle: s.t('rooms.askMainSubtitle'),
+        highlight: true,
+        sectionLabel: s.t('rooms.newSection'),
+        onTap: () => _talkToMain(context, s.t('rooms.askMainPrefill')),
       ),
-      builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.only(top: 10, bottom: 10),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 36,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: PB.borderPrimary,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 14),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Text(
-                  s.t('rooms.newSection'),
-                  style: const TextStyle(
-                    fontSize: PB.fsSm,
-                    fontWeight: FontWeight.w600,
-                    color: PB.textTertiary,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 6),
-              _SheetRow(
-                icon: LucideIcons.users,
-                title: s.t('rooms.askMainTitle'),
-                subtitle: s.t('rooms.askMainSubtitle'),
-                highlight: true,
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _talkToMain(context, s.t('rooms.askMainPrefill'));
-                },
-              ),
-              _SheetRow(
-                icon: LucideIcons.messagesSquare,
-                title: s.t('rooms.newGroup'),
-                subtitle: s.t('rooms.newGroupSubtitle'),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _createGroup(context);
-                },
-              ),
-              _SheetRow(
-                icon: LucideIcons.bot,
-                title: s.t('bots.title'),
-                subtitle: s.tf('rooms.rosterSubtitle', {
-                  'n': state.bots.length,
-                }),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const BotsScreen()),
-                  );
-                },
-              ),
-              const Divider(height: 22),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Text(
-                  s.t('rooms.dmSection'),
-                  style: const TextStyle(
-                    fontSize: PB.fsSm,
-                    fontWeight: FontWeight.w600,
-                    color: PB.textTertiary,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 4),
-              ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxHeight: MediaQuery.sizeOf(context).height * 0.36,
-                ),
-                child: ListView(
-                  shrinkWrap: true,
-                  children: [
-                    for (final bot in state.bots)
-                      ListTile(
-                        leading: BlobAvatar(
-                          seed: bot.id,
-                          color: PB.colorFor(bot.id),
-                          emoji: bot.emoji,
-                          size: 34,
-                          animate: false,
-                        ),
-                        title: Text(
-                          bot.name,
-                          style: const TextStyle(fontSize: PB.fsSm),
-                        ),
-                        subtitle: Text(
-                          bot.isMain
-                              ? s.t('bots.manager')
-                              : (bot.tagline.isNotEmpty
-                                    ? preview(bot.tagline, 34)
-                                    : s.t('rooms.member')),
-                          style: const TextStyle(
-                            fontSize: PB.fsXs,
-                            color: PB.textQuaternary,
-                          ),
-                        ),
-                        onTap: () async {
-                          Navigator.pop(ctx);
-                          final room = await state.ensureDm(bot.id);
-                          if (room != null && context.mounted) {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => ChatScreen(room: room),
-                              ),
-                            );
-                          }
-                        },
-                      ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 6),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Text(
-                  mainBot == null ? '' : s.t('rooms.askMainTip'),
-                  style: const TextStyle(
-                    fontSize: PB.fsXxs,
-                    color: PB.textQuaternary,
-                  ),
-                ),
-              ),
-            ],
-          ),
+      AnchoredMenuItem(
+        icon: LucideIcons.messagesSquare,
+        title: s.t('rooms.newGroup'),
+        subtitle: s.t('rooms.newGroupSubtitle'),
+        onTap: () => _createGroup(context),
+      ),
+      AnchoredMenuItem(
+        icon: LucideIcons.bot,
+        title: s.t('bots.title'),
+        subtitle: s.tf('rooms.rosterSubtitle', {'n': '${state.bots.length}'}),
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const BotsScreen()),
         ),
       ),
+      if (mainBot != null)
+        AnchoredMenuItem(
+          icon: LucideIcons.atSign,
+          title: mainBot.name,
+          subtitle: mainBot.tagline.isEmpty
+              ? s.t('bots.manager')
+              : preview(mainBot.tagline, 34),
+          sectionLabel: s.t('rooms.dmSection'),
+          onTap: () async {
+            final room = await state.ensureDm(mainBot.id);
+            if (room != null && context.mounted) {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => ChatScreen(room: room)),
+              );
+            }
+          },
+        ),
+      // 其余同事只列前几个：浮层太长就失去了「就近选一个」的意义
+      for (final bot in state.bots.where((b) => !b.isMain).take(4))
+        AnchoredMenuItem(
+          icon: LucideIcons.bot,
+          title: bot.name,
+          subtitle: bot.tagline.isEmpty
+              ? s.t('rooms.member')
+              : preview(bot.tagline, 34),
+          onTap: () async {
+            final room = await state.ensureDm(bot.id);
+            if (room != null && context.mounted) {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => ChatScreen(room: room)),
+              );
+            }
+          },
+        ),
+    ];
+
+    await showAnchoredMenu(
+      context: context,
+      anchorKey: _createAnchor,
+      title: s.t('rooms.newTitle'),
+      items: items,
     );
   }
 
@@ -624,52 +559,6 @@ class _CircleIcon extends StatelessWidget {
   }
 }
 
-class _SheetRow extends StatelessWidget {
-  const _SheetRow({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.onTap,
-    this.highlight = false,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final VoidCallback onTap;
-  final bool highlight;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListTile(
-      onTap: onTap,
-      leading: Container(
-        width: 36,
-        height: 36,
-        decoration: BoxDecoration(
-          color: highlight ? PB.colors(context).accentSoft : PB.bgActive,
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Icon(
-          icon,
-          size: 18,
-          color: highlight ? PB.colors(context).accentBright : PB.textSecondary,
-        ),
-      ),
-      title: Text(
-        title,
-        style: const TextStyle(
-          fontSize: PB.fsBase,
-          fontWeight: FontWeight.w500,
-        ),
-      ),
-      subtitle: Text(
-        subtitle,
-        style: const TextStyle(fontSize: PB.fsXs, color: PB.textQuaternary),
-      ),
-    );
-  }
-}
 
 class _Banner extends StatelessWidget {
   const _Banner({required this.text, required this.icon});

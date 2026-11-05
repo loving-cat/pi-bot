@@ -24,6 +24,7 @@ const TESTS = [
   'mcp',
   'mcp-capability',
   'ego-browser',
+  'attachment-delete',
   'relay-safety',
   'boot-failure',
   'sites',

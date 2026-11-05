@@ -681,6 +681,38 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// 从资料库删掉附件（一个或一批）。
+  ///
+  /// 只动存储层：消息上那条附件引用保留，历史聊天记录照常能读 ——
+  /// 用户要的是「资料库里别再列它」，不是「把历史改掉」。
+  /// 所以这里删成功后把对应附件从本地消息里摘掉，界面立刻不再显示，
+  /// 但服务端消息本身没有被改写。
+  Future<int> deleteAttachments(List<String> ids) async {
+    if (ids.isEmpty) return 0;
+    try {
+      final res = ids.length == 1
+          ? await api!.deleteFile(ids.first).then((_) => {'deleted': ids})
+          : await api!.deleteFiles(ids);
+      final deleted =
+          ((res['deleted'] as List?) ?? const []).map((e) => '$e').toSet();
+      if (deleted.isEmpty) return 0;
+
+      // 本地同步摘掉：attachments 是可变字段，直接原地过滤
+      for (final entry in messages.entries) {
+        for (final m in entry.value) {
+          if (m.attachments.isEmpty) continue;
+          m.attachments.removeWhere((a) => deleted.contains(a.id));
+        }
+      }
+      _notify();
+      return deleted.length;
+    } catch (err) {
+      lastError = '$err';
+      _notify();
+      return 0;
+    }
+  }
+
   Future<void> deleteTask(String id) async {
     try {
       await api?.delete('/api/tasks/$id');

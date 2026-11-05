@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../app_state.dart';
@@ -6,6 +7,7 @@ import '../l10n/l10n.dart';
 import '../models.dart';
 import '../ime_guard.dart';
 import '../theme.dart';
+import 'floating_menu.dart';
 
 /// 任务板：一个房间里"要做什么 / 在做 / 做完"的清单。
 ///
@@ -412,31 +414,177 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
 }
 
 /// 打开某个房间的任务板（装配放在这里，聊天页只留一行调用）。
+///
+/// [anchorKey] 是触发按钮：浮层贴着它弹出，而不是从屏幕底部滑上来。
+/// 底部弹层是移动端手势范式，桌面上它和按钮隔着大半个屏幕，很不自然。
+/// 没传锚点时退回居中弹出（窄屏/手机仍然合适）。
 Future<void> showTaskBoard(
   BuildContext context,
   AppState state,
-  Room room,
-) async {
+  Room room, {
+  GlobalKey? anchorKey,
+}) async {
+  // ★ 先在 await 之前把定位需要的东西取完。
+  //
+  //   refreshTasks 是异步的；回来之后再用 context 找 Overlay / 量尺寸，
+  //   既可能拿到已经失效的 context，也会触发 use_build_context_synchronously。
+  //   浮层的落点只取决于「按钮在哪 + 屏幕多大」，这两样现在就能拿到。
+  final box = anchorKey?.currentContext?.findRenderObject() as RenderBox?;
+  final boxReady = box != null && box.attached;
+  final anchor = boxReady ? box.localToGlobal(Offset.zero) : null;
+  // 按钮的实际高度：往下开时从它的底边算起，浮层才不会盖住按钮本身
+  final anchorHeight = boxReady ? box.size.height : 0.0;
+  final overlay = Overlay.maybeOf(context);
+  final overlayBox = overlay?.context.findRenderObject() as RenderBox?;
+  final ready =
+      overlayBox != null && overlayBox.attached && overlayBox.hasSize;
+
   await state.refreshTasks();
   if (!context.mounted) return;
-  await showModalBottomSheet<void>(
-    context: context,
-    backgroundColor: PB.bgPane,
-    isScrollControlled: true,
-    constraints: const BoxConstraints(maxWidth: 560),
-    builder: (_) => ListenableBuilder(
-      listenable: state,
-      builder: (context, child) => TaskBoardSheet(
-        roomName: room.name,
-        tasks: state.tasksFor(room.id),
-        onToggleDone: (t) => state.updateTask(t.id, {
-          'status': t.isDone ? 'open' : 'done',
-          'read': true,
-        }),
-        onTogglePin: (t) => state.updateTask(t.id, {'pinned': !t.isPinned}),
-        onDelete: (t) => state.deleteTask(t.id),
-        onCreate: (title) => state.createTask(roomId: room.id, title: title),
-      ),
+
+  Widget build() => ListenableBuilder(
+    listenable: state,
+    builder: (context, child) => TaskBoardSheet(
+      roomName: room.name,
+      tasks: state.tasksFor(room.id),
+      onToggleDone: (t) => state.updateTask(t.id, {
+        'status': t.isDone ? 'open' : 'done',
+        'read': true,
+      }),
+      onTogglePin: (t) => state.updateTask(t.id, {'pinned': !t.isPinned}),
+      onDelete: (t) => state.deleteTask(t.id),
+      onCreate: (title) => state.createTask(roomId: room.id, title: title),
     ),
   );
+
+  if (anchorKey == null || anchor == null || overlay == null) {
+    // 没有锚点：居中的浮层卡片，仍然比底部弹层合适
+    await showDialog<void>(
+      context: context,
+      barrierColor: const Color(0x99000000),
+      builder: (_) => Dialog(
+        backgroundColor: PB.bgPane,
+        insetPadding: const EdgeInsets.all(24),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(PB.rXl),
+          side: const BorderSide(color: PB.borderTertiary),
+        ),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560, maxHeight: 560),
+          child: build(),
+        ),
+      ),
+    );
+    return;
+  }
+
+  final local = ready ? overlayBox.globalToLocal(anchor) : anchor;
+  final screen = ready ? overlayBox.size : const Size(800, 600);
+
+  const width = 420.0;
+  final spot = menuPlacement(
+    anchor: local,
+    screen: screen,
+    entryCount: 10,
+    width: width,
+    gap: 8,
+    anchorHeight: anchorHeight,
+  );
+
+  late OverlayEntry entry;
+  void close() {
+    if (entry.mounted) entry.remove();
+  }
+
+  entry = OverlayEntry(
+    builder: (_) => _TaskBoardPopover(
+      left: spot.left,
+      top: spot.top,
+      bottom: spot.bottom,
+      width: width,
+      onClose: close,
+      child: build(),
+    ),
+  );
+  overlay.insert(entry);
+}
+
+class _TaskBoardPopover extends StatefulWidget {
+  const _TaskBoardPopover({
+    required this.left,
+    required this.top,
+    required this.bottom,
+    required this.width,
+    required this.onClose,
+    required this.child,
+  });
+
+  final double left;
+  final double? top;
+  final double? bottom;
+  final double width;
+  final VoidCallback onClose;
+  final Widget child;
+
+  @override
+  State<_TaskBoardPopover> createState() => _TaskBoardPopoverState();
+}
+
+class _TaskBoardPopoverState extends State<_TaskBoardPopover> {
+  @override
+  void initState() {
+    super.initState();
+    HardwareKeyboard.instance.addHandler(_onKey);
+  }
+
+  @override
+  void dispose() {
+    HardwareKeyboard.instance.removeHandler(_onKey);
+    super.dispose();
+  }
+
+  bool _onKey(KeyEvent event) {
+    if (event is KeyDownEvent &&
+        event.logicalKey == LogicalKeyboardKey.escape) {
+      widget.onClose();
+      return true;
+    }
+    return false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: widget.onClose,
+          ),
+        ),
+        Positioned(
+          left: widget.left,
+          top: widget.top,
+          bottom: widget.bottom,
+          width: widget.width,
+          child: Material(
+            color: Colors.transparent,
+            child: Container(
+              constraints: const BoxConstraints(maxHeight: 520),
+              decoration: BoxDecoration(
+                color: PB.bgPane,
+                borderRadius: BorderRadius.circular(PB.rXl),
+                border: Border.all(color: PB.borderTertiary),
+                boxShadow: PB.shadow(y: 8, blur: 28, alpha: 0.45),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(PB.rXl),
+                child: SingleChildScrollView(child: widget.child),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 }

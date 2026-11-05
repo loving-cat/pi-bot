@@ -145,6 +145,40 @@ export function pathFor(id) {
   return fs.existsSync(file) ? file : null;
 }
 
+/**
+ * 删掉一个附件（文件 + 索引条目）。
+ *
+ * 只删存储层：消息上那条 attachment 引用还在（消息是历史，不该被悄悄改写）。
+ * 所以调用方拿到 false/true 后要自己决定要不要同步从消息里摘掉 ——
+ * 实际做法是「资料库里不再列出它」，这样历史聊天记录仍然完整可读。
+ *
+ * @returns {boolean} 真的删掉了返回 true；本来就不存在返回 false
+ */
+export function deleteAttachment(id) {
+  const meta = index[id];
+  const file = meta ? path.join(DIR, id + (meta.ext ?? '')) : null;
+  let removed = false;
+  if (file) {
+    try {
+      fs.unlinkSync(file);
+      removed = true;
+    } catch (err) {
+      // 文件可能已经不在了 —— 索引还是要清掉，否则资料库永远幽灵一条
+      if (err?.code !== 'ENOENT') {
+        log('⚠️ 删除附件文件失败：' + (err?.message || err));
+        return false;
+      }
+      removed = true;
+    }
+  }
+  if (meta) {
+    delete index[id];
+    persist();
+    return removed;
+  }
+  return false;
+}
+
 /** 把附件复制进工作目录的 _inbox/，让 bot 能直接按路径读到 */
 export function inboxPath(id) {
   const meta = index[id];

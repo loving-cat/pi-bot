@@ -18,7 +18,13 @@ import { capacityError } from './model-capacity.js';
 import { resolveBotModelSelection } from './model-dispatch.js';
 import { store } from './store.js';
 import { policyChange } from './policy-version.js';
-import { metaFor, pathFor, saveBuffer, saveMovedFile } from './attachments.js';
+import {
+  deleteAttachment,
+  metaFor,
+  pathFor,
+  saveBuffer,
+  saveMovedFile,
+} from './attachments.js';
 import { lanAddresses } from './pairing.js';
 import { timingSafeEqual, log } from './util.js';
 import { shells } from './shells.js';
@@ -956,6 +962,38 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         res.writeHead(200, fileResponseHeaders(meta));
         fs.createReadStream(file).pipe(res);
         return undefined;
+      }
+
+      // 删附件。资料库里可以单个删，也可以勾选一批一起删。
+      //
+      // 单删走 DELETE /api/files/:id；批量走 POST /api/files/delete
+      // （批量不用 DELETE + body：很多客户端和代理会丢掉 DELETE 的 body）。
+      if (fileMatch && req.method === 'DELETE') {
+        const meta = metaFor(fileMatch[1]);
+        if (!meta) return fail(res, 404, 'FILE_NOT_FOUND', '文件不存在');
+        const removed = deleteAttachment(fileMatch[1]);
+        if (!removed) return fail(res, 500, 'FILE_DELETE_FAILED', '删除失败');
+        return send(res, 200, { ok: true, deleted: [fileMatch[1]] });
+      }
+
+      if (pathname === '/api/files/delete' && req.method === 'POST') {
+        const body = await readBody(req).catch(() => ({}));
+        const ids = Array.isArray(body?.ids) ? body.ids : [];
+        if (!ids.length) return fail(res, 400, 'NO_IDS', '没有指定要删哪些');
+        // 上限只是防一次删太多拖住事件循环，正常勾选不会到这个量
+        if (ids.length > 500) return fail(res, 400, 'TOO_MANY_IDS', '一次最多删 500 个');
+        const deleted = [];
+        const missing = [];
+        for (const raw of ids) {
+          const id = String(raw ?? '');
+          if (!/^[a-zA-Z0-9_-]+$/.test(id) || !metaFor(id)) {
+            missing.push(id);
+            continue;
+          }
+          if (deleteAttachment(id)) deleted.push(id);
+          else missing.push(id);
+        }
+        return send(res, 200, { ok: true, deleted, missing });
       }
 
       // 把附件渲染成可嵌入浏览器栏的 HTML（表格 / PDF / Word）。

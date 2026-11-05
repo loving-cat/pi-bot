@@ -668,16 +668,125 @@ class _AddMemberButtonState extends State<_AddMemberButton> {
 ///
 /// 数据不用服务端帮忙：附件本来就挂在每条消息上（msg.attachments），
 /// 按作者是不是人分两组就行。
-class _Library extends StatelessWidget {
+class _Library extends StatefulWidget {
   const _Library({required this.room});
 
   final Room room;
 
   @override
+  State<_Library> createState() => _LibraryState();
+}
+
+class _LibraryState extends State<_Library> {
+  /// 正在勾选的附件 id。非空 = 处于「选择模式」。
+  ///
+  /// 选择模式不是一开始就开着：平时列表就该能直接点开文件。
+  /// 只有用户主动点了右上角的选择按钮（或长按某一行）才进入，
+  /// 这时每行左边出现勾选框，顶部出现「全选 / 删除 / 取消」。
+  final Set<String> _selected = {};
+  bool _selecting = false;
+
+  void _toggleSelecting() {
+    setState(() {
+      _selecting = !_selecting;
+      if (!_selecting) _selected.clear();
+    });
+  }
+
+  void _toggle(String id) {
+    setState(() {
+      if (!_selected.remove(id)) _selected.add(id);
+    });
+  }
+
+  Future<void> _deleteOne(BuildContext context, Attachment a) async {
+    final s = L10n.s(context);
+    final state = AppScope.of(context);
+    final ok = await _confirm(
+      context,
+      title: s.t('room.deleteFileTitle'),
+      body: s.tf('room.deleteFileBody', {'name': a.name}),
+    );
+    if (!ok) return;
+    final n = await state.deleteAttachments([a.id]);
+    if (context.mounted) {
+      _toast(context, n > 0 ? s.t('room.deletedOne') : s.t('room.deleteFailed'));
+    }
+  }
+
+  Future<void> _deleteSelected(BuildContext context) async {
+    if (_selected.isEmpty) return;
+    final s = L10n.s(context);
+    final state = AppScope.of(context);
+    final ids = _selected.toList();
+    final ok = await _confirm(
+      context,
+      title: s.t('room.deleteFilesTitle'),
+      body: s.tf('room.deleteFilesBody', {'n': '${ids.length}'}),
+    );
+    if (!ok) return;
+    final n = await state.deleteAttachments(ids);
+    if (!context.mounted) return;
+    setState(() {
+      _selected.clear();
+      _selecting = false;
+    });
+    _toast(
+      context,
+      n > 0 ? s.tf('room.deletedMany', {'n': '$n'}) : s.t('room.deleteFailed'),
+    );
+  }
+
+  /// 删除不可逆，必须问一次。用站内对话框而不是系统弹窗，样式才一致。
+  Future<bool> _confirm(
+    BuildContext context, {
+    required String title,
+    required String body,
+  }) async {
+    final s = L10n.s(context);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: PB.bgElevated,
+        title: Text(title, style: const TextStyle(fontSize: PB.fsLg)),
+        content: SizedBox(
+          width: 360,
+          child: Text(
+            body,
+            style: const TextStyle(
+              fontSize: PB.fsSm,
+              color: PB.textSecondary,
+              height: 1.6,
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(s.t('common.cancel')),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: PB.danger),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(s.t('common.delete')),
+          ),
+        ],
+      ),
+    );
+    return ok == true;
+  }
+
+  void _toast(BuildContext context, String text) {
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(content: Text(text), duration: const Duration(seconds: 2)),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
     final s = L10n.s(context);
     final state = AppScope.of(context);
-    final msgs = state.messages[room.id] ?? const <Msg>[];
+    final msgs = state.messages[widget.room.id] ?? const <Msg>[];
 
     // 谁给的：用户发的 / bot 产出的。倒序遍历 —— 新的排在前面。
     final fromUser = <Attachment>[];
@@ -704,20 +813,117 @@ class _Library extends StatelessWidget {
       );
     }
 
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
+    final allCount = fromUser.length + fromBot.length;
+    return Column(
       children: [
-        if (fromUser.isNotEmpty) ...[
-          _groupTitle(s.t('room.fromUser'), fromUser.length),
-          for (final a in fromUser) _item(context, a),
-          const SizedBox(height: 16),
-        ],
-        if (fromBot.isNotEmpty) ...[
-          _groupTitle(s.t('room.fromBot'), fromBot.length),
-          for (final a in fromBot) _item(context, a),
-        ],
+        if (allCount > 1) _toolbar(context, s, allCount),
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 24),
+            children: [
+              if (fromUser.isNotEmpty) ...[
+                _groupTitle(s.t('room.fromUser'), fromUser.length),
+                for (final a in fromUser) _item(context, a),
+                const SizedBox(height: 16),
+              ],
+              if (fromBot.isNotEmpty) ...[
+                _groupTitle(s.t('room.fromBot'), fromBot.length),
+                for (final a in fromBot) _item(context, a),
+              ],
+            ],
+          ),
+        ),
       ],
     );
+  }
+
+  Widget _toolbar(BuildContext context, AppStrings s, int total) {
+    if (!_selecting) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(14, 8, 8, 0),
+        child: Row(
+          children: [
+            const Spacer(),
+            TextButton.icon(
+              key: const ValueKey('library-select'),
+              onPressed: _toggleSelecting,
+              icon: const Icon(LucideIcons.listChecks, size: 14),
+              label: Text(
+                s.t('room.select'),
+                style: const TextStyle(fontSize: PB.fsXs),
+              ),
+              style: TextButton.styleFrom(
+                foregroundColor: PB.textTertiary,
+                visualDensity: VisualDensity.compact,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final allSelected = _selected.length == total;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 6, 8, 0),
+      child: Row(
+        children: [
+          TextButton(
+            key: const ValueKey('library-select-all'),
+            onPressed: () => setState(() {
+              if (allSelected) {
+                _selected.clear();
+              } else {
+                _selected.addAll(_allIds());
+              }
+            }),
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              foregroundColor: PB.textSecondary,
+            ),
+            child: Text(
+              allSelected ? s.t('room.unselectAll') : s.t('room.selectAll'),
+              style: const TextStyle(fontSize: PB.fsXs),
+            ),
+          ),
+          Text(
+            s.tf('room.selectedCount', {'n': '${_selected.length}'}),
+            style: const TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
+          ),
+          const Spacer(),
+          TextButton(
+            key: const ValueKey('library-delete'),
+            onPressed: _selected.isEmpty ? null : () => _deleteSelected(context),
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              foregroundColor: PB.danger,
+            ),
+            child: Text(
+              s.t('common.delete'),
+              style: const TextStyle(fontSize: PB.fsXs),
+            ),
+          ),
+          IconButton(
+            key: const ValueKey('library-cancel'),
+            tooltip: s.t('common.cancel'),
+            visualDensity: VisualDensity.compact,
+            onPressed: _toggleSelecting,
+            icon: const Icon(LucideIcons.x, size: 14, color: PB.textTertiary),
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<String> _allIds() {
+    final state = AppScope.of(context);
+    final msgs = state.messages[widget.room.id] ?? const <Msg>[];
+    final ids = <String>[];
+    for (final m in msgs) {
+      for (final a in m.attachments) {
+        ids.add(a.id);
+      }
+    }
+    return ids;
   }
 
   Widget _groupTitle(String text, int n) => Padding(
@@ -736,34 +942,64 @@ class _Library extends StatelessWidget {
     final s = L10n.s(context);
     final state = AppScope.of(context);
     final url = state.fileUrl(a.id);
+    final picked = _selected.contains(a.id);
+
+    // 选择模式下点整行 = 勾选，不再打开文件 ——
+    // 否则用户想勾选却每次都跳去预览，很容易误操作。
+    void onTap() {
+      if (_selecting) {
+        _toggle(a.id);
+        return;
+      }
+      if (url == null) return;
+      if (a.isImage) {
+        showImageViewer(context, url, a.name);
+      } else {
+        openAttachmentByBestRoute(context, a, url);
+      }
+    }
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
       child: InkWell(
         borderRadius: BorderRadius.circular(PB.rLg),
-        // 图片直接看图；能进展示栏的送右侧；
-        // 剩下的（HTML 沙箱预览/纯文本）才弹站内预览。
-        //
-        // 注意：资料库在展示栏**左边**那一栏里，所以这里送展示栏不会自我循环。
-        onTap: url == null
+        onTap: onTap,
+        onLongPress: _selecting
             ? null
-            : () => a.isImage
-                  ? showImageViewer(context, url, a.name)
-                  : openAttachmentByBestRoute(context, a, url),
+            : () => setState(() {
+                _selecting = true;
+                _selected.add(a.id);
+              }),
         child: Container(
           padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
           decoration: BoxDecoration(
-            color: PB.bgActive,
+            color: picked ? PB.colors(context).accentSoft : PB.bgActive,
             borderRadius: BorderRadius.circular(PB.rLg),
-            border: Border.all(color: PB.borderTertiary),
+            border: Border.all(
+              color: picked
+                  ? PB.colors(context).accent.withValues(alpha: 0.45)
+                  : PB.borderTertiary,
+            ),
           ),
           child: Row(
             children: [
-              Icon(
-                a.isImage ? LucideIcons.image : LucideIcons.fileText,
-                size: 16,
-                color: PB.textTertiary,
-              ),
-              const SizedBox(width: 9),
+              if (_selecting) ...[
+                Icon(
+                  picked ? LucideIcons.squareCheck : LucideIcons.square,
+                  size: 15,
+                  color: picked
+                      ? PB.colors(context).accentBright
+                      : PB.textQuaternary,
+                ),
+                const SizedBox(width: 8),
+              ] else ...[
+                Icon(
+                  a.isImage ? LucideIcons.image : LucideIcons.fileText,
+                  size: 16,
+                  color: PB.textTertiary,
+                ),
+                const SizedBox(width: 9),
+              ],
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -788,8 +1024,7 @@ class _Library extends StatelessWidget {
                   ],
                 ),
               ),
-              // 下载就在这儿 —— 不用点进去再找
-              if (url != null)
+              if (!_selecting && url != null)
                 IconButton(
                   tooltip: s.t('room.download'),
                   visualDensity: VisualDensity.compact,
@@ -799,6 +1034,18 @@ class _Library extends StatelessWidget {
                     LucideIcons.download,
                     size: 15,
                     color: PB.textTertiary,
+                  ),
+                ),
+              if (!_selecting)
+                IconButton(
+                  key: ValueKey('library-delete-${a.id}'),
+                  tooltip: s.t('common.delete'),
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () => _deleteOne(context, a),
+                  icon: const Icon(
+                    LucideIcons.trash2,
+                    size: 15,
+                    color: PB.textQuaternary,
                   ),
                 ),
             ],

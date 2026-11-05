@@ -71,6 +71,9 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
+  /// 任务按钮的锚点：任务浮层要贴着它弹出。
+  final _taskAnchor = GlobalKey();
+
   final _scroll = ScrollController();
   final _input = TextEditingController();
   final _focus = FocusNode();
@@ -594,7 +597,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               builder: (ctx) {
                 final list = state.tasksFor(room.id);
                 final pending = list.where((t) => !t.isDone).length;
-                return IconButton(
+                return KeyedSubtree(
+                  key: _taskAnchor,
+                  child: IconButton(
                   padding: EdgeInsets.zero,
                   alignment: Alignment.center,
                   visualDensity: VisualDensity.compact,
@@ -605,7 +610,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   tooltip: pending > 0
                       ? s.tf('chat.tasksWithCount', {'n': pending})
                       : s.t('chat.tasks'),
-                  onPressed: () => showTaskBoard(ctx, state, room),
+                  onPressed: () =>
+                      showTaskBoard(ctx, state, room, anchorKey: _taskAnchor),
                   icon: Badge(
                     isLabelVisible: pending > 0,
                     label: Text('$pending'),
@@ -617,6 +623,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           ? PB.colors(context).accentBright
                           : PB.textTertiary,
                     ),
+                  ),
                   ),
                 );
               },

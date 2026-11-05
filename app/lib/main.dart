@@ -65,27 +65,41 @@ Future<void> main() async {
       }
     }
 
-    final options = WindowOptions(
-      // 注意：这里的 size 是**逻辑像素**，最终物理尺寸 = size × 系统缩放
-      size: target?.size ?? const Size(1180, 760),
-      minimumSize: kWindowMinSize,
-      center: target == null,
-      // ★ 不透明。不能用 Colors.transparent：无边框 + 每像素 alpha 的窗口，
-      //   每次重绘都要走 DWM 的混合路径（每帧整窗重新合成）。界面本来就铺满
-      //   bgApp，透明没有任何视觉效果，纯粹白花钱。
-      backgroundColor: PB.bgApp,
-      skipTaskbar: false,
-      // ★ 真正去标题栏的是这个（插件会在窗口过程里处理 WM_NCCALCSIZE）
-      titleBarStyle: TitleBarStyle.hidden,
-      title: 'pi-bot',
-    );
-    await windowManager.waitUntilReadyToShow(options, () async {
-      await windowManager.setAsFrameless();
-      await windowManager.setHasShadow(true);
-      if (target != null) await windowManager.setBounds(target);
-      await windowManager.show();
-      if (saved?.maximized == true) await windowManager.maximize();
-      await windowManager.focus();
+    // ★ 不要用 waitUntilReadyToShow(options, callback)。
+    //
+    //   它在 macOS 上是**空实现**（插件源码里方法体就一句注释 nothing），
+    //   传进去的回调根本不会执行，setAsFrameless / setBounds / show 从来没跑过。
+    //   更麻烦的是：窗口刚 show 出来时引擎还没接管，此时设的尺寸会被
+    //   按内容布局覆盖，窗口缩成 90~200px（每次都不一样），几乎看不见。
+    //   所以要先把窗口显示出来，再在首帧之后强制设一次尺寸（见下面的回调）。
+    await windowManager.setAsFrameless();
+    await windowManager.setHasShadow(true);
+    await windowManager.show();
+    if (saved?.maximized == true) await windowManager.maximize();
+    await windowManager.focus();
+
+    // ★ 尺寸必须在**首帧之后**再设一次。
+    //
+    //   刚 show 出来的那一瞬间 Flutter 引擎还没接管窗口，此时设的尺寸会被
+    //   引擎按内容布局覆盖掉 —— 实测窗口会缩成 90~200px 不等，每次都不一样，
+    //   取决于当时内容算出来的固有尺寸。
+    //   `flutter run` 下看不到这个问题，因为它在引擎就绪后才显示窗口；
+    //   直接 `open` 正式包才会暴露。
+    //
+    //   等第一帧真的画完再设，引擎已经稳定，尺寸就立得住了。
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final wanted = target?.size ?? const Size(1180, 760);
+      try {
+        await windowManager.setMinimumSize(kWindowMinSize);
+        if (target != null) {
+          await windowManager.setBounds(target);
+        } else {
+          await windowManager.setSize(wanted);
+          await windowManager.center();
+        }
+      } catch (_) {
+        // 窗口已经关掉之类的情况，忽略
+      }
     });
 
     // 记住窗口：拖动/缩放结束后（400ms 空闲）写一次，最大化状态单独记

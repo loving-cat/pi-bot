@@ -50,6 +50,13 @@ class FloatingMenuEntry {
   required int entryCount,
   double width = 214,
   double gap = 10,
+
+  /// 锚点元素的高度。传了它，往下开时会从**底边**开始算，
+  /// 菜单不会盖住触发它的那个按钮。
+  ///
+  /// 不传就是老行为（从锚点往下 gap 开始）—— 那是给右键菜单用的：
+  /// 右键的锚点是鼠标位置本身，没有"元素高度"这回事。
+  double anchorHeight = 0,
 }) {
   const margin = 8.0;
   // 每项约 36px + 上下留白。自适应高度在 Positioned 里量不到，只能估；
@@ -61,7 +68,9 @@ class FloatingMenuEntry {
     (screen.width - width - margin).clamp(margin, double.infinity),
   );
 
-  final roomBelow = screen.height - anchor.dy - gap - margin;
+  // 往下开：从锚点**下边缘**再留 gap，别压在按钮上
+  final anchorBottom = anchor.dy + anchorHeight;
+  final roomBelow = screen.height - anchorBottom - gap - margin;
   final roomAbove = anchor.dy - gap - margin;
   final openDown =
       roomBelow >= estHeight ||
@@ -70,13 +79,14 @@ class FloatingMenuEntry {
   if (openDown) {
     return (
       left: left,
-      top: (anchor.dy + gap).clamp(
+      top: (anchorBottom + gap).clamp(
         margin,
         (screen.height - 80).clamp(margin, double.infinity),
       ),
       bottom: null,
     );
   }
+  // 往上开：底边贴锚点上边
   return (
     left: left,
     top: null,
