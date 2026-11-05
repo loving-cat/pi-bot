@@ -22,6 +22,8 @@ const TESTS = [
   'merge-messages',
   'local-capabilities',
   'mcp',
+  'mcp-capability',
+  'ego-browser',
   'relay-safety',
   'boot-failure',
   'sites',

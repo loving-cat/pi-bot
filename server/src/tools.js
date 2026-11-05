@@ -19,6 +19,7 @@ import { store } from './store.js';
 import { menuText, resolveMenu, menuEntries, matchMenuEntry } from './model-menu.js';
 import { extractText } from './extract.js';
 import { webSearch, webFetch } from './web.js';
+import { runEgoScript, EGO_USAGE_GUIDE } from './ego-browser.js';
 import { shells } from './shells.js';
 import { verdictForTool, commitStdin, resetStdin } from './shell-policy.js';
 import { readonlyBlockReason } from './role-tools.js';
@@ -300,6 +301,59 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
       },
     }),
 
+
+    // ego-browser：驱动用户自己的 ego lite 浏览器。
+    //
+    //   ego lite 是独立 Chromium + CLI，没有可嵌入的控件，所以这里把它当成
+    //   「一个能给 agent 用的浏览器」来驱动，而不是在界面里再嵌一个浏览器。
+    //   它能用上用户已登录的网站和个人上下文 —— 这是内置 webview 给不了的。
+    //   主控不给这个工具：它负责指挥，动手的活派给成员。
+    ...(isMain ? [] : [defineTool({
+      name: 'ego_browser',
+      label: '★ 用 ego 浏览器',
+      description:
+        '用用户自己的 ego 浏览器操作网页：打开页面、点击、填表、复用登录态、截图、抓数据。' +
+        '适合这些活：需要真实浏览器渲染（SPA、要执行 JS）、需要用用户已登录的账号、' +
+        '需要点击/填表/多步操作。只是读一篇文章用 web_fetch 就够了，不必开浏览器。' +
+        '用法是写一段脚本交给我执行（不是 Playwright）。',
+      parameters: Type.Object({
+        script: Type.String({
+          description:
+            '一段 ESM 脚本，顶层可以用 await。用 taskSpace(名字) 开空间、' +
+            'task.page(p1) 取页面、page.goto(url) 打开、page.snapshot() 看结构。' +
+            '要操作 DOM 用 page.evaluate()。',
+        }),
+        timeoutSeconds: Type.Optional(
+          Type.Number({ description: '最长跑多少秒，默认 120，最多 300' }),
+        ),
+      }),
+      execute: async (_toolCallId, { script, timeoutSeconds }) => {
+        // 会开浏览器、能操作页面 —— 按「跑命令」这一档管，只读模式直接拒
+        const policy = store.policy();
+        const blocked = readonlyBlockReason(policy, 'run_background');
+        if (blocked) return fail(blocked);
+
+        const seconds = Math.min(Math.max(Number(timeoutSeconds) || 120, 10), 300);
+        const result = await runEgoScript({ script, timeoutMs: seconds * 1000 });
+
+        if (!result.ok) {
+          const partial = result.output
+            ? chr(10) + chr(10) + "（部分输出）" + chr(10) + result.output.slice(-1500)
+            : "";
+          return fail(
+            '浏览器脚本没跑成：' + (result.error || '未知原因') + partial +
+              chr(10) + chr(10) + EGO_USAGE_GUIDE,
+          );
+        }
+        const out = (result.output || "").trim();
+        return ok(
+          out
+            ? out.slice(-6000)
+            : '（脚本跑完了但没输出 —— 记得 console.log 你要看的东西）',
+          { chars: out.length },
+        );
+      },
+    })]),
     defineTool({
       name: 'list_bots',
       label: '看花名册',

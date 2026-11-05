@@ -45,6 +45,8 @@
 | `model-dispatch.js` | 主控模型目录、默认规则兼容、目录变化的会话刷新及团队成员模型冲突预检 |
 | `mcp.js` | MCP 服务库：规范化、校验、转 pi 配置、测连接（纯逻辑 + 一个 probe） |
 | `mcp-hook.js` | 把用户配的 MCP 按 bot 选择注册进会话；给主控的能力清单 |
+| `mcp-capability.js` | MCP 能力画像：按名字/命令推断服务属于哪类能力，按任务文字推荐该挂哪几个（纯逻辑） |
+| `ego-browser.js` | 驱动用户自己的 ego lite 浏览器：定位 CLI、跑 ESM 脚本、合并 stdout/stderr 并滤掉 ego 自身提示 |
 | `mcp-credentials.js` / `mcp-library.js` | MCP 凭据加密、公共摘要、配置编辑与历史迁移；store 仅委派 |
 | `mcp-probe*.js` | 真实 MCP 初始化与工具发现、有界 HTTP/SSE、stdio 及进程树清理 |
 | `connections.js` / `connections-http.js` | 应用目录、验证结果与过期、并发限制及 Bot 分配路由 |

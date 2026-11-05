@@ -26,6 +26,7 @@ import { buildAppendSystemPrompt } from './system-prompt.js';
 import { buildChiefTools, buildCommonTools } from './tools.js';
 import { createPolicyExtension } from './policy-hook.js';
 import { createMcpExtension, mcpSectionForPrompt } from './mcp-hook.js';
+import { capabilityGuideForPrompt } from './mcp-capability.js';
 import { log } from './util.js';
 import { menuEntries } from './model-menu.js';
 import { modelCatalogSection } from './model-dispatch.js';
@@ -129,7 +130,15 @@ export function createSessionBuilder({
         policy,
         // MCP 清单只给主控：它要知道有哪些能力可以派给成员。
         // 成员自己不拿这份清单 —— 它们要的是已经挂载的工具，不是能力目录。
-        mcpLines: isChief ? mcpSectionForPrompt() : '',
+        //
+        // 两段一起给：上一段列「有哪些服务」，下一段回答「什么活配哪个」。
+        // 少了后一段，主控知道能力存在但派活时想不到去挂，等于白配。
+        mcpLines: isChief
+          ? [mcpSectionForPrompt(), capabilityGuideForPrompt(store.mcpLibrary())]
+              .filter(Boolean)
+              .join('\n\n')
+          : '',
+
         modelLines: isChief ? modelCatalogSection(menuEntries(), health) : '',
       }),
       ...resourceOptions,

@@ -97,10 +97,14 @@ await test('主控少这一个工具，其余工具不受影响', async () => {
     .map((t) => t.name);
   const noMain = buildCommonTools({ runner: {}, roomId: 'r1', botId: main.id, isMain: false })
     .map((t) => t.name);
-  // 除了 ask_user，两边应当完全一致
+  // 主控排除的工具：ask_user（它在跟用户直接对话，不需要卡片）
+  // 和 ego_browser（主控负责指挥，开浏览器这种动手活派给成员）。
+  // 除此之外两边应当完全一致 —— 这条断言防的是"给主控加工具时
+  // 顺手把别的工具也漏给了/漏掉了"。
+  const mainOnlyExcluded = new Set(['ask_user', 'ego_browser']);
   assert.deepEqual(
     withMain.slice().sort(),
-    noMain.filter((n) => n !== 'ask_user').sort(),
+    noMain.filter((n) => !mainOnlyExcluded.has(n)).sort(),
   );
 });
 
