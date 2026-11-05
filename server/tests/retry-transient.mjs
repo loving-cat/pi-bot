@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   decideRetry,
   transientBackoffMs,
+  isRecoverableFailure,
   MAX_RETRIES,
   MAX_RETRIES_TRANSIENT,
 } from '../src/retry-policy.js';
@@ -38,6 +39,10 @@ function main2() {
     assert.equal(transient.retry, true);
   });
 
+  test('临时故障给到 10 次机会', () => {
+    assert.equal(MAX_RETRIES_TRANSIENT, 10);
+  });
+
   test('临时故障也不能无限重试', () => {
     const d = decideRetry({
       error: 'HTTP 429',
@@ -47,6 +52,26 @@ function main2() {
     assert.equal(d.kind, 'transient-exhausted');
     // 说明里要点出「key 额度或上游故障」，用户才知道该查什么
     assert.match(d.why, /key|上游/);
+  });
+
+  test('分流：前半程等接口恢复，后半程提示换模型', () => {
+    // 前几次：老实等
+    for (const attempt of [1, 2, 3, 4, 5]) {
+      const d = decideRetry({ error: 'HTTP 429', attempt });
+      assert.equal(d.kind, 'transient');
+      assert.notEqual(d.switchModel, true, `第 ${attempt} 次不该换模型`);
+    }
+    // 后半程：同一个通路抖这么多次，该换思路了
+    for (const attempt of [6, 7, 8, 9, 10]) {
+      const d = decideRetry({ error: 'HTTP 429', attempt });
+      assert.equal(d.kind, 'transient');
+      assert.equal(d.switchModel, true, `第 ${attempt} 次应该提示换模型`);
+    }
+  });
+
+  test('普通失败不会触发换模型提示（那是临时故障专用）', () => {
+    const d = decideRetry({ error: '某个工具报错', attempt: 1 });
+    assert.notEqual(d.switchModel, true);
   });
 
   test('401 鉴权失败依然不重试（key 错就是错，重试没用）', () => {
@@ -59,12 +84,16 @@ function main2() {
     const first = transientBackoffMs(1);
     const second = transientBackoffMs(2);
     const third = transientBackoffMs(3);
-    assert.ok(first >= 2000 && first < 3000, `第一次约 2s，实际 ${first}`);
-    assert.ok(second >= 4000 && second < 5000, `第二次约 4s，实际 ${second}`);
-    assert.ok(third >= 8000 && third < 9000, `第三次约 8s，实际 ${third}`);
-    // 封顶 30s，别让用户干等
+    assert.ok(first >= 1500 && first < 2200, `第一次约 1.5s，实际 ${first}`);
+    assert.ok(second >= 3000 && second < 3800, `第二次约 3s，实际 ${second}`);
+    assert.ok(third >= 6000 && third < 7000, `第三次约 6s，实际 ${third}`);
+    // 封顶 12s：10 次重试总等待控制在 1 分半左右，再长用户会觉得卡死
     const far = transientBackoffMs(20);
-    assert.ok(far <= 30800, `封顶 30s，实际 ${far}`);
+    assert.ok(far <= 12700, `封顶 12.7s，实际 ${far}`);
+    // 总时长也要兜住 —— 单次封顶只保证单项，累积起来才是用户真实感受
+    let total = 0;
+    for (let a = 1; a <= 10; a++) total += transientBackoffMs(a);
+    assert.ok(total <= 120000, `10 次重试总等待应 ≤ 2 分钟，实际 ${Math.round(total / 1000)}s`);
   });
 
   test('退避带抖动：同样次数不会产生完全相同的等待', () => {
@@ -102,6 +131,42 @@ function main2() {
     const redacted = '模型请求失败，接口详情已隐藏。';
     assert.equal(decideRetry({ error: redacted, status: '429' }).kind, 'transient');
     assert.equal(decideRetry({ error: redacted, status: 429 }).kind, 'transient');
+  });
+
+  test('可恢复的失败不标红：这些类型还有希望', () => {
+    const cases = [
+      { error: '模型请求失败，接口详情已隐藏', status: 429 },
+      { error: '模型请求失败，接口详情已隐藏', status: 503 },
+      { error: '模型请求被限流（HTTP 429）' },
+      { error: '模型请求超时' },
+      { error: '它没有给出内容' },
+      { error: '某个未知错误' }, // 未知也给一次机会
+    ];
+    for (const c of cases) {
+      assert.equal(
+        isRecoverableFailure(c),
+        true,
+        `应该判为可恢复：${JSON.stringify(c)}`,
+      );
+    }
+  });
+
+  test('没希望的失败才标红：这些立刻收手', () => {
+    const cases = [
+      { error: '模型请求认证失败（HTTP 401）', status: 401 },
+      { error: '模型请求被拒绝（HTTP 403）', status: 403 },
+      { error: 'invalid api key' },
+      { error: '已终止' },
+      { error: 'aborted' },
+      { error: 'already processing' },
+    ];
+    for (const c of cases) {
+      assert.equal(
+        isRecoverableFailure(c),
+        false,
+        `不该判为可恢复：${JSON.stringify(c)}`,
+      );
+    }
   });
 
   test('status=401 走鉴权分支，不因为带了 status 就当成临时故障', () => {

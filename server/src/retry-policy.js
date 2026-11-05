@@ -23,7 +23,7 @@ export const MAX_RETRIES = 2;
  * 按普通失败只给 1 次重试，等于把偶发抖动当成了永久失败，
  * 用户看到的就是整条链路一直报错、跑不完。
  */
-export const MAX_RETRIES_TRANSIENT = 5;
+export const MAX_RETRIES_TRANSIENT = 10;
 
 /**
  * 临时故障的退避时间（毫秒）。
@@ -33,8 +33,11 @@ export const MAX_RETRIES_TRANSIENT = 5;
  * 带抖动，避免多个 bot 同时重试形成新的洪峰。
  */
 export function transientBackoffMs(attempt = 1) {
-  const base = Math.min(2000 * Math.pow(2, Math.max(0, attempt - 1)), 30000);
-  const jitter = Math.floor(Math.random() * 800);
+  // 前几次快速重试（接口抖动往往一两秒就恢复），后面逐步拉长。
+  // 封顶 12 秒：10 次重试总等待控制在 1 分半左右 ——
+  // 再长用户就会觉得"卡死了"，而限流恢复通常也用不了那么久。
+  const base = Math.min(1500 * Math.pow(2, Math.max(0, attempt - 1)), 12000);
+  const jitter = Math.floor(Math.random() * 600);
   return base + jitter;
 }
 
@@ -111,10 +114,17 @@ export function decideRetry({
         kind: 'transient-exhausted',
       };
     }
+    // 前几次老老实实等接口恢复；到后半程就换个思路 ——
+    // 同一个模型连续抖这么多次，说明它这条通路本身就不可靠，
+    // 继续干等不如换一个模型试（见 retryHint 里的换模型提示）。
+    const switchModel = attempt >= Math.ceil(MAX_RETRIES_TRANSIENT * 0.6);
     return {
       retry: true,
-      why: '接口临时不稳定（限流或上游抖动），等一会儿再试',
+      why: switchModel
+        ? '接口一直不稳定，换一个模型再试'
+        : '接口临时不稳定（限流或上游抖动），等一会儿再试',
       kind: 'transient',
+      switchModel,
     };
   }
 
@@ -143,6 +153,62 @@ export function decideRetry({
 }
 
 /**
+ * 这次失败**还有没有希望**（不需要知道是第几次）。
+ *
+ * 用途：run() 内部要先判断"这次失败要不要给用户看红色气泡"。
+ * 还有希望就别标红 —— 用户看到的是"正在重试"，而不是满屏红字；
+ * 真到放弃时才标红，一次红字就够说明问题。
+ *
+ * 与 decideRetry 的区别：那个要 attempt 才能回答"还试不试"，
+ * 这个只回答"这类错误是否属于可恢复的那一类"。
+ *
+ * @param {object} p
+ * @param {string} p.error
+ * @param {number|null} [p.status]
+ * @returns {boolean}
+ */
+export function isRecoverableFailure({ error = '', status = null } = {}) {
+  const text = String(error ?? '');
+  const code = Number(status) || null;
+
+  // 用户终止 / 忙 / 鉴权错：都不是"再试试就好"的类型
+  if (/已.{0,2}(终止|中止)|aborted|cancelled|already processing|正在处理|在忙/i.test(text)) {
+    return false;
+  }
+  if (
+    code === 401 ||
+    code === 403 ||
+    /401|403|unauthorized|forbidden|invalid api key|鉴权|未授权/i.test(text)
+  ) {
+    return false;
+  }
+
+  // 临时故障：最值得再试的一类
+  if (
+    code === 429 ||
+    code === 500 ||
+    code === 502 ||
+    code === 503 ||
+    code === 504 ||
+    /\b429\b|rate[ _-]?limit|too many requests|限流|请求过于频繁/i.test(text) ||
+    /\b(500|502|503|504)\b|bad gateway|service unavailable|gateway timeout|上游|服务暂不可用/i.test(
+      text,
+    )
+  ) {
+    return true;
+  }
+
+  // 空回复：模型偶发不出内容，再试通常就好
+  if (/没有给出内容|空回复|empty/i.test(text)) return true;
+
+  // 超时：再试一次有价值
+  if (/超时|timeout|timed out/i.test(text)) return true;
+
+  // 其余未知错误：给一次机会（和 decideRetry 的默认行为一致）
+  return true;
+}
+
+/**
  * 重试时追加到提示词里的说明。
  *
  * 为什么要换措辞而不是原样重发：原样重发的输入完全一样，
@@ -155,9 +221,24 @@ export function decideRetry({
  * @param {string} [p.kind]   失败类型（来自 decideRetry）
  * @returns {string} 要拼在提示词前面的段落（空串表示不加）
  */
-export function retryHint({ attempt = 1, error = '', kind = 'unknown' } = {}) {
+export function retryHint({
+  attempt = 1,
+  error = '',
+  kind = 'unknown',
+  switchModel = false,
+} = {}) {
   const reason = String(error ?? '').slice(0, 200);
   const head = `【上一次没成，这是第 ${attempt} 次重试】${reason ? `原因：${reason}` : ''}`;
+  if (switchModel) {
+    // 接口反复不稳时，光让模型"再试一次"没用 —— 通路本身有问题。
+    // 告诉它保存已有进展，方便换模型后接着做。
+    return (
+      `${head}\n` +
+      '接口一直不稳定，可能要换模型了。这个活从头再来的话代价很大，' +
+      '所以这次**先把已经确认的事实和结论写下来**（已经查到的、已经改好的、还差什么），' +
+      '再继续往下做 —— 万一真换了模型，这些成果能直接接着用。\n\n'
+    );
+  }
 
   const advice =
     kind === 'empty'

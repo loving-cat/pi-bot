@@ -75,6 +75,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// 任务按钮的锚点：任务浮层要贴着它弹出。
   final _taskAnchor = GlobalKey();
 
+  /// 上一次已经提示过的错误"指纹"：同样的原因不再重复弹窗。
+  String? _lastToastedErrorKey;
+
+  /// 错误指纹：把变化的部分（次数、耗时、数字）抹掉，只留原因。
+  ///
+  /// 这样「接口不稳定（第 2 次）」和「接口不稳定（第 3 次）」算同一个原因，
+  /// 只提示一次；而「接口不稳定」和「key 已失效」是不同的，会各提示一次。
+  static String _errorDedupeKey(String message) {
+    return message
+        .replaceAll(RegExp(r'第\s*\d+\s*次'), '')
+        .replaceAll(RegExp(r'\d+(?:\.\d+)?\s*(?:ms|s|秒|毫秒)'), '')
+        .replaceAll(RegExp(r'HTTP\s*\d{3}'), 'HTTP')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
   /// 三个点按钮的锚点：更多菜单要贴着它弹出。
   final _moreAnchor = GlobalKey();
 
@@ -534,9 +550,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (state.lastError != null && state.lastError != _shownError) {
       _shownError = state.lastError;
       final message = _shownError!;
+      // ★ 同一原因只提示一次。
+      //
+      //   key 不稳时接口会连着失败好几次，每次都弹一遍 toast，
+      //   用户看到的就是"弹窗刷屏"。第一次已经说清楚了，
+      //   后面同样的内容再弹只是噪音 —— 重试进度在气泡里能看到。
+      //   只有换了原因（比如从"接口抖动"变成"key 失效"）才再提示一次。
+      final key = _errorDedupeKey(message);
+      final shouldToast = key != _lastToastedErrorKey;
+      _lastToastedErrorKey = key;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        toast(context, message);
+        if (shouldToast) toast(context, message);
         AppScope.read(context).clearError();
       });
     }

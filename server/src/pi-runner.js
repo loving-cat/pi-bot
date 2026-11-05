@@ -67,6 +67,7 @@ import {
   retryHint,
   failureNote,
   transientBackoffMs,
+  isRecoverableFailure,
 } from './retry-policy.js';
 import { createSessionBuilder } from './session-factory.js';
 import { createBuildInput } from './prompt-input.js';
@@ -1234,7 +1235,12 @@ export class PiRunner {
               // ★ 重试等待期间用户插话 → 旧任务作废，别再起跑
               if (stale()) break;
               // 换个说法再发，而不是原样重发（原样输入很可能得到同样结果）
-              const hinted = retryHint({ attempt: attempt - 1, error: lastError, kind: decision.kind });
+              const hinted = retryHint({
+                attempt: attempt - 1,
+                error: lastError,
+                kind: decision.kind,
+                switchModel: decision.switchModel === true,
+              });
               res = await this.run(roomId, bot.id, hinted + prompt, {
                 groupTurn: true,
                 attachments,
@@ -2311,23 +2317,39 @@ export class PiRunner {
         return { ok: true, text: partial, ms: Date.now() - started, messageId: botMsg.id };
       }
       const changedOnce = changes();
+      // ★ 还有希望的失败先不标红。
+      //
+      //   外层会接着重试；这里如果把 status 写成 error，
+      //   用户看到的就是"整条对话被一路标红"，而实际上它正在自愈。
+      //   界面应该表达"还在想办法"，而不是"已经失败了"。
+      //   真到放弃时才写 error —— 一次红字足够说明问题。
+      const recoverable = !keepAborted && !cancelled()
+        && isRecoverableFailure({ error: message, status: failure.status ?? null });
       const msg = store.updateMessage(
         roomId,
         botMsg.id,
         {
-          text: partial,
-          status: keepAborted ? 'aborted' : 'error',
-          error: message,
+          text: recoverable
+            ? (partial || '接口临时不稳定，正在重试…')
+            : partial,
+          status: keepAborted
+            ? 'aborted'
+            : (recoverable ? 'retrying' : 'error'),
+          error: recoverable ? null : message,
           steps,
           usage,
-          meta: { ...(botMsg.meta ?? {}), ...(changedOnce ? { changed: changedOnce } : {}) },
+          meta: {
+            ...(botMsg.meta ?? {}),
+            ...(changedOnce ? { changed: changedOnce } : {}),
+            ...(recoverable ? { retrying: true } : {}),
+          },
         },
         { silent: true },
       );
       // 保持 aborted 时发 msg.updated（客户端认得，会把气泡收掉）；
-      // 只有真出错才发 msg.error（红色）。
+      // 可恢复的失败也走 msg.updated（不标红），只有真出错才发 msg.error。
       bus.emit('event', {
-        t: keepAborted ? 'msg.updated' : 'msg.error',
+        t: keepAborted || recoverable ? 'msg.updated' : 'msg.error',
         roomId,
         msgId: botMsg.id,
         error: message,
