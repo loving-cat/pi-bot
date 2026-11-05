@@ -1,0 +1,28 @@
+app/lib/api.dart
+  h_c2e638ff76b3b9 6,9-13,60,225
+app/lib/app_state.dart
+  h_c2e638ff76b3b9 43-59
+app/lib/error_text.dart
+  h_c2e638ff76b3b9 1-27
+app/lib/l10n/strings/errors.dart
+  h_c2e638ff76b3b9 1-60
+app/lib/l10n/strings/registry.dart
+  h_c2e638ff76b3b9 7,22
+app/lib/widgets/lessons_section.dart
+  h_c2e638ff76b3b9 239
+app/test/error_text_test.dart
+  h_c2e638ff76b3b9 1-76
+server/src/http.js
+  h_c2e638ff76b3b9 54-65,281,317,404,443,455,475,485,508,516,620,668,692,734,910,942,945,955,967,1003,1012,1028,1035,1144,1204,1216,1222,1229,1239,1243,1245,1261,1265,1267
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c3430339be83a45ec6b66baba488f0292736b14e",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
