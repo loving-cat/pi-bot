@@ -1,0 +1,34 @@
+app/lib/app_state.dart
+  h_c2e638ff76b3b9 259-282
+app/lib/l10n/strings/onboarding.dart
+  h_c2e638ff76b3b9 1-38
+app/lib/l10n/strings/registry.dart
+  h_c2e638ff76b3b9 9,25
+app/lib/main.dart
+  h_c2e638ff76b3b9 29,347-353
+app/lib/paste_paths.dart
+  h_c2e638ff76b3b9 1-129
+app/lib/screens/chat_screen.dart
+  h_c2e638ff76b3b9 17,318-322,325-327,329-335,337,340-341
+app/lib/widgets/default_model_picker.dart
+  h_c2e638ff76b3b9 1-189
+app/lib/widgets/model_group_editor.dart
+  h_c2e638ff76b3b9 222-234
+app/lib/widgets/model_setup_gate.dart
+  h_c2e638ff76b3b9 1-143
+app/test/paste_paths_test.dart
+  h_c2e638ff76b3b9 1-115
+server/src/store.js
+  h_c2e638ff76b3b9 84-91,965-979
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5cf4af052931225c85e2cbf56b87284ff4577336",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
