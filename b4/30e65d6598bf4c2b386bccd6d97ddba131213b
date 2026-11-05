@@ -1,0 +1,21 @@
+app/lib/widgets/room_panel.dart
+  s_8631552e8c960b::t_ae9bf79217c0df 671,676-784,789,816-817,819-835,840-928,945-961,966-967,969-972,976,978-982,986-1002,1027,1039-1050
+app/macos/Runner/MainFlutterWindow.swift
+  s_8631552e8c960b::t_8b27cfd9bc229f 5-16,19-22,24-25,31-81
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b430e65d6598bf4c2b386bccd6d97ddba131213b",
+  "prompts": {},
+  "sessions": {
+    "s_8631552e8c960b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a09f10-35bf-7163-af83-9efa585a553d",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
