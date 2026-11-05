@@ -24,7 +24,7 @@ const areaRoom = StringArea(
     'room.addN': '添加 {n} 个',
     'room.added': '已加进「{room}」，下次说话它就接得上。',
     'room.removeTitle': '把 {name} 移出「{room}」？',
-    'room.removeBody': '它会不再参与这个团队的活。\n\nbot 本身还在成员列表里，你和它的私聊、你教过它的东西都留着 —— 以后想加回来，跟助手说一声就行。',
+    'room.removeBody': '它不再参与这个团队。bot 本身和你们的历史对话都保留，随时可以加回来。',
     'room.remove': '移出',
     'room.removed': '已把 {name} 移出这个群',
     'room.lead': '负责人',

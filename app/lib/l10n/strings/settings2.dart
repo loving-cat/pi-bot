@@ -41,7 +41,7 @@ const areaSettings2 = StringArea(
     'settings.server.deviceName': '设备名',
     'settings.notify.title': '后台通知',
     'settings.notify.subtitle': '锁屏也能收到机器人干完活的消息',
-    'settings.notify.hint': '不走 FCM。App 会起一个低优先级的常驻通知保住连接，\n机器人干完活时再单独推一条消息通知。',
+    'settings.notify.hint': '不需要第三方推送服务：App 用常驻通知保持连接，\n任务完成时单独提示。',
     'settings.notify.testTitle': 'pi-bot 通知测试',
     'settings.notify.testBody': '看到这条说明通知是通的 ✅',
     'settings.notify.testButton': '发一条测试通知',

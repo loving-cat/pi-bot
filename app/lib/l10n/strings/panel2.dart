@@ -17,7 +17,7 @@ const areaPanel2 = StringArea(
     // ---- 模型卡片与容量 ----
     'model.cardsTitle': '模型',
     'model.addModel': '添加模型',
-    'model.cardsHint': '每个模型独立设置。单位：tokens。已有模型留空保留原值；新模型留空使用服务端默认值。',
+    'model.cardsHint': '每个模型独立设置，单位 tokens。留空则保留原值或使用默认值。',
     'model.cardNumber': '模型 {n}',
     'model.nameOptional': '显示名（可选）',
     'model.nameHint': '留空使用模型 ID',
@@ -74,21 +74,21 @@ const areaPanel2 = StringArea(
     'limits.savedRunning': '已生效（正在跑的会话下次跑就用新规矩）',
     'limits.saved': '已生效（不用重启）',
     'limits.title': '群聊轮次',
-    'limits.intro': 'bot 之间用 @ 互相分工协作，谁也没规定什么时候停 —— 解不了的活它们会一直聊。这几个数就是闸门。改完立刻生效。',
+    'limits.intro': '限制 bot 之间来回的轮次，避免解不了的活一直聊下去。',
     'limits.leadTurns': '老大最多几轮',
     'limits.memberTurns': '成员最多几轮',
     'limits.runsPerMessage': '一条消息最多跑几次',
     'limits.stepsPerRun': '单次最多来回几轮',
     'limits.turnMinutes': '单轮最长几分钟',
     'limits.turnHint':
-        '一个成员一轮最多跑这么久，到点收住交给别人 —— 防止一个人把整个部门卡住。写代码这类慢活可以调大（比如 20）。',
+        '单个成员一轮最长运行时间，超时会交给别人。',
     'limits.rulesTitle': '部门规矩',
     'limits.rulesHint': '预算管的是"能跑多久"；规矩管的是"能不能拆家"。',
     'limits.fileAndCommand': '改文件 / 跑命令',
     'limits.allow': '允许',
     'limits.ask': '需批准',
     'limits.deny': '只读',
-    'limits.policyHint': '需批准 = 工具照给，但每一次改文件/跑命令都先弹一张卡片让你点。只读 = 直接不给这些工具（看还是能看的）。两种都是真拦得住 —— 靠提示词里写"请先问"是拦不住的。',
+    'limits.policyHint': '需批准 = 每次改文件/跑命令都要你确认。只读 = 不给这些工具。',
     'limits.requireProof': '交付要附证据',
     'limits.requireProofHint': '交活时必须带上命令输出 / 文件路径 / 测试结果，不许只说"改好了"',
 
@@ -177,7 +177,7 @@ const areaPanel2 = StringArea(
     'lesson.candidateCount': '待确认 {n}',
     'lesson.activeCount': '已启用 {n}',
     'lesson.all': '全部',
-    'lesson.emptyCandidates': '还没有待确认的经验。群聊收尾后会自动复盘出候选，你在这里决定要不要让它记住。',
+    'lesson.emptyCandidates': '还没有候选经验。群聊结束后会自动复盘出候选。',
     'lesson.noCandidates': '没有待确认的经验',
     'lesson.emptyActive': '还没有启用的经验。候选条目点「启用」后，助手安排任务时才会参考它。',
     'lesson.noActive': '没有启用的经验',
@@ -220,7 +220,7 @@ const areaPanel2 = StringArea(
     'ctx.title': '上下文',
     'ctx.used': '已占用',
     'ctx.autoCompact': '自动压缩',
-    'ctx.autoCompactOn': '开 —— 用到接近上限时，pi 会把前面的对话总结掉，然后接着干（历史消息还在，只是不再进上下文）',
+    'ctx.autoCompactOn': '开 —— 接近上限时自动总结之前的对话，历史消息仍保留。',
     'ctx.compactNote': '压缩时头部会显示「压缩中」。想让它装得更多，可以给这个 bot 单独调预算。',
     'ctx.compacted': '上下文压缩了（前面的对话已总结）',
     'ctx.compactedFrom': '上下文压缩了：{before}k（前面的对话已总结）',
@@ -268,7 +268,7 @@ const areaPanel2 = StringArea(
     'user.title': '我是谁',
     'user.saved': '已保存，bot 下一轮起会这么称呼你',
     'user.explain':
-        'bot 会用这个名字称呼你。设一次就行 —— 不用往每个人的人设里写"用户叫 XX"。群里它也知道哪条是你发的（其余都是同事）。',
+        'bot 会用这个名字称呼你。',
     'user.hint': '比如：小陈 / Boss / 老板',
 
     // ---- 工具步骤 ----
@@ -294,7 +294,7 @@ const areaPanel2 = StringArea(
     // ---- 日志 ----
     'log.title': '日志',
     'log.openFolder': '打开目录',
-    'log.note': '服务端日志 server.log 和界面日志 app.log 都在这里。出问题时把目录里的文件贴给我们，比截图有用。',
+    'log.note': '服务端日志 server.log 与界面日志 app.log。排查问题时请提供这些文件。',
 
     // ---- 预览 ----
     'preview.readFailed': '暂时无法读取附件，请重新打开或下载后查看。',
@@ -363,7 +363,7 @@ const areaPanel2 = StringArea(
     // ---- model cards & capacity ----
     'model.cardsTitle': 'Models',
     'model.addModel': 'Add model',
-    'model.cardsHint': 'Each model is configured on its own, in tokens. Leave a field blank on an existing model to keep its current value; leave it blank on a new model to use the server default.',
+    'model.cardsHint': 'Each model is configured separately, in tokens. Blank keeps the current or default value.',
     'model.cardNumber': 'Model {n}',
     'model.nameOptional': 'Display name (optional)',
     'model.nameHint': 'Blank uses the model ID',
@@ -424,7 +424,7 @@ const areaPanel2 = StringArea(
         'Applied — running sessions pick up the new limits on their next run',
     'limits.saved': 'Applied (no restart needed)',
     'limits.title': 'Group turns',
-    'limits.intro': 'Bots delegate to each other with @mentions and nothing tells them when to stop, so an unsolvable task turns into an endless back-and-forth. These numbers are the brake, and they apply as soon as you save.',
+    'limits.intro': 'Caps how many turns bots take going back and forth on a task.',
     'limits.leadTurns': 'Lead turns',
     'limits.memberTurns': 'Member turns',
     'limits.runsPerMessage': 'Runs per message',
@@ -438,7 +438,7 @@ const areaPanel2 = StringArea(
     'limits.allow': 'Allow',
     'limits.ask': 'Ask first',
     'limits.deny': 'Read-only',
-    'limits.policyHint': 'Ask first keeps the tools available but shows a card for every file edit or command. Read-only withholds them entirely (reading still works). Both actually block — a prompt saying "please ask first" does not.',
+    'limits.policyHint': 'Ask first = confirm every file edit and command. Read-only = these tools are withheld.',
     'limits.requireProof': 'Deliver with evidence',
     'limits.requireProofHint': 'Finished work must include command output, file paths or test results — "it works now" is not enough',
 
@@ -578,7 +578,7 @@ const areaPanel2 = StringArea(
     'ctx.title': 'Context',
     'ctx.used': 'Used',
     'ctx.autoCompact': 'Auto-compact',
-    'ctx.autoCompactOn': 'On — as the window fills up, pi summarizes earlier turns and keeps going. History stays, it just no longer counts toward the context.',
+    'ctx.autoCompactOn': 'On — summarizes earlier turns when nearing the limit. History is kept.',
     'ctx.compactNote': 'The header shows "Compacting" while it runs. To give it more room, raise this bot\'s budget.',
     'ctx.compacted': 'Context compacted (earlier turns summarized)',
     'ctx.compactedFrom':
@@ -652,7 +652,7 @@ const areaPanel2 = StringArea(
     // ---- logs ----
     'log.title': 'Logs',
     'log.openFolder': 'Open folder',
-    'log.note': 'The server log (server.log) and the app log (app.log) both live here. When something goes wrong, these files help us far more than a screenshot.',
+    'log.note': 'Server log (server.log) and app log (app.log). These help when troubleshooting.',
 
     // ---- preview ----
     'preview.readFailed':

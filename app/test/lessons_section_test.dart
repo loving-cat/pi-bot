@@ -99,11 +99,12 @@ void main() {
     expect(find.text('已启用'), findsOneWidget);
   });
 
-  testWidgets('空库：给出"收尾后会自动复盘"的说明，不显示空白卡片', (tester) async {
+  testWidgets('空库：给出会复盘出候选的说明，不显示空白卡片', (tester) async {
     final state = AppState()..lessonsLoaded = true;
     await tester.pumpWidget(host(state));
     await tester.pump();
-    expect(find.textContaining('收尾后会自动复盘'), findsOneWidget);
+    // 断言的是"会给用户一句解释"，而不是具体措辞 —— 文案精简时不该测试跟着碎
+    expect(find.textContaining('复盘'), findsOneWidget);
   });
 
   testWidgets('长文案不溢出（情境/做法都按行收）', (tester) async {

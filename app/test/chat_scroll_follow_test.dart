@@ -266,6 +266,41 @@ void main() {
     });
   }
 
+
+  for (final platform in [TargetPlatform.windows, TargetPlatform.macOS]) {
+    testWidgets('${platform.name} 底部继续下滑时箭头不闪', (tester) async {
+      final state = _cached();
+      addTearDown(state.dispose);
+      await _showChat(tester, state, platform: platform);
+      await _frames(tester);
+      _expectAtBottom(tester);
+      // 在底部时不该有箭头
+      expect(find.byTooltip('回到最新'), findsNothing);
+
+      // ★ 直接在底部继续往下拖：BouncingScrollPhysics 会先拉伸再回弹，
+      //   老代码会把回弹当成"用户往上翻"，于是箭头闪一下。
+      //   逐帧检查 —— 只看结束状态会漏掉这一闪。
+      final gesture = await tester.startGesture(
+        tester.getCenter(find.byType(ListView).first),
+      );
+      var flashed = false;
+      for (var i = 0; i < 8; i++) {
+        await gesture.moveBy(const Offset(0, -40));
+        await tester.pump(const Duration(milliseconds: 16));
+        if (find.byTooltip('回到最新').evaluate().isNotEmpty) {
+          flashed = true;
+        }
+      }
+      await gesture.up();
+      await _frames(tester);
+
+      expect(flashed, isFalse, reason: '在底部继续下滑时不该出现回到最新按钮');
+      expect(find.byTooltip('回到最新'), findsNothing);
+      _expectAtBottom(tester);
+    });
+  }
+
+
   testWidgets('不同高度消息与正文增减后仍保持跟随', (tester) async {
     final state = _ChatState()
       ..messages[_room.id] = List.generate(

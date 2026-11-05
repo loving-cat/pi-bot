@@ -18,6 +18,12 @@ class ChatScrollFollow {
   final double nearBottom;
   final int maxFrames;
 
+  /// 离底部多近算「还在底部」。
+  ///
+  /// 回弹、像素取整都会让 pixels 与 maxScrollExtent 差几个像素，
+  /// 用 <= 1 这种精确相等来判就会把正常抖动误判成"用户往上翻了"。
+  static const double _bottomSlack = 24;
+
   bool get following => _following;
 
   bool _following = true;
@@ -58,12 +64,18 @@ class ChatScrollFollow {
     } else if (notification is ScrollNotification && notification.depth == 0) {
       if (notification is ScrollStartNotification &&
           notification.dragDetails != null) {
-        final wasAtBottom =
-            _following &&
+        final distanceToBottom =
             (notification.metrics.maxScrollExtent - notification.metrics.pixels)
-                    .abs() <=
-                1;
-        pause();
+                .abs();
+        final wasAtBottom = _following && distanceToBottom <= _bottomSlack;
+        // ★ 在底部起手时不要立刻 pause。
+        //
+        //   ScrollStartNotification 只说明"手指按下了"，还不知道用户
+        //   要往上翻还是继续留在底部看新消息。老代码无条件 pause()，
+        //   于是手指一沾上（哪怕是在最底部继续往下拉）"回到底部"
+        //   箭头就冒出来 —— 用户明明没往上翻。
+        //   在底部起手时保持跟随；真往上翻，_onOffsetChanged 会停掉。
+        if (!wasAtBottom) pause();
         _resumeAfterDrag = wasAtBottom;
       } else if (notification is UserScrollNotification &&
           notification.direction == ScrollDirection.forward) {
