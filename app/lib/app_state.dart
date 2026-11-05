@@ -40,7 +40,23 @@ String lessonError(Object err) {
 }
 
 /// 该错误是否代表「资源已不存在」。
-bool isGoneError(String message) => message.startsWith('[404]');
+///
+/// 同时认状态码前缀与错误码：状态码由 API 层给，错误码由服务端给。
+bool isGoneError(String message) {
+  if (message.startsWith('[404]')) return true;
+  for (final code in const [
+    'TASK_NOT_FOUND',
+    'AUTOMATION_NOT_FOUND',
+    'SITE_NOT_FOUND',
+    'FILE_NOT_FOUND',
+    'BOT_NOT_FOUND',
+    'MODEL_GROUP_NOT_FOUND',
+    'ROOM_NOT_FOUND',
+  ]) {
+    if (message.contains(code)) return true;
+  }
+  return false;
+}
 
 class AppState extends ChangeNotifier {
   static const _kUrl = 'server_url';

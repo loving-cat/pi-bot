@@ -4,6 +4,7 @@ import 'area.dart';
 import 'avatar.dart';
 import 'chat.dart';
 import 'common.dart';
+import 'errors.dart';
 import 'model.dart';
 import 'panel.dart';
 import 'panel2.dart';
@@ -18,6 +19,7 @@ const allStringAreas = <StringArea>[
   areaAvatar,
   areaChat,
   areaCommon,
+  areaErrors,
   areaModel,
   areaPanel,
   areaPanel2,

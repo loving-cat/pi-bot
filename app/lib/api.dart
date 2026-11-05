@@ -3,9 +3,14 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class ApiException implements Exception {
-  ApiException(this.message, {this.status});
+  ApiException(this.message, {this.status, this.code});
   final String message;
   final int? status;
+
+  /// 服务端返回的稳定错误标识（如 ROOM_NOT_FOUND）。
+  /// 界面据此取本地化文案；为空时退回 message。
+  final String? code;
+
   @override
   String toString() => message;
 }
@@ -52,6 +57,7 @@ class Api {
       throw ApiException(
         (body['error'] as String?) ?? 'HTTP ${res.statusCode}',
         status: res.statusCode,
+        code: body['code'] as String?,
       );
     }
     return body;
@@ -216,6 +222,7 @@ class Api {
       throw ApiException(
         (body['error'] as String?) ?? 'HTTP ${res.statusCode}',
         status: res.statusCode,
+        code: body['code'] as String?,
       );
     }
     return body;

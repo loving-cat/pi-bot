@@ -236,7 +236,7 @@ class _LessonsSectionState extends State<LessonsSection> {
   /// 直接甩“经验不存在”用户看不懂，也以为自己点错了。
   void _showError(String err) {
     if (!mounted) return;
-    // 按状态码判断，不靠中文子串：服务端语言可能与界面语言不同。
+    // 按错误码判断，不靠中文子串：服务端语言可能与界面语言不同。
     toast(context, isGoneError(err) ? L10n.s(context).t('lesson.gone') : err);
   }
 }

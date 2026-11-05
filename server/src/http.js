@@ -51,6 +51,18 @@ import { publicSite } from './sites.js';
 import { UploadSessions } from './upload-sessions.js';
 import { loadHooks, saveHooks, validateHook } from './hooks.js';
 
+/// 返回带稳定错误码的失败响应。
+///
+/// 约定：`error` 保留人读的中文兜底（老客户端仍能用），
+/// `code` 是给客户端做本地化用的稳定标识 —— 界面语言切换后
+/// 客户端按 code 取自己的文案，不依赖服务端语言。
+///
+/// @param {string} code 大写下划线标识，如 ROOM_NOT_FOUND
+/// @param {string} message 人读兜底文案
+function fail(res, status, code, message, extra = null) {
+  return send(res, status, { error: message, code, ...(extra ?? {}) });
+}
+
 function send(res, status, body) {
   const payload = JSON.stringify(body ?? {});
   res.writeHead(status, {
@@ -266,7 +278,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
       if (pathname === '/api/pair' && req.method === 'POST') {
         const body = await readBody(req);
         if (!pairing.verify(body.code)) {
-          return send(res, 401, { error: '配对码不对或已过期，看服务端控制台最新那 6 位数字' });
+          return fail(res, 401, 'PAIR_CODE_INVALID', '配对码不对或已过期，看服务端控制台最新那 6 位数字');
         }
         const { token, device } = store.addDevice(body.deviceName);
         // 配对码一次性：换到 token 后立即作废，避免同一码重复换发。
@@ -302,7 +314,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         pathname === '/api/uploads' || pathname.startsWith('/api/uploads/');
       if (!isUploadRoute && ['POST', 'PATCH', 'PUT'].includes(req.method)) {
         if (!isJsonContentType(req.headers['content-type'])) {
-          return send(res, 415, { error: 'content-type 必须是 application/json' });
+          return fail(res, 415, 'BAD_CONTENT_TYPE', 'content-type 必须是 application/json');
         }
       }
 
@@ -389,7 +401,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
             capabilityRevision: approval.capabilityRevision ?? null,
           });
         }
-        if (!approval) return send(res, 400, { error: '没有待批准的这一条' });
+        if (!approval) return fail(res, 400, 'APPROVAL_NOT_PENDING', '没有待批准的这一条');
 
         // 卡片状态跟着变（前端据此把按钮置灰）
         const card = (store.listMessages(approval.roomId, { limit: 200 }) ?? []).find(
@@ -428,7 +440,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         const body = await readBody(req);
         const problem = validateSchedule(body);
         if (problem) return send(res, 400, { error: problem });
-        if (!store.getRoom(body.roomId)) return send(res, 400, { error: '会话不存在' });
+        if (!store.getRoom(body.roomId)) return fail(res, 400, 'ROOM_NOT_FOUND', '会话不存在');
         const automation = store.createAutomation({
           roomId: body.roomId,
           title: body.title,
@@ -440,7 +452,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
           createdBy: device.id,
           nextRunAt: computeNextRun(body) ?? 0,
         });
-        if (!automation) return send(res, 400, { error: '任务要有标题和内容' });
+        if (!automation) return fail(res, 400, 'AUTOMATION_INVALID', '任务要有标题和内容');
         return send(res, 200, { automation });
       }
 
@@ -460,7 +472,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
           patch.nextRunAt = computeNextRun(merged) ?? 0;
         }
         const automation = store.updateAutomation(autoMatch[1], patch);
-        if (!automation) return send(res, 404, { error: '定时任务不存在' });
+        if (!automation) return fail(res, 404, 'AUTOMATION_NOT_FOUND', '定时任务不存在');
         return send(res, 200, { automation });
       }
       if (autoMatch && req.method === 'DELETE') {
@@ -470,7 +482,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
       const autoRunMatch = pathname.match(/^\/api\/automations\/([^/]+)\/run$/);
       if (autoRunMatch && req.method === 'POST') {
         const automation = store.getAutomation(autoRunMatch[1]);
-        if (!automation) return send(res, 404, { error: '定时任务不存在' });
+        if (!automation) return fail(res, 404, 'AUTOMATION_NOT_FOUND', '定时任务不存在');
         runner.runAutomation(automation).catch((err) =>
           log('手动触发定时任务失败：', err?.message || err),
         );
@@ -493,7 +505,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
           ownerBotId: body.ownerBotId ?? null,
           createdBy: device.id,
         });
-        if (!task) return send(res, 400, { error: '任务需要一个标题' });
+        if (!task) return fail(res, 400, 'TASK_NEEDS_TITLE', '任务需要一个标题');
         return send(res, 200, { task });
       }
 
@@ -501,7 +513,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
       if (taskMatch && req.method === 'PATCH') {
         const body = await readBody(req);
         const task = store.updateTask(taskMatch[1], body);
-        if (!task) return send(res, 404, { error: '任务不存在' });
+        if (!task) return fail(res, 404, 'TASK_NOT_FOUND', '任务不存在');
         return send(res, 200, { task });
       }
       if (taskMatch && req.method === 'DELETE') {
@@ -605,7 +617,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
       if (siteTeamMatch && req.method === 'POST') {
         const id = decodeURIComponent(siteTeamMatch[1]);
         const site = store.getSite(id);
-        if (!site) return send(res, 404, { error: '系统不存在' });
+        if (!site) return fail(res, 404, 'SITE_NOT_FOUND', '系统不存在');
         const body = await readBody(req);
         const teamName = String(body.name ?? `${site.name} 团队`).slice(0, 40);
 
@@ -653,7 +665,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
       if (siteTestMatch && req.method === 'POST') {
         const id = decodeURIComponent(siteTestMatch[1]);
         const site = store.getSite(id);
-        if (!site) return send(res, 404, { error: '系统不存在' });
+        if (!site) return fail(res, 404, 'SITE_NOT_FOUND', '系统不存在');
         const r = await sites.ping(site);
         return send(res, 200, r);
       }
@@ -677,7 +689,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         const wanted = new Set(
           (Array.isArray(body.names) ? body.names : []).map((n) => String(n).toLowerCase()),
         );
-        if (!wanted.size) return send(res, 400, { error: '没选要导入的条目' });
+        if (!wanted.size) return fail(res, 400, 'IMPORT_NOTHING_SELECTED', '没选要导入的条目');
 
         const found = scanLocalCapabilities({
           existingSkills: store.skillLibrary(),
@@ -719,7 +731,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
             else imported.push(r.server.name);
           }
         } else {
-          return send(res, 400, { error: 'kind 只能是 skill 或 mcp' });
+          return fail(res, 400, 'INVALID_KIND', 'kind 只能是 skill 或 mcp');
         }
 
         if (imported.length && kind === 'mcp') await runner.applyMcpChange?.();
@@ -895,7 +907,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         let size = 0;
         for await (const chunk of req) {
           size += chunk.length;
-          if (size > limit) return send(res, 413, { error: '单个分片不能超过 4MB' });
+          if (size > limit) return fail(res, 413, 'CHUNK_TOO_LARGE', '单个分片不能超过 4MB');
           chunks.push(chunk);
         }
         const result = uploads.writeChunk(
@@ -927,10 +939,10 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         let size = 0;
         for await (const chunk of req) {
           size += chunk.length;
-          if (size > 25 * 1024 * 1024) return send(res, 413, { error: '文件太大，上限 25MB' });
+          if (size > 25 * 1024 * 1024) return fail(res, 413, 'FILE_TOO_LARGE', '文件太大，上限 25MB');
           chunks.push(chunk);
         }
-        if (!size) return send(res, 400, { error: '空文件' });
+        if (!size) return fail(res, 400, 'EMPTY_FILE', '空文件');
         const name = url.searchParams.get('name') || req.headers['x-file-name'] || 'file';
         const meta = saveBuffer(Buffer.concat(chunks), { name, mime: req.headers['content-type'] });
         return send(res, 200, { attachment: { ...meta, url: `/api/files/${meta.id}` } });
@@ -940,7 +952,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
       if (fileMatch && req.method === 'GET') {
         const meta = metaFor(fileMatch[1]);
         const file = pathFor(fileMatch[1]);
-        if (!meta || !file) return send(res, 404, { error: '文件不存在' });
+        if (!meta || !file) return fail(res, 404, 'FILE_NOT_FOUND', '文件不存在');
         res.writeHead(200, fileResponseHeaders(meta));
         fs.createReadStream(file).pipe(res);
         return undefined;
@@ -952,7 +964,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
       if (renderMatch && req.method === 'GET') {
         const meta = metaFor(renderMatch[1]);
         const file = pathFor(renderMatch[1]);
-        if (!meta || !file) return send(res, 404, { error: '文件不存在' });
+        if (!meta || !file) return fail(res, 404, 'FILE_NOT_FOUND', '文件不存在');
         // ★ 按需加载：render-html 会拉起 xlsx / mammoth / pdf-parse 三个重库。
         //   顶层静态 import 会让**每一次服务端启动**都付这笔钱 —— 启动变慢，
         //   app 的集成测试（真起 node 子进程）在 CI 冷机器上就会被判超时。
@@ -988,7 +1000,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
 
       if (pathname === '/api/bots' && req.method === 'POST') {
         const body = await readBody(req);
-        if (!body.name) return send(res, 400, { error: '需要 name' });
+        if (!body.name) return fail(res, 400, 'NAME_REQUIRED', '需要 name');
         const bot = store.createBot({ ...body, createdBy: device.id });
         return send(res, 200, { bot });
       }
@@ -997,7 +1009,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
       if (botMatch && req.method === 'PATCH') {
         const body = await readBody(req);
         const previous = store.getBot(botMatch[1]);
-        if (!previous) return send(res, 404, { error: 'bot 不存在' });
+        if (!previous) return fail(res, 404, 'BOT_NOT_FOUND', 'bot 不存在');
         let selected;
         if (Object.hasOwn(body, 'model')) {
           const checked = resolveBotModelSelection(body.model, {
@@ -1013,14 +1025,14 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         const capacityProblem = capacityError({ ...previous, ...body }, model, { allowNull: true });
         if (capacityProblem) return send(res, 400, { error: capacityProblem });
         const bot = store.updateBot(botMatch[1], body);
-        if (!bot) return send(res, 404, { error: 'bot 不存在' });
+        if (!bot) return fail(res, 404, 'BOT_NOT_FOUND', 'bot 不存在');
         if (['model', 'thinking', 'contextWindow', 'maxTokens', 'reserveTokens', 'keepRecentTokens', 'mcpServers']
           .some((key) => body[key] !== undefined)) runner.reloadSessionForBot(bot.id);
         return send(res, 200, { bot });
       }
       if (botMatch && req.method === 'DELETE') {
         const r = store.deleteBot(botMatch[1]);
-        if (!r) return send(res, 400, { error: '删不了（不存在或它是主控）' });
+        if (!r) return fail(res, 400, 'CANNOT_DELETE_MAIN_BOT', '删不了（不存在或它是主控）');
         return send(res, 200, r);
       }
 
@@ -1129,7 +1141,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
       }
       if (groupMatch && req.method === 'DELETE') {
         const ok2 = modelGroups.remove(groupMatch[1]);
-        if (!ok2) return send(res, 404, { error: '模型组不存在' });
+        if (!ok2) return fail(res, 404, 'MODEL_GROUP_NOT_FOUND', '模型组不存在');
         // ★ 删除不等刷新完成就回 —— 刷新要对每个 provider 做真实网络请求
         //   （checkAuth），baseUrl 挂了的话会卡到超时（几十秒），
         //   用户看到的就是“删不掉”。
@@ -1189,7 +1201,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
       if (pathname === '/api/rooms/dm' && req.method === 'POST') {
         const body = await readBody(req);
         const room = store.ensureDm(body.botId);
-        if (!room) return send(res, 404, { error: 'bot 不存在' });
+        if (!room) return fail(res, 404, 'BOT_NOT_FOUND', 'bot 不存在');
         // 空私聊 → 让它自己开口（自我介绍 + 询问卡片），不阻塞这次请求
         runner.greetDm(room.id, body.botId).catch((err) =>
           log('私聊开场失败：', err?.message || err),
@@ -1201,20 +1213,20 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
       if (roomMatch && req.method === 'PATCH') {
         const body = await readBody(req);
         const room = store.updateRoom(roomMatch[1], body);
-        if (!room) return send(res, 404, { error: '会话不存在' });
+        if (!room) return fail(res, 404, 'ROOM_NOT_FOUND', '会话不存在');
         return send(res, 200, { room: store.roomSummary(room) });
       }
       if (roomMatch && req.method === 'DELETE') {
         shells.killRoom(roomMatch[1]);
         const r = store.deleteRoom(roomMatch[1]);
-        if (!r) return send(res, 400, { error: '删不了（不存在或是 DM）' });
+        if (!r) return fail(res, 400, 'CANNOT_DELETE_DM', '删不了（不存在或是 DM）');
         return send(res, 200, r);
       }
 
       const msgMatch = pathname.match(/^\/api\/rooms\/([^/]+)\/messages$/);
       if (msgMatch && req.method === 'GET') {
         const roomId = msgMatch[1];
-        if (!store.getRoom(roomId)) return send(res, 404, { error: '会话不存在' });
+        if (!store.getRoom(roomId)) return fail(res, 404, 'ROOM_NOT_FOUND', '会话不存在');
         const limit = Math.min(Number(url.searchParams.get('limit') || 100), config.maxMessagesPerRoom);
         return send(res, 200, { messages: store.listMessages(roomId, { limit }) });
       }
@@ -1224,13 +1236,13 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
       if (memoryMatch && req.method === 'GET') {
         const roomId = memoryMatch[1];
         const room = store.getRoom(roomId);
-        if (!room) return send(res, 404, { error: '会话不存在' });
+        if (!room) return fail(res, 404, 'ROOM_NOT_FOUND', '会话不存在');
         // 群聊可以指定看哪个 bot 的记忆；不传就默认第一个
         const requested = url.searchParams.get('botId');
         const botId = requested || room.botIds?.[0] || null;
-        if (!botId) return send(res, 400, { error: '会话里没有 bot' });
+        if (!botId) return fail(res, 400, 'ROOM_HAS_NO_BOT', '会话里没有 bot');
         if (requested && !(room.botIds ?? []).includes(requested)) {
-          return send(res, 400, { error: '这个 bot 不在会话里' });
+          return fail(res, 400, 'BOT_NOT_IN_ROOM', '这个 bot 不在会话里');
         }
         const rec = store.memorySummaryFor(roomId, botId);
         const lastId = store.listMessages(roomId, { limit: 1 })[0]?.id ?? null;
@@ -1246,13 +1258,13 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
       if (memoryRefreshMatch && req.method === 'POST') {
         const roomId = memoryRefreshMatch[1];
         const room = store.getRoom(roomId);
-        if (!room) return send(res, 404, { error: '会话不存在' });
+        if (!room) return fail(res, 404, 'ROOM_NOT_FOUND', '会话不存在');
         const body = await readBody(req);
         const requested = typeof body.botId === 'string' ? body.botId : '';
         const botId = requested || room.botIds?.[0] || null;
-        if (!botId) return send(res, 400, { error: '会话里没有 bot' });
+        if (!botId) return fail(res, 400, 'ROOM_HAS_NO_BOT', '会话里没有 bot');
         if (requested && !(room.botIds ?? []).includes(requested)) {
-          return send(res, 400, { error: '这个 bot 不在会话里' });
+          return fail(res, 400, 'BOT_NOT_IN_ROOM', '这个 bot 不在会话里');
         }
         const rec = await runner.summarizeMemory(roomId, botId, { force: true });
         return send(res, 200, {
