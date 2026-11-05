@@ -21,12 +21,19 @@ class ModelSetupGate extends StatelessWidget {
     final state = AppScope.of(context);
     return Scaffold(
       backgroundColor: PB.bgApp,
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520),
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(28),
-            child: Column(
+      // ★ 用 SizedBox.expand 撑满窗口，不要让它按内容收缩。
+      //
+      //   桌面端窗口的尺寸由 Flutter 视图的约束决定：如果根页面是
+      //   Center + 滚动视图这种"按内容定大小"的结构，窗口会缩到内容那么大
+      //   （实测会收缩成 131x130，几乎看不见）。HostConnectScreen 也是
+      //   Scaffold 直接撑满，这里保持一致。
+      body: SizedBox.expand(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(28),
+              child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -90,6 +97,7 @@ class ModelSetupGate extends StatelessWidget {
                 ),
               ],
             ),
+          ),
           ),
         ),
       ),

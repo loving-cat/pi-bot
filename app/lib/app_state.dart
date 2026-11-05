@@ -117,6 +117,13 @@ class AppState extends ChangeNotifier {
 
   /// 用户自己配的模型组（key 是打码的 —— 真 key 不出服务端）
   List<ModelGroup> modelGroups = const [];
+
+  /// 模型组是否已经从服务端拉过至少一次。
+  ///
+  /// 必须和「列表为空」分开：刚启动时 modelGroups 就是空列表，
+  /// 但这不代表用户没配模型 —— 只是还没拉到。用它来挡住第一帧的误判，
+  /// 否则会在有模型的情况下先闪一下"去配置模型"引导页。
+  bool modelGroupsLoaded = false;
   final Map<String, List<Msg>> messages = {};
 
   /// 记忆摘要缓存（roomId → 摘要）
@@ -263,11 +270,11 @@ class AppState extends ChangeNotifier {
   bool modelSetupSkipped = false;
 
   /// 是否应该挡住主界面去配置模型。
+  ///
+  /// 三条件缺一不可：拉过一次（否则是还没加载）、确实一个组都没有、
+  /// 用户没有点过"稍后再说"。
   bool get needsModelSetup =>
-      modelGroups.isEmpty && !modelSetupSkipped && !localModeSkippedSetup;
-
-  /// 本机模式下服务端还没起来的过渡态不算"没配模型"，避免启动瞬间闪一下引导页。
-  bool localModeSkippedSetup = false;
+      modelGroupsLoaded && modelGroups.isEmpty && !modelSetupSkipped;
 
   void dismissModelSetup() {
     modelSetupSkipped = true;
@@ -1210,6 +1217,7 @@ class AppState extends ChangeNotifier {
           .whereType<Map<String, dynamic>>()
           .map(ModelGroup.fromJson)
           .toList();
+      modelGroupsLoaded = true;
       // 用户自己叫什么（bot 用它称呼你）。漏了这句左上角就会退回显示服务端地址。
       userName = ((res['user'] as Map?)?['name'] as String?)?.trim() ?? '';
       policy =

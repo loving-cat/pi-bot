@@ -52,10 +52,11 @@ class WindowButtons extends StatelessWidget {
         enabled: !controller.busy,
         onPressed: () => unawaited(controller.close()),
       );
-      // 品牌把手：极简几何记号 + 可拖动区域。
+      // 品牌把手：应用图标的缩小版记号 + 可拖动区域。
       //
       // 不用文字/字母：这里只是"能拖的空白"，不是产品署名。
-      // 用三颗渐次的圆点表示"正在流动"，颜色取当前主控色，换主题会跟着变。
+      // 图形与桌面图标一致（环 + 斜穿的盘），用户一眼能对上"这是同一个应用"。
+      // 颜色取主题色，换主控色时跟着变。
       final accent = PB.colors(context).link;
       final grip = Semantics(
         label: strings.t('window.dragHint'),
@@ -68,7 +69,10 @@ class WindowButtons extends StatelessWidget {
               child: ExcludeSemantics(
                 child: CustomPaint(
                   size: const Size(13, 13),
-                  painter: _GripDotsPainter(accent),
+                  painter: _GripMarkPainter(
+                    ring: PB.colors(context).accentBright,
+                    sweep: accent,
+                  ),
                 ),
               ),
             ),
@@ -186,28 +190,54 @@ class _WindowButtonState extends State<_WindowButton> {
   }
 }
 
-/// 把手记号：三颗从大到小的圆，暗示"连着、可以推"。
+/// 把手记号：应用图标的缩小版 —— 一个环 + 一道斜穿的盘。
 ///
-/// 纯几何、不依赖字体字形 —— 换设备或字体缺失都不会渲染成空白。
-class _GripDotsPainter extends CustomPainter {
-  const _GripDotsPainter(this.color);
+/// 纯几何、不依赖字体字形，也不读图片资源：换设备、缺字体、
+/// 图标文件缺失时都不会渲染成空白。
+///
+/// 这是 14px 的尺寸，细节必须够粗才不糊：环用 1.5 描边，
+/// 斜线 1.6 宽，比图标本身的比例更"重"，小尺寸下才认得出来。
+class _GripMarkPainter extends CustomPainter {
+  const _GripMarkPainter({required this.ring, required this.sweep});
 
-  final Color color;
+  /// 环的颜色（跟随主控色）。
+  final Color ring;
+
+  /// 斜穿那道盘的颜色。
+  final Color sweep;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = color;
     final c = size.center(Offset.zero);
-    // 三个点沿一条轻斜线排开，半径递减
-    const offsets = [Offset(-3.6, 1.6), Offset(0, 0), Offset(3.6, -1.6)];
-    const radii = [2.0, 1.6, 1.1];
-    for (var i = 0; i < offsets.length; i++) {
-      canvas.drawCircle(c + offsets[i], radii[i], paint);
-    }
+    // 半径按 15px 画布定：环要占满，太小在这个尺寸下就看不见了
+    final r = size.width * 0.375;
+
+    // 环：主控色，粗一点才在 28px 高的窗控条里立得住
+    canvas.drawCircle(
+      c,
+      r,
+      Paint()
+        ..color = ring
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = size.width * 0.13,
+    );
+
+    // 斜穿的盘：略出头一点，暗示"贯穿"，方向与桌面图标一致（左下 → 右上）
+    final a = Offset(c.dx - r * 1.12, c.dy + r * 1.12);
+    final b = Offset(c.dx + r * 1.12, c.dy - r * 1.12);
+    canvas.drawLine(
+      a,
+      b,
+      Paint()
+        ..color = sweep
+        ..strokeWidth = size.width * 0.135
+        ..strokeCap = StrokeCap.round,
+    );
   }
 
   @override
-  bool shouldRepaint(_GripDotsPainter oldDelegate) => color != oldDelegate.color;
+  bool shouldRepaint(_GripMarkPainter oldDelegate) =>
+      ring != oldDelegate.ring || sweep != oldDelegate.sweep;
 }
 
 class _WindowGlyphPainter extends CustomPainter {
