@@ -1,0 +1,16 @@
+app/lib/widgets/context_chip.dart
+  h_c2e638ff76b3b9 18,23-34,38-41
+server/src/pi-runner.js
+  h_c2e638ff76b3b9 982-987,992-996,1728-1730,1834,1915-1929,1931-1935,2016-2028
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "047cab31f1f2a215d9c78d6529af733c9c6ab792",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
