@@ -53,6 +53,47 @@ export const JEV_FAILURE = Object.freeze({
 export const JEV_DEFAULT_BASE_URL = 'https://api.typesafe.ai';
 export const JEV_DEFAULT_MODEL = 'jev-latest';
 
+/**
+ * 接入方式。
+ *
+ *   typesafe —— TypeSafe 官方 Jev。地址固定、模型名固定（jev-latest），
+ *               用户只需要填 key。少让用户填两个他本来也不知道填什么的字段。
+ *   custom   —— 任何兼容 /v1/systemone 的服务（自建、中转、别家）。
+ *               地址和模型名都得用户自己给 —— 我们无从猜测。
+ *
+ * 为什么要分这两种而不是"全都让用户填"：
+ *   绝大多数人用的是官方，让他填地址和模型名纯属负担，
+ *   而且填错（比如把 /v1 填进去）只会得到一堆 404。
+ */
+export const JEV_MODE = Object.freeze({
+  typesafe: 'typesafe',
+  custom: 'custom',
+});
+
+/**
+ * 拼出"列模型"的地址。
+ *
+ * 两种习惯都要认，否则会拼出 /v1/v1/models：
+ *   · TypeSafe 官方：baseUrl = https://api.typesafe.ai（不带 /v1）
+ *   · OpenAI 兼容：  baseUrl = https://xxx/v1（绝大多数中转都是这么填的）
+ *
+ * 用户不应该为了让我们拼对而记住"别带 /v1"这种规矩。
+ */
+export function modelsUrl(baseUrl) {
+  const base = String(baseUrl || '').trim().replace(/\/+$/, '');
+  if (!base) return '';
+  if (/\/v\d+$/.test(base)) return `${base}/models`;
+  return `${base}/v1/models`;
+}
+
+/** 某个接入方式下，地址和模型名的默认值。 */
+export function endpointsForMode(mode, { baseUrl = '', model = '' } = {}) {
+  if (mode === JEV_MODE.custom) {
+    return { baseUrl: String(baseUrl || '').trim(), model: String(model || '').trim() };
+  }
+  return { baseUrl: JEV_DEFAULT_BASE_URL, model: model || JEV_DEFAULT_MODEL };
+}
+
 /** 决策请求的超时。超过这个时间就不等了 —— 决策点通常卡在用户交互路径上。 */
 export const JEV_DEFAULT_TIMEOUT_MS = 8000;
 
@@ -233,7 +274,7 @@ export async function jevProbe({
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(500, Number(timeoutMs) || 0));
   try {
-    const res = await fetchImpl(`${base}/v1/models`, {
+    const res = await fetchImpl(`${modelsUrl(base)}`, {
       headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' },
       signal: controller.signal,
     });
@@ -256,7 +297,15 @@ export async function jevProbe({
     let models = [];
     try {
       const j = JSON.parse(text);
-      models = Array.isArray(j?.models) ? j.models.map((m) => m?.name).filter(Boolean) : [];
+      // TypeSafe：{ models: [{ name }] }
+      // OpenAI 兼容：{ data: [{ id }] }
+      // 两种都要认 —— 自定义端点多半是后者，不认的话"测一下"会说
+      // "连通了但一个模型都没有"，用户不知道该填什么。
+      if (Array.isArray(j?.models)) {
+        models = j.models.map((m) => m?.name || m?.id).filter(Boolean);
+      } else if (Array.isArray(j?.data)) {
+        models = j.data.map((m) => m?.id || m?.name).filter(Boolean);
+      }
     } catch {
       /* 结构不符也当连通，至少 200 了 */
     }

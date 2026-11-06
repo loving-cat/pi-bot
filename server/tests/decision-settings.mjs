@@ -102,13 +102,24 @@ test('不传 apiKey 时不动它', () => {
   assert.equal(s.decision().apiKey, 'k1', '改别的字段不该把 key 冲掉');
 });
 
-test('decisionRoute 与 decision 内容一致', () => {
+test('decisionRoute 按接入方式补齐地址和模型名', () => {
   const s = new Store();
-  s.updateDecision({ enabled: true, baseUrl: 'https://a.b', apiKey: 'k' });
-  const route = s.decisionRoute();
-  assert.equal(route.enabled, true);
-  assert.equal(route.baseUrl, 'https://a.b');
-  assert.equal(route.apiKey, 'k');
+  s.updateDecision({ enabled: true, apiKey: 'k' });
+
+  // 官方模式：地址和模型名固定，用户没填也能直接跑
+  const official = s.decisionRoute();
+  assert.equal(official.enabled, true);
+  assert.equal(official.mode, 'typesafe');
+  assert.equal(official.baseUrl, 'https://api.typesafe.ai');
+  assert.equal(official.model, 'jev-latest');
+  assert.equal(official.apiKey, 'k');
+
+  // 自定义模式：用户填什么就是什么
+  s.updateDecision({ mode: 'custom', baseUrl: 'https://a.b', model: 'my-jev' });
+  const custom = s.decisionRoute();
+  assert.equal(custom.mode, 'custom');
+  assert.equal(custom.baseUrl, 'https://a.b');
+  assert.equal(custom.model, 'my-jev');
 });
 
 test('解不开的密文当没配，不拿密文去请求', () => {

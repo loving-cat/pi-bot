@@ -1126,8 +1126,10 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         // 设置页的"测一下"：只读模型列表，不产生推理费用
         const body = await readBody(req);
         const cfg = store.decision();
+        const mode = body.mode === 'custom' || cfg.mode === 'custom' ? 'custom' : 'typesafe';
         const probe = await jevProbe({
-          baseUrl: body.baseUrl || cfg.baseUrl,
+          // 官方模式地址固定；自定义用用户填的
+          baseUrl: mode === 'custom' ? String(body.baseUrl || cfg.baseUrl || '') : 'https://api.typesafe.ai',
           apiKey: body.apiKey || cfg.apiKey,
         });
         return send(res, 200, { probe });

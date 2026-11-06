@@ -154,6 +154,8 @@ class AppState extends ChangeNotifier {
   /// 界面不能因为它没配就拦着用户干活。
   Map<String, dynamic> decision = const {
     'enabled': false,
+    // 默认走 TypeSafe 官方：地址和模型名固定，用户只填 key
+    'mode': 'typesafe',
     'baseUrl': '',
     'model': '',
     'hasApiKey': false,
@@ -1710,12 +1712,16 @@ class AppState extends ChangeNotifier {
   }
 
   /// 测一下决策服务通不通（只读模型列表，不产生推理费用）。
+  ///
+  /// [mode] 决定用哪个地址：typesafe 用固定官方地址，custom 用传进来的。
   Future<Map<String, dynamic>?> probeDecision({
     String? baseUrl,
     String? apiKey,
+    String? mode,
   }) async {
     try {
       final body = <String, dynamic>{};
+      if (mode != null && mode.isNotEmpty) body['mode'] = mode;
       if (baseUrl != null && baseUrl.isNotEmpty) body['baseUrl'] = baseUrl;
       if (apiKey != null && apiKey.isNotEmpty) body['apiKey'] = apiKey;
       final client = api;

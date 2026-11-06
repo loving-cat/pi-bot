@@ -82,6 +82,7 @@ const TESTS = [
   'circuit-breaker',
   'model-endpoints',
   'model-store-isolation',
+  'decision-mode',
 ];
 
 let failed = 0;

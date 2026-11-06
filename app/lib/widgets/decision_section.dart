@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../decision_mode.dart';
 import '../l10n/l10n.dart';
 import '../scope.dart';
 import '../theme.dart';
@@ -8,20 +9,19 @@ import 'toast.dart';
 
 /// 设置里的「快速决策」区块。
 ///
-/// ## 这是什么
+/// ## 两种接入方式
 ///
-/// 产品里有一批"小判断"：这个成员该配哪个模型、这条消息要不要接、
-/// 压缩时哪些内容不能丢。走一次完整 LLM 推理太贵也慢，
-/// 决策模型（Jev / TypeSafe）几百毫秒就能给出结构化答案。
+///   TypeSafe 官方 —— 地址和模型名都是固定的，用户只需要填 key。
+///   自定义       —— 任何兼容 /v1/systemone 的服务，地址和模型名都得自己填。
 ///
-/// ## 两条线
+/// 为什么分两种而不是让用户全填：
+///   绝大多数人用官方，让他填地址和模型名纯属负担，
+///   而且填错（比如把 /v1 也贴进去）只会得到一堆 404。
 ///
-/// 关着的时候一切走原来的逻辑，行为和没这个功能完全一致。
-/// 打开后只有**注册过**的决策点才切过去 —— 不是全局替换，
-/// 因为有的判断必须确定性（危险命令放行），有的高频到不能每次发请求。
+/// ## 自定义模式下测一下的作用
 ///
-/// 所以这个开关默认关闭，也不拦着用户干活：
-/// 没配它，产品照常能用，只是少一点"聪明"。
+/// 用户不知道自己的服务支持哪些模型名。填完地址和 key 点一下，
+/// 我们从 /v1/models 拉回来列给他选 —— 手打模型名太容易错了。
 class DecisionSection extends StatefulWidget {
   const DecisionSection({super.key});
 
@@ -31,6 +31,7 @@ class DecisionSection extends StatefulWidget {
 
 class _DecisionSectionState extends State<DecisionSection> {
   final _url = TextEditingController();
+  final _model = TextEditingController();
   final _key = TextEditingController();
   bool _dirty = false;
   bool _saving = false;
@@ -45,6 +46,7 @@ class _DecisionSectionState extends State<DecisionSection> {
   @override
   void dispose() {
     _url.dispose();
+    _model.dispose();
     _key.dispose();
     super.dispose();
   }
@@ -53,11 +55,13 @@ class _DecisionSectionState extends State<DecisionSection> {
     if (!mounted || _dirty) return;
     final d = AppScope.read(context).decision;
     _url.text = (d['baseUrl'] as String?) ?? '';
+    _model.text = (d['model'] as String?) ?? '';
   }
 
   Map<String, dynamic> get _cfg => AppScope.read(context).decision;
   bool get _enabled => _cfg['enabled'] == true;
   bool get _hasKey => _cfg['hasApiKey'] == true;
+  bool get _custom => isCustomDecisionMode(_cfg);
 
   Future<void> _patch(Map<String, dynamic> patch) async {
     setState(() => _saving = true);
@@ -75,9 +79,10 @@ class _DecisionSectionState extends State<DecisionSection> {
 
   Future<void> _save() async {
     final patch = <String, dynamic>{};
-    final url = _url.text.trim();
-    if (url.isNotEmpty) patch['baseUrl'] = url;
-    // 只在用户真的填了才传 key；留空表示"不改"
+    if (_custom) {
+      patch['baseUrl'] = _url.text.trim();
+      patch['model'] = _model.text.trim();
+    }
     final key = _key.text.trim();
     if (key.isNotEmpty) patch['apiKey'] = key;
     if (patch.isEmpty) return;
@@ -88,26 +93,81 @@ class _DecisionSectionState extends State<DecisionSection> {
   Future<void> _probe() async {
     setState(() => _probing = true);
     final state = AppScope.read(context);
-    final res = await state.probeDecision(
-      baseUrl: _url.text.trim(),
+    final r = await state.probeDecision(
+      baseUrl: _custom ? _url.text.trim() : null,
       apiKey: _key.text.trim(),
+      mode: _custom ? 'custom' : 'typesafe',
     );
     if (!mounted) return;
     setState(() => _probing = false);
     final s = L10n.s(context);
-    if (res == null) {
+    if (r == null) {
       toast(context, s.t('decision.probeFail'), kind: ToastKind.error);
       return;
     }
-    final ok = res['ok'] == true;
+    final ok = r['ok'] == true;
     final models =
-        (res['models'] as List?)?.whereType<String>().toList() ?? const [];
-    toast(
-      context,
-      ok
-          ? s.tf('decision.probeOk', {'models': models.join('、')})
-          : ((res['error'] as String?) ?? s.t('decision.probeFail')),
-      kind: ok ? ToastKind.success : ToastKind.error,
+        (r['models'] as List?)?.whereType<String>().toList() ?? const [];
+    if (!ok) {
+      toast(
+        context,
+        (r['error'] as String?) ?? s.t('decision.probeFail'),
+        kind: ToastKind.error,
+      );
+      return;
+    }
+    if (models.isEmpty) {
+      toast(context, s.t('decision.probeOkNoModels'), kind: ToastKind.success);
+      return;
+    }
+    if (!_custom) {
+      toast(
+        context,
+        s.tf('decision.probeOk', {'models': models.join('、')}),
+        kind: ToastKind.success,
+      );
+      return;
+    }
+    final picked = await _pickModel(models);
+    if (picked == null || !mounted) return;
+    setState(() {
+      _model.text = picked;
+      _dirty = true;
+    });
+  }
+
+  Future<String?> _pickModel(List<String> models) {
+    final s = L10n.s(context);
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: PB.bgElevated,
+        title: Text(
+          s.t('decision.pickModel'),
+          style: const TextStyle(fontSize: PB.fsLg),
+        ),
+        content: SizedBox(
+          width: 420,
+          height: 360,
+          child: ListView.builder(
+            itemCount: models.length,
+            itemBuilder: (c, i) {
+              final m = models[i];
+              return ListTile(
+                dense: true,
+                title: Text(m, style: const TextStyle(fontSize: PB.fsSm)),
+                onTap: () => Navigator.pop(c, m),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(s.t('common.cancel')),
+          ),
+        ],
+      ),
     );
   }
 
@@ -189,19 +249,77 @@ class _DecisionSectionState extends State<DecisionSection> {
                   ),
                 ],
               ),
-              const SizedBox(height: 10),
-              _field(
-                label: s.t('decision.url'),
-                hint: 'https://api.typesafe.ai',
-                controller: _url,
+              const SizedBox(height: 12),
+              Text(
+                s.t('decision.mode'),
+                style: TextStyle(fontSize: PB.fsXxs, color: PB.textTertiary),
+              ),
+              const SizedBox(height: 6),
+              SegmentedButton<String>(
+                segments: [
+                  ButtonSegment(
+                    value: 'typesafe',
+                    label: Text(s.t('decision.modeTypesafe')),
+                  ),
+                  ButtonSegment(
+                    value: 'custom',
+                    label: Text(s.t('decision.modeCustom')),
+                  ),
+                ],
+                selected: {_custom ? 'custom' : 'typesafe'},
+                onSelectionChanged: _saving
+                    ? null
+                    : (v) => _patch({'mode': v.first}),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                _custom
+                    ? s.t('decision.modeCustomHint')
+                    : s.t('decision.modeTypesafeHint'),
+                style: TextStyle(
+                  fontSize: PB.fsXxs,
+                  color: PB.textQuaternary,
+                  height: 1.5,
+                ),
               ),
               const SizedBox(height: 10),
+              if (_custom) ...[
+                _field(
+                  label: s.t('decision.url'),
+                  hint: 'https://your-service/v1',
+                  controller: _url,
+                ),
+                const SizedBox(height: 10),
+              ] else ...[
+                // 官方模式把固定值显示出来：用户知道它连的是哪，但改不了。
+                // 改不了不是防他，是防他填错一个 /v1 就全是 404 还查不出原因。
+                _readonly(
+                  context,
+                  label: s.t('decision.url'),
+                  value: kDecisionOfficialBaseUrl,
+                ),
+                const SizedBox(height: 10),
+                _readonly(
+                  context,
+                  label: s.t('decision.model'),
+                  value: kDecisionOfficialModel,
+                ),
+                const SizedBox(height: 10),
+              ],
               _field(
                 label: s.t('decision.key'),
-                hint: _hasKey ? s.t('decision.keySaved') : 'apikey_...',
+                hint: _hasKey ? s.t('decision.keySaved') : 'sk-...',
                 controller: _key,
                 obscure: true,
               ),
+              if (_custom) ...[
+                const SizedBox(height: 10),
+                _field(
+                  label: s.t('decision.model'),
+                  hint: s.t('decision.modelHint'),
+                  controller: _model,
+                ),
+              ],
               const SizedBox(height: 10),
               Row(
                 children: [
@@ -221,7 +339,9 @@ class _DecisionSectionState extends State<DecisionSection> {
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      s.t('decision.probeNote'),
+                      _custom
+                          ? s.t('decision.probeNoteCustom')
+                          : s.t('decision.probeNote'),
                       style: TextStyle(
                         fontSize: PB.fsXxs,
                         color: PB.textQuaternary,
@@ -232,6 +352,37 @@ class _DecisionSectionState extends State<DecisionSection> {
                 ],
               ),
             ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 只读展示（官方模式下地址和模型名是固定的）。
+  Widget _readonly(
+    BuildContext context, {
+    required String label,
+    required String value,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(fontSize: PB.fsXxs, color: PB.textTertiary),
+        ),
+        const SizedBox(height: 4),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+          decoration: BoxDecoration(
+            color: PB.bgHover,
+            borderRadius: BorderRadius.circular(PB.rLg),
+            border: Border.all(color: PB.borderTertiary),
+          ),
+          child: Text(
+            value,
+            style: TextStyle(fontSize: PB.fsSm, color: PB.textSecondary),
           ),
         ),
       ],

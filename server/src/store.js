@@ -137,11 +137,21 @@ export { MUTATING_TOOLS, toolsForPolicy, isLeadOfRoom, toolsForRole } from './ro
  */
 export const DECISION_DEFAULT = {
   enabled: false,
-  /** 决策服务地址。TypeSafe 官方是 https://api.typesafe.ai */
+  /**
+   * 接入方式。
+   *
+   *   typesafe —— 官方 Jev：地址和模型名都是固定的，用户只填 key
+   *   custom   —— 任何兼容 /v1/systemone 的服务：地址和模型名都得自己给
+   *
+   * 分这两种是为了少让人填他本来也不知道填什么的字段。
+   * 绝大多数人用官方；只有接了别的服务的人需要切到 custom。
+   */
+  mode: 'typesafe',
+  /** 自定义服务的地址（mode=custom 时才有意义） */
   baseUrl: '',
   /** API key（存的是密文，getter 解密后返回） */
   apiKey: '',
-  /** 模型名，留空用 jev-latest */
+  /** 自定义服务的模型名（mode=custom 时才有意义） */
   model: '',
   /** noul 问句的概率阈值：>= 这个值算"是" */
   noulThreshold: 0.5,
@@ -168,6 +178,9 @@ export function normalizeDecision(patch = {}, base = DECISION_DEFAULT) {
       const n = Number(patch[key]);
       out[key] = Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : base[key];
     }
+  }
+  if (patch.mode !== undefined) {
+    out.mode = patch.mode === 'custom' ? 'custom' : 'typesafe';
   }
   if (patch.baseUrl !== undefined) out.baseUrl = String(patch.baseUrl || '').trim();
   if (patch.model !== undefined) out.model = String(patch.model || '').trim();
@@ -1096,14 +1109,24 @@ export class Store {
     return merged;
   }
 
-  /** 给框架用的判别信息：不含解密后的 key，只判断"能不能走"。 */
+  /**
+   * 给框架用的判别信息。
+   *
+   * 地址和模型名在这里**按接入方式补齐默认值**：
+   *   typesafe → https://api.typesafe.ai + jev-latest（用户没填也能跑）
+   *   custom   → 用户填什么就是什么（我们无从猜测）
+   *
+   * 这样 decision-router 不用关心"用户选的是哪种"，拿到的永远是能直接用的值。
+   */
   decisionRoute() {
     const d = this.decision();
+    const isCustom = d.mode === 'custom';
     return {
       enabled: d.enabled,
-      baseUrl: d.baseUrl,
+      mode: isCustom ? 'custom' : 'typesafe',
+      baseUrl: isCustom ? d.baseUrl : 'https://api.typesafe.ai',
       apiKey: d.apiKey,
-      model: d.model,
+      model: isCustom ? d.model : 'jev-latest',
       noulThreshold: d.noulThreshold,
       carefulMinConfidence: d.carefulMinConfidence,
       disabledPoints: d.disabledPoints,
