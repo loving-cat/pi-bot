@@ -1,0 +1,16 @@
+README.md
+  h_c2e638ff76b3b9 230
+docs/DECISION-ROUTER.md
+  h_c2e638ff76b3b9 1-200
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "087e1466eb71acdeefdfec68043c8f6276f4b06f",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
