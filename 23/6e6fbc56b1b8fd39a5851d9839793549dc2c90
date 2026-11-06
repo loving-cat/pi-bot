@@ -1,0 +1,18 @@
+app/lib/l10n/strings/room.dart
+  h_c2e638ff76b3b9 10,69-70
+app/lib/widgets/room_panel.dart
+  h_c2e638ff76b3b9 271-283,331,340-353
+app/test/run_section_scope_test.dart
+  h_c2e638ff76b3b9 1-52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "236e6fbc56b1b8fd39a5851d9839793549dc2c90",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
