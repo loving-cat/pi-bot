@@ -70,7 +70,12 @@ import { createEscalator } from './escalation.js';
 import { modelLabel, resolveModel, syncModelGroups } from './model-registry.js';
 import { modelChangeAffectsSession } from './model-dispatch.js';
 import { buildAppendSystemPrompt } from './system-prompt.js';
-import { selectSkillsFor, skillsPromptLines } from './skills.js';
+import {
+  selectSkillsFor,
+  skillFingerprint,
+  skillsPromptLines,
+  skillsToInject,
+} from './skills.js';
 import { selectLessonsFor, lessonsPromptLines } from './lessons.js';
 import { availableThinkingLevels } from './model-thinking.js';
 import { createLessonReflector } from './lesson-reflect.js';
@@ -2258,6 +2263,11 @@ export class PiRunner {
             error: event.errorMessage ? modelFailure(event.errorMessage).error : null,
           });
           log(`[${bot.name}] 上下文压缩结束（${event.reason}）`);
+          // ★ 压缩会把这轮之前的消息收成摘要 —— 已经注入过的技能正文
+          //   也随之被收走了。下一轮必须重新给，否则模型"忘了"怎么做。
+          //   这是"技能只给一次"唯一必须撤回的场景。
+          entry.compactedSinceInjection = true;
+          entry.skillsInjected = null;
           // ★ 压缩这件事必须**出现在对话里**，不能只藏在状态里。
           //   否则用户看到的是"bot 刚才那几轮说的话不见了"，完全不知道发生了什么。
           //   留一条 kind='compact' 的记录，App 把它画成对话中间的一条小横条。
@@ -2448,8 +2458,27 @@ export class PiRunner {
           // 纯靠它会稀释信号，所以两段都喂进去。
           const task = text + "\n" + String(meta?.text ?? "");
           const picked = selectSkillsFor(library, task, { max: 5 });
-          const lines = skillsPromptLines(picked);
-          return lines.length ? lines.join("\n") + "\n\n" + text : text;
+          // ★ 已经在这个会话里给过的，不再重复给。
+          //
+          //   实测：7 轮的群聊里同一份技能正文被存了 7 份，
+          //   占该 bot 上下文的 89%。它既是上下文膨胀的主因，
+          //   也是缓存失效的主因 —— 每轮前缀都不一样，服务端缓存全废。
+          //
+          //   技能正文进过历史就一直在上下文里，再给一遍不会让它"更记得"。
+          //   只有两种情况要重给：技能被改过（指纹变了）、或压缩把老消息收走了。
+          const already = entry.skillsInjected ?? null;
+          const { skills: fresh } = skillsToInject(picked, {
+            alreadyGiven: already,
+            afterCompaction: Boolean(entry.compactedSinceInjection),
+          });
+          entry.compactedSinceInjection = false;
+          if (!fresh.length) return text;
+          const lines = skillsPromptLines(fresh);
+          if (!lines.length) return text;
+          // 记下这次给了哪些 —— 下一轮同样的就不再重复
+          if (!entry.skillsInjected) entry.skillsInjected = new Set();
+          for (const s of fresh) entry.skillsInjected.add(skillFingerprint(s));
+          return lines.join("\n") + "\n\n" + text;
         } catch (err) {
           // 技能挑不出来不能影响正常干活
           log("技能库匹配失败：", err?.message || err);

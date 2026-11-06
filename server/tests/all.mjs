@@ -83,6 +83,7 @@ const TESTS = [
   'model-endpoints',
   'model-store-isolation',
   'decision-mode',
+  'skills-once',
 ];
 
 let failed = 0;

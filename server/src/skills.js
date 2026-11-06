@@ -279,3 +279,48 @@ export function skillsPromptLines(picked = []) {
     }),
   ];
 }
+
+/**
+ * 这轮**真正需要注入**的技能：上一轮已经给过的，不再重复给。
+ *
+ * ## 为什么必须去重
+ *
+ * 技能正文很长（实测一批 5 条 = 8,266 字符），而每轮匹配到的往往是同一批 ——
+ * 用户问的是同一件事，关键词不变，选出来的还是那几条。
+ *
+ * 实测一个 7 轮的群里，同一个 bot 的上下文有 **89% 是重复的技能正文**：
+ *
+ *   第1条 13,517 字符，其中技能段 8,308（61%）
+ *   第2条  9,372 字符，其中技能段 8,308（89%）
+ *   ...
+ *   第7条  9,330 字符，其中技能段 8,266（89%）
+ *
+ * 同一份内容在会话历史里存了 7 份。它既是上下文膨胀的主因，
+ * 也是**缓存失效的主因** —— 每轮 prompt 前缀都不一样，服务端缓存全废。
+ *
+ * ## 为什么可以安全跳过
+ *
+ * 技能正文一旦进过这个会话的历史，它就在上下文里了，模型看得见。
+ * 再注入一遍不会让它"更记得"，只会多占一份位置。
+ *
+ * ## 什么时候必须重新给
+ *
+ *   · 技能被改过（updatedAt 变了）—— 旧内容已经过时
+ *   · 上一轮之后上下文压缩过 —— 老消息被总结掉了，正文可能真没了
+ *
+ * @param {Array} picked     这轮匹配到的技能
+ * @param {object} [opts]
+ * @param {Set<string>} [opts.alreadyGiven] 已经注入过的技能指纹（id@updatedAt）
+ * @param {boolean} [opts.afterCompaction]  上一轮之后压缩过 → 全部重给
+ * @returns {{skills: Array, fingerprintOf: (s:object)=>string}}
+ */
+export function skillsToInject(picked = [], { alreadyGiven = null, afterCompaction = false } = {}) {
+  const list = Array.isArray(picked) ? picked.filter((s) => s && s.id) : [];
+  if (afterCompaction || !alreadyGiven) return { skills: list };
+  return { skills: list.filter((s) => !alreadyGiven.has(skillFingerprint(s))) };
+}
+
+/** 一个技能"当前内容"的指纹：内容变了指纹就变，就能重新注入。 */
+export function skillFingerprint(skill = {}) {
+  return `${skill.id ?? ''}@${skill.updatedAt ?? 0}`;
+}

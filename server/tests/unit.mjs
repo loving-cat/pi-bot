@@ -533,7 +533,9 @@ await test('store: 轮次预算有默认值（老状态文件没有这一项也�
   const l = store.groupLimits();
   assert.equal(l.leadTurns, 15);
   assert.equal(l.memberTurns, 15);
-  assert.equal(l.maxRuns, 100);
+  // 20 而不是 100：100 配合 turnMaxMs=600s 意味着一条消息理论上能跑 16 小时，
+  // 那是钱的风险，也是"一直转圈"的来源。实测一次 6 人建组只用 7 次运行。
+  assert.equal(l.maxRuns, 20);
   assert.equal(l.maxSteps, 30);
   // 5 分钟对写代码这类慢活偏紧 → 默认放到 10 分钟（App 的「部门预算」里也能改）
   assert.equal(l.turnMaxMs, 600_000);
