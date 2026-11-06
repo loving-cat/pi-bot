@@ -1,0 +1,18 @@
+app/lib/app_state.dart
+  h_c2e638ff76b3b9 12,1935-1956
+app/lib/reconnect_sweep.dart
+  h_c2e638ff76b3b9 1-53
+app/test/reconnect_sweep_test.dart
+  h_c2e638ff76b3b9 1-105
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "115c298c4470c4a252b0307bf10b9d38150ca578",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
