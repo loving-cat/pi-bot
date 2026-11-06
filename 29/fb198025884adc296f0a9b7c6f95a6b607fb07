@@ -1,0 +1,20 @@
+app/lib/widgets/html_attachment_preview.dart
+  h_c2e638ff76b3b9 11,226-230
+app/lib/widgets/room_panel.dart
+  h_c2e638ff76b3b9 737-741,765,808-814
+app/lib/widgets/toast.dart
+  h_c2e638ff76b3b9 34-58,84-85,90
+app/test/toast_surface_test.dart
+  h_c2e638ff76b3b9 1-63
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "29fb198025884adc296f0a9b7c6f95a6b607fb07",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
