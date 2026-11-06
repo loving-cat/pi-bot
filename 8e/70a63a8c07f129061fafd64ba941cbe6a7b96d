@@ -1,0 +1,14 @@
+scripts/tests/check-secrets-placeholder-test.mjs
+  h_c2e638ff76b3b9 28,31,49-55,69-107
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8e70a63a8c07f129061fafd64ba941cbe6a7b96d",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
