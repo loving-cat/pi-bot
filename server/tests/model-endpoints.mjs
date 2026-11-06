@@ -83,7 +83,7 @@ test('rotateCursor 循环轮转', () => {
 
 test('对外展示一定打码，真 key 不出服务端', () => {
   const pub = publicEndpoints([
-    { baseUrl: 'https://a', apiKey: 'sk-1234567890abcdef', label: '主' },
+    { baseUrl: 'https://a', apiKey: 'fixture-credential-endpoint-key', label: '主' },
     { baseUrl: 'https://b', apiKey: '', label: '' },
   ]);
   assert.equal(pub[0].hasKey, true);
