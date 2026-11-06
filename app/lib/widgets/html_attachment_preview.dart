@@ -8,6 +8,7 @@ import '../l10n/l10n.dart';
 import '../html_preview_loader.dart';
 import '../theme.dart';
 import 'offline_html_view.dart';
+import 'toast.dart';
 
 typedef HtmlPreviewRendererBuilder = Widget Function(
   BuildContext context, {
@@ -222,8 +223,11 @@ class _HtmlAttachmentPreviewState extends State<HtmlAttachmentPreview> {
       }
     } catch (_) {
       if (mounted && generation == _generation) {
-        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-          SnackBar(content: Text(L10n.s(context).t('html.browserFailed'))),
+        // 轻提示飘在右上角；底部横条会横跨预览区，挡住的正是用户在看的内容
+        toast(
+          context,
+          L10n.s(context).t('html.browserFailed'),
+          kind: ToastKind.error,
         );
       }
     } finally {

@@ -31,6 +31,31 @@ import '../theme.dart';
 /// 需要更长的时间就传 `duration`；不想自动消失（比如等着用户点掉）传 `duration: null`。
 enum ToastKind { info, success, error }
 
+/// 同时最多几条。超过就挤掉最老的。
+///
+/// 放成常量而不是写死在函数里：它是"不许刷屏"这条规矩的具体数字，
+/// 单测要能直接引用，改的时候也只有一处。
+const int kToastMaxLive = 3;
+
+/// 默认停留时长。失败更久 —— 用户要读完才知道下一步做什么，
+/// 成功只是"知道了就行"。
+const Duration kToastSuccessDuration = Duration(milliseconds: 2400);
+const Duration kToastErrorDuration = Duration(seconds: 4);
+
+/// 某类提示默认停留多久。
+Duration defaultToastDuration(ToastKind kind) =>
+    kind == ToastKind.error ? kToastErrorDuration : kToastSuccessDuration;
+
+/// 新来一条时，该挤掉哪几条。
+///
+/// 纯函数：给定当前活着的条数和上限，返回要收掉的数量。
+/// 抽出来是因为"最多 3 条"这条规矩最容易在改动里悄悄失效，
+/// 而它失效的后果是刷屏时整块屏幕被盖住。
+int toastEvictionsFor(int liveCount, {int max = kToastMaxLive}) {
+  if (max <= 0) return liveCount;
+  return liveCount >= max ? liveCount - max + 1 : 0;
+}
+
 /// 当前屏幕上的所有 toast（按出现顺序），用于"最多 3 条"的控制。
 final Map<OverlayState, List<_ToastHandle>> _live = {};
 
@@ -56,18 +81,13 @@ void toast(
     return;
   }
 
-  // 超过 3 条就把最老的收掉 —— 刷屏时不该把整块屏幕盖住
-  while (list.length >= 3) {
+  // 超过上限就把最老的收掉 —— 刷屏时不该把整块屏幕盖住
+  for (var i = 0; i < toastEvictionsFor(list.length); i++) {
     list.first.dismiss();
   }
 
   final handle = _ToastHandle(message: message, kind: kind, overlay: overlay);
-  handle.show(
-    duration ??
-        (kind == ToastKind.error
-            ? const Duration(seconds: 4)
-            : const Duration(milliseconds: 2400)),
-  );
+  handle.show(duration ?? defaultToastDuration(kind));
   list.add(handle);
   handle.onGone = () {
     list.remove(handle);

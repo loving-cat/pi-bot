@@ -734,7 +734,11 @@ class _LibraryState extends State<_Library> {
     if (!ok) return;
     final n = await state.deleteAttachments([a.id]);
     if (context.mounted) {
-      _toast(context, n > 0 ? s.t('room.deletedOne') : s.t('room.deleteFailed'));
+      _toast(
+        context,
+        n > 0 ? s.t('room.deletedOne') : s.t('room.deleteFailed'),
+        error: n <= 0,
+      );
     }
   }
 
@@ -758,6 +762,7 @@ class _LibraryState extends State<_Library> {
     _toast(
       context,
       n > 0 ? s.tf('room.deletedMany', {'n': '$n'}) : s.t('room.deleteFailed'),
+      error: n <= 0,
     );
   }
 
@@ -800,10 +805,13 @@ class _LibraryState extends State<_Library> {
     return ok == true;
   }
 
-  void _toast(BuildContext context, String text) {
-    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-      SnackBar(content: Text(text), duration: const Duration(seconds: 2)),
-    );
+  /// 删除结果用右上角轻提示，不用浏览器时代那种底部横条。
+  ///
+  /// SnackBar 会**铺在窗口底部**，横跨整个内容区：它挡住的是消息列表和
+  /// 输入框下沿，而删除结果这种"知道了就行"的消息，不该占那么大一块视觉。
+  /// 共享的 toast 飘在右上角、不参与布局、不拦鼠标，看完自己就没了。
+  void _toast(BuildContext context, String text, {bool error = false}) {
+    toast(context, text, kind: error ? ToastKind.error : ToastKind.success);
   }
 
   @override
