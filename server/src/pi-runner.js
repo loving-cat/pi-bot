@@ -23,7 +23,7 @@ import { bus } from './bus.js';
 import { store, toolsForPolicy } from './store.js';
 import { dmOpeningPrompt, shouldMirrorProgress, mirrorProgress } from './dm.js';
 import { loadExtraProviders, settingsDefaultModel } from './providers.js';
-import { modelGroups } from './model-groups.js';
+import { modelGroups, rotateCursor } from './model-groups.js';
 import { assistantFailure, fallbackModels, modelFailure, recoverModelReply } from './model-reply.js';
 import { invalidateSessions, retireStaleSession, reserveSession } from './session-refresh.js';
 import { deliverDirectInput } from './direct-message-delivery.js';
@@ -225,6 +225,12 @@ export class PiRunner {
      * 让每个 bot 各自撞 N 次是纯粹的浪费（实测 6 个成员 = 66 次请求）。
      */
     this.breakers = new Map();
+    /**
+     * 每个模型组当前用第几条端点（多 key 轮转用）。
+     *
+     * 熔断打开时切到下一条；全部挂了才真的停。
+     */
+    this.endpointCursors = new Map();
     /** 已经派出去、但异步的 run() 还没把 busy 设上的会话（key = roomId:botId） */
     this.dispatching = new Set();
     /** roomId -> { text, files }：锁被占时进来的消息，合并到这里等下一轮 */
@@ -807,7 +813,22 @@ export class PiRunner {
     const next = breakerFail(found.breaker, { kind, status, now: Date.now() });
     this.breakers.set(found.groupId, next);
     if (next.state === BREAKER_STATE.open) {
-      const name = modelGroups.get(found.groupId)?.name ?? found.groupId;
+      const group = modelGroups.get(found.groupId);
+      const name = group?.name ?? found.groupId;
+      // ★ 熔断的那条路可能只是其中一条端点 —— 有备用就立刻切过去。
+      //
+      //   这是「用户无感」的关键一步：key 不稳时不让他感觉到任何中断，
+      //   后台静默换一条通路接着跑。只有全部端点都挂了才真的停下来。
+      const switched = this.#tryRotateEndpoint(found.groupId);
+      if (switched) {
+        log(
+          `🔁 模型组「${name}」${next.fails} 次通路失败，已切到备用地址 ` +
+            `${switched.baseUrl}（不中断，继续跑）`,
+        );
+        // 切成功后把熔断器重置，让新端点从干净状态开始
+        this.breakers.set(found.groupId, createBreaker());
+        return { ...next, switchedTo: switched.baseUrl };
+      }
       log(
         `⛔ 模型组「${name}」连续 ${next.fails} 次通路失败，熔断 ` +
           `${Math.round(next.cooldownMs / 1000)}s（这期间不再往它发请求）`,
@@ -815,6 +836,30 @@ export class PiRunner {
       return next;
     }
     return next;
+  }
+
+  /**
+   * 把某个组切到下一条端点（成功后重新注册 provider）。
+   *
+   * @returns {{baseUrl: string}|null} 切成功返回新端点，没有备用或失败返回 null
+   */
+  #tryRotateEndpoint(groupId) {
+    const group = modelGroups.get(groupId);
+    const eps = group?.endpoints ?? [];
+    if (eps.length < 2) return null;
+    const prevIdx = this.endpointCursors.get(groupId) ?? 0;
+    const nextIdx = rotateCursor(prevIdx, eps.length);
+    if (nextIdx === prevIdx) return null;
+    try {
+      // pi 的 registerProvider 是合并语义：只传变化的两项就会覆盖旧值
+      const cfg = group.toProviderConfig(nextIdx);
+      this.modelRuntime.registerProvider(groupId, cfg);
+      this.endpointCursors.set(groupId, nextIdx);
+      return { baseUrl: cfg.baseUrl, index: nextIdx };
+    } catch (err) {
+      log(`切换端点失败（${groupId}）：${err?.message ?? err}`);
+      return null;
+    }
   }
 
   isBusy(roomId, botId) {

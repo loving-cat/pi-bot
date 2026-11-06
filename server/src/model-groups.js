@@ -51,6 +51,87 @@ export function maskKey(key) {
   return `${k.slice(0, 6)}…${k.slice(-4)}`;
 }
 
+/**
+ * 一个模型组最多几条端点。太多没意义，也没人维护得过来。
+ */
+export const MAX_ENDPOINTS = 5;
+
+const ENDPOINT_URL_MAX = 400;
+const ENDPOINT_KEY_MAX = 400;
+const ENDPOINT_LABEL_MAX = 40;
+
+/**
+ * 规范化端点列表。
+ *
+ * 为什么需要它：老配置只有单个 baseUrl + apiKey，没有 endpoints。
+ * 直接换数据结构会让所有老用户的配置读不出来 —— 所以：
+ *   · 有 endpoints 就用它
+ *   · 没有就**把老的 baseUrl + apiKey 包成第一项**（迁移，不丢数据）
+ *
+ * 每条端点形如 { baseUrl, apiKey, label }。
+ */
+export function normalizeEndpoints(raw, { fallbackBaseUrl = '', fallbackApiKey = '' } = {}) {
+  const list = Array.isArray(raw) ? raw : [];
+  const out = [];
+  for (const item of list) {
+    if (!item || typeof item !== 'object') continue;
+    const baseUrl = String(item.baseUrl ?? '').trim().replace(/\/+$/, '');
+    if (!baseUrl) continue;
+    if (out.length >= MAX_ENDPOINTS) break;
+    out.push({
+      baseUrl: baseUrl.slice(0, ENDPOINT_URL_MAX),
+      apiKey: String(item.apiKey ?? '').trim().slice(0, ENDPOINT_KEY_MAX),
+      label: String(item.label ?? '').trim().slice(0, ENDPOINT_LABEL_MAX),
+    });
+  }
+  // 迁移：老的单个 baseUrl 自动变成第一条
+  if (!out.length) {
+    const baseUrl = String(fallbackBaseUrl ?? '').trim().replace(/\/+$/, '');
+    if (baseUrl) {
+      out.push({
+        baseUrl: baseUrl.slice(0, ENDPOINT_URL_MAX),
+        apiKey: String(fallbackApiKey ?? '').trim().slice(0, ENDPOINT_KEY_MAX),
+        label: '',
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * 现在该用第几条端点。
+ *
+ * 用单调递增的轮转游标，而不是"失败次数"：
+ * 失败次数会被并发请求写乱，而游标只要 % 长度就一定落在合法范围内。
+ */
+export function endpointAt(endpoints, cursor = 0) {
+  if (!Array.isArray(endpoints) || !endpoints.length) return null;
+  const i = Math.abs(Math.floor(Number(cursor) || 0)) % endpoints.length;
+  return { endpoint: endpoints[i], index: i };
+}
+
+/**
+ * 轮转到下一条端点。
+ *
+ * 只有一条时返回 0（游标还是会动，但结果不变）——
+ * 这样上层不用写"只有一条怎么办"的分支。
+ */
+export function rotateCursor(cursor, endpointCount) {
+  const n = Math.max(1, Number(endpointCount) || 1);
+  return ((Math.floor(Number(cursor) || 0) + 1) % n + n) % n;
+}
+
+/** 端点对外展示：**key 一定打码**。 */
+export function publicEndpoints(endpoints = []) {
+  return (Array.isArray(endpoints) ? endpoints : []).map((e, i) => ({
+    baseUrl: e.baseUrl,
+    label: e.label || '',
+    hasKey: Boolean(e.apiKey),
+    keyMasked: maskKey(e.apiKey),
+    index: i,
+  }));
+}
+
 export class ModelGroup {
   constructor(data) {
     Object.assign(this, data);
@@ -63,10 +144,37 @@ export class ModelGroup {
    *   这是"用户填错了"，不是"程序坏了"，调用方要原样显示给用户看。
    */
   static fromInput(input = {}, { existing = null } = {}) {
-    const baseUrl = str(input.baseUrl ?? existing?.baseUrl, 400).replace(/\/+$/, '');
+    /**
+     * 端点列表。
+     *
+     * ★ 迁移逻辑在这里，不在别处：
+     *   老配置只有 baseUrl + apiKey（没有 endpoints）。
+     *   不迁移的话所有老用户保存一次就会丢掉 key。
+     *
+     * 新写法优先用 input.endpoints；没有就退回老字段。
+     */
+    let endpoints = normalizeEndpoints(input.endpoints, {
+      fallbackBaseUrl: input.baseUrl ?? existing?.baseUrl,
+      fallbackApiKey: input.apiKey || existing?.apiKey || '',
+    });
+    // 编辑已有组时，某条端点没传 apiKey = "不改这把钥匙"。
+    // App 拿到的是打码值，不能拿它覆盖真 key。
+    if (Array.isArray(input.endpoints) && existing?.endpoints?.length) {
+      const prev = existing.endpoints;
+      endpoints = endpoints.map((ep, i) => ({
+        ...ep,
+        apiKey: ep.apiKey || prev[i]?.apiKey || '',
+      }));
+    }
+
+    const baseUrl = endpoints[0]?.baseUrl ?? '';
     if (!baseUrl) return { error: 'baseUrl 不能为空' };
     if (!/^https?:\/\//i.test(baseUrl)) {
       return { error: 'baseUrl 要以 http:// 或 https:// 开头' };
+    }
+    const badUrl = endpoints.find((ep) => !/^https?:\/\//i.test(ep.baseUrl));
+    if (badUrl) {
+      return { error: `备用地址要以 http:// 或 https:// 开头：${badUrl.baseUrl.slice(0, 60)}` };
     }
 
     const name = str(input.name ?? existing?.name, 60) || '未命名模型组';
@@ -94,6 +202,7 @@ export class ModelGroup {
         name,
         baseUrl,
         apiKey,
+        endpoints,
         api,
         models,
         enabled: input.enabled === undefined ? existing?.enabled ?? true : Boolean(input.enabled),
@@ -118,6 +227,8 @@ export class ModelGroup {
       name: this.name,
       baseUrl: this.baseUrl,
       apiKey: this.apiKey,
+      // 多端点（含真 key，落盘时整体加密）
+      endpoints: this.endpoints ?? [],
       api: this.api,
       models: this.models,
       enabled: this.enabled,
@@ -136,6 +247,8 @@ export class ModelGroup {
       api: this.api,
       hasKey: Boolean(this.apiKey),
       keyMasked: maskKey(this.apiKey),
+      // 多端点：每条都打码。一次都没配时是空数组，界面据此决定显示什么。
+      endpoints: publicEndpoints(this.endpoints ?? []),
       models: this.models,
       enabled: this.enabled,
       builtin: Boolean(this.builtin),
@@ -144,12 +257,24 @@ export class ModelGroup {
     };
   }
 
-  /** pi 认识的 provider 配置 */
-  toProviderConfig() {
+  /**
+   * pi 认识的 provider 配置。
+   *
+   * [endpointIndex] 指定用哪条端点（多 key 轮转时用）。
+   * 不传就用第一条 —— 保持老行为不变。
+   *
+   * ★ 为什么 pi 这边只能一条：pi 的 provider 只有一个 baseUrl + apiKey，
+   *   它不支持"同一组模型多条通路"。所以轮转只能在**注册层**做：
+   *   换端点时重新 registerProvider 同一个 provider id，
+   *   把 baseUrl/apiKey 覆盖掉（pi 的 registerProvider 是合并语义）。
+   */
+  toProviderConfig(endpointIndex = 0) {
+    const eps = this.endpoints ?? [];
+    const ep = eps[endpointIndex] ?? eps[0] ?? null;
     return {
       name: this.name,
-      baseUrl: this.baseUrl,
-      apiKey: this.apiKey || 'no-key',
+      baseUrl: ep?.baseUrl || this.baseUrl,
+      apiKey: (ep?.apiKey || this.apiKey) || 'no-key',
       api: this.api,
       authHeader: true,
       // 模型级 compat 必填：pi 的 getApiKeyAndHeaders 依据模型上的
@@ -332,23 +457,61 @@ export class ModelGroupStore {
   #groups = [];
   #loaded = false;
 
+  /**
+   * @param {{dataDir?: string}} [opts] 数据目录；不传用全局 config。
+   *
+   * 为什么允许覆盖：单测要能指向临时目录。
+   * 只能读全局 config 的话，测试就会往用户真实的
+   * model-groups.json 里写东西 —— 那是绝对不能发生的事。
+   */
+  constructor(opts = {}) {
+    this.dataDir = opts.dataDir || config.dataDir;
+  }
+
   get file() {
-    return path.join(config.dataDir, 'model-groups.json');
+    return path.join(this.dataDir, 'model-groups.json');
   }
 
   /** 内存里的 key 是明文；落盘前加密。没成功载入就拒绝写，避免把文件盖成空。 */
   #seal(apiKey) {
     const text = String(apiKey ?? '');
     if (!text) return '';
-    return encrypt(text, loadOrCreateKey(config.dataDir));
+    return encrypt(text, loadOrCreateKey(this.dataDir));
+  }
+
+  /** 端点里的 key 也要一起加密。 */
+  #sealEndpoints(endpoints) {
+    if (!Array.isArray(endpoints) || !endpoints.length) return [];
+    return endpoints.map((ep) => ({ ...ep, apiKey: this.#seal(ep.apiKey) }));
+  }
+
+  /** 端点里的 key 解密。解不开时报错——绝不把密文当 key 用。 */
+  #openEndpoints(endpoints, key, groupName) {
+    if (!Array.isArray(endpoints) || !endpoints.length) return [];
+    return endpoints.map((ep) => {
+      const stored = String(ep?.apiKey ?? '');
+      if (!stored || !isEncrypted(stored)) return ep;
+      try {
+        return { ...ep, apiKey: decrypt(stored, key) };
+      } catch (err) {
+        throw new Error(
+          `模型组「${groupName}」的备用地址 key 解密失败，未改文件：${err.message}`,
+        );
+      }
+    });
   }
 
   load() {
     if (this.#loaded) return;
     const raw = readJson(this.file, null);
     const list = Array.isArray(raw?.groups) ? raw.groups : [];
-    const needsKey = list.some((item) => item && String(item.apiKey ?? ''));
-    const key = needsKey ? loadOrCreateKey(config.dataDir) : null;
+    const needsKey = list.some(
+      (item) =>
+        item &&
+        (String(item.apiKey ?? '') ||
+          (Array.isArray(item.endpoints) && item.endpoints.some((e) => e?.apiKey))),
+    );
+    const key = needsKey ? loadOrCreateKey(this.dataDir) : null;
     let migrated = 0;
     const plainList = [];
     for (const item of list) {
@@ -368,7 +531,11 @@ export class ModelGroupStore {
       } catch (err) {
         throw new Error(`模型组「${item.name || item.id || ''}」的 key 解密失败，未改文件：${err.message}`);
       }
-      plainList.push({ ...item, apiKey: plain });
+      plainList.push({
+        ...item,
+        apiKey: plain,
+        endpoints: this.#openEndpoints(item.endpoints, key, item.name || item.id || ''),
+      });
     }
     // 先确认每一条密文都能解开，再写迁移。任一失败都不落盘。
     if (migrated) {
@@ -398,6 +565,7 @@ export class ModelGroupStore {
       groups: this.#groups.map((g) => {
         const json = g.toJson();
         json.apiKey = this.#seal(json.apiKey);
+        json.endpoints = this.#sealEndpoints(json.endpoints);
         return json;
       }),
     });

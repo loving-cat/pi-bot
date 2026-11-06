@@ -80,6 +80,8 @@ const TESTS = [
   'decision-settings',
   'model-health-forget',
   'circuit-breaker',
+  'model-endpoints',
+  'model-store-isolation',
 ];
 
 let failed = 0;
