@@ -1,0 +1,20 @@
+server/src/model-health.js
+  h_c2e638ff76b3b9 85-110
+server/src/pi-runner.js
+  h_c2e638ff76b3b9 626-636
+server/tests/all.mjs
+  h_c2e638ff76b3b9 81
+server/tests/model-health-forget.mjs
+  h_c2e638ff76b3b9 1-73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "72f4f8bab0a61768873c429bdc210379016d60e6",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
