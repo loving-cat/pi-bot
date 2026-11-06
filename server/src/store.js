@@ -1073,14 +1073,25 @@ export class Store {
     const saved = this.state.decision ?? {};
     const merged = normalizeDecision(saved, DECISION_DEFAULT);
     if (merged.apiKey) {
-      if (this.secretsKey) {
-        try {
-          merged.apiKey = decrypt(merged.apiKey, this.secretsKey);
-        } catch {
-          // 解不开就当没配 —— 让它走回原逻辑，而不是拿一段密文去请求
-          merged.apiKey = '';
+      if (isEncrypted(merged.apiKey)) {
+        // ★ 只有密文、没有钥匙（或者钥匙不对）时，必须当成"没配"。
+        //
+        //   这里原本只在有 secretsKey 时才尝试解密：没钥匙的话
+        //   apiKey 会原样保留那段 'enc:v1:...' 字符串，然后被当成
+        //   Bearer token 发出去 —— 结果是稳定 401，
+        //   排查时看到的是"key 明明填了却一直认证失败"。
+        //   密文永远不该出现在请求里。
+        let plain = '';
+        if (this.secretsKey) {
+          try {
+            plain = decrypt(merged.apiKey, this.secretsKey);
+          } catch {
+            plain = '';
+          }
         }
+        merged.apiKey = plain;
       }
+      // 明文（本地调试或迁移过来的老数据）原样用
     }
     return merged;
   }

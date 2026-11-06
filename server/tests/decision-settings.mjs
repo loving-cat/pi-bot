@@ -119,3 +119,21 @@ test('解不开的密文当没配，不拿密文去请求', () => {
   s.useSecretsKey(Buffer.alloc(32, 2));
   assert.equal(s.decision().apiKey, '', '解不开要当没配，而不是把密文发出去');
 });
+
+test('★ 没有钥匙时也不能把密文当 key —— 否则稳定 401', () => {
+  const s = new Store();
+  s.useSecretsKey(Buffer.alloc(32, 3));
+  s.updateDecision({ enabled: true, apiKey: 'real-key' });
+  // 模拟"这个实例没注入密钥"（比如从别处 new 出来的）
+  s.secretsKey = null;
+  const got = s.decision().apiKey;
+  assert.equal(got, '', '密文绝不能出现在 apiKey 里');
+  assert.doesNotMatch(got, /^enc:/);
+});
+
+test('明文 key（本地调试）原样使用', () => {
+  const s = new Store();
+  // 不注入密钥 → 存的是明文
+  s.updateDecision({ enabled: true, apiKey: 'plain-token' });
+  assert.equal(s.decision().apiKey, 'plain-token');
+});
