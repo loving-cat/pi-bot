@@ -2088,6 +2088,11 @@ export class PiRunner {
           ]);
           entry.compactRetryAfter = 0;
           entry.progressAt = Date.now();
+          // ★ 主动压缩和 pi 自己压一样，会把老消息收成摘要 ——
+          //   已经注入过的技能正文随之消失，下一轮必须重新给。
+          //   这条路径不走 compaction_end 事件，所以在这里单独清一次。
+          entry.compactedSinceInjection = true;
+          entry.skillsInjected = null;
           return { compacted: true, failed: false, attempts, why: plan.why };
         } catch (err) {
           lastError = err;

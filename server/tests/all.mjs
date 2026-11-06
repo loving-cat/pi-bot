@@ -84,6 +84,7 @@ const TESTS = [
   'model-store-isolation',
   'decision-mode',
   'skills-once',
+  'skills-compaction-reset',
 ];
 
 let failed = 0;
