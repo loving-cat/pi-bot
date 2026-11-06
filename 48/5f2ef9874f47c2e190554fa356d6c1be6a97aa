@@ -1,0 +1,24 @@
+server/src/pi-runner.js
+  h_c2e638ff76b3b9 73-78,2266-2270,2461-2481
+server/src/skills.js
+  h_c2e638ff76b3b9 282-326
+server/src/store.js
+  h_c2e638ff76b3b9 53-65
+server/tests/all.mjs
+  h_c2e638ff76b3b9 86
+server/tests/skills-once.mjs
+  h_c2e638ff76b3b9 1-112
+server/tests/unit.mjs
+  h_c2e638ff76b3b9 536-538
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "485f2ef9874f47c2e190554fa356d6c1be6a97aa",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
