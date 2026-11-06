@@ -2041,7 +2041,9 @@ export class PiRunner {
     if (!session) return { compacted: false, failed: false, attempts: 0, why: '没有会话' };
 
     const usage = session.getContextUsage?.();
-    const threshold = Math.min(0.95, Math.max(0.5, config.compactAtPercent || 0.8)) * 100;
+    // 下限 0.2 而不是 0.5：默认值已经调到 0.4（见 config.compactAtPercent），
+    // 夹在 0.5 会把配置悄悄改成一半 —— 用户以为改了，实际没生效。
+    const threshold = Math.min(0.95, Math.max(0.2, config.compactAtPercent || 0.4)) * 100;
     const plan = PiRunner.planCompaction({
       percent: typeof usage?.percent === 'number' ? usage.percent : null,
       threshold,

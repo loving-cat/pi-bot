@@ -195,7 +195,22 @@ export const config = {
    * 压完只剩几个点余量 —— 群聊里读一份数据就回到 100%，又压，循环。
    * 提前到 80% 压，压完通常只剩 5% 左右，能撑很多轮。
    */
-  compactAtPercent: Number(process.env.PI_BOT_COMPACT_AT_PERCENT || 0.8),
+  /**
+   * 主动压缩阈值（0-1）。到这条线就先压缩成摘要，不等 pi 的 98% 触发线。
+   *
+   * 原来写的是 0.8，但**实际几乎不会触发** —— 实测主控会话积到 40.8 万
+   * token（占 1M 窗口 40.8%）就再也没涨过，离 80 万还很远。
+   * 而每轮都在按全量重算 40 万 token：未命中缓存时 9.5 秒一轮。
+   *
+   * 现在降到 0.4：
+   *   · 40 万 token 时就会压一次，压完降到几万；
+   *   · 未命中缓存的单轮从 9.5s 降到 ~4s（实测 40 万 = 9.5s，5 万 = 3.8s）；
+   *   · 群聊里每个 bot 都在这个量级，收益是乘出来的。
+   *
+   * 为什么不再低（比如 0.2）：压得太勤会把"刚讨论完的细节"过早收进摘要，
+   * 而摘要必然丢信息 —— 用户会觉得 bot 忘事。
+   */
+  compactAtPercent: Number(process.env.PI_BOT_COMPACT_AT_PERCENT || 0.4),
   /** 关掉自动压缩（PI_BOT_AUTO_COMPACT=0）。关掉之后长会话会直接撞上下文上限 */
   autoCompact: process.env.PI_BOT_AUTO_COMPACT !== '0',
   /** 单轮 agent 运行的硬超时（毫秒），0 = 不限 */

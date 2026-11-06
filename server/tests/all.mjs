@@ -85,6 +85,7 @@ const TESTS = [
   'decision-mode',
   'skills-once',
   'skills-compaction-reset',
+  'compact-threshold',
 ];
 
 let failed = 0;
