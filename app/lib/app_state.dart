@@ -9,6 +9,7 @@ import 'api.dart';
 import 'attachment_preview_request.dart';
 import 'browser_pane_state.dart';
 import 'models.dart';
+import 'reconnect_sweep.dart';
 import 'native.dart';
 import 'notify.dart';
 import 'platform.dart';
@@ -1931,6 +1932,28 @@ class AppState extends ChangeNotifier {
         //   一份全新的快照进来了，这些临时状态就该归零。
         typing.clear();
         queued.clear();
+        // ★ 断线期间已经结束的 streaming 消息，本地必须处理掉。
+        //
+        //   typing 只是一个布尔，"谁在写"实际上是靠**消息的 status** 画的：
+        //   一条 status='streaming' 且内容为空的消息 → 渲染成"正在输入"的三个点。
+        //   断线时服务端照样跑完了那一轮、把消息收尾成 done 并发 msg.done，
+        //   但那一刻客户端不在线，事件丢了 —— 本地那条就永远停在 streaming。
+        //   再连回来发新一轮，服务端建新消息，界面上就是**旧的三个点还挂着、
+        //   旁边又冒出一批新的**，看起来像"三个在干活又出现三个"。
+        //
+        //   先就地收掉（三个点立刻消失，不用等网络），再强制重拉拿真实状态。
+        //   打开着的那个房间下面本来就会 force 刷新，但**其它房间没人管** ——
+        //   切过去时 loadMessages 因为本地有缓存直接 return，看到的还是旧的。
+        final stale = roomsWithStaleStreaming(messages);
+        if (stale.isNotEmpty) {
+          for (final rid in stale) {
+            final list = messages[rid];
+            if (list != null) clearStaleStreaming(list);
+          }
+          for (final rid in stale) {
+            unawaited(loadMessages(rid, force: true));
+          }
+        }
         for (final k in contexts.keys.toList()) {
           final c = contexts[k];
           if (c != null && c.compacting) {
