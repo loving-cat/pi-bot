@@ -78,6 +78,7 @@ const TESTS = [
   'decision-router',
   'model-recommend',
   'decision-settings',
+  'model-health-forget',
 ];
 
 let failed = 0;

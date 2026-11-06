@@ -82,6 +82,32 @@ export class ModelHealth {
     return result && Date.now() - result.at <= this.ttlMs ? result : null;
   }
 
+  /**
+   * 丢掉某个 provider（模型组）下的所有结论，包括「模型 × 档位」组合。
+   *
+   * 为什么必须有这个：用户换 key / 改 baseUrl 之后，旧 key 的失败记录
+   * 还留在 results 里（TTL 24 小时）。于是菜单上那个组一直被标成 ✗ 实测不可用，
+   * 主控看到"不可用"就不选它 —— 用户会觉得"我明明换了稳定的 key，
+   * 怎么还是报错/不用它"。
+   *
+   * 健康结论是**针对某份凭证**的，凭证换了，结论就作废。
+   *
+   * @returns 清掉的条数
+   */
+  forgetProvider(providerId) {
+    if (!providerId) return 0;
+    const prefix = `${providerId}/`;
+    let n = 0;
+    for (const key of Object.keys(this.results)) {
+      if (key.startsWith(prefix)) {
+        delete this.results[key];
+        n++;
+      }
+    }
+    if (n) this.save();
+    return n;
+  }
+
   /** 全库有没有**任何**新鲜结论（用来区分「真全挂了」和「全都过期了」） */
   hasFresh() {
     const at = Date.now();

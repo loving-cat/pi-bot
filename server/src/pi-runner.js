@@ -623,6 +623,17 @@ export class PiRunner {
   /** 改完模型组：重新注册 + 刷新列表，然后广播一声让 App 更新 */
   async applyModelGroupChange(groupId = null) {
     this.syncModelGroups();
+    // ★ 这一组的健康结论作废。
+    //
+    //   健康结论是针对**某份凭证**的：用户换了 key / 改了 baseUrl，
+    //   旧凭证的 401/429 记录（TTL 24 小时）还挂在那里，
+    //   菜单上这个组就一直标 ✗ 实测不可用 —— 主控看到"不可用"绕开它，
+    //   用户看到的是"我换了稳定 key 怎么还是老样子"。
+    //   凭证变了，结论就该作废，让下一轮重新探。
+    if (groupId && this.health) {
+      const n = this.health.forgetProvider(groupId);
+      if (n) log(`🔁 模型组 ${groupId} 的凭证变了，清掉 ${n} 条旧探活结论`);
+    }
     await this.refreshAvailableModels();
     this.model = this.resolveModel(this.modelLabel()) ?? this.resolveModel(config.model)
       ?? this.resolveModel(defaultMenuSlug(this.health)) ?? null;
