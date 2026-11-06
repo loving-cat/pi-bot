@@ -79,6 +79,7 @@ const TESTS = [
   'model-recommend',
   'decision-settings',
   'model-health-forget',
+  'circuit-breaker',
 ];
 
 let failed = 0;

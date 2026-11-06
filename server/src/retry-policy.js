@@ -297,13 +297,20 @@ export function failureNote({
   kind = '',
 } = {}) {
   const r = String(reason ?? '').slice(0, 160);
+  // 中途重试**不再往群里写**（用户说"尽可能无感"）。
+  // 这个分支留着是为了兼容老调用方，但文案改成不打扰人的一句话。
   if (willRetry) {
-    // 接口抖动时说清楚"不是活干不了"，否则用户会以为任务本身有问题
-    return kind === 'transient'
-      ? `${botName} 在等接口恢复（${r}），第 ${attempt} 次重试…`
-      : `${botName} 这次没跑成（${r}），正在重试第 ${attempt} 次…`;
+    return `${botName} 正在重试（第 ${attempt} 次）`;
   }
-  // 临时故障耗尽：告诉用户下一步该查什么，而不是只丢一句失败
+  // 放弃时才写一条 —— 这才是用户需要知道的。
+  //
+  // 熔断打开时不要讲技术细节：他只想知道「多久会好、我要不要做什么」。
+  if (kind === 'breaker-open') {
+    return (
+      `${botName} 这条路的接口暂时连不上，先停一会儿自动恢复。` +
+      '\n你不用做什么，恢复后它会自己接着跑。'
+    );
+  }
   if (kind === 'transient-exhausted') {
     return (
       `${botName} 没能完成：模型接口连续 ${attempt} 次不稳定（${r}）。` +

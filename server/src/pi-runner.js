@@ -81,6 +81,16 @@ import {
   transientBackoffMs,
   isRecoverableFailure,
 } from './retry-policy.js';
+import {
+  canRequest as breakerAllows,
+  createBreaker,
+  isCircuitFailure,
+  recordFailure as breakerFail,
+  recordSuccess as breakerOk,
+  settleAfterCooldown,
+  breakerNote,
+  BREAKER_STATE,
+} from './circuit-breaker.js';
 import { createSessionBuilder } from './session-factory.js';
 import { createBuildInput } from './prompt-input.js';
 import { collectNewImages, snapshotImages } from './image-watch.js';
@@ -207,6 +217,14 @@ export class PiRunner {
      * 用同一个标记会让新一轮也被当成终止。代数只回答"你还是不是当前那一轮"。
      */
     this.roundEpochs = new Map();
+    /**
+     * 熔断器，按模型组 id 存。
+     *
+     * 为什么要按**组**而不是按 bot：一个组就是一份 baseUrl + key。
+     * 那把 key 挂了，组里所有模型、所有 bot 都一起不可用 ——
+     * 让每个 bot 各自撞 N 次是纯粹的浪费（实测 6 个成员 = 66 次请求）。
+     */
+    this.breakers = new Map();
     /** 已经派出去、但异步的 run() 还没把 busy 设上的会话（key = roomId:botId） */
     this.dispatching = new Set();
     /** roomId -> { text, files }：锁被占时进来的消息，合并到这里等下一轮 */
@@ -743,6 +761,62 @@ export class PiRunner {
     return ticket;
   }
 
+  /**
+   * 取某个模型组的熔断器（没有就建一个）。
+   *
+   * 从 bot 的 model slug 里取组 id（`<组id>/<模型id>`）。
+   * 取不到就返回 null —— 调用方按"没有熔断"处理，绝不让它挡住正常流程。
+   */
+  breakerFor(botId) {
+    const bot = store.getBot(botId);
+    const slug = String(bot?.model ?? '').trim();
+    if (!slug.includes('/')) return null;
+    const groupId = slug.slice(0, slug.indexOf('/'));
+    if (!groupId) return null;
+    let cb = this.breakers.get(groupId);
+    if (!cb) {
+      cb = createBreaker();
+      this.breakers.set(groupId, cb);
+    }
+    // 冷却结束自动转 halfOpen（纯函数，状态推进）
+    const settled = settleAfterCooldown(cb, Date.now());
+    if (settled !== cb) {
+      this.breakers.set(groupId, settled);
+      cb = settled;
+    }
+    return { groupId, breaker: cb };
+  }
+
+  /** 把一个模型组标记为"刚成功过" —— 恢复后立刻回到正常。 */
+  markGroupHealthy(botId) {
+    const found = this.breakerFor(botId);
+    if (!found) return;
+    if (found.breaker.state !== BREAKER_STATE.closed || (found.breaker.fails ?? 0) > 0) {
+      this.breakers.set(found.groupId, breakerOk(found.breaker));
+      log(`✅ 模型组 ${found.groupId} 恢复正常`);
+      return;
+    }
+    this.breakers.set(found.groupId, breakerOk(found.breaker));
+  }
+
+  /** 记一次通路失败（只有真·通路故障才计入）。 */
+  markGroupFailed(botId, { kind, status } = {}) {
+    const found = this.breakerFor(botId);
+    if (!found) return null;
+    if (!isCircuitFailure({ kind, status })) return found.breaker;
+    const next = breakerFail(found.breaker, { kind, status, now: Date.now() });
+    this.breakers.set(found.groupId, next);
+    if (next.state === BREAKER_STATE.open) {
+      const name = modelGroups.get(found.groupId)?.name ?? found.groupId;
+      log(
+        `⛔ 模型组「${name}」连续 ${next.fails} 次通路失败，熔断 ` +
+          `${Math.round(next.cooldownMs / 1000)}s（这期间不再往它发请求）`,
+      );
+      return next;
+    }
+    return next;
+  }
+
   isBusy(roomId, botId) {
     const key = this.#key(roomId, botId);
     // ★ 同步占位也算忙。
@@ -1216,23 +1290,66 @@ export class PiRunner {
             //   结果用户以为全员交付完成，实际有人掉链子被悄悄兜底。
             //
             //   这里改成：失败 → 群里留痕 → 有限次重试 → 用完上报给负责人。
-            let res = await this.run(roomId, bot.id, prompt, {
-              groupTurn: true,
-              attachments,
-              // ★ 用户直接叫的人才能用保底槽（与打断特权同一个判据：fromId 为空）。
-              //   同事之间 @ 算常规派活，不占用给人留的那一位。
-              human: !item.fromId && isUserInitiatedRound({ openerBotId }),
-            });
+            //
+            // ★ 但发请求之前先看这条路通不通。
+            //
+            //   熔断器打开时不发网络请求，直接快速失败 —— 这是「更快」的关键：
+            //   实测 6 个成员的群、key 彻底不可用，原先会打 66 次请求、累积等 584 秒。
+            //   有熔断后第 1 个 bot 撞 3 次就停住，其余 5 个立刻得到结论。
+            const gate = this.breakerFor(bot.id);
+            const gateCheck = gate ? breakerAllows(gate.breaker, Date.now()) : { allow: true };
+            let res;
+            if (!gateCheck.allow) {
+              log(`【${room.name}】${bot.name} 跳过：${gateCheck.reason}`);
+              res = {
+                ok: false,
+                text: '',
+                ms: 0,
+                error: breakerNote(gate.breaker, {
+                  groupName: modelGroups.get(gate.groupId)?.name ?? '',
+                }),
+                status: 503,
+                messageId: '',
+                breakerSkipped: true,
+              };
+            } else {
+              res = await this.run(roomId, bot.id, prompt, {
+                groupTurn: true,
+                attachments,
+                // ★ 用户直接叫的人才能用保底槽（与打断特权同一个判据：fromId 为空）。
+                //   同事之间 @ 算常规派活，不占用给人留的那一位。
+                human: !item.fromId && isUserInitiatedRound({ openerBotId }),
+              });
+            }
+            // 第一次的结果也要喂给熔断器，否则"第 1 次就挂"的情况记不到
+            if (res.ok) {
+              this.markGroupHealthy(bot.id);
+            } else if (!res.breakerSkipped) {
+              const firstDecision = decideRetry({
+                error: String(res.error ?? ''),
+                attempt: 1,
+                aborting: this.aborting.has(roomId),
+                status: res.status ?? null,
+              });
+              this.markGroupFailed(bot.id, {
+                kind: firstDecision.kind,
+                status: res.status ?? null,
+              });
+            }
             let attempt = 1;
             let lastError = res.ok ? '' : String(res.error ?? '未知原因');
             // 上游状态码：错误文案是脱敏的，只有它能让重试策略分辨
             // "429 限流"和"任务本身做不成"
             let lastStatus = res.ok ? null : (res.status ?? null);
-            // 最后一次失败的类型：循环外写"失败回执"时要用它来决定文案
-            let lastKind = '';
+            // 最后一次失败的类型：循环外写"失败回执"时要用它来决定文案。
+            // 被熔断挡下时直接标成 breaker-open —— 那正是要给用户看的文案。
+            let lastKind = res.breakerSkipped ? 'breaker-open' : '';
             const retries = [];
 
             while (!res.ok) {
+              // 熔断挡住的那次：不是"又失败一次"，是"压根没发请求"。
+              // 直接跳出，别走重试决策 —— 那会再算一遍退避时间，白等。
+              if (res.breakerSkipped) break;
               // 用户插话了：旧任务直接作废，既不重试也不上报
               if (stale()) break;
               const decision = decideRetry({
@@ -1246,28 +1363,30 @@ export class PiRunner {
                 lastKind = decision.kind;
                 break;
               }
+              // ★ 熔断器刚打开 → 别再撞了。
+              //
+              //   这一次失败可能就是压垮它的第 3 次。已经确定这条路不通，
+              //   继续按指数退避重试只是把 97 秒的等待重复一遍。
+              const afterFail = this.breakerFor(bot.id);
+              if (afterFail && afterFail.breaker.state === BREAKER_STATE.open) {
+                log(`【${room.name}】${bot.name} 熔断已打开，停止重试`);
+                lastKind = 'breaker-open';
+                break;
+              }
               attempt++;
               retries.push(`${attempt}. ${decision.why}`);
-              // 群里留痕：用户和负责人都能看到"它这次没成，正在重试"
-              store.appendMessage(
-                {
-                  roomId,
-                  authorType: 'system',
-                  authorId: bot.id,
-                  authorName: '重试回执',
-                  text: failureNote({
-                    botName: bot.name,
-                    reason: lastError,
-                    attempt: attempt - 1,
-                    willRetry: true,
-                    kind: decision.kind,
-                  }),
-                  status: 'done',
-                  meta: { via: 'retry', attempt: attempt - 1 },
-                },
-                { beforeStreaming: true },
+              // ★ 前几次重试**不往群里写东西**。
+              //
+              //   原先每次重试都插一条「XX 在等接口恢复（HTTP 502），第 N 次重试…」。
+              //   10 次重试就是 10 条系统消息，把整段对话刷满 ——
+              //   用户看到的是"群里一直在报错"，而实际上这些重试大多会自己恢复。
+              //
+              //   接口抖动是**我们这边的事**，不该让用户围观。
+              //   只在「放弃」时写一条（下面失败回执那段），那才是他需要知道的。
+              //   中途进度留在日志里，排查时能看到。
+              log(
+                `【${room.name}】${bot.name} 第 ${attempt} 次尝试（${decision.kind}）：${lastError.slice(0, 80)}`,
               );
-              log(`【${room.name}】${bot.name} 第 ${attempt} 次尝试（${decision.kind}）`);
               // 隔一会儿再试：立刻重发大概率撞上同样的偶发问题。
               // 接口抖动类按指数退避 —— 限流时固定 3 秒重发会一直撞同一堵墙。
               const waitMs =
@@ -1292,6 +1411,15 @@ export class PiRunner {
               if (!res.ok) {
                 lastError = String(res.error ?? '未知原因');
                 lastStatus = res.status ?? null;
+              }
+              // 把这次的结果喂给熔断器（纯函数，非通路故障不计入）
+              if (res.ok) {
+                this.markGroupHealthy(bot.id);
+              } else {
+                this.markGroupFailed(bot.id, {
+                  kind: decision.kind,
+                  status: res.status ?? null,
+                });
               }
             }
 

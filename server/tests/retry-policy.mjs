@@ -120,13 +120,34 @@ test('收尾文案不再出现"换个人或者再派一次"这种暗示可以自
   assert.ok(!/请你重新安排/.test(note), '旧文案给了自己上的口子，不该再出现');
 });
 
-test('群里的留痕：重试时和放弃时说的话不一样', () => {
-  const retrying = failureNote({ botName: '小王', reason: '超时', attempt: 1, willRetry: true });
-  assert.match(retrying, /正在重试第 1 次/);
-
+test('放弃时才写回执，且不掺技术细节', () => {
   const gaveUp = failureNote({ botName: '小王', reason: '超时', willRetry: false });
   assert.match(gaveUp, /没能完成/);
   assert.ok(!/正在重试/.test(gaveUp));
+
+  // 熔断打开时不讲 HTTP 细节，只说"多久恢复、你要不要做什么"
+  const breaker = failureNote({
+    botName: '小王',
+    reason: 'HTTP 502',
+    willRetry: false,
+    kind: 'breaker-open',
+  });
+  assert.match(breaker, /自动恢复/);
+  assert.match(breaker, /你不用做什么/);
+  assert.ok(!/502/.test(breaker), '熔断文案不该带技术码：' + breaker);
+});
+
+test('★ 中途重试不再写进群里（用户说"尽可能无感"）', () => {
+  // 10 次重试就是 10 条系统消息，把对话刷满。
+  // 现在中途只在日志里留痕，群里不写。
+  const retrying = failureNote({
+    botName: '小王',
+    reason: 'HTTP 502',
+    attempt: 3,
+    willRetry: true,
+  });
+  assert.ok(retrying.length < 30, '中途文案要极短：' + retrying);
+  assert.ok(!/502/.test(retrying), '不该把错误码念给用户');
 });
 
 test('留痕文案截断长错误', () => {
