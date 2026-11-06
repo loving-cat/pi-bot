@@ -1,0 +1,31 @@
+README.md
+  s_06973911ad2cd6::t_3328d755d814da 168-169,171,251-252
+  s_06973911ad2cd6::t_fa370ac91cbfc0 254-264
+  s_06973911ad2cd6::t_56073611269265 324
+  s_06973911ad2cd6::t_e38c0454b8f686 170
+  s_06973911ad2cd6::t_c943ea0d5b8164 253
+scripts/check-secrets.mjs
+  s_06973911ad2cd6::t_3328d755d814da 117
+  s_06973911ad2cd6::t_4bd387a9de052c 185-186,191
+  s_06973911ad2cd6::t_3fc8af7cd6db54 148,151-153,156-158,188-190,192-197
+docs/MODULE-MAP.md
+  s_06973911ad2cd6::t_3328d755d814da 26,49,54,71,103,142
+  s_06973911ad2cd6::t_e38c0454b8f686 25
+  s_06973911ad2cd6::t_6d2aae5e70fa3d 24,34-35,72
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "85ad83cee8fe8ff3a9764dd900f9eb9e6eaef363",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
