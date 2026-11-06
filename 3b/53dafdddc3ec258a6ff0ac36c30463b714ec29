@@ -1,0 +1,16 @@
+server/src/store.js
+  h_c2e638ff76b3b9 1076-1090,1092,1094
+server/tests/decision-settings.mjs
+  h_c2e638ff76b3b9 122-139
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3b53dafdddc3ec258a6ff0ac36c30463b714ec29",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
