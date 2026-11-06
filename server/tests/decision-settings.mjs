@@ -70,15 +70,15 @@ test('改设置后能读回来', () => {
 test('★ key 落盘是密文，读出来是明文', () => {
   const s = new Store();
   s.useSecretsKey(Buffer.alloc(32, 7));
-  s.updateDecision({ enabled: true, apiKey: 'apikey_secret_123' });
+  s.updateDecision({ enabled: true, apiKey: 'fixture-credential-decision-key' });
 
   // 内存里的 state 应该是密文（形如 enc:v1:...）
   const stored = s.state.decision?.apiKey ?? '';
-  assert.notEqual(stored, 'apikey_secret_123', '不该明文落盘');
+  assert.notEqual(stored, 'fixture-credential-decision-key', '不该明文落盘');
   assert.match(stored, /^enc:/, '应该是加密格式');
 
   // getter 解出来是明文
-  assert.equal(s.decision().apiKey, 'apikey_secret_123');
+  assert.equal(s.decision().apiKey, 'fixture-credential-decision-key');
 });
 
 test('没有密钥时 key 保持原样（本地调试不至于用不了）', () => {
