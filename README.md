@@ -227,6 +227,7 @@ docs/
   WINDOWS.md          Windows 构建 / 平台实现 / 真机验收
   MACOS.md            macOS 构建 / 平台实现 / 真机验收
   PITFALLS.md         ★ 踩过的坑与修法（含 Flutter/Windows/DPI/字体/并发）
+  DECISION-ROUTER.md  快速决策路由（Jev）：注册表、两条线、端点与实测格式
 ```
 
 ## 测试
