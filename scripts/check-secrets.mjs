@@ -145,6 +145,57 @@ function readFile(file) {
 
 const isAllowed = (line) => ALLOW.some((re) => re.test(line));
 
+/**
+ * 这串东西是不是"一看就是随便打的"占位符。
+ *
+ * ★ 为什么需要它：规则只认形状，不认语义。
+ *   `sk-1234567890abcdef` 有 16 个字符，形状上完全符合"OpenAI 风格 key"，
+ *   但它显然是样例值。结果是：修掉一处误报的提交，因为提交信息里
+ *   **引用了那个假 key**，又把它自己扫挂了 —— 越修越红，死循环。
+ *
+ * 这里只放行**明确的填充模式**，宁可漏掉极少数真 key 也不放松形状规则：
+ *   · 全是数字（真 key 不会）
+ *   · 含 1234567890 / 0123456789 这种连续十位
+ *   · 含 abcdef / abcdefgh 这种字母顺序串
+ *   · 同一个字符重复 6 次以上
+ *
+ * 熵值之类的统计学判断不敢用 —— 会把短一点的真 key 误放行。
+ */
+function looksLikePlaceholder(text) {
+  const s = String(text ?? '');
+  if (!s) return false;
+  // 去掉 sk- / nvapi- 这类前缀，只看主体
+  const body = s.replace(/^[A-Za-z]{2,6}[-_]/, '');
+  if (!body) return false;
+  // 全数字
+  if (/^\d+$/.test(body)) return true;
+  // 连续十位数字
+  if (/0123456789|1234567890|9876543210/.test(body)) return true;
+  // 字母顺序串（abcdef 起）
+  if (/abcdef/i.test(body)) return true;
+  // 同一个字符重复 6 次以上
+  if (/(.)\1{5,}/.test(body)) return true;
+  return false;
+}
+
+/**
+ * 命中规则后，再看一眼是不是占位符。
+ *
+ * 只对"按形状认 key"的规则做这个判断 —— 邮箱、路径那几条不适用：
+ * 一个邮箱里恰好含 abcdef 是真的有可能的。
+ */
+const KEY_SHAPED_RULES = new Set([
+  'OpenAI/Anthropic 风格 key',
+  'undocumented sk_ key',
+  'NVIDIA key',
+  'GitHub token',
+  'AWS access key',
+  'Google API key',
+  'Slack token',
+  'Bearer 长串',
+  '硬编码口令',
+]);
+
 const hits = [];
 
 function scanText(where, text) {
@@ -153,10 +204,12 @@ function scanText(where, text) {
     const line = lines[i];
     if (line.length > 2000 || isAllowed(line)) continue;
     for (const rule of RULES) {
-      if (rule.re.test(line)) {
-        hits.push({ file: where, line: i + 1, rule: rule.name, text: line.trim().slice(0, 120) });
-        break;
-      }
+      const m = line.match(rule.re);
+      if (!m) continue;
+      // 形状像 key，但内容明显是占位符 → 不算
+      if (KEY_SHAPED_RULES.has(rule.name) && looksLikePlaceholder(m[0])) continue;
+      hits.push({ file: where, line: i + 1, rule: rule.name, text: line.trim().slice(0, 120) });
+      break;
     }
   }
 }
