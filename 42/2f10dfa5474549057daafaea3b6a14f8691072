@@ -1,0 +1,24 @@
+app/lib/l10n/strings/panel2.dart
+  h_c2e638ff76b3b9 260-262,651-653
+server/src/config.js
+  h_c2e638ff76b3b9 191,193-199,201,205-214,216-220,222-223,225
+server/src/pi-runner.js
+  h_c2e638ff76b3b9 1976-1996,1998
+server/tests/compact-retry.mjs
+  h_c2e638ff76b3b9 75-83
+server/tests/compact-threshold.mjs
+  h_c2e638ff76b3b9 23-27
+server/tests/unit.mjs
+  h_c2e638ff76b3b9 284,312-314,318-336
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "422f10dfa5474549057daafaea3b6a14f8691072",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
