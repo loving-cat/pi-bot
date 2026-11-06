@@ -57,12 +57,12 @@ void main() {
   });
 
   group('clearStaleStreaming', () {
-    test('有内容的流式消息收成 done（内容留着）', () {
+    test('有内容的流式消息标记中断并保留内容', () {
       final list = [m('a', status: 'streaming', text: '已经写了一部分')];
       expect(clearStaleStreaming(list), 1);
-      expect(list.single.status, 'done');
+      expect(list.single.status, 'error');
       expect(list.single.text, '已经写了一部分', reason: '不能把已写的内容丢掉');
-      expect(list.single.error, isNull);
+      expect(list.single.error, isNotNull);
     });
 
     test('空内容的流式消息收成 error 并给原因', () {

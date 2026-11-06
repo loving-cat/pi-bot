@@ -43,6 +43,9 @@ class PB {
       isLightMode ? PBNeutral.lightBgHover : PBNeutral.bgHover;
   static Color get bgActive =>
       isLightMode ? PBNeutral.lightBgActive : PBNeutral.bgActive;
+  /// 文件卡片底。浅色纯白、深色比气泡亮一档 —— 两端都不跟内容抢视线。
+  static Color get bgFileCard =>
+      isLightMode ? PBNeutral.lightBgFileCard : PBNeutral.bgActive;
   static Color get bgInput =>
       isLightMode ? PBNeutral.lightBgInput : PBNeutral.bgInput;
 
@@ -207,13 +210,16 @@ class PB {
   ];
 
   static final _defaultColors = PBThemeColors.derive(accent);
+  /// 浅色模式下也要有一份：derive 的链接色按底色算，不能拿深色那份复用。
+  static final _defaultColorsLight = PBThemeColors.derive(accent, light: true);
 
   /// 从当前主题读取语义颜色，未挂主题时使用默认种子。
   static PBThemeColors colors(BuildContext context) =>
-      Theme.of(context).extension<PBThemeColors>() ?? _defaultColors;
+      Theme.of(context).extension<PBThemeColors>() ??
+      (isLightMode ? _defaultColorsLight : _defaultColors);
 
   static ThemeData theme({Color? seed, bool light = false}) {
-    final colors = PBThemeColors.derive(seed ?? accent);
+    final colors = PBThemeColors.derive(seed ?? accent, light: light);
     // colorScheme 必须跟着明暗走：输入框、按钮、弹窗用的是它，
     // 只改 PB.xxx 的话这些组件会停在旧配色上。
     final scheme = (light ? ColorScheme.light : ColorScheme.dark)(

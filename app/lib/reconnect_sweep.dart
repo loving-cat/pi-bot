@@ -22,7 +22,7 @@ Set<String> roomsWithStaleStreaming(Map<String, List<Msg>> messages) {
   final out = <String>{};
   for (final entry in messages.entries) {
     for (final msg in entry.value) {
-      if (msg.isStreaming) {
+      if (msg.isLive) {
         out.add(entry.key);
         break; // 一个房间有一个就够，不用继续扫
       }
@@ -31,7 +31,7 @@ Set<String> roomsWithStaleStreaming(Map<String, List<Msg>> messages) {
   return out;
 }
 
-/// 把这些房间里还停在 streaming 的消息就地标成中断。
+/// 把这些房间里仍在进行中的消息就地标成中断，历史刷新后再应用真实终态。
 ///
 /// 用于"重拉还没回来 / 重拉失败"的这段时间：先让三个点消失，
 /// 而不是让用户对着一个永远不会结束的转圈。服务端真在跑的活
@@ -41,9 +41,9 @@ Set<String> roomsWithStaleStreaming(Map<String, List<Msg>> messages) {
 int clearStaleStreaming(List<Msg> messages, {String reason = '连接中断，这一轮已结束'}) {
   var n = 0;
   for (final msg in messages) {
-    if (!msg.isStreaming) continue;
-    msg.status = msg.text.trim().isEmpty ? 'error' : 'done';
-    if (msg.status == 'error') msg.error = reason;
+    if (!msg.isLive) continue;
+    msg.status = 'error';
+    msg.error = reason;
     for (final step in msg.steps) {
       if (step.status == 'running') step.status = 'error';
     }

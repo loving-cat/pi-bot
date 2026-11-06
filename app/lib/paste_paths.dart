@@ -1,5 +1,10 @@
 import 'dart:io';
 
+/// URI 整段受保护，单字母盘符保留给 Windows 路径识别。
+final _urlPattern = RegExp(
+  r'''(?<![A-Za-z0-9_./\\+-])(?:[A-Za-z][A-Za-z0-9+.-]*://|[A-Za-z][A-Za-z0-9+.-]+:|//)[^\s<>"`]+''',
+);
+
 /// 从粘贴文本里认出文件路径。
 ///
 /// 两种形态：
@@ -39,7 +44,7 @@ PastePathResult extractPastedFiles(String text) {
     if (line.isEmpty) continue;
 
     // 整行就是路径：整行收走
-    final whole = asExistingFile(line);
+    final whole = _urlPattern.hasMatch(line) ? null : asExistingFile(line);
     if (whole != null) {
       files.add(whole);
       continue;
@@ -51,7 +56,10 @@ PastePathResult extractPastedFiles(String text) {
     kept.add(stripped.trim());
   }
 
-  return PastePathResult(files: files, remainingText: kept.join('\n'));
+  return PastePathResult(
+    files: files,
+    remainingText: files.isEmpty ? text : kept.join('\n'),
+  );
 }
 
 /// 把一个字符串当路径试：存在就返回 File，否则 null。
@@ -79,14 +87,25 @@ bool _isDriveLetter(String ch) {
 /// 返回剩下的文字。
 String extractInlinePaths(String line, List<File> out) {
   final buffer = StringBuffer();
+  final urls = _urlPattern.allMatches(line).toList();
+  var urlIndex = 0;
   var i = 0;
   while (i < line.length) {
+    while (urlIndex < urls.length && urls[urlIndex].end <= i) {
+      urlIndex++;
+    }
+    final url = urlIndex < urls.length ? urls[urlIndex] : null;
+    if (url != null && i >= url.start) {
+      buffer.write(line.substring(i, url.end));
+      i = url.end;
+      continue;
+    }
     final ch = line[i];
 
     // 引号包住的路径：优先整段试（带空格的路径只能这么认）
     if (ch == '"') {
       final close = line.indexOf('"', i + 1);
-      if (close > i) {
+      if (close > i && (url == null || close < url.start)) {
         final file = asExistingFile(line.substring(i, close + 1));
         if (file != null) {
           out.add(file);
@@ -126,7 +145,8 @@ String extractInlinePaths(String line, List<File> out) {
       // 但句子里的空格同时又是分隔符。只按空格截断会漏掉带空格的路径，
       // 只用最长匹配又会把后面的句子一起吃进来。
       var best = -1;
-      var end = line.length;
+      var end = url?.start ?? line.length;
+      if (end - i > 1024) end = i + 1024;
       while (end > i) {
         if (asExistingFile(line.substring(i, end)) != null) {
           best = end;

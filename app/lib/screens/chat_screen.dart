@@ -49,8 +49,10 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 /// 就会把还空着的占位顶到上面 —— 用户看起来像"它还在想，但被压上去了/卡住了"。
 /// 只影响显示顺序，不影响消息本身的时间顺序。
 List<Msg> displayOrderMsgs(List<Msg> msgs) => [
-  ...msgs.where((m) => !(m.isStreaming && m.text.trim().isEmpty)),
-  ...msgs.where((m) => m.isStreaming && m.text.trim().isEmpty),
+  // 还在进行中（流式 / 重试）且暂时没内容的，排到最后 ——
+  // 否则它会插在历史消息中间，看起来像一条空记录。
+  ...msgs.where((m) => !(m.isLive && m.text.trim().isEmpty)),
+  ...msgs.where((m) => m.isLive && m.text.trim().isEmpty),
 ];
 
 class ChatScreen extends StatefulWidget {
@@ -652,26 +654,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           fontWeight: FontWeight.w500,
                         ),
                       ),
-                      // 状态只在"正在干活 / 正在压缩"时露出来 —— 平时不占地方
-                      if (busy || state.compactingIn(room.id)) ...[
+                      // 状态只在"正在干活"时露出来 —— 平时不占地方。
+                      //
+                      // ★ 压缩状态不在这里画：右边的 ContextChip 已经会显示
+                      //   「↻ 压缩中」，两处一起出现就是「压缩中 压缩中」。
+                      //   压缩本来就是上下文的事，归给上下文那个小圆环汇报。
+                      if (busy) ...[
                         const SizedBox(width: 8),
-                        if (state.compactingIn(room.id))
-                          Text(
-                            s.t('chat.compacting'),
-                            style: const TextStyle(
-                              fontSize: PB.fsXxs,
-                              color: PB.warn,
-                            ),
-                          )
-                        else
-                          SizedBox(
-                            width: 11,
-                            height: 11,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 1.8,
-                              color: PB.colors(context).accentBright,
-                            ),
+                        SizedBox(
+                          width: 11,
+                          height: 11,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 1.8,
+                            color: PB.colors(context).accentBright,
                           ),
+                        ),
                       ],
                       // 上下文占用：平时也就是一个小圆环
                       const SizedBox(width: 6),
@@ -1953,7 +1950,10 @@ class _MessageRow extends StatelessWidget {
     if (msg.isAborted) return const SizedBox.shrink();
 
     final isUser = msg.isUser;
-    final streaming = msg.isStreaming;
+    // ★ 重试中也是「还在进行」：要转圈、要显示占位文案。
+    //   原来只认 isStreaming，retrying 那条被当成「已完成但没内容」，
+    //   画出来是一个没有内容的透明气泡。
+    final streaming = msg.isLive;
 
     // ★ 名字和 emoji 一律**从 authorId 现查**，不信消息里存的那一份。
     //   消息里的 authorName 是写入时的快照 —— 用户给 bot 改完名字，

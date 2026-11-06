@@ -72,7 +72,6 @@ const areaChat = StringArea(
     // ---- 聊天页 ----
     'chat.pickImageFailed': '选图失败：{error}',
     'chat.pickFileFailed': '选文件失败：{error}',
-    'chat.compacting': '压缩中',
     'chat.tasks': '任务',
     'chat.tasksWithCount': '任务（{n} 个未完成）',
     'chat.newSession': '开新会话',
@@ -248,7 +247,6 @@ const areaChat = StringArea(
     // ---- Chat ----
     'chat.pickImageFailed': 'Could not add the image: {error}',
     'chat.pickFileFailed': 'Could not add the file: {error}',
-    'chat.compacting': 'Compacting',
     'chat.tasks': 'Tasks',
     'chat.tasksWithCount': 'Tasks ({n} open)',
     'chat.newSession': 'New session',

@@ -242,6 +242,12 @@ class Msg {
   bool get isUser => authorType == 'user';
   bool get isStreaming => status == 'streaming';
 
+  /// 服务端正在等待或执行重试。
+  bool get isRetrying => status == 'retrying';
+
+  /// 流式输出或等待重试，供进行中提示和重连同步共用。
+  bool get isLive => isStreaming || isRetrying;
+
   /// 用户主动终止的（按 Esc）。服务端写 status='aborted'。
   ///
   /// 为什么单独一个状态而不是复用 'error'：终止不是"出错"。

@@ -10,6 +10,7 @@ import 'attachment_preview_request.dart';
 import 'browser_pane_state.dart';
 import 'models.dart';
 import 'reconnect_sweep.dart';
+import 'attachment_deletions.dart';
 import 'native.dart';
 import 'notify.dart';
 import 'platform.dart';
@@ -126,6 +127,7 @@ class AppState extends ChangeNotifier {
   /// 否则会在有模型的情况下先闪一下"去配置模型"引导页。
   bool modelGroupsLoaded = false;
   final Map<String, List<Msg>> messages = {};
+  final AttachmentDeletions _attachmentDeletions = AttachmentDeletions();
 
   /// 记忆摘要缓存（roomId → 摘要）
   final Map<String, MemorySummary> memorySummaries = {};
@@ -707,24 +709,35 @@ class AppState extends ChangeNotifier {
   /// 但服务端消息本身没有被改写。
   Future<int> deleteAttachments(List<String> ids) async {
     if (ids.isEmpty) return 0;
+    final client = api;
+    if (client == null) return 0;
+    _attachmentDeletions.bind(client);
+    final deletionEpoch = _attachmentDeletions.epoch;
     try {
-      final res = ids.length == 1
-          ? await api!.deleteFile(ids.first).then((_) => {'deleted': ids})
-          : await api!.deleteFiles(ids);
-      final deleted =
-          ((res['deleted'] as List?) ?? const []).map((e) => '$e').toSet();
+      final res = await client.deleteFiles(ids);
+      if (_disposed ||
+          !identical(api, client) ||
+          deletionEpoch != _attachmentDeletions.epoch) {
+        return 0;
+      }
+      final deleted = ((res['deleted'] as List?) ?? const [])
+          .map((e) => '$e')
+          .toSet();
       if (deleted.isEmpty) return 0;
 
-      // 本地同步摘掉：attachments 是可变字段，直接原地过滤
-      for (final entry in messages.entries) {
-        for (final m in entry.value) {
-          if (m.attachments.isEmpty) continue;
-          m.attachments.removeWhere((a) => deleted.contains(a.id));
-        }
-      }
+      _attachmentDeletions.record(
+        deleted,
+        revision: res['attachmentDeletionRevision'],
+      );
+      _attachmentDeletions.filterCache(messages);
       _notify();
       return deleted.length;
     } catch (err) {
+      if (_disposed ||
+          !identical(api, client) ||
+          deletionEpoch != _attachmentDeletions.epoch) {
+        return 0;
+      }
       lastError = '$err';
       _notify();
       return 0;
@@ -841,6 +854,7 @@ class AppState extends ChangeNotifier {
     rooms = const [];
     bots = const [];
     messages.clear();
+    _attachmentDeletions.bind(null);
     serverInfo = null;
     _notify();
   }
@@ -1249,6 +1263,7 @@ class AppState extends ChangeNotifier {
   Future<void> refresh() async {
     final client = api;
     if (client == null) return;
+    final deletionVersion = _attachmentDeletions.version;
     try {
       final res = await client.get('/api/state');
       if (_disposed || !identical(api, client)) return;
@@ -1277,7 +1292,8 @@ class AppState extends ChangeNotifier {
       groupLimits = ((res['groupLimits'] as Map?) ?? const {}).map(
         (k, v) => MapEntry('$k', (v as num?)?.toInt() ?? 0),
       );
-      decision = ((res['decision'] as Map?) ?? decision).cast<String, dynamic>();
+      decision = ((res['decision'] as Map?) ?? decision)
+          .cast<String, dynamic>();
       tasks = ((res['tasks'] as List?) ?? const [])
           .whereType<Map<String, dynamic>>()
           .map(TaskItem.fromJson)
@@ -1293,6 +1309,13 @@ class AppState extends ChangeNotifier {
             ),
           ),
         );
+      if (deletionVersion == _attachmentDeletions.version &&
+          _invalidateAttachmentCache(res['attachmentDeletionRevision'])) {
+        final open = _openRoomId;
+        if (open != null && rooms.any((room) => room.id == open)) {
+          unawaited(loadMessages(open, force: true));
+        }
+      }
       lastError = null;
       _lastRefreshStatus = 200;
     } catch (err) {
@@ -1337,14 +1360,20 @@ class AppState extends ChangeNotifier {
     final client = api;
     if (client == null) return;
     if (!force && messages.containsKey(roomId)) return;
+    _attachmentDeletions.bind(client);
+    final deletionEpoch = _attachmentDeletions.epoch;
     try {
       final res = await client.get(
         '/api/rooms/$roomId/messages',
         query: {'limit': '200'},
       );
+      if (_disposed ||
+          !identical(api, client) ||
+          deletionEpoch != _attachmentDeletions.epoch)
+        return;
       final list = ((res['messages'] as List?) ?? const [])
           .whereType<Map<String, dynamic>>()
-          .map(Msg.fromJson)
+          .map(_visibleMessage)
           .toList();
       messages[roomId] = list;
       _notify();
@@ -1356,6 +1385,10 @@ class AppState extends ChangeNotifier {
         unawaited(ensureDm(botId));
       }
     } catch (err) {
+      if (_disposed ||
+          !identical(api, client) ||
+          deletionEpoch != _attachmentDeletions.epoch)
+        return;
       lastError = '$err';
       _notify();
     }
@@ -1906,7 +1939,9 @@ class AppState extends ChangeNotifier {
       final channel = WebSocketChannel.connect(Uri.parse(client.wsUrl));
       _channel = channel;
       _sub = channel.stream.listen(
-        _onFrame,
+        (raw) {
+          if (identical(api, client)) _onFrame(raw);
+        },
         onError: (Object err) => _onClosed('$err'),
         onDone: () => _onClosed('连接已断开'),
         cancelOnError: true,
@@ -1938,6 +1973,7 @@ class AppState extends ChangeNotifier {
         //   一份全新的快照进来了，这些临时状态就该归零。
         typing.clear();
         queued.clear();
+        _invalidateAttachmentCache(ev['attachmentDeletionRevision']);
         // ★ 断线期间已经结束的 streaming 消息，本地必须处理掉。
         //
         //   typing 只是一个布尔，"谁在写"实际上是靠**消息的 status** 画的：
@@ -1981,6 +2017,15 @@ class AppState extends ChangeNotifier {
         if (open != null) unawaited(loadMessages(open, force: true));
         break;
 
+      case 'attachments.deleted':
+        _attachmentDeletions.bind(api);
+        _attachmentDeletions.record(
+          ((ev['ids'] as List?) ?? const []).whereType<String>(),
+          revision: ev['revision'],
+        );
+        _attachmentDeletions.filterCache(messages);
+        break;
+
       case 'lessons.updated':
         // 复盘是在服务端后台跑的：不接这个事件，界面就要等用户切标签页
         // 才能看到新候选（更糟的是操作一条已经被删的经验 →“经验不存在”）。
@@ -2002,7 +2047,7 @@ class AppState extends ChangeNotifier {
         break;
 
       case 'msg.new':
-        final msg = Msg.fromJson((ev['msg'] as Map).cast<String, dynamic>());
+        final msg = _visibleMessage((ev['msg'] as Map).cast<String, dynamic>());
         final list = messages.putIfAbsent(msg.roomId, () => []);
         if (!list.any((m) => m.id == msg.id)) {
           // 插队：服务端说这条插在哪条之前，本地就插哪。
@@ -2039,7 +2084,7 @@ class AppState extends ChangeNotifier {
               : list.indexWhere((m) => m.id == afterId);
           list.insert(
             after >= 0 ? after + 1 : list.length,
-            Msg.fromJson(raw.cast<String, dynamic>()),
+            _visibleMessage(raw.cast<String, dynamic>()),
           );
           _notify();
         }
@@ -2070,7 +2115,9 @@ class AppState extends ChangeNotifier {
       case 'msg.updated':
       case 'msg.done':
         {
-          final msg = Msg.fromJson((ev['msg'] as Map).cast<String, dynamic>());
+          final msg = _visibleMessage(
+            (ev['msg'] as Map).cast<String, dynamic>(),
+          );
           _replace((ev['msg'] as Map).cast<String, dynamic>());
           _maybeNotify(msg);
           break;
@@ -2297,8 +2344,20 @@ class AppState extends ChangeNotifier {
     return null;
   }
 
+  bool _invalidateAttachmentCache(Object? revision) {
+    _attachmentDeletions.bind(api);
+    if (!_attachmentDeletions.synchronize(revision)) return false;
+    messages.clear();
+    return true;
+  }
+
+  Msg _visibleMessage(Map<String, dynamic> json) {
+    _attachmentDeletions.bind(api);
+    return _attachmentDeletions.filter(Msg.fromJson(json));
+  }
+
   void _replace(Map<String, dynamic> json) {
-    final msg = Msg.fromJson(json);
+    final msg = _visibleMessage(json);
     final list = messages.putIfAbsent(msg.roomId, () => []);
     final idx = list.indexWhere((m) => m.id == msg.id);
     if (idx >= 0) {

@@ -19,26 +19,27 @@ abstract final class PBNeutral {
 
   // ---- 浅色
   //
-  // 背景用略带蓝的灰白（纯白长时间阅读偏刺眼）；
-  // 层级越"高"越白，靠 1-2%% 的明度差区分，不靠阴影堆叠。
-  // 浅色不是深色的反相，而是一套独立的配色。
-  //
-  // 思路：背景带一点冷蓝的色相（不是中性灰），这样和主控的强调色
-  // 是同一族的、不打架；气泡用接近纯白，靠明度差 + 边框浮起来。
-  // 太灰会显得脏，太白会刺眼 —— 取中间那个"纸上带一点天光"的感觉。
-  static const lightBgApp = Color(0xFFE8EDF7);
-  static const lightBgPane = Color(0xFFF2F5FB);
+  // 中性灰白表面，层级按明度排列：app < pane < elevated / bubble。
+  static const lightBgApp = Color(0xFFEDEDED);
+  static const lightBgPane = Color(0xFFF5F5F5);
   static const lightBgElevated = Color(0xFFFFFFFF);
   static const lightBgBubble = Color(0xFFFFFFFF);
-  static const lightBgHover = Color(0xFFDEE5F2);
-  static const lightBgActive = Color(0xFFCFD9EC);
-  static const lightBgInput = Color(0xFFEDF1F9);
+  static const lightBgHover = Color(0xFFE5E5E5);
+  static const lightBgActive = Color(0xFFD8D8D8);
+
+  /// 文件卡片底。
+  ///
+  /// 浅色下用**纯白**：文件卡片里放的是文件名、大小、类型图标，
+  /// 底一旦带蓝灰就跟内容抢注意力，而且和"可点击的选中态"糊在一起看不清。
+  /// 深色下沿用 bgActive（比气泡亮一档，卡片才有浮起感）。
+  static const lightBgFileCard = Color(0xFFFFFFFF);
+  static const lightBgInput = Color(0xFFF1F1F1);
   static const lightTextPrimary = Color(0xFF16171A);
   static const lightTextSecondary = Color(0xFF474A52);
   static const lightTextTertiary = Color(0xFF62656E);
   static const lightTextQuaternary = Color(0xFF7C7F89);
-  static const lightQuoteBorder = Color(0xFFC9CDD4);
-  static const lightQuoteBackground = Color(0xFFF0F2F5);
+  static const lightQuoteBorder = Color(0xFFCCCCCC);
+  static const lightQuoteBackground = Color(0xFFF2F2F2);
   static const lightQuoteText = Color(0xFF3A3D45);
 }
 
@@ -59,7 +60,7 @@ class PBThemeColors extends ThemeExtension<PBThemeColors> {
     required this.quoteText,
   });
 
-  factory PBThemeColors.derive(Color seed) {
+  factory PBThemeColors.derive(Color seed, {bool light = false}) {
     final opaque = seed.withAlpha(255);
     final fill = _contrastColor(
       opaque,
@@ -68,12 +69,17 @@ class PBThemeColors extends ThemeExtension<PBThemeColors> {
       minimum: 5.1,
     );
     final soft = opaque.withValues(alpha: 0.14);
-    final tintedSurface = Color.alphaBlend(soft, PBNeutral.bgActive);
+    // 链接颜色按当前模式的表面亮度计算。
+    final base = light ? PBNeutral.lightBgActive : PBNeutral.bgActive;
+    final tintedSurface = Color.alphaBlend(soft, base);
     final linkSurface =
-        tintedSurface.computeLuminance() > PBNeutral.bgActive.computeLuminance()
+        tintedSurface.computeLuminance() > base.computeLuminance()
         ? tintedSurface
-        : PBNeutral.bgActive;
-    final bright = _contrastColor(opaque, linkSurface, lighter: true);
+        : base;
+    // 浅色底上的链接要更暗才够对比
+    final bright = light
+        ? _contrastColor(opaque, linkSurface, lighter: false)
+        : _contrastColor(opaque, linkSurface, lighter: true);
     return PBThemeColors(
       accent: fill,
       accentBright: bright,
@@ -83,9 +89,11 @@ class PBThemeColors extends ThemeExtension<PBThemeColors> {
       userBubbleBottom: _darken(fill, 0.045),
       onAccent: Colors.white,
       link: bright,
-      quoteBorder: PBNeutral.quoteBorder,
-      quoteBackground: PBNeutral.quoteBackground,
-      quoteText: PBNeutral.quoteText,
+      quoteBorder: light ? PBNeutral.lightQuoteBorder : PBNeutral.quoteBorder,
+      quoteBackground: light
+          ? PBNeutral.lightQuoteBackground
+          : PBNeutral.quoteBackground,
+      quoteText: light ? PBNeutral.lightQuoteText : PBNeutral.quoteText,
     );
   }
 

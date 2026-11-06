@@ -142,7 +142,9 @@ class _Thumb extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
         child: Container(
           constraints: const BoxConstraints(maxWidth: 240, maxHeight: 240),
-          color: PB.bgActive,
+          // 图片加载前的占位底跟卡片同色：浅色下纯白，
+          // 否则会先闪一下蓝灰再出图。
+          color: PB.bgFileCard,
           child: Image.network(
             url!,
             fit: BoxFit.cover,
@@ -355,7 +357,10 @@ class _FileChipState extends State<FileChip> {
     return Container(
       width: fullWidth ? double.infinity : null,
       decoration: BoxDecoration(
-        color: PB.bgActive,
+        // 文件卡片用专门的底色：浅色下纯白，深色下比气泡亮一档。
+        // 原来用 bgActive —— 浅色下那是 #CFD9EC（明显偏蓝），
+        // 文件名压在上面像被染过色，而且和"选中态"混在一起。
+        color: PB.bgFileCard,
         borderRadius: BorderRadius.circular(PB.rXl),
         border: Border.all(color: PB.borderTertiary),
       ),
