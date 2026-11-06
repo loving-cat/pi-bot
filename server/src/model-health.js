@@ -12,6 +12,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config.js';
 import { log } from './util.js';
+import { requestWithProviderLease } from './model-request-lease.js';
+import { providerLeaseScope } from './provider-updates.js';
 
 const FILE = path.join(config.dataDir, 'model-health.json');
 const TTL_MS = 24 * 3600 * 1000;
@@ -204,22 +206,20 @@ export class ModelHealth {
   }
 
   async probeLevel(slug, level, timeoutMs = 30_000) {
-    const model = this.runner.resolveModel(slug);
-    if (!model) return { ok: false, note: '模型不存在' };
+    if (!this.runner.resolveModel(slug)) return { ok: false, note: '模型不存在' };
     const started = Date.now();
-    let timer = null;
     try {
-      const timeout = new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`超时 ${timeoutMs}ms`)), timeoutMs);
-      });
-      const reply = await Promise.race([
-        this.runner.modelRuntime.completeSimple(
+      const reply = await requestWithProviderLease(this.runner, (signal, lease) => {
+        const model = this.runner.resolveModel(slug);
+        lease.restrictTo?.(providerLeaseScope(model));
+        return this.runner.modelRuntime.completeSimple(
           model,
           { messages: [{ role: 'user', content: '用一句话说明什么是均线。', timestamp: Date.now() }] },
-          { maxTokens: 1024, reasoning: level === 'off' ? undefined : level },
-        ),
-        timeout,
-      ]);
+          { maxTokens: 1024, reasoning: level === 'off' ? undefined : level, signal },
+        );
+      },
+        timeoutMs,
+      );
       const text = textOf(reply).trim();
       const r = {
         ok: Boolean(text) && !reply?.errorMessage,
@@ -234,8 +234,6 @@ export class ModelHealth {
       const r = { ok: false, ms: Date.now() - started, error: String(err?.message || err).slice(0, 120), at: Date.now() };
       this.results[ModelHealth.levelKey(slug, level)] = r;
       return r;
-    } finally {
-      if (timer) clearTimeout(timer);
     }
   }
 
@@ -275,29 +273,27 @@ export class ModelHealth {
   }
 
   async probe(slug, timeoutMs = 25_000) {
-    const model = this.runner.resolveModel(slug);
-    if (!model) {
+    if (!this.runner.resolveModel(slug)) {
       const r = { ok: false, ms: 0, error: '模型不存在', at: Date.now() };
       this.results[slug] = r;
       return r;
     }
     const started = Date.now();
-    let timer = null;
     try {
-      const timeout = new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`超时 ${timeoutMs}ms`)), timeoutMs);
-      });
-      const reply = await Promise.race([
-        this.runner.modelRuntime.completeSimple(
+      const reply = await requestWithProviderLease(this.runner, (signal, lease) => {
+        const model = this.runner.resolveModel(slug);
+        lease.restrictTo?.(providerLeaseScope(model));
+        return this.runner.modelRuntime.completeSimple(
           model,
           { messages: [{ role: 'user', content: '回复两个字：你好', timestamp: Date.now() }] },
           // maxTokens 要给够：推理型模型的思考内容会先把小额度吃掉，
           // 剩下的正文就是空 → 会被误判成「模型挂了」。
           // reasoning 用 low：有些推理模型不允许关闭思考，传 off 直接 400。
-          { maxTokens: 512, reasoning: 'low' },
-        ),
-        timeout,
-      ]);
+          { maxTokens: 512, reasoning: 'low', signal },
+        );
+      },
+        timeoutMs,
+      );
       const text = textOf(reply).trim();
       const r = {
         ok: Boolean(text) && !reply?.errorMessage,
@@ -316,8 +312,6 @@ export class ModelHealth {
       };
       this.results[slug] = r;
       return r;
-    } finally {
-      if (timer) clearTimeout(timer);
     }
   }
 

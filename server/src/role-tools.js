@@ -18,7 +18,16 @@ const READONLY_ALLOW_SET = new Set(READONLY_ALLOW);
 export const MUTATING_TOOLS = [
   'write', 'edit', 'bash', 'powershell',
   'run_background', 'write_stdin', 'kill_shell',
+  'ego_browser',
 ];
+
+/** 不透明脚本无法静态核验内部命令，存在命令限制时不开放此执行入口。 */
+export function opaqueScriptBlockReason(policy, tool) {
+  if (tool !== 'ego_browser') return null;
+  return policy?.denyCommands?.length || policy?.allowCommands?.length
+    ? '当前命令规则不允许执行无法逐条核验的浏览器脚本。'
+    : null;
+}
 
 const READ_ONLY_BUILTINS = new Set(['read', 'ls', 'grep', 'find']);
 const COORDINATION_TOOLS = new Set([

@@ -4,10 +4,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-// attachments.js 在 import 时就定死了 DATA_DIR，所以先设环境变量再动态加载
+// 附件模块加载前固定本测试的数据目录。
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-attach-'));
-process.env.PI_BOT_DATA_DIR = tmp;
-process.env.PI_DATA_DIR = tmp;
+process.env.PI_BOT_HOME = tmp;
+process.env.PI_BOT_WORKSPACE = path.join(tmp, 'workspace');
 
 const mod = await import('../src/attachments.js');
 

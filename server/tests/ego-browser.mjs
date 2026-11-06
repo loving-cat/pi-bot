@@ -14,7 +14,7 @@ test('空脚本直接拒绝，不起进程', async () => {
   assert.match(r.error, /脚本是空的/);
 });
 
-test('真实跑一段脚本并拿到输出', async () => {
+test('真实跑一段脚本并拿到输出', { skip: process.env.PI_BOT_EGO_INTEGRATION !== '1' }, async () => {
   const r = await runEgoScript({
     script: 'const task = await taskSpace("pi-bot-test-space"); console.log("hello-from-ego:" + (task.spaceId ? "ok" : "no"));',
     timeoutMs: 60000,
@@ -27,7 +27,7 @@ test('真实跑一段脚本并拿到输出', async () => {
   assert.match(r.output, /hello-from-ego:ok/);
 });
 
-test('输出里不带 ego 自己的 notice 噪音', async () => {
+test('输出里不带 ego 自己的 notice 噪音', { skip: process.env.PI_BOT_EGO_INTEGRATION !== '1' }, async () => {
   const r = await runEgoScript({
     script: 'console.log("clean-line");',
     timeoutMs: 60000,
@@ -37,7 +37,7 @@ test('输出里不带 ego 自己的 notice 噪音', async () => {
   assert.match(r.output, /clean-line/);
 });
 
-test('脚本报错时返回失败并带上错误信息', async () => {
+test('脚本报错时返回失败并带上错误信息', { skip: process.env.PI_BOT_EGO_INTEGRATION !== '1' }, async () => {
   const r = await runEgoScript({
     script: 'throw new Error("boom-from-test");',
     timeoutMs: 60000,

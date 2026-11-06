@@ -9,6 +9,7 @@ import { config } from './config.js';
 import { store } from './store.js';
 import { VERSION } from './version.js';
 import { bus } from './bus.js';
+import { attachmentDeletionRevision, withoutDeletedAttachments } from './attachments.js';
 import { serverInfo, isLoopback, LOCAL_DEVICE, hostAllowed } from './http.js';
 import { log, timingSafeEqual } from './util.js';
 
@@ -54,6 +55,7 @@ export function attachWs(server, { runner }) {
         device,
         rooms: store.listRooms().map((r) => store.roomSummary(r)),
         bots: store.listBots(),
+        attachmentDeletionRevision: attachmentDeletionRevision(),
       }),
     );
     log(`📱 ${device.name} 已连接（在线 ${wss.clients.size}）`);
@@ -111,7 +113,8 @@ export function attachWs(server, { runner }) {
       }
       return;
     }
-    const payload = JSON.stringify(event);
+    const outgoing = event.msg ? { ...event, msg: withoutDeletedAttachments(event.msg) } : event;
+    const payload = JSON.stringify(outgoing);
     for (const client of wss.clients) {
       if (client.readyState === 1) client.send(payload);
     }

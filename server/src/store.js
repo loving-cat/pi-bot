@@ -43,6 +43,7 @@ import { assertMcpCredentialsSealed } from './mcp-credentials.js';
 import { normalizeSite } from './sites.js';
 import { CHIEF_MODEL_POLICY } from './model-dispatch.js';
 import { encrypt, decrypt, isEncrypted } from './secrets.js';
+import { sealedDecisionKey } from './decision-credentials.js';
 import { policyVersion as computePolicyVersion, policyChange, planPolicyChangeNotices, describePolicyChange } from './policy-version.js';
 
 export const GROUP_LIMITS_DEFAULT = {
@@ -1150,8 +1151,12 @@ export class Store {
     const next = normalizeDecision(patch, prev);
     const stored = {
       ...next,
-      apiKey:
-        this.secretsKey && next.apiKey ? encrypt(next.apiKey, this.secretsKey) : next.apiKey,
+      apiKey: sealedDecisionKey({
+        previous: this.state.decision?.apiKey,
+        value: next.apiKey,
+        provided: patch.apiKey !== undefined,
+        key: this.secretsKey,
+      }),
     };
     this.state.decision = stored;
     this.scheduleSave();
@@ -2084,9 +2089,14 @@ export class Store {
     let n = 0;
     for (const [roomId, list] of this.messages) {
       for (const msg of list) {
-        if (msg.status === 'streaming') {
-          msg.status = msg.text ? 'done' : 'error';
-          if (!msg.text) msg.error = '服务端重启，本轮中断';
+        // 进行中的消息保留部分输出，但进程退出不能证明任务完成。
+        if (msg.status === 'streaming' || msg.status === 'retrying') {
+          const wasRetrying = msg.status === 'retrying';
+          msg.status = 'error';
+          msg.error = wasRetrying
+              ? '服务端重启，重试中断（重新发起即可）'
+              : '服务端重启，本轮中断';
+          msg.meta = { ...(msg.meta ?? {}), retrying: false, retryPlaceholder: false };
           msg.updatedAt = now();
           this.dirtyRooms.add(roomId);
           n++;

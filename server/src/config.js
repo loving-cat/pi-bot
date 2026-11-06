@@ -168,6 +168,14 @@ export const config = {
    * 超时就如实回报并在群里留痕，而不是让用户干等。
    */
   runSlotWaitMs: Number(process.env.PI_BOT_RUN_SLOT_WAIT_MS || 0),
+  /** 后台整理并发上限，默认 1；0 表示不限。 */
+  backgroundConcurrency: Number(process.env.PI_BOT_BACKGROUND_CONCURRENCY ?? 1),
+  /**
+   * 等后台槽位的硬超时（毫秒）。0 = 一直等。
+   *
+   * 默认最多等 30 秒；依赖压缩的前台任务还受本轮剩余时间约束。
+   */
+  backgroundSlotWaitMs: Number(process.env.PI_BOT_BACKGROUND_SLOT_WAIT_MS ?? 30_000),
   /** 主控只有只读文件工具 —— 它是调度者，不是干活的人 */
   chiefTools: (process.env.PI_BOT_CHIEF_TOOLS || 'read,ls,grep,find').split(',').map((s) => s.trim()).filter(Boolean),
   /** 多人部门负责人的只读内置工具；执行工具不参与此配置。 */

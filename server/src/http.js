@@ -20,7 +20,11 @@ import { resolveBotModelSelection } from './model-dispatch.js';
 import { store } from './store.js';
 import { policyChange } from './policy-version.js';
 import {
-  deleteAttachment,
+  deleteAttachments,
+  referencedAttachmentIds,
+  isAttachmentDeleted,
+  attachmentDeletionRevision,
+  withoutDeletedAttachments,
   metaFor,
   pathFor,
   saveBuffer,
@@ -293,6 +297,25 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         });
       }
 
+      // 运行统计：缓存命中率 / 耗时 / 重试。
+      //
+      // 统计只给可信回环来源，并复用原生客户端或同源页面的身份检查。
+      if (pathname === '/api/run-stats') {
+        if (!isLoopback(req)) return fail(res, 403, 'LOCAL_ONLY', '仅本机可用');
+        if (!authenticate(req, url)) return fail(res, 401, 'UNAUTHORIZED', '需要有效身份');
+        const day = url.searchParams.get('day');
+        const limit = Number(url.searchParams.get('limit') || 100);
+        if (day) {
+          const stat = runner.stats?.day(day) ?? null;
+          return stat ? send(res, 200, { ok: true, day, ...stat }) : fail(res, 404, 'NO_STATS', '没有这一天的数据');
+        }
+        return send(res, 200, {
+          ok: true,
+          ...(runner.stats?.recent(Number.isFinite(limit) ? limit : 100) ?? {}),
+          days: Object.keys(runner.stats?.days ?? {}).sort().slice(-30),
+        });
+      }
+
       if (pathname === '/api/pair' && req.method === 'POST') {
         const body = await readBody(req);
         if (!pairing.verify(body.code)) {
@@ -362,6 +385,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
           device,
           rooms: store.listRooms().map((r) => store.roomSummary(r)),
           bots: store.listBots(),
+          attachmentDeletionRevision: attachmentDeletionRevision(),
           // 每个活着的会话的上下文占用（key 是 '房间:bot'）。
           // 放这儿而不是单开接口：App 每次刷新状态就顺带拿到了，少一次往返。
           context: runner.contextUsage(),
@@ -983,32 +1007,28 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
       //
       // 单删走 DELETE /api/files/:id；批量走 POST /api/files/delete
       // （批量不用 DELETE + body：很多客户端和代理会丢掉 DELETE 的 body）。
-      if (fileMatch && req.method === 'DELETE') {
-        const meta = metaFor(fileMatch[1]);
-        if (!meta) return fail(res, 404, 'FILE_NOT_FOUND', '文件不存在');
-        const removed = deleteAttachment(fileMatch[1]);
-        if (!removed) return fail(res, 500, 'FILE_DELETE_FAILED', '删除失败');
-        return send(res, 200, { ok: true, deleted: [fileMatch[1]] });
-      }
-
-      if (pathname === '/api/files/delete' && req.method === 'POST') {
-        const body = await readBody(req).catch(() => ({}));
-        const ids = Array.isArray(body?.ids) ? body.ids : [];
+      if ((fileMatch && req.method === 'DELETE')
+          || (pathname === '/api/files/delete' && req.method === 'POST')) {
+        const singleDelete = req.method === 'DELETE' && fileMatch;
+        const body = singleDelete ? null : await readBody(req).catch(() => ({}));
+        const ids = singleDelete ? [fileMatch[1]] : (Array.isArray(body?.ids) ? body.ids : []);
         if (!ids.length) return fail(res, 400, 'NO_IDS', '没有指定要删哪些');
-        // 上限只是防一次删太多拖住事件循环，正常勾选不会到这个量
         if (ids.length > 500) return fail(res, 400, 'TOO_MANY_IDS', '一次最多删 500 个');
-        const deleted = [];
-        const missing = [];
-        for (const raw of ids) {
-          const id = String(raw ?? '');
-          if (!/^[a-zA-Z0-9_-]+$/.test(id) || !metaFor(id)) {
-            missing.push(id);
-            continue;
-          }
-          if (deleteAttachment(id)) deleted.push(id);
-          else missing.push(id);
+        const valid = [...new Set(ids.filter((id) => typeof id === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(id)))];
+        const missingIndex = valid.filter((id) => !metaFor(id) && !isAttachmentDeleted(id));
+        const referencedMissing = referencedAttachmentIds(store.messages.values(), missingIndex);
+        let result;
+        try {
+          result = deleteAttachments(valid, { referencedMissing });
+        } catch {
+          return fail(res, 500, 'FILE_DELETE_FAILED', '删除记录写入失败');
         }
-        return send(res, 200, { ok: true, deleted, missing });
+        result.missing.push(...ids.filter((id) => !valid.includes(id)));
+        const revision = attachmentDeletionRevision();
+        if (result.deleted.length) bus.emit('event', { t: 'attachments.deleted', ids: result.deleted, revision });
+        const response = { ...result, attachmentDeletionRevision: revision };
+        if (result.failed.length) return fail(res, 500, 'FILE_DELETE_FAILED', '部分附件文件清理失败，可重试', response);
+        return send(res, 200, { ok: true, ...response });
       }
 
       // 把附件渲染成可嵌入浏览器栏的 HTML（表格 / PDF / Word）。
@@ -1307,7 +1327,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         const roomId = msgMatch[1];
         if (!store.getRoom(roomId)) return fail(res, 404, 'ROOM_NOT_FOUND', '会话不存在');
         const limit = Math.min(Number(url.searchParams.get('limit') || 100), config.maxMessagesPerRoom);
-        return send(res, 200, { messages: store.listMessages(roomId, { limit }) });
+        return send(res, 200, { messages: store.listMessages(roomId, { limit }).map(withoutDeletedAttachments) });
       }
 
       // 记忆摘要（私聊右侧「记忆」页）：GET 返回缓存 + 是否过期；POST 重新生成

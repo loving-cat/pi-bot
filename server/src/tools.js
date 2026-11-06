@@ -23,7 +23,7 @@ import { webSearch, webFetch } from './web.js';
 import { runEgoScript, EGO_USAGE_GUIDE } from './ego-browser.js';
 import { shells } from './shells.js';
 import { verdictForTool, commitStdin, resetStdin } from './shell-policy.js';
-import { readonlyBlockReason } from './role-tools.js';
+import { readonlyBlockReason, opaqueScriptBlockReason } from './role-tools.js';
 import { log, now, isBusyError, planDispatchRetry } from './util.js';
 import { CODING_BASELINE_TITLE, CODING_BASELINE_HOWTO, isCodingRole } from './coding-baseline.js';
 import { scanLocalCapabilities } from './local-capabilities.js';
@@ -339,9 +339,10 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
         ),
       }),
       execute: async (_toolCallId, { script, timeoutSeconds }) => {
-        // 会开浏览器、能操作页面 —— 按「跑命令」这一档管，只读模式直接拒
+        // 执行前再次检查当前策略，审批由统一 tool_call 钩子处理。
         const policy = store.policy();
-        const blocked = readonlyBlockReason(policy, 'run_background');
+        const blocked = readonlyBlockReason(policy, 'ego_browser')
+          || opaqueScriptBlockReason(policy, 'ego_browser');
         if (blocked) return fail(blocked);
 
         const seconds = Math.min(Math.max(Number(timeoutSeconds) || 120, 10), 300);
@@ -551,9 +552,9 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
       label: '读文件正文',
       description:
         '读取文件正文并转成文本。支持 pdf / xlsx / xls / docx / csv / tsv / html / md / txt / json / yaml / 代码文件。' +
-        '扫描件 PDF 和老的 .doc 提取不出来。用户发的附件在 _inbox/ 目录下。',
+        '扫描件 PDF 和老的 .doc 提取不出来。用户发的附件在 _inbox/<本会话目录>/ 下，具体路径聊天里会给你。',
       parameters: Type.Object({
-        path: Type.String({ description: '相对工作目录的路径，如 _inbox/abc123_报表.xlsx' }),
+        path: Type.String({ description: '相对工作目录的路径，如 _inbox/r_8b4a2e4e1f0d0e48/abc123456789_报表.xlsx' }),
         maxChars: Type.Optional(Type.Number({ description: '最多返回多少字，默认 12 万' })),
       }),
       execute: async (_toolCallId, { path: inputPath, maxChars }) => {

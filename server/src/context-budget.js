@@ -19,6 +19,20 @@ export function positiveOrNull(v) {
   return Math.floor(n);
 }
 
+/** 保留原文必须低于最早触发线，并为摘要留出空间。 */
+export function capRecentTokens({ contextWindow, keepRecentTokens, reserveTokens = 16384, threshold = 0.6 }) {
+  const cw = positiveOrNull(contextWindow);
+  const keep = positiveOrNull(keepRecentTokens);
+  if (!cw || !keep) return keep;
+  const configuredReserve = positiveOrNull(reserveTokens) ?? 16384;
+  const reserve = configuredReserve < cw ? configuredReserve : Math.max(1, Math.floor(cw / 2));
+  const ratio = Number.isFinite(Number(threshold))
+    ? Math.min(0.95, Math.max(0.2, Number(threshold))) : 0.6;
+  const trigger = Math.max(1, Math.floor(Math.min(cw * ratio, cw - reserve)));
+  const summaryBudget = Math.min(reserve, Math.floor(trigger / 2));
+  return Math.min(keep, Math.max(1, trigger - summaryBudget));
+}
+
 /**
  * 把 bot 上设的 contextWindow / maxTokens 盖到模型对象上。
  *
@@ -64,6 +78,33 @@ export function applyCompactionBudget(session, bot = {}) {
   const overrides = {};
   if (reserve != null) overrides.reserveTokens = reserve;
   if (keep != null) overrides.keepRecentTokens = keep;
+  if (cw > 0) {
+    let existing = {};
+    try { existing = sm.getCompactionSettings?.(session.model) ?? {}; } catch {}
+    let effectiveReserve = reserve ?? positiveOrNull(existing.reserveTokens) ?? 16384;
+    if (effectiveReserve >= cw) {
+      effectiveReserve = Math.max(1, Math.floor(cw / 2));
+      overrides.reserveTokens = effectiveReserve;
+    }
+    const requestedKeep = keep ?? positiveOrNull(existing.keepRecentTokens) ?? 20000;
+    const boundedKeep = capRecentTokens({
+      contextWindow: cw, keepRecentTokens: requestedKeep,
+      reserveTokens: effectiveReserve, threshold: config.compactAtPercent,
+    });
+    if (boundedKeep < requestedKeep) {
+      overrides.keepRecentTokens = boundedKeep;
+    }
+    const model = session.model;
+    if (model?.provider && model?.id
+        && (overrides.keepRecentTokens != null || overrides.reserveTokens != null)) {
+      overrides.modelOverrides = {
+        [`${model.provider}/${model.id}`]: {
+          ...(overrides.keepRecentTokens != null ? { keepRecentTokens: overrides.keepRecentTokens } : {}),
+          ...(overrides.reserveTokens != null ? { reserveTokens: overrides.reserveTokens } : {}),
+        },
+      };
+    }
+  }
   if (!config.autoCompact) overrides.enabled = false;
   if (Object.keys(overrides).length === 0) return null;
   try {

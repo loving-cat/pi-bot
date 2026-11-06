@@ -307,8 +307,8 @@ export function failureNote({
   // 熔断打开时不要讲技术细节：他只想知道「多久会好、我要不要做什么」。
   if (kind === 'breaker-open') {
     return (
-      `${botName} 这条路的接口暂时连不上，先停一会儿自动恢复。` +
-      '\n你不用做什么，恢复后它会自己接着跑。'
+      `${botName} 的模型接口暂时不可用，这次任务已停止。` +
+      '\n稍后或修复模型组配置后，请重新发送任务；系统不会自动重放已完成的操作。'
     );
   }
   if (kind === 'transient-exhausted') {

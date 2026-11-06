@@ -154,15 +154,10 @@ export function settleAfterCooldown(breaker, now = Date.now()) {
   return { ...breaker, state: BREAKER_STATE.halfOpen, probing: false };
 }
 
-/**
- * 给用户看的一句话。
- *
- * 「无感」的关键在这里：通路坏了不是用户的错，也不该让他读一堆技术细节。
- * 只说三件事：哪条路、多久后自己恢复、他现在能做什么（什么都不用做）。
- */
+/** 说明当前请求被熔断拦下，以及用户何时可以重新尝试。 */
 export function breakerNote(breaker, { groupName = '', now = Date.now() } = {}) {
   const until = (breaker?.openedAt ?? now) + (breaker?.cooldownMs ?? 0);
   const left = Math.max(0, Math.ceil((until - now) / 1000));
   const who = groupName ? '模型组「' + groupName + '」' : '当前模型';
-  return who + '的接口暂时连不上，先停 ' + left + ' 秒再自动重试。这期间不用做什么。';
+  return who + '的接口暂时连不上，本次请求未执行。请在 ' + left + ' 秒后重试。';
 }

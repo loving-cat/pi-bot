@@ -1,3 +1,4 @@
+import { providerLeaseScope } from './provider-updates.js';
 /**
  * 收尾复盘：一轮群聊结束后，从**真实发生的事**里提炼 0~2 条候选经验。
  *
@@ -62,7 +63,7 @@ export const REFLECT_TIMEOUT_MS = 60_000;
 export function createLessonReflector({ runner, logFn = log } = {}) {
   const lastAt = new Map();
 
-  return async function reflect({ roomId, sinceIndex = 0 } = {}) {
+  async function reflect({ roomId, sinceIndex = 0, lease = null } = {}) {
     if (process.env.PI_BOT_LESSON_REFLECT === '0') return { skipped: 'disabled' };
 
     const room = store.getRoom(roomId);
@@ -83,6 +84,7 @@ export function createLessonReflector({ runner, logFn = log } = {}) {
     const lead = room.leadBotId ? store.getBot(room.leadBotId) : null;
     const model = runner.resolveModel(lead?.model || '') ?? runner.model;
     if (!model) return { skipped: 'no-model' };
+    lease?.restrictTo(providerLeaseScope(model));
 
     // 先占坑：即使后面失败，也别在 10 分钟内反复重试烧钱
     lastAt.set(roomId, now);
@@ -173,5 +175,15 @@ export function createLessonReflector({ runner, logFn = log } = {}) {
     }
     logFn?.(`【${room.name}】复盘完成：新增 ${added} 条候选经验（待用户启用）`);
     return { added };
+  }
+
+  return (options = {}) => {
+    const execute = () => {
+      runner.flushProviderUpdates?.();
+      return runner.providerUpdates
+        ? runner.providerUpdates.withLease((lease) => reflect({ ...options, lease })) : reflect(options);
+    };
+    return runner.withBackgroundSlot
+      ? runner.withBackgroundSlot(`复盘 · ${options.roomId ?? ''}`, execute) : execute();
   };
 }

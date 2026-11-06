@@ -13,7 +13,7 @@ import { log } from './util.js';
 import { bus } from './bus.js';
 import { loadHooks, applyHooks } from './hooks.js';
 import { config } from './config.js';
-import { isDelegatingLead, leadToolAllowed, readonlyBlockReason, MUTATING_TOOLS } from './role-tools.js';
+import { isDelegatingLead, leadToolAllowed, readonlyBlockReason, opaqueScriptBlockReason, MUTATING_TOOLS } from './role-tools.js';
 import { isExternalMcpTool, externalApprovalSummary, mcpAccessSignature } from './mcp-access.js';
 
 /** 执行命令的工具名 */
@@ -71,6 +71,8 @@ export function createPolicyExtension({ roomId, bot }) {
         // 只读：默认拒绝。审批授权、命令白名单和会话里残留的工具都不能放行。
         const readonlyReason = readonlyBlockReason(policy, tool);
         if (readonlyReason) return { block: true, reason: readonlyReason };
+        const scriptReason = opaqueScriptBlockReason(policy, tool);
+        if (scriptReason) return { block: true, reason: scriptReason };
 
         // ---- 钩子：可以先改入参（重写命令），也可以直接拦下 ----
         const hooked = applyHooks(loadHooks(), { tool, input: event?.input ?? {} });

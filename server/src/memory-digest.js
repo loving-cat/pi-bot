@@ -5,6 +5,8 @@
  * 引用指针、压缩提示条都不进摘要，否则几百条回执会把结论挤掉。
  */
 
+import { countTurns } from './memory-policy.js';
+
 export function isMemoryMaterial(message) {
   if (!message) return false;
   if (!(message.text ?? '').trim()) return false;
@@ -16,6 +18,21 @@ export function isMemoryMaterial(message) {
 
 export function memoryConversation(messages = []) {
   return messages.filter(isMemoryMaterial);
+}
+
+/** 用已处理消息 ID 定位增量；游标不在窗口时处理当前可见材料，避免窗口滑动后停更。 */
+export function memoryProgress(messages = [], summary = null) {
+  const conversation = memoryConversation(messages);
+  const cursor = summary?.lastId;
+  const index = cursor ? messages.findIndex((message) => message.id === cursor) : -1;
+  const newMessages = memoryConversation(index >= 0 ? messages.slice(index + 1) : messages);
+  const previousTurns = Math.max(0, Number(summary?.count) || 0);
+  return {
+    conversation,
+    newMessages,
+    lastId: messages.at(-1)?.id ?? null,
+    totalTurns: summary?.text ? previousTurns + countTurns(newMessages) : countTurns(conversation),
+  };
 }
 
 /** 拼成给模型的摘要材料；按条数/单条/总字数三重截断。 */

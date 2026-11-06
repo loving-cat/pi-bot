@@ -24,12 +24,14 @@ import { store, toolsForPolicy } from './store.js';
 import { dmOpeningPrompt, shouldMirrorProgress, mirrorProgress } from './dm.js';
 import { loadExtraProviders, settingsDefaultModel } from './providers.js';
 import { modelGroups, rotateCursor } from './model-groups.js';
+import { ProviderUpdates, providerLeaseScope } from './provider-updates.js';
+import { settleRetryMessage } from './retry-messages.js';
 import { assistantFailure, fallbackModels, modelFailure, recoverModelReply } from './model-reply.js';
 import { invalidateSessions, retireStaleSession, reserveSession } from './session-refresh.js';
 import { deliverDirectInput } from './direct-message-delivery.js';
 import { MergeQueue, MERGE_QUIET_MS } from './merge-messages.js';
-import { buildMemoryDigest, memoryConversation } from './memory-digest.js';
-import { countTurns, shouldAutoSummarize } from './memory-policy.js';
+import { buildMemoryDigest, memoryProgress } from './memory-digest.js';
+import { shouldAutoSummarize } from './memory-policy.js';
 import { PRIORITY, RunSlots } from './run-slots.js';
 
 /**
@@ -56,6 +58,7 @@ import { buildChiefTools, buildCommonTools } from './tools.js';
 import { defaultMenuSlug, logMenu, menuSlugs, resolveMenu } from './model-menu.js';
 import { attachmentBlock } from './extract.js';
 import { inboxPath, metaFor, readForModel, saveFromPath } from './attachments.js';
+import { RunStats, RunUsage } from './run-stats.js';
 import { parseMentions } from './mentions.js';
 import { log, newId, pickEscalationHost, isSuperiorCall } from './util.js';
 import { planItem, shouldStopRound, leftBehind, planClosing, isUserInitiatedRound } from './group-round.js';
@@ -236,6 +239,11 @@ export class PiRunner {
      * 熔断打开时切到下一条；全部挂了才真的停。
      */
     this.endpointCursors = new Map();
+    this.providerUpdates = new ProviderUpdates({
+      sessions: this.sessions,
+      providerForBot: (id) => this.providerForBot(id),
+      onError: (_id, error) => log('模型通路更新失败：', modelFailure(error).error),
+    });
     /** 已经派出去、但异步的 run() 还没把 busy 设上的会话（key = roomId:botId） */
     this.dispatching = new Set();
     /** roomId -> { text, files }：锁被占时进来的消息，合并到这里等下一轮 */
@@ -254,6 +262,15 @@ export class PiRunner {
       capacity: config.maxConcurrentRuns,
       reserve: config.runSlotReserve,
     });
+
+    /** 压缩、记忆摘要和复盘共用的后台并发配额。 */
+    this.backgroundSlots = new RunSlots({
+      capacity: config.backgroundConcurrency,
+      reserve: 0,
+    });
+
+    /** 有界本地运行统计，不保存提示词或凭据。 */
+    this.stats = new RunStats({ file: path.join(config.dataDir, 'run-stats.json') });
 
     /**
      * 连发消息的合并队列（只在它空闲时用）。
@@ -283,7 +300,7 @@ export class PiRunner {
     const deliveryEpoch = this.directDeliveryEpochs.get(roomId) ?? 0;
     try {
       await deliverDirectInput({
-        prepare: () => this.#buildInput(merged, []),
+        prepare: () => this.#buildInput(merged, [], roomId),
         run: ({ promptText }) =>
           this.run(roomId, botId, promptText, { skipUserMessage: true, attachments: [] }),
         getEntry: () => this.sessions.get(this.#key(roomId, botId)),
@@ -394,10 +411,13 @@ export class PiRunner {
     for (const [key, entry] of this.sessions) {
       if (!key.startsWith(`${roomId}:`)) continue;
       if (!entry?.session || !entry.busy) continue;
-      // 只在压缩：不必打断它，让它压完。
-      // 打断压缩等于让下一轮又从满上下文开始，只会更糟。
-      if (entry.compactingOnly) continue;
       botIds.push(key.slice(roomId.length + 1));
+      // 压缩可继续，但这轮任务已失效，不能在压缩后执行旧指令。
+      if (entry.compactingOnly) {
+        entry.turnController?.abort();
+        n++;
+        continue;
+      }
       try {
         entry.turnController?.abort();
         entry.session.abort?.().catch(() => {});
@@ -438,7 +458,7 @@ export class PiRunner {
     try {
       while (next) {
         try {
-          const { promptText } = await this.#buildInput(next.text, next.files);
+          const { promptText } = await this.#buildInput(next.text, next.files, roomId);
           await this.runRound(roomId, {
             openerText: next.text,
             attachmentContext: promptText,
@@ -651,7 +671,25 @@ export class PiRunner {
 
   /** 改完模型组：重新注册 + 刷新列表，然后广播一声让 App 更新 */
   async applyModelGroupChange(groupId = null) {
-    this.syncModelGroups();
+    const configs = modelGroups.toProviderConfigs();
+    const ids = groupId ? [groupId] : [...new Set([
+      ...(this.registeredGroups ?? []), ...Object.keys(configs),
+    ])];
+    for (const id of ids) {
+      this.providerUpdates.request(id, () => {
+        if (configs[id]) {
+          this.modelRuntime?.registerProvider(id, configs[id]);
+          (this.registeredGroups ??= new Set()).add(id);
+        } else {
+          this.modelRuntime?.unregisterProvider(id);
+          this.registeredGroups?.delete(id);
+        }
+        this.endpointCursors.delete(id);
+        this.breakers.delete(id);
+        this.health?.forgetProvider?.(id);
+        this.refreshDefaultModel();
+      });
+    }
     // ★ 这一组的健康结论作废。
     //
     //   健康结论是针对**某份凭证**的：用户换了 key / 改了 baseUrl，
@@ -690,6 +728,27 @@ export class PiRunner {
   }
 
   // ---------------------------------------------------------------- 会话
+
+  providerForBot(botId) {
+    const bot = store.getBot(botId);
+    if (!bot?.model) return this.model?.provider ?? null;
+    return this.resolveModel(bot.model)?.provider ?? String(bot.model).split('/')[0];
+  }
+
+  refreshDefaultModel() {
+    this.model = this.resolveModel(this.modelLabel()) ?? this.resolveModel(config.model)
+      ?? this.resolveModel(defaultMenuSlug(this.health)) ?? null;
+    this.routerModel = this.model;
+  }
+
+  flushProviderUpdates() {
+    const applied = this.providerUpdates.flush();
+    if (applied.length) {
+      void this.refreshAvailableModels().then(() => {
+        bus.emit('event', { t: 'models.changed' });
+      }).catch((error) => log('模型目录刷新失败：', modelFailure(error).error));
+    }
+  }
 
   #key(roomId, botId) {
     return `${roomId}:${botId}`;
@@ -758,7 +817,7 @@ export class PiRunner {
    * 返回 null 表示本轮**不需要**槽位（不限并发且没开保底位），
    * 调用方不要把它当成失败。
    */
-  async #acquireRunSlot({ roomId, botId, human, signal }) {
+  async #acquireRunSlot({ roomId, botId, human, signal, timeoutMs = config.runSlotWaitMs }) {
     const slots = this.runSlots;
     if (!slots || slots.unlimited) return null;
     const name = `${store.getRoom(roomId)?.name ?? roomId} / ${store.getBot(botId)?.name ?? botId}`;
@@ -766,10 +825,57 @@ export class PiRunner {
       priority: human ? PRIORITY.human : PRIORITY.normal,
       name,
       // 0 = 不设超时（一直等）；配了才硬超时
-      timeoutMs: config.runSlotWaitMs,
+      timeoutMs,
       signal,
     });
     return ticket;
+  }
+
+  /** 记录本次执行的消耗与重试次数；统计失败不影响任务结果。 */
+  #recordRun({ roomId, botId, startedAt, ok, usage, taskRunId = '', attemptIndex = 1, sdkRetries = 0, kind = '' }) {
+    try {
+      const bot = store.getBot(botId);
+      const model = bot?.model ? String(bot.model) : (this.model?.id ?? '');
+      this.stats?.record({
+        roomId,
+        botId,
+        model,
+        provider: this.providerForBot(botId) ?? '',
+        ms: Date.now() - startedAt,
+        usage,
+        taskRunId, attemptIndex, sdkRetries,
+        ok,
+        kind,
+      });
+    } catch (error) {
+      log('记录运行统计失败：', error?.message || error);
+    }
+  }
+
+  /** 在后台配额内执行操作；排队超时或取消返回 null，操作结束后释放。 */
+  async withBackgroundSlot(name, operation, { signal = null } = {}) {
+    const ticket = await this.#acquireBackgroundSlot({ name, signal });
+    if (ticket && !ticket.ok) {
+      log(`【${name}】跳过：没拿到后台槽位（${ticket.reason}）`);
+      return null;
+    }
+    try {
+      return await operation();
+    } finally {
+      try { ticket?.release?.(); } catch { /* 释放失败不影响结果 */ }
+    }
+  }
+
+  async #acquireBackgroundSlot({ name = '', signal = null, timeoutMs = config.backgroundSlotWaitMs } = {}) {
+    const slots = this.backgroundSlots;
+    if (signal?.aborted) return { ok: false, reason: 'aborted' };
+    if (!slots || slots.unlimited) return null;
+    return slots.acquire({
+      priority: PRIORITY.normal,
+      name,
+      timeoutMs,
+      signal,
+    });
   }
 
   /**
@@ -827,12 +933,11 @@ export class PiRunner {
       const switched = this.#tryRotateEndpoint(found.groupId);
       if (switched) {
         log(
-          `🔁 模型组「${name}」${next.fails} 次通路失败，已切到备用地址 ` +
-            `${switched.baseUrl}（不中断，继续跑）`,
+          `🔁 模型组「${name}」${next.fails} 次通路失败，已切到备用通路 ${switched.index + 1}`,
         );
         // 切成功后把熔断器重置，让新端点从干净状态开始
         this.breakers.set(found.groupId, createBreaker());
-        return { ...next, switchedTo: switched.baseUrl };
+        return { ...next, switchedTo: switched.index };
       }
       log(
         `⛔ 模型组「${name}」连续 ${next.fails} 次通路失败，熔断 ` +
@@ -846,9 +951,10 @@ export class PiRunner {
   /**
    * 把某个组切到下一条端点（成功后重新注册 provider）。
    *
-   * @returns {{baseUrl: string}|null} 切成功返回新端点，没有备用或失败返回 null
+   * @returns {{index: number}|null} 已切换返回端点序号，待空闲、没有备用或失败返回 null
    */
   #tryRotateEndpoint(groupId) {
+    if (this.providerUpdates.has(groupId)) return null;
     const group = modelGroups.get(groupId);
     const eps = group?.endpoints ?? [];
     if (eps.length < 2) return null;
@@ -856,11 +962,15 @@ export class PiRunner {
     const nextIdx = rotateCursor(prevIdx, eps.length);
     if (nextIdx === prevIdx) return null;
     try {
-      // pi 的 registerProvider 是合并语义：只传变化的两项就会覆盖旧值
       const cfg = group.toProviderConfig(nextIdx);
-      this.modelRuntime.registerProvider(groupId, cfg);
-      this.endpointCursors.set(groupId, nextIdx);
-      return { baseUrl: cfg.baseUrl, index: nextIdx };
+      const applied = this.providerUpdates.request(groupId, () => {
+        this.modelRuntime.registerProvider(groupId, cfg);
+        this.endpointCursors.set(groupId, nextIdx);
+        this.breakers.set(groupId, createBreaker());
+        this.health?.forgetProvider?.(groupId);
+        this.refreshDefaultModel();
+      });
+      return applied ? { index: nextIdx } : null;
     } catch (err) {
       log(`切换端点失败（${groupId}）：${err?.message ?? err}`);
       return null;
@@ -917,14 +1027,17 @@ export class PiRunner {
    * 拼输入（薄包装）：依赖在这里绑一次，逻辑在 prompt-input.js。
    * 绑在这儿是因为 attachments.js 那几个助手本来就是按本进程的配置工作的。
    */
-  #buildInput(clean, files) {
+  #buildInput(clean, files, roomId = '') {
     this.__buildInput ??= createBuildInput({
       workspace: config.workspace,
       metaFor,
       inboxPath,
       attachmentBlock,
     });
-    return this.__buildInput(clean, files);
+    // roomId 传下去是为了让附件落到 _inbox/<roomId>/：
+    // 所有房间共用同一个工作目录，不隔离的话 A 房间的文件
+    // 会被 B 房间的 bot 一把 ls 全看到。
+    return this.__buildInput(clean, files, { roomId });
   }
 
   sendImage({ roomId, botId, filePath, caption }) {
@@ -1346,8 +1459,10 @@ export class PiRunner {
             //   熔断器打开时不发网络请求，直接快速失败 —— 这是「更快」的关键：
             //   实测 6 个成员的群、key 彻底不可用，原先会打 66 次请求、累积等 584 秒。
             //   有熔断后第 1 个 bot 撞 3 次就停住，其余 5 个立刻得到结论。
+            this.flushProviderUpdates();
             const gate = this.breakerFor(bot.id);
             const gateCheck = gate ? breakerAllows(gate.breaker, Date.now()) : { allow: true };
+            const taskRunId = newId('run_');
             let res;
             if (!gateCheck.allow) {
               log(`【${room.name}】${bot.name} 跳过：${gateCheck.reason}`);
@@ -1365,6 +1480,8 @@ export class PiRunner {
             } else {
               res = await this.run(roomId, bot.id, prompt, {
                 groupTurn: true,
+                retryManaged: true,
+                taskRunId, attemptIndex: 1,
                 attachments,
                 // ★ 用户直接叫的人才能用保底槽（与打断特权同一个判据：fromId 为空）。
                 //   同事之间 @ 算常规派活，不占用给人留的那一位。
@@ -1454,8 +1571,11 @@ export class PiRunner {
                 kind: decision.kind,
                 switchModel: decision.switchModel === true,
               });
+              settleRetryMessage(store, roomId, res, { willRetry: true });
               res = await this.run(roomId, bot.id, hinted + prompt, {
                 groupTurn: true,
+                retryManaged: true,
+                taskRunId, attemptIndex: attempt,
                 attachments,
               });
               if (!res.ok) {
@@ -1477,6 +1597,7 @@ export class PiRunner {
             //   不重试、不留“失败回执”、不上报负责人、不推进游标 ——
             //   否则用户会看到旧任务的红字和"XX 没能完成"，而他刚说过"按新的来"。
             if (stale()) {
+              settleRetryMessage(store, roomId, res, { aborted: true });
               if (taskId) {
                 store.finishTask(taskId, {
                   ok: res.ok,
@@ -1487,6 +1608,10 @@ export class PiRunner {
               return;
             }
 
+            // 按最终结果结束重试状态，保留成功正文。
+            settleRetryMessage(store, roomId, res, res.ok
+              ? { succeeded: true }
+              : { error: lastError, aborted: this.aborting.has(roomId) });
             if (taskId) {
               store.finishTask(taskId, {
                 ok: res.ok,
@@ -1694,7 +1819,7 @@ export class PiRunner {
       const effective = mode === 'followUp' ? 'followUp' : 'steer';
       let queued;
       try {
-        const { promptText } = await this.#buildInput(clean, files);
+        const { promptText } = await this.#buildInput(clean, files, roomId);
         if (this.aborting.has(roomId)) throw Object.assign(new Error('已终止'), { name: 'AbortError' });
         queued = await entry.session[effective](promptText, files.map(readForModel).filter(Boolean));
       } catch (err) {
@@ -1812,7 +1937,7 @@ export class PiRunner {
       const effective = mode === 'followUp' ? 'followUp' : 'steer';
       const deliveryEpoch = this.directDeliveryEpochs.get(roomId) ?? 0;
       deliverDirectInput({
-        prepare: () => this.#buildInput(clean, files),
+        prepare: () => this.#buildInput(clean, files, roomId),
         // DM 里的每一轮都是用户直接说话 → 走人的保底槽
         run: ({ promptText }) => this.run(roomId, botId, promptText, { skipUserMessage: true, attachments: files, human: true }),
         getEntry: () => this.sessions.get(this.#key(roomId, botId)),
@@ -1839,6 +1964,9 @@ export class PiRunner {
     return { userMessage, bot, group: room.kind === 'group' };
   }
 
+  /** 记忆摘要的有界材料窗口；增量进度使用消息 ID。 */
+  static MEMORY_WINDOW = 400;
+
   /**
    * 按策略判断要不要自动总结一次记忆。**不阻塞**调用方。
    *
@@ -1852,15 +1980,10 @@ export class PiRunner {
   maybeAutoSummarize(roomId, botId) {
     if (this.memoryAutoDisabled) return;
     try {
-      const all = store.listMessages(roomId, { limit: 400 });
-      const conversation = memoryConversation(all);
-      if (!conversation.length) return;
-      const totalTurns = countTurns(conversation);
+      const all = store.listMessages(roomId, { limit: PiRunner.MEMORY_WINDOW });
       const summary = store.memorySummaryFor(roomId, botId);
-      // 上次总结之后的新消息：靠 lastCount（上次处理到第几条）切出来。
-      // 老记录没有 lastCount 就从 0 算，宁可多算也不漏。
-      const processed = Number(summary?.lastCount ?? 0);
-      const newMessages = conversation.slice(processed);
+      const { conversation, newMessages, totalTurns } = memoryProgress(all, summary);
+      if (!conversation.length || !newMessages.length) return;
       const verdict = shouldAutoSummarize({
         summary,
         totalTurns,
@@ -1888,31 +2011,33 @@ export class PiRunner {
    * 有新消息（lastId 变了）或 force 时才重新生成。
    */
   async summarizeMemory(roomId, botId, { force = false } = {}) {
-    // 同一对 room:bot 同时只跑一个摘要任务（两个客户端同时点"更新"也不会并发调模型）
+    // 普通摘要复用进行中的任务；强制摘要各自持有配置租约。
     const jobKey = `${roomId}:${botId}`;
     if (!this.memoryJobs) this.memoryJobs = new Map();
     if (!force && this.memoryJobs.has(jobKey)) return this.memoryJobs.get(jobKey);
-    const job = this.#summarizeMemoryNow(roomId, botId, { force });
+    this.flushProviderUpdates();
+    const job = this.withBackgroundSlot(`记忆摘要 · ${roomId}`, () => {
+      this.flushProviderUpdates();
+      return this.providerUpdates.withLease((lease) => this.#summarizeMemoryNow(roomId, botId, { force, lease }));
+    });
     this.memoryJobs.set(jobKey, job);
     try {
       return await job;
     } finally {
-      this.memoryJobs.delete(jobKey);
+      if (this.memoryJobs.get(jobKey) === job) this.memoryJobs.delete(jobKey);
     }
   }
 
-  async #summarizeMemoryNow(roomId, botId, { force = false } = {}) {
+  async #summarizeMemoryNow(roomId, botId, { force = false, lease = null } = {}) {
     const room = store.getRoom(roomId);
     if (!room) return { error: '会话不存在' };
     const bot = store.getBot(botId);
     if (!bot) return { error: 'bot 不存在' };
 
-    const all = store.listMessages(roomId, { limit: 200 });
-    const conversation = memoryConversation(all);
-    const lastId = store.listMessages(roomId, { limit: 1 })[0]?.id ?? null;
-    if (!conversation.length) return { text: '', at: null, count: 0, stale: false, lastId };
-
+    const all = store.listMessages(roomId, { limit: PiRunner.MEMORY_WINDOW });
     const cached = store.memorySummaryFor(roomId, botId);
+    const { conversation, lastId, totalTurns } = memoryProgress(all, cached);
+    if (!conversation.length) return { text: '', at: null, count: 0, stale: false, lastId };
     if (!force && cached && cached.lastId === lastId) return cached;
 
     const digest = buildMemoryDigest(all);
@@ -1929,6 +2054,7 @@ export class PiRunner {
     ].join('\n');
 
     const model = (bot.model ? this.resolveModel(bot.model) : null) ?? this.model;
+    lease?.restrictTo(providerLeaseScope(model));
     const controller = new AbortController();
     const timer = setTimeout(
       () => controller.abort(new Error('记忆摘要超时（90 秒）')),
@@ -1950,10 +2076,9 @@ export class PiRunner {
       return store.setMemorySummary(roomId, botId, {
         text,
         lastId,
-        // count = 到目前为止的总轮数（不是消息条数）——自动触发策略按它算增量
-        count: countTurns(conversation),
-        turns: countTurns(conversation),
-        lastCount: conversation.length,
+        // 累计窗口内已确认的轮数；增量边界由 lastId 保存。
+        count: totalTurns,
+        turns: totalTurns,
         at: Date.now(),
       });
     } catch (err) {
@@ -2050,7 +2175,7 @@ export class PiRunner {
    *
    * @returns {Promise<{compacted:boolean, failed:boolean, attempts:number, why:string}>}
    */
-  async #compactIfNeeded(entry, bot, roomId = null) {
+  async #compactIfNeeded(entry, bot, roomId = null, { signal = null, deadline = 0 } = {}) {
     const session = entry?.session;
     if (!session) return { compacted: false, failed: false, attempts: 0, why: '没有会话' };
 
@@ -2073,12 +2198,26 @@ export class PiRunner {
       return { compacted: false, failed: false, attempts: 0, why: plan.why };
     }
 
-    // ★ 压缩期间打一个显式标记。
-    //
-    //   这一轮从 reserveSession 起 entry.busy 就是 true，于是
-    //   #interruptRoundForUser / isRoomBusy 会把「正在压缩」当成「正在干活」——
-    //   用户一说话就把全群 abort，连压缩也一起打断，下次进来又从 0 开始压，
-    //   永远压不完。压缩不是「在为用户干活」，它是在为下一轮做准备。
+    // 压缩共用后台配额；排队同时受用户取消与本轮剩余时间约束。
+    const remaining = deadline ? Math.max(1, deadline - Date.now()) : 0;
+    const configuredWait = config.backgroundSlotWaitMs;
+    const waitMs = remaining && configuredWait > 0 ? Math.min(remaining, configuredWait) : remaining || configuredWait;
+    const bgTicket = await this.#acquireBackgroundSlot({
+      name: `压缩 · ${bot.name}`, signal, timeoutMs: waitMs,
+    });
+    if (signal?.aborted) {
+      bgTicket?.release?.();
+      throw signal.reason ?? Object.assign(new Error('已终止'), { name: 'AbortError' });
+    }
+    if (deadline && Date.now() >= deadline) {
+      bgTicket?.release?.();
+      throw new Error('等待上下文整理超时');
+    }
+    if (bgTicket && !bgTicket.ok) {
+      log(`【${bot.name}】压缩没拿到后台槽位（${bgTicket.reason}），本轮先不压`);
+      return { compacted: false, failed: false, attempts: 0, why: '后台槽位不可用' };
+    }
+
     entry.compactingOnly = true;
     // 压缩可能跑好几分钟：续心跳 + 5 分钟硬上限（否则这个 bot 永远轮不到）
     const beat = setInterval(() => {
@@ -2089,18 +2228,20 @@ export class PiRunner {
     let lastError = null;
     try {
       for (let i = 0; i < COMPACT_MAX_ATTEMPTS; i++) {
-        if (roomId && this.aborting.has(roomId)) {
+        if (signal?.aborted || roomId && this.aborting.has(roomId)) {
           return { compacted: false, failed: false, attempts, why: '用户已终止' };
         }
         attempts = i + 1;
         entry.startedAt = entry.startedAt ?? Date.now();
         entry.progressAt = Date.now();
+        let compactTimer;
         try {
+          const limitMs = deadline ? Math.max(1, Math.min(5 * 60 * 1000, deadline - Date.now())) : 5 * 60 * 1000;
           await Promise.race([
             session.compact(PiRunner.COMPACT_PROMPT),
-            new Promise((_, reject) =>
-              setTimeout(() => reject(new Error('压缩超时（5 分钟）')), 5 * 60 * 1000),
-            ),
+            new Promise((_, reject) => {
+              compactTimer = setTimeout(() => reject(new Error('上下文压缩超时')), limitMs);
+            }),
           ]);
           entry.compactRetryAfter = 0;
           entry.progressAt = Date.now();
@@ -2122,7 +2263,9 @@ export class PiRunner {
           const sec = Math.round(wait / 1000);
           log(`【${bot.name}】主动压缩失败（第 ${attempts}/${COMPACT_MAX_ATTEMPTS} 次），${sec}s 后重试：${msg}`);
           // 退避期间也要续心跳，否则 watchdog 以为卡死
-          await sleep(wait);
+          await sleep(Math.min(wait, deadline ? Math.max(0, deadline - Date.now()) : wait));
+        } finally {
+          clearTimeout(compactTimer);
         }
       }
     } finally {
@@ -2131,7 +2274,9 @@ export class PiRunner {
       try {
         await session.abort?.();
       } catch {
-        // 中断压缩失败不影响本轮继续
+        // 中断压缩失败不影响本轮继续。
+      } finally {
+        bgTicket?.release?.();
       }
     }
 
@@ -2161,7 +2306,12 @@ export class PiRunner {
    * @returns {Promise<{ok:boolean, text:string, ms:number, error?:string, messageId:string}>}
    */
 
-  async run(
+  async run(roomId, botId, prompt, options = {}) {
+    this.flushProviderUpdates();
+    return this.providerUpdates.withLease((lease) => this.#runWithLease(roomId, botId, prompt, { ...options, lease }));
+  }
+
+  async #runWithLease(
     roomId,
     botId,
     prompt,
@@ -2171,6 +2321,10 @@ export class PiRunner {
       skipUserMessage = false,
       attachments = [],
       groupTurn = false,
+      retryManaged = false,
+      taskRunId = newId('run_'),
+      attemptIndex = 1,
+      lease = null,
       /**
        * 这一轮是**人**发起的（用户直接说话 / 打断）还是一次常规派活。
        * 人发起的可以使用保底槽位，永远不被机器挤掉。
@@ -2179,9 +2333,21 @@ export class PiRunner {
     } = {},
   ) {
     const started = Date.now();
+    const capMs = store.groupLimits().turnMaxMs;
+    const effectiveTimeout = groupTurn ? Math.min(timeoutMs || capMs, capMs) : timeoutMs;
+    const deadline = effectiveTimeout > 0 ? started + effectiveTimeout : 0;
     const room = store.getRoom(roomId);
     if (!room) return { ok: false, text: '', ms: 0, error: '会话不存在', messageId: '' };
     if (this.aborting.has(roomId)) return { ok: false, text: '', ms: 0, error: '已终止', messageId: '' };
+    if (this.providerUpdates.has(this.providerForBot(botId))) {
+      const error = '模型组正在处理配置切换，本次任务未执行。请稍后重试，或检查模型组配置。';
+      const msg = store.appendMessage({
+        roomId, authorType: 'bot', authorId: botId,
+        authorName: store.getBot(botId)?.name ?? botId,
+        text: '', status: 'error', error,
+      });
+      return { ok: false, text: '', ms: 0, error, messageId: msg.id };
+    }
 
     let entry;
     try {
@@ -2203,6 +2369,8 @@ export class PiRunner {
       return { ok: false, text: '', ms: Date.now() - started, error: message, messageId: '' };
     }
 
+    const fallbackModel = this.model;
+    const providerScope = providerLeaseScope(entry.session.model, fallbackModel);
     const turnController = new AbortController();
     entry.turnController = turnController;
     const cancelled = () => this.aborting.has(roomId) || turnController.signal.aborted;
@@ -2237,6 +2405,7 @@ export class PiRunner {
     const committed = [];
     let buffer = '';
     let usage = null;
+    const meter = new RunUsage();
     let responseFailure = null;
     const steps = [];
 
@@ -2346,8 +2515,13 @@ export class PiRunner {
             pushDelta();
           }
           break;
+        case 'auto_retry_start':
+          meter.retry();
+          break;
         case 'message_end':
           if (event.message?.role === 'assistant') {
+            meter.add(event.message.usage);
+            usage = meter.snapshot();
             const failure = assistantFailure(event.message);
             if (failure) {
               responseFailure = failure;
@@ -2355,10 +2529,10 @@ export class PiRunner {
               pushDelta.flush();
               break;
             }
+            responseFailure = null;
             const finalText = textOf(event.message) || buffer;
             if (finalText.trim()) committed.push(finalText.trim());
             buffer = '';
-            usage = event.message.usage ?? usage;
             pushDelta.flush();
           }
           break;
@@ -2398,34 +2572,7 @@ export class PiRunner {
     const unsubscribe = entry.session.subscribe(onEvent);
     entry.unsubscribe = unsubscribe;
 
-    // ★ 压缩必须在这里做，不能更早。
-    //
-    //   主动压缩可能要跑几分钟。放在建消息/订阅之前的话，这段时间里
-    //   监听器还没挂上、botMsg 也还没建 —— 压缩产生的事件没人接，
-    //   界面既没有"压缩中"也没有横条，连 typing 都没有：
-    //   用户发完消息看到的是界面**完全静止**，然后突然开始回复。
-    //   项目自己在下面 compaction_start 的注释里把这种体验判为"看着像卡死"，
-    //   但它当时正发生在另一条路径上。
-    //
-    //   顺序：先建占位消息 + 订阅 + 发 typing，再做压缩。
-    //   这样用户立刻看到"正在处理"，压缩开始/结束都能正常广播和留痕。
-    await this.#compactIfNeeded(entry, bot, roomId);
-
-    // 压缩结束，这一轮马上要真正产出内容了。
-    // 之后它就是"在为用户干活"，插话语义恢复原样（该打断就打断）。
-    entry.compactingOnly = false;
-
-    // 用户带的图 -> 喂给模型（视觉模型能直接看）
-    const images = [];
-    for (const id of attachments) {
-      const img = readForModel(id);
-      if (img) images.push(img);
-    }
-    // bot 自己画图：记下开跑前的快照，跑完把新出现的图自动带上
-    const beforeImages = config.autoAttachImages ? snapshotImages(config.workspace) : null;
-    // 这一轮改了哪些文件：跑之前拍一张，跑完比一次
-    const watchChanges = process.env.PI_BOT_WATCH_CHANGES !== '0';
-    const beforeFiles = watchChanges ? snapshotWorkspace(config.workspace) : null;
+    let beforeFiles = null;
     const changes = () => {
       if (!beforeFiles) return null;
       try {
@@ -2438,31 +2585,39 @@ export class PiRunner {
 
     let timeoutHandle = null;
     try {
+      // 建好消息与事件订阅后整理上下文，等待与异常均进入本轮清理路径。
+      checkCancelled();
+      await this.#compactIfNeeded(entry, bot, roomId, { signal: turnController.signal, deadline });
+      checkCancelled();
+      lease?.restrictTo(providerScope);
+
+      // 压缩结束，这一轮马上要真正产出内容了。
+      // 之后它就是"在为用户干活"，插话语义恢复原样（该打断就打断）。
+      entry.compactingOnly = false;
+
+      // 用户带的图 -> 喂给模型（视觉模型能直接看）
+      const images = [];
+      for (const id of attachments) {
+        const img = readForModel(id);
+        if (img) images.push(img);
+      }
+      // bot 自己画图：记下开跑前的快照，跑完把新出现的图自动带上
+      const beforeImages = config.autoAttachImages ? snapshotImages(config.workspace) : null;
+      // 这一轮改了哪些文件：跑之前拍一张，跑完比一次
+      const watchChanges = process.env.PI_BOT_WATCH_CHANGES !== '0';
+      beforeFiles = watchChanges ? snapshotWorkspace(config.workspace) : null;
+      checkCancelled();
       // 槽位：超时就如实回报并在群里留痕，不静默干等
+      const remainingMs = deadline ? Math.max(1, deadline - Date.now()) : 0;
+      const slotWaitMs = remainingMs && config.runSlotWaitMs > 0
+        ? Math.min(remainingMs, config.runSlotWaitMs) : remainingMs || config.runSlotWaitMs;
       const slotTicket = await this.#acquireRunSlot({
-        roomId, botId, human, signal: turnController.signal,
+        roomId, botId, human, signal: turnController.signal, timeoutMs: slotWaitMs,
       });
       entry.slotTicket = slotTicket;
       if (slotTicket && !slotTicket.ok) {
-        log(
-          `【${room.name}】${store.getBot(botId)?.name ?? botId} 没拿到运行槽位`
-            + `（${slotTicket.reason === 'timeout' ? '排队超时' : '已取消'}，`
-            + `等了 ${Math.round(slotTicket.waitedMs / 1000)} 秒）→ 这一轮不跑`,
-        );
-        store.appendMessage({
-          roomId,
-          authorType: 'system',
-          authorName: '排队提示',
-          text:
-            `同时跑的任务已满，${store.getBot(botId)?.name ?? botId} 这一轮排队超时没有开跑。`
-            + '可以等手上的活跑完再发一次，或在「部门预算」里调高并发上限。',
-          status: 'done',
-          meta: { via: 'run_slot_timeout', botId, reason: slotTicket.reason },
-        });
-        return {
-          ok: false, text: '', ms: Date.now() - started,
-          error: '运行槽位排队超时', messageId: '',
-        };
+        checkCancelled();
+        throw new Error('运行槽位排队超时');
       }
       checkCancelled();
       // ★ 兜底：万一还是撞上"这个会话正在处理"（并发下理论上不该有了，
@@ -2547,17 +2702,15 @@ export class PiRunner {
           return entry.session.followUp(prompt);
         }
       };
-      const runPromise = startTurn();
-      // 部门里的单轮有额外时间预算：不能一个成员把整个部门卡住
-      const capMs = store.groupLimits().turnMaxMs;
-      const effectiveTimeout = groupTurn ? Math.min(timeoutMs || capMs, capMs) : timeoutMs;
+      if (deadline && Date.now() >= deadline) throw new Error('本轮等待超时，尚未发起模型请求');
+      const runPromise = this.providerUpdates.withLease(startTurn, providerScope);
       if (effectiveTimeout > 0) {
         const timeout = new Promise((_, reject) => {
           timeoutHandle = setTimeout(() => {
             turnController.abort(new Error('模型请求超时'));
             entry.session.abort().catch(() => {});
             reject(new Error(`超过 ${Math.round(effectiveTimeout / 1000)}s 未完成，已中断`));
-          }, effectiveTimeout);
+          }, Math.max(1, deadline - Date.now()));
         });
         await Promise.race([runPromise, timeout]);
       } else {
@@ -2582,15 +2735,26 @@ export class PiRunner {
             : '请直接用文字回答刚才的问题，不要调用工具。'),
           readText: () => render(),
           readFailure: () => responseFailure,
-          models: fallbackModels(entry.session.model ?? (bot.model ? this.resolveModel(bot.model) : this.model), this.model),
-          complete: (model, signal) => this.modelRuntime.completeSimple(
-              model,
-              {
-                systemPrompt: `${bot.persona ?? ''}\n\n你是「${bot.name}」。直接给结论，不要客套。`,
-                messages: [{ role: 'user', content: userContent, timestamp: Date.now() }],
-              },
-              { maxTokens: Math.min(2048, model.maxTokens ?? 2048), signal },
-            ),
+          models: fallbackModels(entry.session.model, fallbackModel),
+          complete: async (model, signal) => {
+            try {
+              const reply = await this.modelRuntime.completeSimple(
+                model,
+                {
+                  systemPrompt: `${bot.persona ?? ''}\n\n你是「${bot.name}」。直接给结论，不要客套。`,
+                  messages: [{ role: 'user', content: userContent, timestamp: Date.now() }],
+                },
+                { maxTokens: Math.min(2048, model.maxTokens ?? 2048), signal },
+              );
+              meter.add(reply?.usage);
+              usage = meter.snapshot();
+              return reply;
+            } catch (error) {
+              meter.add(error?.usage);
+              usage = meter.snapshot();
+              throw error;
+            }
+          },
         });
         if (recovery.failure) {
           responseFailure = recovery.failure;
@@ -2646,6 +2810,8 @@ export class PiRunner {
           { silent: true },
         );
         bus.emit('event', { t: 'msg.error', roomId, msgId: botMsg.id, error: msg.error, msg });
+        this.#recordRun({ roomId, botId, startedAt: started, ok: false, usage: meter.snapshot(),
+          taskRunId, attemptIndex, sdkRetries: meter.retries, kind: 'empty' });
         return { ok: false, text: '', ms: Date.now() - started, error: msg.error, messageId: botMsg.id };
       }
 
@@ -2669,6 +2835,10 @@ export class PiRunner {
         { silent: true },
       );
       bus.emit('event', { t: 'msg.done', msg });
+      this.#recordRun({
+        roomId, botId, startedAt: started, ok: true, usage: meter.snapshot(),
+        taskRunId, attemptIndex, sdkRetries: meter.retries,
+      });
       return { ok: true, text: finalText, ms: Date.now() - started, messageId: botMsg.id };
     } catch (err) {
       const failure = cancelled() ? modelFailure(turnController.signal.reason ?? { name: 'AbortError' })
@@ -2694,6 +2864,8 @@ export class PiRunner {
           { silent: true },
         );
         bus.emit('event', { t: 'msg.done', msg });
+        this.#recordRun({ roomId, botId, startedAt: started, ok: true, usage: meter.snapshot(),
+          taskRunId, attemptIndex, sdkRetries: meter.retries, kind: 'step-cap' });
         return { ok: true, text: partial, ms: Date.now() - started, messageId: botMsg.id };
       }
       const changedOnce = changes();
@@ -2703,7 +2875,7 @@ export class PiRunner {
       //   用户看到的就是"整条对话被一路标红"，而实际上它正在自愈。
       //   界面应该表达"还在想办法"，而不是"已经失败了"。
       //   真到放弃时才写 error —— 一次红字足够说明问题。
-      const recoverable = !keepAborted && !cancelled()
+      const recoverable = retryManaged && !keepAborted && !cancelled()
         && isRecoverableFailure({ error: message, status: failure.status ?? null });
       const msg = store.updateMessage(
         roomId,
@@ -2722,6 +2894,7 @@ export class PiRunner {
             ...(botMsg.meta ?? {}),
             ...(changedOnce ? { changed: changedOnce } : {}),
             ...(recoverable ? { retrying: true } : {}),
+            ...(recoverable ? { retryPlaceholder: !partial } : {}),
           },
         },
         { silent: true },
@@ -2736,6 +2909,10 @@ export class PiRunner {
         msg,
       });
       log(`模型本轮出错：${message}`);
+      this.#recordRun({
+        roomId, botId, startedAt: started, ok: false, usage: meter.snapshot(),
+        taskRunId, attemptIndex, sdkRetries: meter.retries, kind: recoverable ? 'retrying' : 'error',
+      });
       // ★ 把 status 一起带出去。
       //
       //   message 是给用户看的（"接口详情已隐藏"），里面**不含** HTTP 状态码。

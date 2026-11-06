@@ -28,6 +28,7 @@ export const ENTRIES = Object.freeze([
   'model-health.json',
   'hooks.json',
   'secret.key',
+  'run-stats.json',
 ]);
 
 /** 迁移完成后写在新目录里的标记：来源目录、复制了哪些条目、沿用的工作目录 */

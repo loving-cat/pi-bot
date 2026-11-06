@@ -30,6 +30,9 @@ import { log, newId, now, readJson, writeJsonAtomic } from './util.js';
 import { mergeGroupModels } from './model-capacity.js';
 import { modelFailure } from './model-reply.js';
 import { publicFetch } from './net-guard.js';
+import { mergeModelEndpoints } from './model-endpoints.js';
+export { MAX_ENDPOINTS, normalizeEndpoints, endpointAt, rotateCursor } from './model-endpoints.js';
+
 import {
   THINKING_LEVELS,
   thinkingCompat,
@@ -49,76 +52,6 @@ export function maskKey(key) {
   if (!k) return '';
   if (k.length <= 10) return `${k.slice(0, 2)}…`;
   return `${k.slice(0, 6)}…${k.slice(-4)}`;
-}
-
-/**
- * 一个模型组最多几条端点。太多没意义，也没人维护得过来。
- */
-export const MAX_ENDPOINTS = 5;
-
-const ENDPOINT_URL_MAX = 400;
-const ENDPOINT_KEY_MAX = 400;
-const ENDPOINT_LABEL_MAX = 40;
-
-/**
- * 规范化端点列表。
- *
- * 为什么需要它：老配置只有单个 baseUrl + apiKey，没有 endpoints。
- * 直接换数据结构会让所有老用户的配置读不出来 —— 所以：
- *   · 有 endpoints 就用它
- *   · 没有就**把老的 baseUrl + apiKey 包成第一项**（迁移，不丢数据）
- *
- * 每条端点形如 { baseUrl, apiKey, label }。
- */
-export function normalizeEndpoints(raw, { fallbackBaseUrl = '', fallbackApiKey = '' } = {}) {
-  const list = Array.isArray(raw) ? raw : [];
-  const out = [];
-  for (const item of list) {
-    if (!item || typeof item !== 'object') continue;
-    const baseUrl = String(item.baseUrl ?? '').trim().replace(/\/+$/, '');
-    if (!baseUrl) continue;
-    if (out.length >= MAX_ENDPOINTS) break;
-    out.push({
-      baseUrl: baseUrl.slice(0, ENDPOINT_URL_MAX),
-      apiKey: String(item.apiKey ?? '').trim().slice(0, ENDPOINT_KEY_MAX),
-      label: String(item.label ?? '').trim().slice(0, ENDPOINT_LABEL_MAX),
-    });
-  }
-  // 迁移：老的单个 baseUrl 自动变成第一条
-  if (!out.length) {
-    const baseUrl = String(fallbackBaseUrl ?? '').trim().replace(/\/+$/, '');
-    if (baseUrl) {
-      out.push({
-        baseUrl: baseUrl.slice(0, ENDPOINT_URL_MAX),
-        apiKey: String(fallbackApiKey ?? '').trim().slice(0, ENDPOINT_KEY_MAX),
-        label: '',
-      });
-    }
-  }
-  return out;
-}
-
-/**
- * 现在该用第几条端点。
- *
- * 用单调递增的轮转游标，而不是"失败次数"：
- * 失败次数会被并发请求写乱，而游标只要 % 长度就一定落在合法范围内。
- */
-export function endpointAt(endpoints, cursor = 0) {
-  if (!Array.isArray(endpoints) || !endpoints.length) return null;
-  const i = Math.abs(Math.floor(Number(cursor) || 0)) % endpoints.length;
-  return { endpoint: endpoints[i], index: i };
-}
-
-/**
- * 轮转到下一条端点。
- *
- * 只有一条时返回 0（游标还是会动，但结果不变）——
- * 这样上层不用写"只有一条怎么办"的分支。
- */
-export function rotateCursor(cursor, endpointCount) {
-  const n = Math.max(1, Number(endpointCount) || 1);
-  return ((Math.floor(Number(cursor) || 0) + 1) % n + n) % n;
 }
 
 /** 端点对外展示：**key 一定打码**。 */
@@ -144,28 +77,9 @@ export class ModelGroup {
    *   这是"用户填错了"，不是"程序坏了"，调用方要原样显示给用户看。
    */
   static fromInput(input = {}, { existing = null } = {}) {
-    /**
-     * 端点列表。
-     *
-     * ★ 迁移逻辑在这里，不在别处：
-     *   老配置只有 baseUrl + apiKey（没有 endpoints）。
-     *   不迁移的话所有老用户保存一次就会丢掉 key。
-     *
-     * 新写法优先用 input.endpoints；没有就退回老字段。
-     */
-    let endpoints = normalizeEndpoints(input.endpoints, {
-      fallbackBaseUrl: input.baseUrl ?? existing?.baseUrl,
-      fallbackApiKey: input.apiKey || existing?.apiKey || '',
-    });
-    // 编辑已有组时，某条端点没传 apiKey = "不改这把钥匙"。
-    // App 拿到的是打码值，不能拿它覆盖真 key。
-    if (Array.isArray(input.endpoints) && existing?.endpoints?.length) {
-      const prev = existing.endpoints;
-      endpoints = endpoints.map((ep, i) => ({
-        ...ep,
-        apiKey: ep.apiKey || prev[i]?.apiKey || '',
-      }));
-    }
+    const mergedEndpoints = mergeModelEndpoints(input, existing);
+    if (mergedEndpoints.error) return { error: mergedEndpoints.error };
+    const endpoints = mergedEndpoints.endpoints;
 
     const baseUrl = endpoints[0]?.baseUrl ?? '';
     if (!baseUrl) return { error: 'baseUrl 不能为空' };
@@ -186,8 +100,8 @@ export class ModelGroup {
     const models = merged.models;
 
     const api = API_TYPES.includes(input.api) ? input.api : existing?.api ?? API_TYPES[0];
-    // 没改 key 就把老的拿回来（App 拿到的是打码后的，不能拿它覆盖真 key）
-    const apiKey = str(input.apiKey, 400) || existing?.apiKey || '';
+    // 单地址字段始终反映首端点，供公共摘要和连通性测试使用。
+    const apiKey = endpoints[0]?.apiKey ?? '';
 
     const brokenModel = models.find((m) => thinkingLevelMapError(m.thinkingLevelMap));
     if (brokenModel) {
@@ -274,7 +188,7 @@ export class ModelGroup {
     return {
       name: this.name,
       baseUrl: ep?.baseUrl || this.baseUrl,
-      apiKey: (ep?.apiKey || this.apiKey) || 'no-key',
+      apiKey: (ep ? ep.apiKey : this.apiKey) || 'no-key',
       api: this.api,
       authHeader: true,
       // 模型级 compat 必填：pi 的 getApiKeyAndHeaders 依据模型上的
@@ -482,7 +396,9 @@ export class ModelGroupStore {
   /** 端点里的 key 也要一起加密。 */
   #sealEndpoints(endpoints) {
     if (!Array.isArray(endpoints) || !endpoints.length) return [];
-    return endpoints.map((ep) => ({ ...ep, apiKey: this.#seal(ep.apiKey) }));
+    return endpoints.map((ep) => ep && typeof ep === 'object'
+      ? { ...ep, apiKey: this.#seal(ep.apiKey) }
+      : ep);
   }
 
   /** 端点里的 key 解密。解不开时报错——绝不把密文当 key 用。 */
@@ -520,32 +436,35 @@ export class ModelGroupStore {
         continue;
       }
       const stored = String(item.apiKey ?? '');
-      if (!stored || !isEncrypted(stored)) {
-        if (stored) migrated++;
-        plainList.push(item);
-        continue;
+      let plain = stored;
+      if (isEncrypted(stored)) {
+        try {
+          plain = decrypt(stored, key);
+        } catch (err) {
+          throw new Error(`模型组「${item.name || item.id || ''}」的 key 解密失败，未改文件：${err.message}`);
+        }
       }
-      let plain;
-      try {
-        plain = decrypt(stored, key);
-      } catch (err) {
-        throw new Error(`模型组「${item.name || item.id || ''}」的 key 解密失败，未改文件：${err.message}`);
-      }
+      const endpoints = this.#openEndpoints(item.endpoints, key, item.name || item.id || '');
+      const hasPlainEndpoint = Array.isArray(item.endpoints) && item.endpoints.some((ep) =>
+        ep?.apiKey && !isEncrypted(String(ep.apiKey)));
+      if ((stored && !isEncrypted(stored)) || hasPlainEndpoint) migrated++;
       plainList.push({
         ...item,
         apiKey: plain,
-        endpoints: this.#openEndpoints(item.endpoints, key, item.name || item.id || ''),
+        endpoints,
       });
     }
     // 先确认每一条密文都能解开，再写迁移。任一失败都不落盘。
     if (migrated) {
       writeJsonAtomic(this.file, {
         ...raw,
-        groups: list.map((item) => {
+        groups: plainList.map((item) => {
           if (!item || typeof item !== 'object') return item;
-          const stored = String(item.apiKey ?? '');
-          if (!stored || isEncrypted(stored)) return item;
-          return { ...item, apiKey: encrypt(stored, key) };
+          return {
+            ...item,
+            apiKey: this.#seal(item.apiKey),
+            endpoints: this.#sealEndpoints(item.endpoints),
+          };
         }),
       });
       log(`🔐 已把 ${migrated} 个模型组的 key 从明文迁移为密文`);

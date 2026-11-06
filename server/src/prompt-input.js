@@ -11,11 +11,16 @@ import path from 'node:path';
  * @param {object} deps
  * @param {string} deps.workspace      工作目录（算相对路径用）
  * @param {(id:string)=>any} deps.metaFor        附件元数据
- * @param {(id:string)=>string|null} deps.inboxPath   附件在工作目录里的落点
+ * @param {(id:string,roomId?:string)=>string|null} deps.inboxPath   附件在工作目录里的落点
  * @param {(abs:string,name:string)=>Promise<string>} deps.attachmentBlock  文档正文提取
  */
 export function createBuildInput({ workspace, metaFor, inboxPath, attachmentBlock }) {
-  return async function buildInput(clean, files = []) {
+  /**
+   * @param {string} clean 用户这句话
+   * @param {string[]} files 附件 id
+   * @param {{roomId?:string}} [opts] 附件落到 _inbox/<roomId>/，按房间隔离
+   */
+  return async function buildInput(clean, files = [], { roomId = '' } = {}) {
     const imageIds = [];
     const docBlocks = [];
     const inboxRel = [];
@@ -28,7 +33,7 @@ export function createBuildInput({ workspace, metaFor, inboxPath, attachmentBloc
         imageIds.push(id);
         continue;
       }
-      const abs = inboxPath(id);
+      const abs = inboxPath(id, roomId);
       if (!abs) continue;
       inboxRel.push(path.relative(workspace, abs).replace(/\\/g, '/'));
       docBlocks.push(await attachmentBlock(abs, meta.name));

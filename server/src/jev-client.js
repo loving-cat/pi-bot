@@ -80,10 +80,15 @@ export const JEV_MODE = Object.freeze({
  * 用户不应该为了让我们拼对而记住"别带 /v1"这种规矩。
  */
 export function modelsUrl(baseUrl) {
+  return serviceUrl(baseUrl, 'models');
+}
+
+/** 探活和实际决策共用版本路径，保留自定义地址中的前缀。 */
+function serviceUrl(baseUrl, resource) {
   const base = String(baseUrl || '').trim().replace(/\/+$/, '');
   if (!base) return '';
-  if (/\/v\d+$/.test(base)) return `${base}/models`;
-  return `${base}/v1/models`;
+  if (/\/v\d+$/.test(base)) return `${base}/${resource}`;
+  return `${base}/v1/${resource}`;
 }
 
 /** 某个接入方式下，地址和模型名的默认值。 */
@@ -199,7 +204,7 @@ export async function jevDecide({
   let json = null;
   let text = '';
   try {
-    const res = await fetchImpl(`${base}/v1/systemone`, {
+    const res = await fetchImpl(serviceUrl(base, 'systemone'), {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${key}`,

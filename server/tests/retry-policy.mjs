@@ -125,15 +125,16 @@ test('放弃时才写回执，且不掺技术细节', () => {
   assert.match(gaveUp, /没能完成/);
   assert.ok(!/正在重试/.test(gaveUp));
 
-  // 熔断打开时不讲 HTTP 细节，只说"多久恢复、你要不要做什么"
+  // 熔断后的任务已经终止，需要用户重新发起。
   const breaker = failureNote({
     botName: '小王',
     reason: 'HTTP 502',
     willRetry: false,
     kind: 'breaker-open',
   });
-  assert.match(breaker, /自动恢复/);
-  assert.match(breaker, /你不用做什么/);
+  assert.match(breaker, /这次任务已停止/);
+  assert.match(breaker, /请重新发送任务/);
+  assert.doesNotMatch(breaker, /自动恢复|你不用做什么|会自己接着跑/);
   assert.ok(!/502/.test(breaker), '熔断文案不该带技术码：' + breaker);
 });
 

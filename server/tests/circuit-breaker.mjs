@@ -150,7 +150,7 @@ test('★ 凭证错误的冷却比临时故障长得多', () => {
 // 用户可见文案
 // ---------------------------------------------------------------------------
 
-test('★ 提示要短、要说清多久恢复、要说明不用做什么', () => {
+test('提示说明本次未执行、等待时间和需要用户重试', () => {
   let b = createBreaker();
   for (let i = 0; i < OPEN_AFTER_FAILS; i++) {
     b = recordFailure(b, { kind: 'transient', status: 502, now: 1000 });
@@ -158,7 +158,9 @@ test('★ 提示要短、要说清多久恢复、要说明不用做什么', () =
   const note = breakerNote(b, { groupName: 'GPT', now: 1000 });
   assert.match(note, /GPT/, '要说清是哪条路');
   assert.match(note, /秒/, '要给时间');
-  assert.match(note, /不用做什么/, '要告诉用户他不需行动');
+  assert.match(note, /本次请求未执行/, '不能把未执行说成仍在等待');
+  assert.match(note, /请在 \d+ 秒后重试/, '需要用户重新发起请求');
+  assert.doesNotMatch(note, /自动重试|不用做什么|无需操作/, '不能承诺没有排程的自动恢复');
   assert.ok(note.length < 60, '别写成小作文：' + note);
 });
 

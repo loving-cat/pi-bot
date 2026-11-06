@@ -81,14 +81,16 @@ test('★ key 落盘是密文，读出来是明文', () => {
   assert.equal(s.decision().apiKey, 'fixture-credential-decision-key');
 });
 
-test('没有密钥时 key 保持原样（本地调试不至于用不了）', () => {
+test('没有密钥时拒绝保存凭据，设置保持不变', () => {
   const s = new Store();
-  s.updateDecision({ enabled: true, apiKey: 'plain_key' });
-  assert.equal(s.decision().apiKey, 'plain_key');
+  const before = structuredClone(s.state.decision);
+  assert.throws(() => s.updateDecision({ enabled: true, apiKey: 'fixture-credential-decision' }), /加密未就绪/);
+  assert.deepEqual(s.state.decision, before);
 });
 
 test('apiKey 传空字符串表示清掉', () => {
   const s = new Store();
+  s.useSecretsKey(Buffer.alloc(32, 4));
   s.updateDecision({ apiKey: 'k1' });
   assert.equal(s.decision().apiKey, 'k1');
   s.updateDecision({ apiKey: '' });
@@ -97,6 +99,7 @@ test('apiKey 传空字符串表示清掉', () => {
 
 test('不传 apiKey 时不动它', () => {
   const s = new Store();
+  s.useSecretsKey(Buffer.alloc(32, 4));
   s.updateDecision({ apiKey: 'k1' });
   s.updateDecision({ enabled: true });
   assert.equal(s.decision().apiKey, 'k1', '改别的字段不该把 key 冲掉');
@@ -104,6 +107,7 @@ test('不传 apiKey 时不动它', () => {
 
 test('decisionRoute 按接入方式补齐地址和模型名', () => {
   const s = new Store();
+  s.useSecretsKey(Buffer.alloc(32, 4));
   s.updateDecision({ enabled: true, apiKey: 'k' });
 
   // 官方模式：地址和模型名固定，用户没填也能直接跑
@@ -142,9 +146,12 @@ test('★ 没有钥匙时也不能把密文当 key —— 否则稳定 401', () 
   assert.doesNotMatch(got, /^enc:/);
 });
 
-test('明文 key（本地调试）原样使用', () => {
+test('已有明文凭据可读取，重新保存时加密', () => {
   const s = new Store();
-  // 不注入密钥 → 存的是明文
-  s.updateDecision({ enabled: true, apiKey: 'plain-token' });
-  assert.equal(s.decision().apiKey, 'plain-token');
+  s.state.decision = { enabled: true, apiKey: 'fixture-credential-legacy' };
+  assert.equal(s.decision().apiKey, 'fixture-credential-legacy');
+  s.useSecretsKey(Buffer.alloc(32, 4));
+  s.updateDecision({ enabled: true });
+  assert.match(s.state.decision.apiKey, /^enc:/);
+  assert.equal(s.decision().apiKey, 'fixture-credential-legacy');
 });
