@@ -114,7 +114,7 @@ const RULES = [
   },
   {
     name: '真实邮箱',
-    // 只放行恰好 noreply@github.com（与 okMail 同一地址）。ALLOW 会跳过整行，所以不能加在那里。
+    // 仅放行完整的公开署名地址，域名边界之后仍有字符时继续检查。
     re: /\b(?!noreply@github\.com(?![A-Za-z0-9.-]))[A-Za-z0-9._%+-]+@(?!users\.noreply\.github\.com\b|example\.|pi-bot\.local\b|[A-Za-z0-9.-]+\.(?:test|example|invalid)\b)[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b/,
   },
 ];
@@ -145,37 +145,17 @@ function readFile(file) {
 
 const isAllowed = (line) => ALLOW.some((re) => re.test(line));
 
-/**
- * 这串东西是不是"一看就是随便打的"占位符。
- *
- * ★ 为什么需要它：规则只认形状，不认语义。
- *   `sk-1234567890abcdef` 有 16 个字符，形状上完全符合"OpenAI 风格 key"，
- *   但它显然是样例值。结果是：修掉一处误报的提交，因为提交信息里
- *   **引用了那个假 key**，又把它自己扫挂了 —— 越修越红，死循环。
- *
- * 这里只放行**明确的填充模式**，宁可漏掉极少数真 key 也不放松形状规则：
- *   · 全是数字（真 key 不会）
- *   · 含 1234567890 / 0123456789 这种连续十位
- *   · 含 abcdef / abcdefgh 这种字母顺序串
- *   · 同一个字符重复 6 次以上
- *
- * 熵值之类的统计学判断不敢用 —— 会把短一点的真 key 误放行。
- */
+/** 仅放行整体由明确样例序列组成的值，不以局部片段判断凭据。 */
 function looksLikePlaceholder(text) {
   const s = String(text ?? '');
-  if (!s) return false;
-  // 去掉 sk- / nvapi- 这类前缀，只看主体
-  const body = s.replace(/^[A-Za-z]{2,6}[-_]/, '');
+  const quoted = s.match(/[:=]\s*['"`]([^'"`]+)['"`]$/);
+  const candidate = quoted?.[1] ?? s.replace(/^Bearer\s+/i, '');
+  const body = candidate.replace(/^[A-Za-z]{2,6}[-_]/, '');
   if (!body) return false;
-  // 全数字
   if (/^\d+$/.test(body)) return true;
-  // 连续十位数字
-  if (/0123456789|1234567890|9876543210/.test(body)) return true;
-  // 字母顺序串（abcdef 起）
-  if (/abcdef/i.test(body)) return true;
-  // 同一个字符重复 6 次以上
-  if (/(.)\1{5,}/.test(body)) return true;
-  return false;
+  if (/^(?:(?:0123456789|1234567890|9876543210)+)(?:abcdef(?:gh)?)?$/i.test(body)) return true;
+  if (/^(?:abcdef(?:gh)?)+(?:a+)?$/i.test(body)) return true;
+  return /^(.)\1{5,}$/.test(body);
 }
 
 /**
@@ -202,14 +182,19 @@ function scanText(where, text) {
   const lines = String(text ?? '').split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (line.length > 2000 || isAllowed(line)) continue;
+    if (line.length > 2000) continue;
+    if (/^Co-authored-by: Cursor Agent <cursoragent@cursor\.com>$/.test(line)) continue;
     for (const rule of RULES) {
-      const m = line.match(rule.re);
-      if (!m) continue;
-      // 形状像 key，但内容明显是占位符 → 不算
-      if (KEY_SHAPED_RULES.has(rule.name) && looksLikePlaceholder(m[0])) continue;
-      hits.push({ file: where, line: i + 1, rule: rule.name, text: line.trim().slice(0, 120) });
-      break;
+      const matches = line.matchAll(new RegExp(rule.re.source, rule.re.flags.replaceAll('g', '') + 'g'));
+      let found = false;
+      for (const match of matches) {
+        if (isAllowed(match[0])) continue;
+        if (KEY_SHAPED_RULES.has(rule.name) && looksLikePlaceholder(match[0])) continue;
+        hits.push({ file: where, line: i + 1, rule: rule.name, text: line.trim().slice(0, 120) });
+        found = true;
+        break;
+      }
+      if (found) break;
     }
   }
 }

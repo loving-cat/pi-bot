@@ -21,6 +21,9 @@
 | `session-factory.js` | 造会话：模型/工具/预算/提示词装配；扩展过滤（不加载 context-mode 类） |
 | `session-pool.js` | 会话缓存、pending 去重、LRU 驱逐 |
 | `session-refresh.js` | 配置变更后标记会话待重载；忙碌会话延后释放，取用时同步预留避免竞态 |
+| `provider-updates.js` | 按本轮选中、备用模型的实际依赖协调配置更新；未知或动态路由保留全局保护，地址与凭据成对切换 |
+| `model-request-lease.js` | 模型探测请求的超时与取消；底层请求真正结束前保留运行时使用标记，防止超时后提前切换凭据 |
+| `retry-messages.js` | 群轮次结束或中断时收尾重试占位，避免消息停留在无人处理的等待状态 |
 | `role-tools.js` | 有效负责人判定、内置与自定义工具白名单、角色配置签名（纯逻辑） |
 | `direct-message-delivery.js` | 私聊异步输入投递；会话忙时按原模式排队、保留输入并响应取消 |
 | `tools.js` | 工具定义（通用 + 主控）：派活/私信/建部门/后台进程/询问卡片… |
@@ -28,6 +31,8 @@
 | `group-round.js` | 群轮次决策：该跳过/排队/打断/派发、收尾轮判定（纯函数） |
 | `policy-version.js` | 部门规矩的版本标识与变更影响判定：哪些字段影响授权、变更该通知哪些在跑的活（纯函数） |
 | `run-slots.js` | 全局运行槽位：同时开跑上限、给人留保底位、等待超时与取消、释放幂等（纯逻辑） |
+| `run-stats.js` | 单次运行内汇总模型用量、重试及缺失字段；有界本地明细与按日统计，不保存提示词或凭据 |
+| `memory-digest.js` | 记忆材料筛选、输入裁剪及稳定消息 ID 增量游标；窗口滑动时不以数组长度替代进度 |
 | `transcript-budget.js` | 群聊记录按字数预算裁剪、单条超长保留头尾（纯函数） |
 | `skills.js` | 技能库：规范化、SKILL.md 解析、按任务挑选（纯函数） |
 | `lessons.js` | 经验库：cue/lesson/evidence 校验、按任务挑选、**有上限的注入渲染**（一次≤3条≤600字，只有 active 参与） |
@@ -41,10 +46,12 @@
 | `mentions.js` | @解析与花名册文本 |
 | `model-*.js` | 模型接线：注册（registry）/模型组（groups）/探活（health）/菜单（menu） |
 | `model-capacity.js` | 同 ID 模型元数据合并、容量优先级与正整数/最大输出校验（纯逻辑） |
+| `model-endpoints.js` | 多端点规范化与局部编辑合并；按唯一完整请求目标保留凭据，省略列表时保留备用端点（纯逻辑） |
 | `model-thinking.js` | 思考强度：`reasoning` / 七档 `thinkingLevelMap` / 上游 `thinkingFormat`，含预设与校验（纯逻辑） |
 | `model-dispatch.js` | 主控模型目录、默认规则兼容、目录变化的会话刷新及团队成员模型冲突预检 |
 | `model-recommend.js` | 按"活的性质"在已启用模型里排序推荐：Jev 判性质、本地按能力挑模型 |
 | `decision-router.js` | 快速决策路由框架：决策点注册表（权重/问题/校验器），开 Jev 走它、没开走原逻辑 |
+| `decision-credentials.js` | 决策凭据的保留、清空与加密；密钥不可用时拒绝保存新明文，保留已有密文 |
 | `jev-client.js` | TypeSafe/Jev 决策模型的传输层：请求组装、failure 归类、答案解析、探活 |
 | `mcp.js` | MCP 服务库：规范化、校验、转 pi 配置、测连接（纯逻辑 + 一个 probe） |
 | `mcp-hook.js` | 把用户配的 MCP 按 bot 选择注册进会话；给主控的能力清单 |
@@ -61,8 +68,8 @@
 | `merge-messages.js` | 连发消息合并：静默窗口 700ms，把"想到一句发一句"拼成一段 |
 | `model-reply.js` | 模型错误分类与脱敏展示、认证失败终止重试、真正空回复的限定模型恢复 |
 | `providers.js` | 额外 provider 注册与默认模型解析 |
-| `context-budget.js` | 上下文预算：容量覆盖 + 压缩阈值 |
-| `attachments.js` / `extract.js` / `upload-sessions.js` | 附件存取、正文提取、**分片上传** |
+| `context-budget.js` | 上下文预算：容量覆盖、压缩阈值与保留原文上限，为压缩摘要预留空间 |
+| `attachments.js` / `extract.js` / `upload-sessions.js` | 附件存取、正文提取、**分片上传**；附件按房间存放，删除先持久化最小标记再清理文件，历史读取与实时推送统一过滤 |
 | `shells.js` | 后台进程注册表（启动/读/写/杀、容量与回收） |
 | `shell-policy.js` | 命令级规则：归一化、解析、通配匹配、判不了就拒绝（纯函数） |
 | `policy-hook.js` | 命令规则的执行点（pi 内联扩展，拦 `tool_call`） |
@@ -93,6 +100,7 @@
 | 位置 | 职责 |
 |---|---|
 | `app_state.dart` | 连接、房间、消息、流式、任务、定时任务、模型组…（**状态与请求**） |
+| `attachment_deletions.dart` | 附件删除版本与缓存过滤，拒绝旧请求结果；重连遗漏删除事件时使历史缓存失效 |
 | `models.dart` | 数据模型：Msg / Room / Bot / TaskItem / Automation / ChangedSummary… |
 | `api.dart` | HTTP 封装（含分片上传 `uploadChunked`） |
 | `update_info.dart` | 更新响应解析 + 要不要提示的规则（纯逻辑，有测试） |
@@ -131,7 +139,7 @@
 | `clipboard_image.dart` / `clipboard_image_macos.dart` | 剪贴板图片平台分流；Windows PowerShell、macOS PNG/TIFF 读取与临时文件清理 |
 | `l10n/` | 界面文案：区域化扁平 key 词表（中英同放）、语言切换与查询；`L10n.s(context).t(key)` 取值，`tf` 做插值 |
 | `token_count.dart` | 容量单位换算：`1M` / `256K` / 纯数字三种写法等价；裸小数不合法 |
-| `paste_paths.dart` | 粘贴文本里的文件路径识别：整段路径与「文字+路径」两种形态，只认真实存在的文件 |
+| `paste_paths.dart` | 粘贴文本里的文件路径识别：整段路径与「文字+路径」两种形态，只认真实存在的文件，完整链接不参与路径匹配 |
 | `error_text.dart` | 服务端错误码 → 当前语言文案；词表缺该 code 时退回服务端原文 |
 | `widgets/model_setup_gate.dart` / `widgets/default_model_picker.dart` | 无模型组时的配置引导与默认模型选择 |
 | `window_state.dart` | 窗口位置/大小记忆：编码、解析、夹回可见区（纯函数） |

@@ -165,7 +165,10 @@ Xcode 检查与 Flutter 构建，仅重新组装安装包。当前使用 ad-hoc 
 
 容量单位为 tokens，填正整数且最大输出不超过上下文窗口；已有模型留空保留原值，
 新模型留空使用服务端默认值。容量须按接口实际支持的值填写。编辑已有组时，API key
-留空保留原凭据；“测试连接”的模型列表可达不等于推理鉴权已通过。
+留空仅在端点目标未变且唯一时保留原凭据；地址变化后须重新填写，删除或重排端点不会把
+别的端点密钥带过去。普通编辑保留备用端点。模型组正在使用时，地址和密钥的运行时更新
+等待请求结束，在下次请求前一起生效；无法安全继续的任务会明确结束，需要重新发起。
+“测试连接”的模型列表可达不等于推理鉴权已通过。
 
 > 自检：`node server/tools/check-model-runtime.mjs`
 > 它会照 App 的方式新建一个模型组、造个临时 bot 真跑一句话，然后自己清理干净。
@@ -245,6 +248,20 @@ flutter test
 flutter analyze
 ```
 
+真实浏览器集成用例默认跳过。需要验证浏览器时，先准备专用测试环境，再运行
+`PI_BOT_EGO_INTEGRATION=1 node tests/ego-browser.mjs`；该命令会操作本机浏览器。
+
+本机诊断可读取 `GET /api/run-stats`，仅允许通过身份检查的本机回环请求。
+统计保存在数据目录的 `run-stats.json`，最多保留 2,000 条运行记录和 90 天汇总。
+`runs` 表示运行尝试数，`retries` 记录实际恢复次数；同一轮内的多次模型响应与
+补答用量会累加。缺失用量以完整性标记说明，未知缓存命中率返回空值；独立的压缩、
+记忆摘要和复盘费用不在这份运行统计内，不能将它当作供应商账单。
+
+主动压缩、记忆摘要和复盘默认最多同时运行一个，可用
+`PI_BOT_BACKGROUND_CONCURRENCY` 调整；后台排队默认最多 30 秒，可用
+`PI_BOT_BACKGROUND_SLOT_WAIT_MS` 调整。用户任务的压缩排队同时受停止动作和
+本轮剩余时间限制，不能通过后台排队绕过任务超时。
+
 `scripts/pack-windows.ps1` 生成可分发目录（exe + server + 依赖）。默认把应用源码复制到
 系统临时目录再构建 Release，产物回填到原来的 Release 路径，临时副本用完即删。
 `-WithNode` 附带 `node.exe`（目标机器无需安装 Node），`-Zip` 同时打包压缩文件，
@@ -304,6 +321,7 @@ flutter analyze
 - 命令黑名单 / 白名单默认都是空的。**一条都没配时，行为和改动前完全一致**，`npm` / `git` / `node` 以及 `sh -c 'git status'` 不会被拦
 - **配了任一规则之后**，`sh -c` / `bash -c`、`xargs <命令>`、解释器调用会拒绝，只放行 `--version` / `-V` / `--help`。白名单只有 `git status` 时，`sh -c 'git status'` 也会被拒，直接写 `git status` 可以。`rm -rf` 这类规则会拆开短选项，并把 `rm` 的 `--recursive` / `--force` 当成 `-r` / `-f`
 - 黑名单看不到脚本文件、Makefile、`npm` scripts 里面的命令。字符串规则盖不住这些入口，长期方案是沙箱，另行立项。`awk` 的 `system`、`vim -c`、`npx`、`make` 等间接执行也没有列全；要严格限制，请用白名单模式，或把危险操作设为“需要批准”。详见 [docs/AGENT-MODEL.md](docs/AGENT-MODEL.md)
+- 浏览器脚本遵守危险操作审批。配置了命令白名单或黑名单时，脚本入口不可用，因为无法逐条核验脚本内部执行的命令。
 - 子进程（bash / powershell、后台命令、MCP 本地服务）只继承白名单：`PATH`、`HOME`、`USER` / `USERNAME` / `LOGNAME`、`SHELL`、`TERM`、`LANG`、`LC_*`、`TMPDIR` / `TEMP` / `TMP`、`PI_CODING_AGENT_DIR`、`XDG_*`、`SSH_AUTH_SOCK`、`GIT_SSH*`、`NODE_EXTRA_CA_CERTS`、`SSL_CERT_*`、`DISPLAY`，以及名字以 `_PROXY` 结尾的代理变量。`PI_BOT_*` 也会继承，但 `PI_BOT_TOKEN` 和 `PI_BOT_SECRET_KEY` 除外。Windows 启动还要这些（比较时不分大小写）：`SystemRoot`、`windir`、`SystemDrive`、`ComSpec`、`PATHEXT`、`USERPROFILE`、`APPDATA`、`LOCALAPPDATA`、`HOMEDRIVE`、`HOMEPATH`、`ProgramFiles`、`ProgramFiles(x86)`、`ProgramData`、`PSModulePath`、`NUMBER_OF_PROCESSORS`、`PROCESSOR_ARCHITECTURE`、`OS`、`PUBLIC`。`*_API_KEY`、`*_TOKEN`、`*_SECRET` 不会因为父进程里有就传下去
 - AWS、gcloud 等云凭证仍然不传给子进程。pi 子 agent 是例外：只有 `runPiCli` 拉起它时，按当前模型把对应 provider 的 key 显式放进环境。派子 agent 时如果先起的是本程序自己的入口脚本，这一跳也会带上这把 key；别的 `index.js` 不会。bash、后台命令和 MCP 默认拿不到。某个 MCP 服务自己要用的变量，写在这个服务配置的显式 `env` 里，例如 `OPENAI_API_KEY=test-key-a`
 - 站点口令和模型组 API key 用 AES-256-GCM 落在数据目录里，不写明文。密钥默认是 `<数据目录>/secret.key`（权限 0600）。设置了 `PI_BOT_SECRET_KEY`（32 字节的 hex 或 base64）就用环境变量，此时不读、不写 `secret.key`。密钥丢失或换错后，已经加密的口令和 key 无法还原：操作会报错，不会把密文写成空
