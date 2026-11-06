@@ -7,6 +7,7 @@ const areaRoom = StringArea(
     'room.tab.detail': '详情',
     'room.tab.library': '资料库',
     'room.tab.members': '成员',
+    'room.membersModelHint': '模型和思考等级属于成员本人，在左上角「＋ → 成员」里调。',
     'room.tab.memory': '记忆',
     'room.kind.group': '群聊',
     'room.kind.dm': '私聊',
@@ -65,6 +66,8 @@ const areaRoom = StringArea(
     'room.tab.detail': 'Details',
     'room.tab.library': 'Files',
     'room.tab.members': 'Members',
+    'room.membersModelHint':
+        'Model and thinking level belong to each member — edit them in the roster.',
     'room.tab.memory': 'Memory',
     'room.kind.group': 'Group chat',
     'room.kind.dm': 'Direct message',

@@ -268,10 +268,19 @@ class _RoomPanelState extends State<RoomPanel> {
               '（${(ctx.percent ?? 0).round()}%）'
               '${ctx.compacting ? ' · ${s.t('room.compacting')}' : ''}',
             ),
-          // ★ 就地改运行参数（用户：“不是应该在胶囊点击后的右侧侧边栏 有一个
-          //   可以调模型 上下文窗口 思考等级之类的吗？”）。
-          //   谁说了算：私聊是对方，群聊是负责人 —— 就是替这个会话拍板的那个 bot。
-          if (_primaryBot(room) case final bot?) BotRunSection(bot: bot),
+          // ★ 运行参数只在**私聊**里给。
+          //
+          //   模型 / 思考等级 / 上下文预算都是 **bot 自己的属性**，不是房间的
+          //   （Room 上根本没有这些字段）。群聊里有 6 个人，这里只显示负责人
+          //   一个人的参数，语义就错了两处：
+          //     · 用户以为在调"这个群的模型"，实际改的是负责人这个人在
+          //       **所有会话**（包括它自己的私聊）的配置；
+          //     · 另外 5 个人的参数完全看不到，也不知道在哪调。
+          //
+          //   群里要调成员参数，去「成员」页 —— 那里按人列，一行一个人才对。
+          if (!room.isGroup) ...[
+            if (_primaryBot(room) case final bot?) BotRunSection(bot: bot),
+          ],
         ],
       ),
     );
@@ -319,6 +328,7 @@ class _RoomPanelState extends State<RoomPanel> {
   );
 
   Widget _members(BuildContext context, Room room) {
+    final s = L10n.s(context);
     final state = AppScope.of(context);
     // 花名册里还没进来的
     final outsiders = state.bots
@@ -327,6 +337,20 @@ class _RoomPanelState extends State<RoomPanel> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(10, 8, 10, 24),
       children: [
+        // 说明模型为什么不在这个页面调：它属于人，不属于群。
+        // 不写这一句，用户会去详情页找"群的模型"—— 那里现在没有了。
+        if (room.isGroup)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(6, 2, 6, 10),
+            child: Text(
+              s.t('room.membersModelHint'),
+              style: TextStyle(
+                fontSize: PB.fsXxs,
+                color: PB.textQuaternary,
+                height: 1.5,
+              ),
+            ),
+          ),
         for (final id in room.botIds)
           _MemberRow(
             bot: state.botById(id),
