@@ -1,0 +1,44 @@
+app/lib/app_state.dart
+  h_c2e638ff76b3b9 149-163,1277,1694-1730
+app/lib/l10n/strings/panel2.dart
+  h_c2e638ff76b3b9 76-91,452-465
+app/lib/screens/settings_screen.dart
+  h_c2e638ff76b3b9 16,400-403
+app/lib/widgets/decision_section.dart
+  h_c2e638ff76b3b9 1-278
+docs/MODULE-MAP.md
+  h_c2e638ff76b3b9 46-48
+server/src/decision-router.js
+  h_c2e638ff76b3b9 1-287
+server/src/http.js
+  h_c2e638ff76b3b9 9,73-83,373-375,1112-1135
+server/src/jev-client.js
+  h_c2e638ff76b3b9 1-274
+server/src/model-dispatch.js
+  h_c2e638ff76b3b9 8
+server/src/model-recommend.js
+  h_c2e638ff76b3b9 1-148
+server/src/store.js
+  h_c2e638ff76b3b9 124-181,1064-1116
+server/src/tools.js
+  h_c2e638ff76b3b9 20,1298-1330
+server/tests/all.mjs
+  h_c2e638ff76b3b9 78-80
+server/tests/decision-router.mjs
+  h_c2e638ff76b3b9 1-313
+server/tests/decision-settings.mjs
+  h_c2e638ff76b3b9 1-121
+server/tests/model-recommend.mjs
+  h_c2e638ff76b3b9 1-153
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bcf9de0a00c17d4c52dd3b80de929511928e6112",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
