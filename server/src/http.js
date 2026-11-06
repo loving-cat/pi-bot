@@ -6,6 +6,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config.js';
+import { jevProbe } from './jev-client.js';
 import { modelGroups, testModelGroup } from './model-groups.js';
 import {
   THINKING_FORMATS,
@@ -67,6 +68,17 @@ import { loadHooks, saveHooks, validateHook } from './hooks.js';
 /// @param {string} message 人读兜底文案
 function fail(res, status, code, message, extra = null) {
   return send(res, status, { error: message, code, ...(extra ?? {}) });
+}
+
+/**
+ * 对外的决策设置：**抹掉 key**。
+ *
+ * 只回一个"配没配"的布尔，不回密文也不回明文 ——
+ * 密文出现在界面上没有意义，明文更不该经网络再传一次。
+ */
+function publicDecision(d = {}) {
+  const { apiKey, ...rest } = d;
+  return { ...rest, hasApiKey: Boolean(String(apiKey || '').trim()) };
 }
 
 function send(res, status, body) {
@@ -358,6 +370,9 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
           // 群聊轮次预算（防止 bot 解不了就互相聊个没完）
           groupLimits: store.groupLimits(),
           policy: store.policy(),
+          // 快速决策（Jev）的设置。key 已抹掉，只回"配没配"。
+          // 放这里让 App 一次刷新就拿到，设置页不用再单独拉一次。
+          decision: publicDecision(store.decision()),
           // 最近被命令策略拦下的执行（新的在前），界面用来做审计提示
           denials: store.listDenials({ limit: 20 }),
           // 任务板（房间页会按 roomId 过滤）
@@ -1094,6 +1109,30 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
       if (pathname === '/api/group-limits' && req.method === 'GET') {
         return send(res, 200, { limits: store.groupLimits() });
       }
+      // ---------- 快速决策路由（Jev）----------
+      if (pathname === '/api/decision' && req.method === 'GET') {
+        return send(res, 200, { decision: publicDecision(store.decision()) });
+      }
+      if (pathname === '/api/decision' && req.method === 'PATCH') {
+        const body = await readBody(req);
+        const decision = store.updateDecision(body);
+        log(
+          `⚙️  快速决策（Jev）${decision.enabled ? '已打开' : '已关闭'}` +
+            (decision.enabled && decision.baseUrl ? `，端点 ${decision.baseUrl}` : ''),
+        );
+        return send(res, 200, { decision: publicDecision(decision) });
+      }
+      if (pathname === '/api/decision/probe' && req.method === 'POST') {
+        // 设置页的"测一下"：只读模型列表，不产生推理费用
+        const body = await readBody(req);
+        const cfg = store.decision();
+        const probe = await jevProbe({
+          baseUrl: body.baseUrl || cfg.baseUrl,
+          apiKey: body.apiKey || cfg.apiKey,
+        });
+        return send(res, 200, { probe });
+      }
+
       // ---------- 部门规矩（危险动作 / 交付要附证据）----------
       if (pathname === '/api/policy' && req.method === 'GET') {
         // 带上版本号：App 可以把它展示出来，也方便排查"这条活按哪套规矩跑的"

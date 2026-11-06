@@ -75,6 +75,9 @@ const TESTS = [
   'policy-version',
   'run-slots',
   'compact-retry',
+  'decision-router',
+  'model-recommend',
+  'decision-settings',
 ];
 
 let failed = 0;

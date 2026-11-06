@@ -73,6 +73,22 @@ const areaPanel2 = StringArea(
     // ---- 群聊轮次与部门规矩 ----
     'limits.savedRunning': '已生效（正在跑的会话下次跑就用新规矩）',
     'limits.saved': '已生效（不用重启）',
+    // ---- 快速决策（Jev） ----
+    // 默认关闭，也不拦着干活：没配它产品照常能用，只是少一点"聪明"。
+    'decision.title': '快速决策',
+    'decision.intro': '把"该用哪个模型""要不要接话"这类小判断交给专用决策模型，几百毫秒出结果，比走一次完整推理便宜得多。',
+    'decision.enable': '启用快速决策',
+    'decision.enabledHint': '部分判断现在走决策模型',
+    'decision.disabledHint': '关着时一切走原来的逻辑',
+    'decision.url': '服务地址',
+    'decision.key': 'API Key',
+    'decision.keySaved': '已保存（留空表示不改）',
+    'decision.probe': '测一下',
+    'decision.probing': '测试中…',
+    'decision.probeNote': '只读模型列表，不产生推理费用。',
+    'decision.probeOk': '连通正常，可用模型：{models}',
+    'decision.probeFail': '连不上',
+    'decision.saved': '已保存',
     'limits.title': '群聊轮次',
     // 这五个数原来叫「老大最多几轮 / 成员最多几轮 / 一条消息最多跑几次 /
     // 单次最多来回几轮 / 单轮最长几分钟」—— 名字抽象、彼此重叠，
@@ -433,6 +449,20 @@ const areaPanel2 = StringArea(
     'limits.savedRunning':
         'Applied — running sessions pick up the new limits on their next run',
     'limits.saved': 'Applied (no restart needed)',
+    'decision.title': 'Fast decisions',
+    'decision.intro': 'Hands small calls ("which model for this job", "should I reply") to a decision model: a few hundred ms, far cheaper than a full inference.',
+    'decision.enable': 'Enable fast decisions',
+    'decision.enabledHint': 'Some calls now use the decision model',
+    'decision.disabledHint': 'Everything uses the original logic',
+    'decision.url': 'Endpoint',
+    'decision.key': 'API key',
+    'decision.keySaved': 'Saved (leave blank to keep)',
+    'decision.probe': 'Test',
+    'decision.probing': 'Testing…',
+    'decision.probeNote': 'Reads the model list only; no inference cost.',
+    'decision.probeOk': 'Connected. Models: {models}',
+    'decision.probeFail': 'Cannot connect',
+    'decision.saved': 'Saved',
     'limits.title': 'Group turns',
     'limits.intro': 'Keeps bots from chatting forever. These numbers cap how much they can spend.',
     'limits.groupPerBot': 'How long one bot can run',

@@ -121,6 +121,64 @@ function normalizePolicy(patch = {}, base = POLICY_DEFAULT) {
 
 export { MUTATING_TOOLS, toolsForPolicy, isLeadOfRoom, toolsForRole } from './role-tools.js';
 
+// ---------------------------------------------------------------------------
+// 快速决策路由（Jev）的设置
+// ---------------------------------------------------------------------------
+
+/**
+ * 决策路由的默认设置 —— **默认关闭**。
+ *
+ * 关着的时候一切走原来的逻辑，行为和没这个功能完全一致；
+ * 用户自己在后台填了地址和 key、又打开开关，才会有一部分决策点切到 Jev。
+ *
+ * 为什么默认关：这是个**额外的外部依赖**。开着就意味着派活这类操作
+ * 会多一次网络往返，而且需要用户自己有 key。默认关掉，
+ * 不想用的人不会被迫承受延迟和费用。
+ */
+export const DECISION_DEFAULT = {
+  enabled: false,
+  /** 决策服务地址。TypeSafe 官方是 https://api.typesafe.ai */
+  baseUrl: '',
+  /** API key（存的是密文，getter 解密后返回） */
+  apiKey: '',
+  /** 模型名，留空用 jev-latest */
+  model: '',
+  /** noul 问句的概率阈值：>= 这个值算"是" */
+  noulThreshold: 0.5,
+  /** careful 级别决策点的最低置信度，低于它落回原逻辑 */
+  carefulMinConfidence: 0.75,
+  /** 单独关掉的决策点（全局开着、但这些点仍走原逻辑） */
+  disabledPoints: [],
+};
+
+const DECISION_BOOL_KEYS = ['enabled'];
+const DECISION_NUM_KEYS = [
+  ['noulThreshold', 0, 1],
+  ['carefulMinConfidence', 0, 1],
+];
+
+/** 规范化决策设置：类型不对就用默认值，绝不因为脏数据让启动失败。 */
+export function normalizeDecision(patch = {}, base = DECISION_DEFAULT) {
+  const out = { ...base };
+  for (const key of DECISION_BOOL_KEYS) {
+    if (patch[key] !== undefined) out[key] = Boolean(patch[key]);
+  }
+  for (const [key, min, max] of DECISION_NUM_KEYS) {
+    if (patch[key] !== undefined) {
+      const n = Number(patch[key]);
+      out[key] = Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : base[key];
+    }
+  }
+  if (patch.baseUrl !== undefined) out.baseUrl = String(patch.baseUrl || '').trim();
+  if (patch.model !== undefined) out.model = String(patch.model || '').trim();
+  if (patch.apiKey !== undefined) out.apiKey = String(patch.apiKey || '').trim();
+  if (patch.disabledPoints !== undefined) {
+    const list = Array.isArray(patch.disabledPoints) ? patch.disabledPoints : [];
+    out.disabledPoints = [...new Set(list.map((p) => String(p || '').trim()).filter(Boolean))];
+  }
+  return out;
+}
+
 function positiveIntOrDefault(v, fallback) {
   const n = Number(v);
   if (!Number.isFinite(n) || n <= 0) return fallback;
@@ -1000,6 +1058,59 @@ export class Store {
     //   "哪些在飞的活该收到"规矩变了"的通知"，不能等事件发出去再回头查旧值。
     const change = policyChange(prev, next);
     bus.emit('event', { t: 'policy.updated', policy: next, change });
+    return next;
+  }
+
+  // ---------- 快速决策路由（Jev） ----------
+
+  /**
+   * 读决策设置。
+   *
+   * key 存的是密文（和站点口令同一套加密），这里解密后返回给内部调用方；
+   * 对外的 REST 接口要自己把 key 抹掉（见 http.js 的 publicDecision）。
+   */
+  decision() {
+    const saved = this.state.decision ?? {};
+    const merged = normalizeDecision(saved, DECISION_DEFAULT);
+    if (merged.apiKey) {
+      if (this.secretsKey) {
+        try {
+          merged.apiKey = decrypt(merged.apiKey, this.secretsKey);
+        } catch {
+          // 解不开就当没配 —— 让它走回原逻辑，而不是拿一段密文去请求
+          merged.apiKey = '';
+        }
+      }
+    }
+    return merged;
+  }
+
+  /** 给框架用的判别信息：不含解密后的 key，只判断"能不能走"。 */
+  decisionRoute() {
+    const d = this.decision();
+    return {
+      enabled: d.enabled,
+      baseUrl: d.baseUrl,
+      apiKey: d.apiKey,
+      model: d.model,
+      noulThreshold: d.noulThreshold,
+      carefulMinConfidence: d.carefulMinConfidence,
+      disabledPoints: d.disabledPoints,
+    };
+  }
+
+  /** 改决策设置。apiKey 传空字符串表示"清掉"，不传表示"不动"。 */
+  updateDecision(patch = {}) {
+    const prev = this.decision();
+    const next = normalizeDecision(patch, prev);
+    const stored = {
+      ...next,
+      apiKey:
+        this.secretsKey && next.apiKey ? encrypt(next.apiKey, this.secretsKey) : next.apiKey,
+    };
+    this.state.decision = stored;
+    this.scheduleSave();
+    bus.emit('event', { t: 'decision.updated', enabled: next.enabled });
     return next;
   }
 

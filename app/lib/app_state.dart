@@ -146,6 +146,21 @@ class AppState extends ChangeNotifier {
     'requireProof': false,
   };
 
+  /// 快速决策路由（Jev）的设置。
+  ///
+  /// 默认关闭。开着的时候一部分"小判断"会走决策模型而不是完整推理，
+  /// 关着就一切照旧 —— 所以这个开关**不是必须配的**，
+  /// 界面不能因为它没配就拦着用户干活。
+  Map<String, dynamic> decision = const {
+    'enabled': false,
+    'baseUrl': '',
+    'model': '',
+    'hasApiKey': false,
+    'noulThreshold': 0.5,
+    'carefulMinConfidence': 0.75,
+    'disabledPoints': <String>[],
+  };
+
   /// 用户自己叫什么。
   /// bot 的系统提示里会用这个名字称呼你（服务端拼进去的），
   /// 界面上左上角显示它 —— 显示主机名没意义，那是机器的名字，不是人的。
@@ -1259,6 +1274,7 @@ class AppState extends ChangeNotifier {
       groupLimits = ((res['groupLimits'] as Map?) ?? const {}).map(
         (k, v) => MapEntry('$k', (v as num?)?.toInt() ?? 0),
       );
+      decision = ((res['decision'] as Map?) ?? decision).cast<String, dynamic>();
       tasks = ((res['tasks'] as List?) ?? const [])
           .whereType<Map<String, dynamic>>()
           .map(TaskItem.fromJson)
@@ -1672,6 +1688,43 @@ class AppState extends ChangeNotifier {
     } catch (err) {
       lastError = '$err';
       _notify();
+    }
+  }
+
+  /// 改快速决策设置。
+  /// 返回服务端确认后的设置（key 已被抹掉），失败返回 null。
+  Future<Map<String, dynamic>?> saveDecision(Map<String, dynamic> patch) async {
+    try {
+      final client = api;
+      if (client == null) return null;
+      final res = await client.patch('/api/decision', patch);
+      final saved = (res['decision'] as Map?)?.cast<String, dynamic>();
+      await refresh();
+      return saved;
+    } catch (err) {
+      lastError = '$err';
+      _notify();
+      return null;
+    }
+  }
+
+  /// 测一下决策服务通不通（只读模型列表，不产生推理费用）。
+  Future<Map<String, dynamic>?> probeDecision({
+    String? baseUrl,
+    String? apiKey,
+  }) async {
+    try {
+      final body = <String, dynamic>{};
+      if (baseUrl != null && baseUrl.isNotEmpty) body['baseUrl'] = baseUrl;
+      if (apiKey != null && apiKey.isNotEmpty) body['apiKey'] = apiKey;
+      final client = api;
+      if (client == null) return null;
+      final res = await client.post('/api/decision/probe', body);
+      return (res['probe'] as Map?)?.cast<String, dynamic>();
+    } catch (err) {
+      lastError = '$err';
+      _notify();
+      return null;
     }
   }
 

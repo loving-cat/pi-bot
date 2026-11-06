@@ -43,6 +43,9 @@
 | `model-capacity.js` | 同 ID 模型元数据合并、容量优先级与正整数/最大输出校验（纯逻辑） |
 | `model-thinking.js` | 思考强度：`reasoning` / 七档 `thinkingLevelMap` / 上游 `thinkingFormat`，含预设与校验（纯逻辑） |
 | `model-dispatch.js` | 主控模型目录、默认规则兼容、目录变化的会话刷新及团队成员模型冲突预检 |
+| `model-recommend.js` | 按"活的性质"在已启用模型里排序推荐：Jev 判性质、本地按能力挑模型 |
+| `decision-router.js` | 快速决策路由框架：决策点注册表（权重/问题/校验器），开 Jev 走它、没开走原逻辑 |
+| `jev-client.js` | TypeSafe/Jev 决策模型的传输层：请求组装、failure 归类、答案解析、探活 |
 | `mcp.js` | MCP 服务库：规范化、校验、转 pi 配置、测连接（纯逻辑 + 一个 probe） |
 | `mcp-hook.js` | 把用户配的 MCP 按 bot 选择注册进会话；给主控的能力清单 |
 | `mcp-capability.js` | MCP 能力画像：按名字/命令推断服务属于哪类能力，按任务文字推荐该挂哪几个（纯逻辑） |

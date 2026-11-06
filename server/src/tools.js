@@ -17,6 +17,7 @@ import { bus } from './bus.js';
 import { config } from './config.js';
 import { store } from './store.js';
 import { menuText, resolveMenu, menuEntries, matchMenuEntry } from './model-menu.js';
+import { recommendModel } from './model-recommend.js';
 import { extractText } from './extract.js';
 import { webSearch, webFetch } from './web.js';
 import { runEgoScript, EGO_USAGE_GUIDE } from './ego-browser.js';
@@ -1292,6 +1293,39 @@ export function buildChiefTools({ runner, health, roomId, botId }) {
             '\n\n按任务、上下文容量、用户指定和已知健康状态选择；不要仅按列表顺序，也不要把未验证当作不可用。',
           { menu: menuEntries().map((m) => m.alias) },
         ),
+    }),
+
+    defineTool({
+      name: 'recommend_model',
+      label: '问问该用什么模型',
+      description:
+        '给一段"这个成员要干什么"的描述，让决策模型判断活的性质（重推理/写代码/查资料/写文案/简单活），' +
+        '再按能力在已启用的模型里挑一个。\n' +
+        '⚠️ 这只是**建议** —— 用户明确指定了模型就听用户的，别用这个覆盖。\n' +
+        '决策模型没开时它会返回按目录排序的起点，也一样能用。',
+      parameters: Type.Object({
+        task: Type.String({ description: '这个成员要干的活，一两句话' }),
+        botName: Type.Optional(Type.String({ description: '成员名字，帮助判断职责' })),
+        botRole: Type.Optional(Type.String({ description: '成员的职位/角色' })),
+      }),
+      execute: async (_toolCallId, params) => {
+        const rec = await recommendModel(
+          { task: params.task, botName: params.botName || '', botRole: params.botRole || '' },
+          store.decisionRoute(),
+        );
+        const lines = [];
+        if (rec.ok) {
+          lines.push(`建议用：${rec.pick}`);
+          if (rec.kind) lines.push(`（活的性质：${rec.kind}）`);
+        } else {
+          lines.push(`按目录顺序推荐：${rec.pick ?? '（没有可用模型）'}`);
+          lines.push(`（决策模型没参与：${rec.why}）`);
+        }
+        if (rec.alternatives?.length) {
+          lines.push(`备选：${rec.alternatives.slice(0, 3).join('、')}`);
+        }
+        return ok(lines.join('\n'), { pick: rec.pick, source: rec.source });
+      },
     }),
 
     defineTool({

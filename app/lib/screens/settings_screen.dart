@@ -13,6 +13,7 @@ import '../l10n/l10n.dart';
 import '../widgets/language_card.dart';
 import '../window_chrome.dart';
 import '../widgets/toast.dart';
+import '../widgets/decision_section.dart';
 import '../widgets/group_limits_section.dart';
 import '../widgets/user_name_section.dart';
 import '../widgets/model_group_editor.dart';
@@ -395,6 +396,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       const SizedBox(height: 22),
       // 群聊轮次：防 bot 解不了就互相聊个没完
       const GroupLimitsSection(),
+
+      const SizedBox(height: 22),
+      // 快速决策：把一批小判断交给专用决策模型（默认关闭）
+      const DecisionSection(),
 
       const SizedBox(height: 22),
       _SectionTitle(
