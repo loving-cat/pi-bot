@@ -281,6 +281,7 @@ await test('store: 非法颜色 / 非法形状退回 null（让客户端按 id �
 //   所以这四个数必须能被用户/总经理覆盖，而且要能只覆盖其中一部分。
 // ---------------------------------------------------------------------------
 const { withCapacity, applyCompactionBudget } = await import('../src/context-budget.js');
+const { config } = await import('../src/config.js');
 
 const FAKE_MODEL = {
   provider: 'cline',
@@ -308,12 +309,31 @@ await test('容量覆盖：非法值当没设', () => {
   assert.equal(m2.maxTokens, 161_000, '字符串数字要认');
 });
 
-await test('压缩预算：bot 上没设 → 不覆盖，交给 pi 自己的默认', () => {
+await test('压缩预算：bot 上没设 → 用全局默认（保留原文 6 万）', () => {
+  // 全局默认现在是 keepRecentTokens=60000，而不是 pi 自带的 20000 ——
+  // 压缩时多留 4 万原文，因为摘要会丢掉工具结果的细节。
   const calls = [];
   const session = { settingsManager: { applyOverrides: (o) => calls.push(o) } };
   const r = applyCompactionBudget(session, {});
-  assert.equal(r, null);
-  assert.equal(calls.length, 0, '一层都没设就别去动 settings');
+  assert.equal(r.keepRecentTokens, 60_000);
+  assert.equal(calls.length, 1, '全局默认值也要真的下发');
+});
+
+await test('压缩预算：全局默认关掉时（config 全 null）才交给 pi', () => {
+  // 这条守住回退路径：真的一层都没设，就别去动 settings
+  const calls = [];
+  const session = { settingsManager: { applyOverrides: (o) => calls.push(o) } };
+  const saved = { reserve: config.reserveTokens, keep: config.keepRecentTokens };
+  config.reserveTokens = null;
+  config.keepRecentTokens = null;
+  try {
+    const r = applyCompactionBudget(session, {});
+    assert.equal(r, null);
+    assert.equal(calls.length, 0);
+  } finally {
+    config.reserveTokens = saved.reserve;
+    config.keepRecentTokens = saved.keep;
+  }
 });
 
 await test('压缩预算：bot 上设了 → 按会话覆盖（不动全局 settings.json）', () => {

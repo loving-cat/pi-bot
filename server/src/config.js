@@ -187,30 +187,42 @@ export const config = {
    * 触发条件：contextTokens > contextWindow - reserveTokens。
    */
   reserveTokens: Number(process.env.PI_BOT_RESERVE_TOKENS || 0) || null,
-  keepRecentTokens: Number(process.env.PI_BOT_KEEP_RECENT_TOKENS || 0) || null,
+  /**
+   * 压缩时保留多少 token 的原文（默认 60000，pi 自带默认是 20000）。
+   *
+   * 为什么调高：压缩会把老对话总结成摘要，而摘要必然丢细节 ——
+   * 实测 pi 的摘要提示词虽要求"保留精确路径/函数名/错误信息"，
+   * 但工具结果超过 2000 字符的部分在进摘要前就被截掉了（pi 的
+   * TOOL_RESULT_MAX_CHARS），实测一个群 bot 的会话里 84% 是工具结果。
+   *
+   * 保留 6 万而不是 2 万：压缩后多留 4 万原文，代价是上下文大一点，
+   * 换来的是"最近做的事还能原样看到"——这比摘要里的概括可靠得多。
+   */
+  keepRecentTokens: Number(process.env.PI_BOT_KEEP_RECENT_TOKENS || 0) || 60_000,
   /**
    * 主动压缩阈值（0-1）。到这条线就先压缩成摘要，不等 pi 的 98% 触发线。
    *
-   * 为什么：pi 默认到 contextWindow - reserveTokens（1M 窗口下约 98%）才压，
+   * ## 为什么自己做这一层
+   *
+   * pi 默认到 contextWindow - reserveTokens（1M 窗口下约 98%）才压，
    * 压完只剩几个点余量 —— 群聊里读一份数据就回到 100%，又压，循环。
-   * 提前到 80% 压，压完通常只剩 5% 左右，能撑很多轮。
+   *
+   * ## 为什么是 0.6 而不是 0.8 或 0.4
+   *
+   *   0.8 —— 实测**几乎不会触发**：主控会话积到 40.8 万 token
+   *          （1M 窗口的 40.8%）就再也没涨过，离 80 万还差 39 万。
+   *          等于不压缩，白留着 40 万上下文每轮重算。
+   *
+   *   0.4 —— 能压，但触发得比需要更早。实测主控每轮上下文增长：
+   *          中位 390 / 平均 1,248 / P90 3,550 token。
+   *          压到 40% 后要涨回触发线约 302 轮，而压到 60% 约 461 轮。
+   *          压缩必然丢细节（工具结果超 2000 字符的部分进不了摘要），
+   *          所以能晚压就晚压。
+   *
+   *   0.6 —— 60 万 token 触发。真正撑不住之前压一次，
+   *          又不会在还很宽裕的时候就把细节收走。
    */
-  /**
-   * 主动压缩阈值（0-1）。到这条线就先压缩成摘要，不等 pi 的 98% 触发线。
-   *
-   * 原来写的是 0.8，但**实际几乎不会触发** —— 实测主控会话积到 40.8 万
-   * token（占 1M 窗口 40.8%）就再也没涨过，离 80 万还很远。
-   * 而每轮都在按全量重算 40 万 token：未命中缓存时 9.5 秒一轮。
-   *
-   * 现在降到 0.4：
-   *   · 40 万 token 时就会压一次，压完降到几万；
-   *   · 未命中缓存的单轮从 9.5s 降到 ~4s（实测 40 万 = 9.5s，5 万 = 3.8s）；
-   *   · 群聊里每个 bot 都在这个量级，收益是乘出来的。
-   *
-   * 为什么不再低（比如 0.2）：压得太勤会把"刚讨论完的细节"过早收进摘要，
-   * 而摘要必然丢信息 —— 用户会觉得 bot 忘事。
-   */
-  compactAtPercent: Number(process.env.PI_BOT_COMPACT_AT_PERCENT || 0.4),
+  compactAtPercent: Number(process.env.PI_BOT_COMPACT_AT_PERCENT || 0.6),
   /** 关掉自动压缩（PI_BOT_AUTO_COMPACT=0）。关掉之后长会话会直接撞上下文上限 */
   autoCompact: process.env.PI_BOT_AUTO_COMPACT !== '0',
   /** 单轮 agent 运行的硬超时（毫秒），0 = 不限 */

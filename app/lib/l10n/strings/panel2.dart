@@ -257,8 +257,9 @@ const areaPanel2 = StringArea(
     'ctx.used': '已占用',
     'ctx.autoCompact': '自动压缩',
     'ctx.autoCompactOn': '开 —— 接近上限时自动总结之前的对话，历史消息仍保留。',
-    'ctx.compactNote': '占用到 40% 就会自动总结之前的对话，头部显示「压缩中」。'
-        '历史消息仍保留，只是上下文里换成摘要。想让它装得更多，可以给这个 bot 单独调预算。',
+    'ctx.compactNote': '占用到 60% 会自动把之前的长对话收成摘要，头部显示「压缩中」。'
+        '历史消息仍保留，只是喂给模型的上下文换成摘要 + 最近 6 万 token 原文。'
+        '想让它装得更多，可以给这个 bot 单独调预算。',
     'ctx.compacted': '上下文压缩了（前面的对话已总结）',
     'ctx.compactedFrom': '上下文压缩了：{before}k（前面的对话已总结）',
     'ctx.compactedSaved': '上下文压缩了：{before}k → 省下 {saved}k（前面的对话已总结）',
@@ -647,8 +648,9 @@ const areaPanel2 = StringArea(
     'ctx.used': 'Used',
     'ctx.autoCompact': 'Auto-compact',
     'ctx.autoCompactOn': 'On — summarizes earlier turns when nearing the limit. History is kept.',
-    'ctx.compactNote': 'Auto-summarizes at 40% used; the header shows "Compacting" while it runs. '
-        'History is kept — only the context is swapped for a summary. To give it more room, raise this bot\'s budget.',
+    'ctx.compactNote': 'Auto-summarizes at 60% used; the header shows "Compacting" while it runs. '
+        'History is kept — the model gets a summary plus the last 60k tokens verbatim. '
+        'To give it more room, raise this bot\'s budget.',
     'ctx.compacted': 'Context compacted (earlier turns summarized)',
     'ctx.compactedFrom':
         'Context compacted from {before}k (earlier turns summarized)',
