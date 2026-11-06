@@ -88,7 +88,8 @@ test('同分时按目录顺序，结果稳定', () => {
 // ---------------------------------------------------------------------------
 
 test('Jev 关着 → fallback，但仍给一个起点', async () => {
-  const r = await recommendModel({ task: '随便干点活' }, OFF);
+  // 注入候选，不依赖真实数据目录（CI 上没有任何模型组）
+  const r = await recommendModel({ task: '随便干点活' }, OFF, { entries: ENTRIES });
   assert.equal(r.ok, false);
   assert.equal(r.source, 'fallback');
   assert.ok(r.pick, '关着也要给一个起点，否则主控无从下手');
@@ -100,6 +101,7 @@ test('Jev 给的性质决定挑哪个模型', async () => {
     { task: '转个格式' },
     ON,
     {
+      entries: ENTRIES,
       fetchImpl: async () => ({
         ok: true,
         status: 200,
@@ -123,6 +125,7 @@ test('Jev 判错（选项名非法）→ 落回 fallback', async () => {
     { task: 'x' },
     ON,
     {
+      entries: ENTRIES,
       fetchImpl: async () => ({
         ok: true,
         status: 200,
@@ -142,6 +145,7 @@ test('Jev 网络失败 → 落回 fallback，不阻塞分配', async () => {
     { task: 'x' },
     ON,
     {
+      entries: ENTRIES,
       fetchImpl: async () => {
         throw new Error('ECONNRESET');
       },

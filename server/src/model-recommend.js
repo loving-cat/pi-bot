@@ -100,12 +100,19 @@ export function rankCandidates(kind, { entries = [], needsLongContext = false, n
 /**
  * 给一个任务/成员出模型建议。
  *
+ * [opts.entries] 可注入候选模型 —— 单测用，避免依赖真实数据目录。
+ * 不传则读当前已启用的模型组。
+ *
  * @returns {Promise<{ok:boolean, source:'jev'|'fallback', pick?:string,
  *                    alternatives?:string[], kind?:string, why:string,
  *                    failure?:string, error?:string}>}
  */
-export async function recommendModel({ task = '', botName = '', botRole = '' } = {}, settings = {}, { fetchImpl } = {}) {
-  const entries = menuEntries();
+export async function recommendModel(
+  { task = '', botName = '', botRole = '' } = {},
+  settings = {},
+  { fetchImpl, entries: injected } = {},
+) {
+  const entries = Array.isArray(injected) ? injected : menuEntries();
   if (!entries.length) {
     return { ok: false, source: 'fallback', why: '没有已启用的模型组' };
   }
@@ -118,7 +125,12 @@ export async function recommendModel({ task = '', botName = '', botRole = '' } =
     { fetchImpl },
   );
   if (!decision.ok) {
-    const fallback = rankCandidates('routine', { entries });
+    // 降级也要给起点，否则主控拿到"没建议"还得自己再查一遍目录
+    const fallback = rankCandidates('routine', {
+      entries,
+      needsLongContext: false,
+      needsSpeed: false,
+    });
     return {
       ok: false,
       source: 'fallback',
