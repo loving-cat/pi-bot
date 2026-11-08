@@ -1,0 +1,16 @@
+app/lib/app_state.dart
+  h_c2e638ff76b3b9 2143-2148
+app/test/task_run_merge_test.dart
+  h_c2e638ff76b3b9 2-3,148-160
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "581e1c811decaa39f8bb431a2fcb53bfc1c1561c",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
