@@ -1,0 +1,16 @@
+app/lib/app_state.dart
+  h_c2e638ff76b3b9 4,156-159,162-200,204,206,208,211,214-241,505-506,2695-2697
+app/test/draft_persistence_test.dart
+  h_c2e638ff76b3b9 1-55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b006565df33ab6c0e533a728eda5da5203fd7528",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
