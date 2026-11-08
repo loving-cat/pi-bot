@@ -38,6 +38,7 @@ import {
   PHASE,
   REJECT,
   STATE,
+  STATE_FIELDS,
   STATE_TEXT,
   STOP,
   WAIT_KIND,
@@ -50,6 +51,7 @@ import {
   reject,
 } from './task-contract.js';
 import { validateAttemptResult, isCompletionCandidate } from './task-attempt.js';
+import { checkCanRun } from './task-budget.js';
 import { validateGoal, goalChanged } from './task-goal.js';
 import {
   ATTEMPT_STATE,
@@ -191,6 +193,26 @@ export function validateTaskRun(run) {
   const flags = validateFlags(run.flags);
   if (!flags.ok) return flags;
 
+  // ★ 状态与在途尝试的一致性（STATE_FIELDS 的真正执行点）。
+  //
+  //   这张表原来没有任何调用方：completed / cancelled 挂着在途尝试、
+  //   verifying 挂着在途尝试都能通过校验。表写了却没人查，
+  //   下一位维护者会按注释以为得到了保护。
+  const spec = STATE_FIELDS[run.state];
+  if (spec) {
+    const active = activeAttemptOf(run);
+    if (spec.requireActive && !active) {
+      return reject(REJECT.badField, 'state', `「${STATE_TEXT[run.state]}」必须有在途执行，实际没有`);
+    }
+    if (!spec.allowActive && active) {
+      return reject(
+        REJECT.badField,
+        'attempts',
+        `「${STATE_TEXT[run.state]}」不允许有在途执行（${active.attemptId}）`,
+      );
+    }
+  }
+
   // ★ 状态必须等于派生值 —— 不允许"字段说一套、状态说另一套"
   const derived = deriveState(run);
   if (derived !== run.state) {
@@ -323,18 +345,28 @@ export function reduceTaskRun(run, event) {
   if (event.revision < 1) {
     return reject(REJECT.badField, 'event.revision', 'revision 必须是正整数');
   }
-  if (event.revision < expectRevision) {
+  // ★ 结算事件按**记录自己的版本**归档。
+  //
+  //   推进器是在当前版本下发起结算的（它拿的是 run.revision），
+  //   但这次执行本身属于旧版本 —— 改版后旧尝试的结果仍然必须能落地，
+  //   否则「旧结果按它自己的版本归档」这条设计根本无法实现：
+  //   每次改版都会留下一批永远结算不了的尝试。
+  //
+  //   所以这里不再用「事件版本 > 记录版本」判 future，
+  //   而是以记录版本为准，只保留「迟到」判断（事件版本 < 记录版本）。
+  const effectiveRevision = isSettlement ? record.revision : event.revision;
+  if (effectiveRevision < expectRevision) {
     return reject(
       REJECT.staleRevision,
       'event.revision',
-      `事件针对第 ${event.revision} 版目标，这里已是第 ${expectRevision} 版（迟到）`,
+      `事件针对第 ${effectiveRevision} 版目标，这里已是第 ${expectRevision} 版（迟到）`,
     );
   }
-  if (event.revision > expectRevision) {
+  if (effectiveRevision > expectRevision) {
     return reject(
       REJECT.futureRevision,
       'event.revision',
-      `事件针对第 ${event.revision} 版目标，但这里只有第 ${expectRevision} 版`,
+      `事件针对第 ${effectiveRevision} 版目标，但这里只有第 ${expectRevision} 版`,
     );
   }
 
@@ -681,7 +713,7 @@ function planDispatch(run, event) {
     );
   }
 
-  const budget = checkBudget(run);
+  const budget = checkBudget(run, event.at);
   if (!budget.ok) return budget;
 
   return {
@@ -695,20 +727,21 @@ function planDispatch(run, event) {
   };
 }
 
-function checkBudget(run) {
+function checkBudget(run, at) {
   const budget = run.budget;
   if (!budget) return ok();
-  const limit = budget.maxRuns;
-  if (limit === null || limit === undefined) return ok();
-  const used = (run.attempts ?? []).length;
-  if (used >= limit) {
-    return reject(
-      REJECT.illegalSource,
-      'budget',
-      `本任务预算已用尽（${used}/${limit}），不能继续派发`,
-    );
-  }
-  return ok();
+  // ★ 用 task-budget 的统一判定，不要在这里再写一份。
+  //
+  //   原来这里只看 attempts.length：忽略 deadlineAt（过期任务照样能派），
+  //   而且与 checkCanRun 的结论经常相反（一个说还能跑、一个说用尽了）。
+  //   预算只能有一个判定点。
+  const gate = checkCanRun(budget, {
+    at: isTime(at) ? at : run.updatedAt,
+    runningCount: 0,
+    usedFromLedger: (run.attempts ?? []).length,
+  });
+  if (gate.ok) return ok();
+  return reject(REJECT.illegalSource, 'budget', gate.text ?? gate.code ?? '预算不允许继续派发');
 }
 
 // ---------------------------------------------------------------------------
@@ -811,6 +844,30 @@ function planRejectGate(run, event, kind, reasonText) {
   const index = gates.findIndex((g) => g.kind === kind);
   if (index < 0) {
     return reject(REJECT.waitMismatch, 'openGates', `当前没有在等「${WAIT_TEXT[kind]}」`);
+  }
+  // ★ 拒绝同样要核对引用：拒绝的是**哪一件事**。
+  //
+  //   原来只按 kind 找第一个门槛就移除 —— 于是一个完全不相干的
+  //   approvalId 也能把任意审批门槛解除并把任务阻塞。
+  //   批准和拒绝对「解除的是哪一件事」应当一样严格。
+  const gate = gates[index];
+  const provided = eventRefFor(kind, event);
+  if (!isId(gate.ref)) {
+    return reject(REJECT.badField, 'openGates.ref', '登记的门槛没有可核对的引用');
+  }
+  if (!isId(provided)) {
+    return reject(
+      REJECT.missingField,
+      refFieldName(kind),
+      '拒绝等待必须带上是哪一件事的引用（否则任何拒绝都能解除门槛）',
+    );
+  }
+  if (gate.ref !== provided) {
+    return reject(
+      REJECT.waitMismatch,
+      refFieldName(kind),
+      `拒绝的是 ${provided}，当前等的是 ${gate.ref}`,
+    );
   }
   return {
     ok: true,

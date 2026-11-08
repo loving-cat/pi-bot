@@ -106,7 +106,17 @@ export function activeAttemptOf(run) {
 
 /** 未结算的尝试（registered + abandoned）。 */
 export function pendingAttemptsOf(run) {
-  return (run?.attempts ?? []).filter((a) => a.state !== ATTEMPT_STATE.settled);
+  // ★ abandoned 不算「未结算」。
+  //
+  //   abandoned 的语义是「这次执行被主动放弃了」（暂停/阻塞/改版时打的标记），
+  //   它已经注定不会再有结果，不构成新派发的阻碍。
+  //
+  //   把它算成未结算会造成死锁：用户点一次「暂停 → 继续」，
+  //   账本就留一条 abandoned，之后再派发一律 too_many_pending，
+  //   而唯一能清掉它的 attempt_closed 没有任何生产者 —— 任务从此再也跑不动。
+  return (run?.attempts ?? []).filter(
+    (a) => a.state !== ATTEMPT_STATE.settled && a.state !== ATTEMPT_STATE.abandoned,
+  );
 }
 
 /**

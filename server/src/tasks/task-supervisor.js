@@ -291,7 +291,8 @@ export function createTaskSupervisor({
     const root = rootId === taskRun.id ? taskRun : read(rootId);
     if (!root?.budget) return Number.POSITIVE_INFINITY;
     if (root.budget.maxRuns === null || root.budget.maxRuns === undefined) return Number.POSITIVE_INFINITY;
-    return remainingRuns(root.budget);
+    // 以账本为权威：工厂已不再写 budget.usedRuns。
+    return remainingRuns(root.budget, root.attempts?.length ?? 0);
   }
 
   /**

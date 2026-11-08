@@ -115,10 +115,25 @@ export function validateBudget(budget) {
   return { ok: true };
 }
 
-/** 还能跑几次。不限额返回 null。 */
-export function remainingRuns(budget) {
+/**
+ * 还能跑几次。不限额返回 null。
+ *
+ * @param {object} budget
+ * @param {number} [usedFromLedger] 账本里已登记的执行数（权威来源）
+ *
+ * ★ 为什么必须有第二个参数：
+ *
+ *   工厂已经不再写 budget.usedRuns（累计量从账本派生，存一份必然不同步），
+ *   但这里原来只读 usedRuns —— 于是账本已经跑了 2 次，面板仍显示
+ *   「0/2，剩余 2 次」，checkCanRun 也一直放行，与归约器的判定相反。
+ *   传了账本数就以账本为准；没传时退回旧行为（兼容既有调用方）。
+ */
+export function remainingRuns(budget, usedFromLedger) {
   if (!budget || budget.maxRuns === null || budget.maxRuns === undefined) return null;
-  return Math.max(0, budget.maxRuns - (budget.usedRuns ?? 0));
+  const used = Number.isFinite(Number(usedFromLedger))
+    ? Number(usedFromLedger)
+    : (budget.usedRuns ?? 0);
+  return Math.max(0, budget.maxRuns - used);
 }
 
 /**
@@ -126,7 +141,7 @@ export function remainingRuns(budget) {
  *
  * 顺序即用户可理解的解释顺序：先看是不是过点了，再看有没有名额，最后看槽位。
  */
-export function checkCanRun(budget, { at, runningCount = 0 } = {}) {
+export function checkCanRun(budget, { at, runningCount = 0, usedFromLedger } = {}) {
   if (!budget) return { ok: true };
 
   if (isTime(budget.deadlineAt) && Number.isFinite(at) && at > budget.deadlineAt) {
@@ -137,12 +152,15 @@ export function checkCanRun(budget, { at, runningCount = 0 } = {}) {
     );
   }
 
-  const left = remainingRuns(budget);
+  const used = Number.isFinite(Number(usedFromLedger))
+    ? Number(usedFromLedger)
+    : (budget.usedRuns ?? 0);
+  const left = remainingRuns(budget, used);
   if (left !== null && left <= 0) {
     return reject(
       BUDGET_REJECT.exhausted,
       'budget.maxRuns',
-      `执行次数已用尽（${budget.usedRuns}/${budget.maxRuns}）`,
+      `执行次数已用尽（${used}/${budget.maxRuns}）`,
     );
   }
 
@@ -170,7 +188,7 @@ export function chargeRun(budget) {
     return reject(
       BUDGET_REJECT.exhausted,
       'budget.maxRuns',
-      `执行次数已用尽（${budget.usedRuns}/${budget.maxRuns}）`,
+      `执行次数已用尽（${Number.isFinite(Number(usedFromLedger)) ? Number(usedFromLedger) : (budget.usedRuns ?? 0)}/${budget.maxRuns}）`,
     );
   }
   return { ok: true, budget: next };
@@ -208,7 +226,7 @@ export function extendBudget(budget, extraRuns) {
 /**
  * 给用户/界面的预算口径说明。
  */
-export function describeBudget(budget) {
+export function describeBudget(budget, usedFromLedger) {
   if (!budget) {
     return {
       limited: false,
@@ -218,11 +236,11 @@ export function describeBudget(budget) {
     };
   }
   const lines = [];
-  const left = remainingRuns(budget);
+  const left = remainingRuns(budget, usedFromLedger);
   if (left === null) {
-    lines.push(`执行次数不限额（已执行 ${budget.usedRuns ?? 0} 次）`);
+    lines.push(`执行次数不限额（已执行 ${Number.isFinite(Number(usedFromLedger)) ? Number(usedFromLedger) : (budget.usedRuns ?? 0)} 次）`);
   } else {
-    lines.push(`执行次数 ${budget.usedRuns ?? 0}/${budget.maxRuns}，剩余 ${left} 次`);
+    lines.push(`执行次数 ${Number.isFinite(Number(usedFromLedger)) ? Number(usedFromLedger) : (budget.usedRuns ?? 0)}/${budget.maxRuns}，剩余 ${left} 次`);
   }
   if (isPositiveInt(budget.extraRuns)) {
     lines.push(`其中追加 ${budget.extraRuns} 次`);

@@ -373,8 +373,15 @@ export class TaskRunStore {
         };
       }
     } else if (taskRun.budget && Array.isArray(taskRun.attempts)) {
-      // 根任务：账本里的执行必须都扣过额
-      const charged = taskRun.budget.usedRuns ?? 0;
+      // ★ 只做「两个计数器都在时必须一致」的核对。
+      //
+      //   累计执行量已经从账本派生（工厂不再写 usedRuns），
+      //   这里原来把 usedRuns 缺失当成 0 去和账本比，
+      //   于是任何「账本有记录」的任务都写不进去 —— 包括
+      //   「结果未知 → 核验 → 重新派发」这条主恢复链路。
+      //
+      //   现在的语义：usedRuns 存在就必须 >= 账本条数；不存在就不比。
+      const charged = taskRun.budget.usedRuns;
       const logged = taskRun.attempts.length;
       if (Number.isInteger(charged) && charged < logged) {
         return {

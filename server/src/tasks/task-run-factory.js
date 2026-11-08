@@ -186,6 +186,23 @@ function normalizeBudget(budget, { isSubtask }) {
     }
   }
   out.extraRuns = 0;
+  // ★ 保留并发上限。
+  //
+  //   task-budget 把 concurrencyLimit 列为三种准确可数限制之一，
+  //   checkCanRun 也确实实现了它 —— 但这里从不写它，
+  //   于是调用方以为自己设了并发上限，实际永远不生效。
+  //   要么支持、要么报错，不能静默丢弃。
+  if (budget.concurrencyLimit !== undefined) {
+    if (budget.concurrencyLimit === null) {
+      out.concurrencyLimit = null;
+    } else {
+      const c = Number(budget.concurrencyLimit);
+      if (!Number.isInteger(c) || c <= 0) {
+        return reject(REJECT.badField, 'budget.concurrencyLimit', 'concurrencyLimit 必须是正整数或 null');
+      }
+      out.concurrencyLimit = c;
+    }
+  }
   // ★ 第五轮清理：不再写 usedRuns。
   //   累计执行量从账本派生（attempts.length），存一份必然与账本不同步 ——
   //   那正是第三轮 G02 的根因。留着这个字段只会让诊断视图读到假数据。
