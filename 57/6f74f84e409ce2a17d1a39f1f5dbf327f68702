@@ -1,0 +1,21 @@
+app/lib/request_outbox.dart
+  s_06973911ad2cd6::t_95921d68425990 1-158
+app/lib/ws_frame.dart
+  s_06973911ad2cd6::t_a1d476b028071b 1-36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "576f74f84e409ce2a17d1a39f1f5dbf327f68702",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
