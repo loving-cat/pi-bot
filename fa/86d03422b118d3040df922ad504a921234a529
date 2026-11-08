@@ -1,0 +1,24 @@
+server/src/tasks/attempt-ledger.js
+  h_c2e638ff76b3b9 109-119
+server/src/tasks/task-budget.js
+  h_c2e638ff76b3b9 118-131,133-136,144,155-158,163,191,229,239,241,243
+server/src/tasks/task-reduce.js
+  h_c2e638ff76b3b9 41,54,196-215,348-358,362,365,369,716,730,733-744,848-871
+server/src/tasks/task-run-factory.js
+  h_c2e638ff76b3b9 189-205
+server/src/tasks/task-run-store.js
+  h_c2e638ff76b3b9 376-384
+server/src/tasks/task-supervisor.js
+  h_c2e638ff76b3b9 294-295
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fa86d03422b118d3040df922ad504a921234a529",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
