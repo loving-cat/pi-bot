@@ -1,0 +1,31 @@
+server/src/attachments.js
+  s_06973911ad2cd6::t_90670c3029b014 157-169
+server/src/http.js
+  s_06973911ad2cd6::t_0fdceb56637196 57-60,93-94,267-273,474-481,589-591,1405-1426,1428-1473,1510
+server/src/providers.js
+  s_06973911ad2cd6::t_48b9a529cedd2d 18
+server/src/relay/agent.js
+  s_06973911ad2cd6::t_8cb01d90b87c2a 39-47,273,282
+server/src/role-tools.js
+  s_06973911ad2cd6::t_0d7d721ab3becd 13-15,37,54-58
+server/src/server-main.js
+  s_06973911ad2cd6::t_60ee15838101c6 13-15,92-95,160-166,179
+server/src/ws.js
+  s_06973911ad2cd6::t_0642ca2d18d419 8,13-16,21-86,89-103,145-174,191-211
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "98d4ddf1cb7fbee39e99678e54d7b6b501bc4795",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
