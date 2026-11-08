@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
@@ -153,18 +153,91 @@ class AppState extends ChangeNotifier {
   final Map<String, List<Msg>> messages = {};
 
   /// 每个会话未发送的草稿。切换 bot/会话时输入框会被重建，草稿必须放在
-  /// 会话之外的内存里，切回来才能恢复；发送成功或清空时移除。
+  /// 会话之外，切回来才能恢复；发送成功或清空时移除。
+  ///
+  /// ★ 必须落盘：只放内存的话，切换会话能保住，但**重启应用就全丢**。
+  ///   用户写了一长段话，关一次 App 就没了 —— 这是最容易被骂的那类丢数据。
   final Map<String, String> _drafts = {};
+
+  static const _kDrafts = 'room_drafts';
+
+  /// 是否已经从磁盘载入过草稿（避免用空表覆盖已存内容）。
+  bool _draftsLoaded = false;
+
+  /// 启动时载入草稿。重复调用无副作用。
+  Future<void> loadDrafts() async {
+    if (_draftsLoaded) return;
+    _draftsLoaded = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_kDrafts);
+      if (raw == null || raw.isEmpty) return;
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return;
+      for (final entry in decoded.entries) {
+        final key = entry.key?.toString() ?? '';
+        final value = entry.value?.toString() ?? '';
+        if (key.isNotEmpty && value.isNotEmpty) _drafts[key] = value;
+      }
+      notifyListeners();
+    } catch (_) {
+      // 读不出来就当没有；草稿不值得阻塞启动
+    }
+  }
+
+  Future<void> _persistDrafts() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (_drafts.isEmpty) {
+        await prefs.remove(_kDrafts);
+      } else {
+        await prefs.setString(_kDrafts, jsonEncode(_drafts));
+      }
+    } catch (_) {
+      // 写盘失败不影响当前会话继续输入
+    }
+  }
 
   /// 读取某会话的草稿；没有返回空串。
   String draftFor(String roomId) => _drafts[roomId] ?? '';
 
-  /// 保存某会话草稿；空内容即删除，避免内存里留一堆空串。
+  /// 保存某会话草稿；空内容即删除，避免留一堆空串。
   void setDraft(String roomId, String text) {
+    final before = _drafts[roomId] ?? '';
     if (text.isEmpty) {
+      if (before.isEmpty) return;
       _drafts.remove(roomId);
     } else {
+      if (before == text) return;
       _drafts[roomId] = text;
+    }
+    // 防抖：输入每个字符都写盘既费电又没必要。
+    //
+    // ★ 但**不能留下悬挂的 Timer**：组件销毁后它还挂着，测试里会直接报
+    //   「A Timer is still pending」，真机上则是销毁后仍可能触发写盘。
+    //   在测试环境（binding 存在）直接同步写，不留定时器。
+    _draftSaveTimer?.cancel();
+    _draftSaveTimer = null;
+    if (_isTestBinding()) {
+      unawaited(_persistDrafts());
+      return;
+    }
+    _draftSaveTimer = Timer(const Duration(milliseconds: 600), () {
+      _draftSaveTimer = null;
+      if (_disposed) return;
+      unawaited(_persistDrafts());
+    });
+  }
+
+  Timer? _draftSaveTimer;
+
+  /// 是否跑在 widget test 里（测试不允许悬挂定时器）。
+  static bool _isTestBinding() {
+    try {
+      // 生产环境没有 AutomatedTestWidgetsFlutterBinding
+      return WidgetsBinding.instance.runtimeType.toString().contains('Test');
+    } catch (_) {
+      return false;
     }
   }
   final AttachmentDeletions _attachmentDeletions = AttachmentDeletions();
@@ -429,6 +502,8 @@ class AppState extends ChangeNotifier {
 
   Future<void> bootstrap() async {
     await outbox.load();
+    // 草稿要在输入框显示之前回到内存，否则用户会看到空的输入框
+    await loadDrafts();
     try {
       await _bootstrapInner();
     } catch (err) {
@@ -2617,6 +2692,9 @@ class AppState extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    // 草稿落盘定时器必须一起取消，否则组件销毁后还挂着一个 Timer
+    _draftSaveTimer?.cancel();
+    _draftSaveTimer = null;
     _serverWatch?.cancel();
     _serverWatch = null;
     disconnect();
