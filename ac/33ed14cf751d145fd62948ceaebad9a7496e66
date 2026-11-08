@@ -1,0 +1,22 @@
+app/lib/task_run_models.dart
+  h_c2e638ff76b3b9 47-48,59-71,81-82
+app/lib/widgets/room_panel.dart
+  h_c2e638ff76b3b9 110-112
+app/lib/widgets/room_task_panel.dart
+  h_c2e638ff76b3b9 17,23-25,51-65
+app/lib/widgets/task_run_sheet.dart
+  h_c2e638ff76b3b9 135-139
+server/src/tasks/task-transport.js
+  h_c2e638ff76b3b9 50-55,63-65,72-73,76-81
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ac33ed14cf751d145fd62948ceaebad9a7496e66",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
