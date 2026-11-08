@@ -1,0 +1,14 @@
+server/src/tasks/task-supervisor.js
+  h_c2e638ff76b3b9 1149-1177
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7831692dceb92ecfdc6a33772691bed5d6dd4e80",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
