@@ -69,6 +69,28 @@ export function readManagedSubmission({ runner, taskRuns, roomId, botId,
     };
   }
 
+  // ★ 角色可能在本轮执行期间被改过（负责人被撤换）。
+  //
+  //   会话是长期复用的对象，执行中途改角色不会重建它 ——
+  //   于是旧负责人还能用 task_plan 改计划、assign_member_task 派活，
+  //   而他已经不是负责人了。这里按「当前真实角色」再核一次。
+  const rawKey = raw.taskRunId;
+  const liveRun = rawKey ? taskRuns.read(rawKey) : null;
+  const liveTask = liveRun?.status === 'found' ? liveRun.taskRun : null;
+  if (liveTask
+    && String(liveTask.owner?.leadBotId ?? '') !== String(raw.botId ?? botId)
+    && String(liveTask.owner?.leadBotId ?? '') !== String(botId)) {
+    // 执行者既不是负责人、也不是这次尝试的登记 Bot —— 身份已失效
+    const attempt = (liveTask.attempts ?? []).find((a) => a.attemptId === raw.attemptId);
+    if (!attempt || attempt.botId !== (raw.botId ?? botId)) {
+      return {
+        kind: SUBMISSION.invalid,
+        code: 'role_changed',
+        text: '这一轮的执行身份已失效（负责人或执行者已变更），请重新开始',
+      };
+    }
+  }
+
   const verdict = resolveManagedContext(
     {
       taskRunId: raw.taskRunId,

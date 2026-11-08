@@ -230,6 +230,12 @@ export const TRANSITIONS = Object.freeze({
     STATE.waiting_input,
     STATE.waiting_dependency,
     STATE.paused_user,
+    // ★ 受阻的任务可能因为额度用尽而转成预算暂停。
+    //
+    //   归约器允许这条路径（blocked --budget_exhausted--> paused_budget），
+    //   但可达性表里漏了 —— 表与实现不一致，任何按表判可达的调用方
+    //   都会认为这条合法路径不合法。以实现为准补上。
+    STATE.paused_budget,
     STATE.cancelled,
   ],
   [STATE.completed]: [],
