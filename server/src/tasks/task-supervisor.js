@@ -612,10 +612,19 @@ export function createTaskSupervisor({
       return { status: 'retry_scheduled', dueAt, why: '执行者还在忙，稍后重派' };
     }
     if (failedStop) {
+      // ★ attempt 必须取**真实已重试次数**。
+      //
+      //   原来读的是 nextAction.retryCount —— 那个字段全仓库没有任何地方写过，
+      //   所以 attempt 恒等于 1，decideRetry 对普通失败恒返回 retry:true：
+      //     · 本来只想给一次机会的失败被重试到上限（10 次），烧时间烧额度；
+      //     · 后面的自主重试上限、autonomyMisses、「自主重试 N 次仍未成功」
+      //       这些提示全部变成死代码 —— 用户永远看不到那句解释。
+      //   retry.count 才是真正在累加的计数，用它。
+      const triedTimes = (read(taskRun.id)?.retry?.count ?? taskRun.retry?.count ?? 0) + 1;
       const decision = decideRetry({
         error: String(rawResult?.error ?? rawResult?.text ?? ''),
         status: rawResult?.status ?? null,
-        attempt: (taskRun.nextAction?.retryCount ?? 0) + 1,
+        attempt: triedTimes,
       });
       if (decision.retry && (taskRun.retry?.count ?? 0) < MAX_TRANSIENT_ATTEMPTS) {
         const dueAt = clock() + (decision.delayMs ?? 30_000);
@@ -643,9 +652,19 @@ export function createTaskSupervisor({
         && !nowRun.flags?.blockedByUser) {
         const misses = (nowRun.autonomyMisses ?? 0) + 1;
         if (misses < AUTONOMY_RETRY_LIMIT) {
+          await patch(taskRun.id, { autonomyMisses: misses });
+          // ★ 必须走 unblock 事件把状态迁回去。
+          //   只清 flags.blockedAt 是不够的：state 仍是 blocked，
+          //   下一轮 planNextAction 第 93 行照样判阻塞，重试永远不会发生。
+          const released = await settle(taskRun.id, {
+            type: EVENT.unblocked, revision: nowRun.revision, at: clock(),
+            reason: '自主推进：自动解除本轮失败阻塞',
+          });
+          if (!released.ok) {
+            log('自主重试解除阻塞失败：', taskRun.id, released.text ?? released.code);
+            return { status: 'blocked', why: released.code ?? 'unblock_failed' };
+          }
           await patch(taskRun.id, {
-            autonomyMisses: misses,
-            flags: { ...(nowRun.flags ?? {}), blockedAt: null, blockedReason: '' },
             retryAt: clock() + AUTONOMY_RETRY_MS,
             nextAction: null,
           });
@@ -653,12 +672,16 @@ export function createTaskSupervisor({
           log('自主模式：第 ' + misses + ' 次失败，自动重试', taskRun.id);
           return { status: 'retry_scheduled', why: 'autonomous_retry_' + misses };
         }
-        await patch(taskRun.id, { autonomyMisses: misses });
-        await block(
-          taskRun.id,
-          '自主重试 ' + misses + ' 次仍未成功，需要你确认下一步：'
-            + String(nowRun.flags?.blockedReason ?? '').slice(0, 80),
-        );
+        // ★ 重试用尽：把真正的原因写给用户看。
+        //   直接调 block() 是不行的 —— 任务此刻已经是 blocked 状态，
+        //   block() 见到 blocked 会提前 return，用户看到的还是通用的
+        //   「执行失败」，不知道是自主重试了三轮才放弃。
+        const why = '自主重试 ' + misses + ' 次仍未成功，需要你确认下一步：'
+          + String(nowRun.flags?.blockedReason ?? '').slice(0, 80);
+        await patch(taskRun.id, {
+          autonomyMisses: misses,
+          flags: { ...(nowRun.flags ?? {}), blockedAt: clock(), blockedReason: why },
+        });
         return { status: 'blocked', why: 'autonomy_exhausted', misses };
       }
     }
@@ -708,7 +731,7 @@ export function createTaskSupervisor({
       return { status: 'blocked', why: out.code };
     }
     // 有界重试：只有明确 transient 才排重试；结果未知不在此列
-    const decision = decideRetry({ error: String(out.text ?? out.code ?? ''), status: out.status ?? null, attempt: taskRun.nextAction?.retryCount ?? 1 });
+    const decision = decideRetry({ error: String(out.text ?? out.code ?? ''), status: out.status ?? null, attempt: (read(id)?.retry?.count ?? 0) + 1 });
     if (decision.retry && (taskRun.retry?.count ?? 0) < MAX_TRANSIENT_ATTEMPTS) {
       const dueAt = clock() + (decision.delayMs ?? 30_000);
       await patch(id, {
