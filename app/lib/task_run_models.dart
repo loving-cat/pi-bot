@@ -44,6 +44,8 @@ class TaskRunChildren {
     required this.running,
     required this.waiting,
     this.participants = const [],
+    this.participantsTruncated = 0,
+    this.participantTotal = 0,
   });
 
   final int total;
@@ -54,6 +56,19 @@ class TaskRunChildren {
   /// 参与者（谁在跟进这份任务）。
   final List<TaskRunChild> participants;
 
+  /// 名单之外还有多少人。
+  ///
+  /// 部门人数超过名单上限时，界面必须说出来 —— 否则用户以为只有这几个人在跟，
+  /// 实际有一整个部门在跑。
+  final int participantsTruncated;
+
+  /// 实际参与人数（含名单外的）。
+  final int participantTotal;
+
+  /// 名单之外还有人的提示文案（没有则为空串）。
+  String get truncatedHint =>
+      participantsTruncated > 0 ? '另有 $participantsTruncated 人参与' : '';
+
   factory TaskRunChildren.fromJson(Map<String, dynamic> json) => TaskRunChildren(
     total: _asInt(json['total']),
     done: _asInt(json['done']),
@@ -63,6 +78,8 @@ class TaskRunChildren {
         .whereType<Map>()
         .map((e) => TaskRunChild.fromJson(e.cast<String, dynamic>()))
         .toList(growable: false),
+    participantsTruncated: _asInt(json['participantsTruncated']),
+    participantTotal: _asInt(json['participantTotal']),
   );
 
   bool get isEmpty => total == 0;

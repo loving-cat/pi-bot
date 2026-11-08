@@ -47,6 +47,12 @@ export function summarizeChildren(children, { nameOf = null, limit = 8 } = {}) {
   // 参与者名单：用户要能看出「这份活是谁在跟」。
   // nameOf 由调用方注入（纯函数里不碰 store）。
   const participants = [];
+  // 被名单长度挡掉的参与者数量。
+  //
+  // ★ 原来静默截断：部门超过 limit 人时，详情页的名单就是缺人的，
+  //   用户以为只有这几个人在跟 —— 而实际有一整个部门在跑。
+  const seenBots = new Set();
+  let truncated = 0;
   for (const child of children) {
     const state = String(child?.state ?? '');
     if (state === 'completed') done += 1;
@@ -54,16 +60,25 @@ export function summarizeChildren(children, { nameOf = null, limit = 8 } = {}) {
     else if (['waiting_approval', 'waiting_input', 'blocked', 'paused_budget', 'paused_user'].includes(state)) waiting += 1;
     else running += 1;
     const botId = child?.owner?.leadBotId ?? null;
-    if (botId && participants.length < limit && !participants.some((p) => p.botId === botId)) {
+    if (!botId || seenBots.has(botId)) continue;
+    seenBots.add(botId);
+    if (participants.length < limit) {
       participants.push({
         botId,
         name: typeof nameOf === 'function' ? (nameOf(botId) ?? '') : '',
         state,
         done: state === 'completed' || state === 'cancelled',
       });
+    } else {
+      truncated += 1;
     }
   }
-  return { total, done, running, waiting, participants };
+  return {
+    total, done, running, waiting, participants,
+    // 名单之外还有人（前端必须显示「还有 N 人」而不是假装只有这几个）
+    participantsTruncated: truncated,
+    participantTotal: seenBots.size,
+  };
 }
 
 export const USER_PHASE = Object.freeze({

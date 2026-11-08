@@ -14,10 +14,14 @@ class RoomTaskPanel extends StatelessWidget {
     super.key,
     required this.roomId,
     required this.onOpen,
+    this.onOpenHistory,
   });
 
   final String roomId;
   final void Function(TaskRun task) onOpen;
+
+  /// 打开任务历史（已结束/取消的任务）。为空时不显示入口。
+  final VoidCallback? onOpenHistory;
 
   @override
   Widget build(BuildContext context) {
@@ -44,6 +48,21 @@ class RoomTaskPanel extends StatelessWidget {
                       color: PB.textSecondary,
                     ),
                   ),
+                  const Spacer(),
+                  // 历史入口：之前这个面板是死代码，没有任何调用方，
+                  // 用户没法回看已经结束的任务。
+                  if (onOpenHistory != null)
+                    InkWell(
+                      onTap: onOpenHistory,
+                      borderRadius: BorderRadius.circular(4),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                        child: Text(
+                          '历史',
+                          style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+                        ),
+                      ),
+                    ),
                 ],
               ),
               const SizedBox(height: 6),

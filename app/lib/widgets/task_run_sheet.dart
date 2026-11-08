@@ -132,6 +132,11 @@ class _TaskRunSheetBody extends StatelessWidget {
                   color: p.done ? PB.success : PB.textTertiary,
                 ),
               ),
+          if (task.childrenSummary!.truncatedHint.isNotEmpty)
+            Text(
+              "· ${task.childrenSummary!.truncatedHint}",
+              style: TextStyle(fontSize: 12, color: PB.textTertiary),
+            ),
         ],
         if (task.scope.isNotEmpty) ...[
           const SizedBox(height: 8),

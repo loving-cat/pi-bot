@@ -107,6 +107,9 @@ class _RoomPanelState extends State<RoomPanel> {
               RoomTaskPanel(
                 roomId: room.id,
                 onOpen: (task) => showTaskRunSheet(context, AppScope.read(context), task),
+                onOpenHistory: () => showTaskRunHistorySheet(
+                  context, AppScope.read(context), room.id,
+                ),
               ),
               _tabs(context, isGroup, tab),
               Container(height: 1, color: PB.borderTertiary),
