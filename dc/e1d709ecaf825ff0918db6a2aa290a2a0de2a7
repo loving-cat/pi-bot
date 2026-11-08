@@ -1,0 +1,26 @@
+app/lib/task_run_controller.dart
+  h_c2e638ff76b3b9 139-152,154-157,271-272
+app/lib/widgets/task_run_sheet.dart
+  h_c2e638ff76b3b9 167
+server/src/role-tools.js
+  h_c2e638ff76b3b9 37
+server/src/tasks/task-commands.js
+  h_c2e638ff76b3b9 195-205
+server/src/tasks/task-next-action.js
+  h_c2e638ff76b3b9 118-129,132-135
+server/src/tasks/task-plan-tool.js
+  h_c2e638ff76b3b9 102-107,122
+server/src/tasks/task-supervisor.js
+  h_c2e638ff76b3b9 103-104,182-190,362-382,384-392,600,648-655,680,715,742-750,752,794,804-813,815,819,1165
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dce1d709ecaf825ff0918db6a2aa290a2a0de2a7",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
