@@ -43,6 +43,8 @@ export function planNextAction(taskRun, {
   now = Date.now(),
   remainingRuns = Number.POSITIVE_INFINITY,
   maxStallRounds = 2,
+  /** 可选：判断这个任务的 registered 尝试是否真的还在本进程里跑。 */
+  isInflight = null,
 } = {}) {
   if (!taskRun) return { kind: NEXT.blocked, why: '任务不存在' };
 
@@ -75,8 +77,21 @@ export function planNextAction(taskRun, {
   if (taskRun.state === STATE.verifying) return { kind: NEXT.verify, why: '验收当前成果' };
 
   // 6) 在途执行
+  //
+  //   ★ 「有 registered 尝试」不等于「它真的在跑」。
+  //
+  //     进程崩溃/重启后账本会留下未结算的 registered 记录，但本进程
+  //     根本没有在执行它。这种情况必须走核验（restore），否则任务会
+  //     被永久判为「有执行在途」——谁也不会再来结算它，任务静死。
+  //     调用方通过 isInflight 告诉这里「谁是真在跑」。
   const active = (taskRun.attempts ?? []).filter((a) => a.state === ATTEMPT_STATE.registered);
-  if (active.length) return { kind: NEXT.wait, attemptId: active[0].attemptId, why: '有执行在途' };
+  if (active.length) {
+    const liveId = typeof isInflight === 'function' ? isInflight(taskRun) : true;
+    if (liveId === false) {
+      return { kind: NEXT.restore, attemptId: active[0].attemptId, why: '有未结算的执行，但它已不在运行（重启/崩溃残留）' };
+    }
+    return { kind: NEXT.wait, attemptId: active[0].attemptId, why: '有执行在途' };
+  }
 
   // 7) 根预算
   if (remainingRuns <= 0) return { kind: NEXT.pausedBudget, why: '根预算已用尽' };

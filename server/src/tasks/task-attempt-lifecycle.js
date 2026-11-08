@@ -220,10 +220,20 @@ export function planRefund(existing, claim = {}) {
   }
   // 已开始（或曾有 startedAt）：真实资源已消耗
   if (existing.phase === PHASE.started || existing.startedAt) {
-    return reject(
-      REJECT.cannotRefund,
-      '这次执行已经开始，真实资源已消耗，不能退款',
-    );
+    // ★ 例外：dispatch 被拒的那次，执行并没有真的发生。
+    //
+    //   占位会被推进到 started，但状态机的 dispatch 事件被拒时，
+    //   模型一次都没跑。这时候拒绝退款会留下「已扣额度 + started 占位」
+    //   的脏账：额度白扣、占位永不释放，任务重试时又撞 too_many_pending。
+    //   只有「已经真正执行过」（有过结果或已结算）才不能退。
+    const reallyRan = existing.phase === PHASE.settled || Boolean(existing.result);
+    if (reallyRan) {
+      return reject(
+        REJECT.cannotRefund,
+        '这次执行已经开始，真实资源已消耗，不能退款',
+      );
+    }
+    return { ok: true, action: 'advance', phase: PHASE.refunded };
   }
   if (existing.phase === PHASE.settled) {
     return reject(REJECT.cannotRefund, '这次执行已经结算，不能退款');

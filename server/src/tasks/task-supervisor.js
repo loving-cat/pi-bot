@@ -37,6 +37,9 @@ const DEFAULT_CONCURRENCY = 4;
 
 const AUTONOMY_RETRY_LIMIT = 3;
 
+/** 步数用尽让出后，隔多久继续推进（避免原地空转，又不让任务停住）。 */
+const YIELD_RESUME_MS = 1_000;
+
 /** 自主重试之间的间隔：给执行器一点时间从上次失败里恢复。 */
 const AUTONOMY_RETRY_MS = 5_000;
 
@@ -97,11 +100,15 @@ export function createTaskSupervisor({
   if (typeof execute !== 'function') throw new Error('推进器需要执行器');
 
   const queue = new Set();
+  /** 上一轮因前置条件（残留尝试/同 Bot 占用）被挡下的任务，供诊断。 */
+  const blockedByPrecondition = [];
   let draining = null;
   const running = new Set();
   const inflight = new Map(); // taskRunId → 本次进程内正在执行的标识
   /** 正在推进的任务 → 那次推进的 Promise（防止同一任务被两条路径同时推进）。 */
   const advanceLocks = new Map();
+  /** 内联推进子任务时，正在被用掉的 Bot（保证同一个 Bot 不并发）。 */
+  const childBusyBots = new Set();
 
   function notify(taskRunId) {
     if (!taskRunId) return;
@@ -176,6 +183,8 @@ export function createTaskSupervisor({
         // 本轮正在跑的，按 Bot 登记：同一个 Bot 不并行。
         const active = new Map(); // taskRunId → Promise
         const busyBots = new Set();
+        // 被前置条件挡住、本轮起不来的任务（不留在队列里，避免活锁）
+        const deferred = [];
 
         const canRun = (id, taskRun) => {
           if (running.has(id)) return false;
@@ -187,7 +196,10 @@ export function createTaskSupervisor({
           //   那条错误被当成永久失败，任务就被毒化成 blocked ——
           //   用户看到的是「受阻」，原因是一句内部错误串。
           const active = (taskRun?.attempts ?? []).filter((a) => a.state === 'registered');
-          if (active.length) return false;
+          // ★ 只拦「本进程真在跑」的那些。崩溃/重启残留的 registered
+          //   必须放行，让 runTask 走核验分支给它一个结论；
+          //   否则任务被永久判为「有执行在途」，谁也不会再来结算。
+          if (active.length && inflight.has(id)) return false;
           const botId = taskRun?.owner?.leadBotId ?? null;
           if (botId && busyBots.has(botId)) return false;
           return true;
@@ -204,6 +216,18 @@ export function createTaskSupervisor({
               await runTask(id);
             } catch (err) {
               log('推进任务失败：', id, err?.message || err);
+              // ★ 抛异常不能让任务静死。
+              //
+              //   原来只打一行日志：任务停在当时的中间态（常见是 verifying），
+              //   retryAt / blockedAt / blockedReason 全空，idle() 却立即返回 ——
+              //   宿主以为跑完了，而任务再也不会被唤醒，用户只看到「验收中」转圈。
+              //   这里把它落到明确的阻塞状态并写明原因，用户能看见、能处理。
+              try {
+                const now = read(id);
+                if (now && !['blocked', 'completed', 'cancelled'].includes(now.state)) {
+                  await block(id, '推进过程出错：' + String(err?.message ?? err).slice(0, 120));
+                }
+              } catch {}
             } finally {
               running.delete(id);
               if (botId) busyBots.delete(botId);
@@ -218,6 +242,7 @@ export function createTaskSupervisor({
 
         while (queue.size) {
           let launched = false;
+          deferred.length = 0;
           // ★ 按负责人安排的优先级取下一批：数字小的先跑。
           //   负责人用 assign_member_task / @ 派活时的先后就是优先级 ——
           //   他说「先交首批，别等全量」，这个顺序必须真的影响调度。
@@ -229,14 +254,24 @@ export function createTaskSupervisor({
             if (active.size >= concurrencyBudget()) break;
             const taskRun = read(id);
             if (!taskRun) { queue.delete(id); continue; }
-            if (!canRun(id, taskRun)) continue;
+            if (!canRun(id, taskRun)) { deferred.push(id); continue; }
             if (launch(id, taskRun)) launched = true;
           }
           // 读不到的（已被删/损坏）清出队列，别卡住循环
           for (const id of [...queue]) if (!read(id)) queue.delete(id);
           if (!launched) {
             // 剩下的都被「同 Bot 在跑」或并发上限挡住：等有执行结束再说。
-            if (!active.size) break;
+            if (!active.size) {
+              // ★ 没有任何在飞的执行，却一个也起不来 —— 说明这些任务
+              //   被 canRun 永久拒绝了（典型：崩溃残留的 registered 尝试）。
+              //
+              //   必须先清出队列再退出，否则 finally 里看到 queue 非空又
+              //   立刻 schedule()，形成纯微任务活锁：事件循环永远拿不到
+              //   机会，CPU 打满、进程只能 SIGKILL。实测 95% CPU 持续 >60s。
+              for (const keep of [...queue]) queue.delete(keep);
+              blockedByPrecondition.push(...deferred);
+              break;
+            }
             await Promise.race([...active.values()]);
           }
         }
@@ -409,7 +444,14 @@ export function createTaskSupervisor({
 
       // 结果未知（重启后 / 已 started 未结算）：先核验
       const unknown = inflight.has(taskRun.id) ? [] : unknownOf(taskRun);
-      if (unknown.length || (!inflight.has(taskRun.id) && isRestartUnknown(taskRun) && taskRun.state !== STATE.running)) {
+      // ★ 重启后残留的「registered」尝试，即使状态是 running 也要核验。
+      //
+      //   原来的条件排除了 running，而崩溃残留的表现恰恰就是
+      //   state=running + 一条没结算的 registered 尝试 —— 于是它永远
+      //   走不到核验分支：canRun 一直拒绝派发、runTask 又不出结论，
+      //   任务静静躺在那里永远不动（修掉活锁之后暴露出来的正是这个）。
+      //   inflight 里没有它，就说明本进程没在跑它，那它就是残留。
+      if (unknown.length || (!inflight.has(taskRun.id) && isRestartUnknown(taskRun))) {
         const resolved = await inspectAndSettle(taskRun, {
           attemptId: unknown[0]?.attemptId ?? (taskRun.attempts ?? []).find((a) => a.state === 'registered')?.attemptId,
           slot: unknown[0] ?? null,
@@ -424,7 +466,21 @@ export function createTaskSupervisor({
       if (liveKids.length) {
         let progressed = false;
         for (const kid of liveKids) {
-          const out = await runTask(kid.id);
+          // ★ 内联推进子任务时也要尊重「同一个 Bot 同时只跑一个」。
+          //
+          //   这条不变量原来只在调度器的 launch() 里生效；父任务内联
+          //   调用 runTask(kid) 完全绕过了它 —— 于是同一个 Bot 的两个执行
+          //   真的会并发跑（实测 load=2），撞同一个会话。
+          //   这里显式检查：孩子用的 Bot 正在忙，就等下一轮，不硬上。
+          const kidBot = kid.owner?.leadBotId ?? null;
+          if (kidBot && childBusyBots.has(kidBot)) continue;
+          if (kidBot) childBusyBots.add(kidBot);
+          let out;
+          try {
+            out = await runTask(kid.id);
+          } finally {
+            if (kidBot) childBusyBots.delete(kidBot);
+          }
           if (out.status === 'blocked' || out.status === 'wait') {
             return { status: 'wait', why: '子任务未完成', child: kid.id };
           }
@@ -432,12 +488,33 @@ export function createTaskSupervisor({
             progressed = true;
           }
         }
-        if (!progressed) return { status: 'wait', why: '子任务推进中' };
+        if (!progressed) {
+          // ★ 子任务全部停住时，父任务不能无限「等」。
+          //
+          //   原来直接 return wait：父任务永久停在 queued，停滞计数不增加，
+          //   也不产生任何给用户看的结论。用户看到「准备中」却永远没有下文。
+          //
+          //   子任务自己受阻（blocked）不是父任务在"推进中"，
+          //   而是整件事卡住了 —— 要说清是谁卡住、为什么。
+          const stuck = childrenOf(taskRuns, read(taskRunId) ?? taskRun)
+            .filter((k) => !terminal(k));
+          if (stuck.length && stuck.every((k) => k.state === STATE.blocked)) {
+            const first = stuck[0];
+            const who = runner.store?.getBot?.(first.owner?.leadBotId ?? '')?.name ?? '成员';
+            const why = '等在子任务上：' + who + '受阻（'
+              + String(first.flags?.blockedReason ?? '未说明').slice(0, 80) + '）';
+            await block(taskRunId, why);
+            return { status: 'blocked', why: 'children_blocked' };
+          }
+          return { status: 'wait', why: '子任务推进中' };
+        }
         continue;
       }
 
       const action = planNextAction(taskRun, {
         now: clock(), remainingRuns: remainingOf(taskRun), maxStallRounds, restartUnknown: false,
+        // 本进程是否真在跑这条 registered 尝试；不在就是崩溃/重启残留。
+        isInflight: (run) => inflight.has(run.id),
       });
 
       if (action.kind === NEXT.done) return { status: 'done', why: action.why };
@@ -496,6 +573,10 @@ export function createTaskSupervisor({
       const beforeProgress = progressSignature(beforeRun);
       const out = await doLeadStep(taskRun, action);
       if (out.status === 'retry_scheduled' || out.status === 'paused_budget') return out;
+      // ★ 执行让出（步数上限）不是失败，但也不能在这里直接 return ——
+      //   直接 return 就绕过了下面「安排续行」的收尾，任务从此停在 running，
+      //   界面显示「执行中」却再也不动。让它落到循环尾部统一处理。
+      if (out.status === 'yielded') break;
       if (out.status !== 'ok') return out;
 
       // ★ 这一步没有可观察的进展（没有新交付、没有新子任务、没有完成申请）。
@@ -509,6 +590,39 @@ export function createTaskSupervisor({
       //   新工具结果）再推进。停滞计数已在 doLeadStep 里累计，所以反复无进展
       //   仍会被既有上限挡住，不会无限重试。
       const afterRun = read(taskRunId) ?? taskRun;
+      // ★ 执行段让出（达到单次执行上限）是正常收尾，不是"没有产出"。
+      //
+      //   模型这一轮跑到步数上限就让出，本来下一轮还要继续做。
+      //   原来这种情况会掉进下面的「无进展」判定被判成阻塞 ——
+      //   等于每一轮正常让出都被当成失败。
+      if (afterRun.state === STATE.queued || afterRun.state === STATE.running) {
+        // 结算后 nextAction 已被清空，按「最后一条账本记录」判断这一步的结果。
+        const ledger = afterRun.attempts ?? [];
+        const attempt = ledger[ledger.length - 1] ?? null;
+        // stop 存在结果里（result.stop），不直接在账本记录上
+        const stopKind = attempt?.result?.stop ?? attempt?.stop ?? null;
+        if (stopKind === 'yielded') {
+          // ★ 让出是有上限的。
+          //
+          //   「让步继续」本身正确 —— 模型跑到单轮上限，下一轮接着做。
+          //   但如果每一轮都只是让出、目标始终不达成，那就是在空转：
+          //   必须停下来告诉用户卡在哪，而不是一直排下一轮。
+          const after = read(taskRunId) ?? afterRun;
+          const afterSig = progressSignature(after);
+          const prev = after.stall ?? { rounds: 0, lastSignature: null };
+          const rounds = prev.lastSignature === afterSig ? (prev.rounds ?? 0) + 1 : 1;
+          if (rounds > Math.max(1, Number(maxStallRounds) || 2)) {
+            const why = '连续 ' + rounds + ' 轮让出但没有新进展（目标始终未达成），需要你确认下一步';
+            await patch(taskRunId, { nextAction: null, retryAt: null, stall: { rounds, lastSignature: afterSig } });
+            await block(taskRunId, why);
+            return { status: 'blocked', why: 'yield_stall' };
+          }
+          const resumeAt = clock() + YIELD_RESUME_MS;
+          await patch(taskRunId, { nextAction: null, retryAt: resumeAt, stall: { rounds, lastSignature: afterSig } });
+          setTimer(resumeAt, taskRunId);
+          return { status: 'yielded', why: '执行段让出，已安排续行' };
+        }
+      }
       const afterProgress = progressSignature(afterRun);
       // 状态发生了推进（例如刚结算完进入 verifying / 拿到新门槛）也算变化：
       // 那种情况下必须继续走验收/等待分支，不能停在这里。
@@ -526,20 +640,64 @@ export function createTaskSupervisor({
         //   所以把真实情况说清楚：这一步没有可核验的产出，等用户补充要求或明确继续。
         // 说明「下一步该做什么」，而不是只说「没有产出」。
         // 最常见的原因就是：负责人只在群里 @ 了成员，但没有建出持久子任务。
+        // ★ 写了分工计划也算进展。
+        //
+        //   提示词明确要求负责人「先列计划再派活」，但列计划本身不产生
+        //   子任务、不登记文件、也不申请完成 —— 于是「只列了计划」这一轮
+        //   被判成「没有产出可核验的交付」直接阻塞，正好把系统教它的
+        //   第一步当成失败。计划是真实推进，不该被罚。
+        const hasPlan = (afterRun.plan?.steps ?? []).length > 0
+          && (taskRun.plan?.steps ?? []).length !== (afterRun.plan?.steps ?? []).length;
+        if (hasPlan) return { status: 'ok', why: '已登记分工计划' };
+
+        // ★ 刚从暂停/阻塞里恢复的那一轮，不该因「这一轮没产出」被判死。
+        //
+        //   用户暂停一个正在跑的任务 → 那次执行被中断（账本标 abandoned）、
+        //   这一轮自然没有新交付。如果就此判「没有产出」并阻塞，
+        //   用户点「继续」的后果是任务直接死掉 —— 每次暂停都会毁掉任务。
+        //   恢复的第一轮应当允许它重新开始干活。
+        // 判断依据：账本里存在「被中断」的尝试（暂停/阻塞/改版留下的），
+        // 且这次是它之后的第一次推进 —— 允许重新开始，不当作失败。
+        const ledger = afterRun.attempts ?? [];
+        const hasInterrupted = ledger.some((a) => a.state === 'abandoned');
+        const executedNow = ledger.some(
+          (a) => a.state === 'settled' && (a.result?.stop === 'returned' || a.result?.stop === 'yielded'),
+        );
+        if (hasInterrupted && !executedNow) {
+          return { status: 'ok', why: '检测到被中断的执行，允许重新开始' };
+        }
+        if (hasInterrupted && ledger.filter((a) => a.state === 'settled').length <= 1) {
+          return { status: 'ok', why: '中断后首次推进，允许重新开始' };
+        }
         const reason = '负责人这一轮没有产出可核验的交付（没有建子任务、没有登记文件，也没有完成申请）';
         await block(taskRunId, reason);
         return { status: 'blocked', why: 'no_progress' };
       }
     }
 
-    // 步数用尽 = 让出：持久续行并重新入队，不是静默停住
+    // ★ 步数用尽 = 让出给**事件**，不再自己叫自己。
+    //
+    //   原来这里 notify(taskRunId)：等于「我这一轮用完了，立刻再跑一轮」，
+    //   中间没有任何真实事件。配合停滞签名曾含产物，就构成无界自旋
+    //   （实测同一任务 8 秒内执行 71 次仍在跑，而默认额度是不限额，
+    //   生产上没有任何东西能拦住它）。
+    //
+    //   正确语义：一步做完就交回。下一次推进必须由真实事件驱动 ——
+    //   子任务交付、用户指令、到期重试、执行结果回收。
+    //   如果下一次没有事件，任务就该静静等着，而不是空转。
     yielded = true;
-    await patch(taskRunId, { nextAction: null });
+    // 让出但**保证还会被叫醒**：排一个到期重试。
+    //
+    //   只让出不排队 = 任务永远停在 running，用户看到「执行中」却再也不动。
+    //   这是另一个方向的死法，比自旋更难发现（因为界面看起来正常）。
+    //   用一个短间隔的到期唤醒，既避免原地空转，又保证推进继续。
+    const resumeAt = clock() + YIELD_RESUME_MS;
+    await patch(taskRunId, { nextAction: null, retryAt: resumeAt });
     const current = read(taskRunId);
     await recordStall(current ?? { id: taskRunId });
-    notify(taskRunId);
-    log('步数用尽，让出后继续', taskRunId);
-    return { status: 'yielded', why: '步数上限，已持久续行' };
+    setTimer(resumeAt, taskRunId);
+    log('步数用尽，让出后 ' + YIELD_RESUME_MS + 'ms 继续', taskRunId);
+    return { status: 'yielded', why: '步数上限，已安排续行' };
   }
 
   function terminal(run) {
@@ -1042,6 +1200,28 @@ export function createTaskSupervisor({
     for (const candidate of candidates) await resumeBudgetPaused(candidate);
     // 本次目标若不在候选里（例如自身就是 root 但尚未建立 rootTaskId），兜底一次
     if (!candidates.some((c) => c.id === taskRunId)) await resumeBudgetPaused(run);
+
+    // ★ 追加额度只解决「钱」的问题，不替用户做「要不要继续」的决定。
+    //
+    //   预算暂停（paused_budget）本来就是额度造成的，加钱即恢复 —— 上面已处理。
+    //   而 blocked 是任务本身卡住（执行失败/缺信息），加额度并不会让它变好；
+    //   顺手解除反而掩盖了真实问题。
+    //
+    //   但也不能什么都不说：如果目标是 blocked，把「加了额度但任务仍受阻、
+    //   需要先解除阻塞」如实告诉调用方，不要回一个空洞的 ok。
+    {
+      const target = read(taskRunId);
+      if (target && target.state === STATE.blocked) {
+        return {
+          ok: true,
+          budget: read(rootId)?.budget ?? null,
+          resumed: results.map((r) => r.taskRunId),
+          note: '额度已追加，但任务当前是「受阻」状态（原因：'
+            + String(target.flags?.blockedReason ?? '未说明').slice(0, 80)
+            + '）。额度不会解除阻塞，请先解除阻塞再继续。',
+        };
+      }
+    }
 
     notify(rootId);
     const failed = results.find((r) => r.ok !== true);

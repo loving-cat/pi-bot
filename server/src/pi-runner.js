@@ -1091,7 +1091,19 @@ export class PiRunner {
     if (active && requestIdentityKey(active.requesterId, active.requestId) !== requestIdentityKey(scope.requesterId, scope.requestId)) {
       throw Object.assign(new Error('同一会话已有另一个请求身份在执行'), { code: 'REQUEST_SCOPE_CONFLICT' });
     }
-    this.beginRequestScope(roomId, botId, scope);
+    // ★ 关闭接单开关时**不建立**请求作用域。
+    //
+    //   作用域的作用是「这一轮必须走 accept_task 才有效」。
+    //   但 accept_task 只在 PI_BOT_TASK_INTAKE=1 时才注册
+    //   （session-factory 里 isChief && intakeEnabled() 才加）。
+    //   关闭态却照样建作用域 —— 于是 tools.js 的
+    //   「本轮是接单请求，建部门/派活必须通过 accept_task」必然命中，
+    //   而那个替代路径根本不存在：
+    //   默认配置下用户让主控建部门、派活，一律被拒且无路可走，
+    //   组织能力被自己的防护锁死。
+    //
+    //   关闭态就不该有「接单轮」这个概念 —— 普通聊天照旧。
+    if (this.taskIntakeEnabled) this.beginRequestScope(roomId, botId, scope);
     let failure = null;
     let verdict = null;
     try {

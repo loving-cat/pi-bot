@@ -291,6 +291,51 @@ export function createTaskRuntime({
         return false;
       }
     },
+    /**
+     * 只读核验「结果未知」的那次执行到底发生了什么。
+     *
+     * ★ 生产装配从不注入它，于是任何一次崩溃/超时产生的「结果未知」
+     *   都会把任务永久钉死在 blocked：用户点「解除阻塞」，系统核验不了
+     *   就立刻判回同一个 blocked —— 死循环，任务永远救不回来。
+     *
+     *   这里给出一个真实可用的核验入口：查那次尝试有没有落结果。
+     *   查得到就把结果交回去让状态机结算；查不到也明确说「查不到」，
+     *   让调用方给出可理解的结论，而不是无限重试同一状态。
+     */
+    inspectOutcome: async ({ taskRun, attemptId }) => {
+      try {
+        const loaded = taskRuns.read(taskRun.id);
+        const current = loaded?.status === 'found' ? loaded.taskRun : null;
+        if (!current) return { resolved: false, reason: '任务已不存在' };
+        const rec = (current.attempts ?? []).find((a) => a.attemptId === attemptId);
+        if (!rec) return { resolved: false, reason: '账本里没有这次执行' };
+        // 已经结算过：不需要再核验
+        if (rec.state === 'settled') return { resolved: true, alreadySettled: true };
+        // 有结果记录就直接结算
+        if (rec.result) {
+          return {
+            resolved: true,
+            attemptEvent: {
+              type: 'attempt_finished',
+              revision: rec.revision ?? current.revision,
+              at: clock(),
+              attempt: {
+                attemptId,
+                taskRunId: current.id,
+                botId: rec.botId,
+                revision: rec.revision ?? current.revision,
+                stop: rec.result.stop ?? 'returned',
+                phaseKind: rec.phaseKind ?? 'lead',
+              },
+            },
+          };
+        }
+        // 没有结果：这次执行确实没留下可核验的产出
+        return { resolved: false, reason: '这次执行没有留下结果记录' };
+      } catch (err) {
+        return { resolved: false, reason: String(err?.message ?? err) };
+      }
+    },
     clock,
     log,
     // 并发数按部门人数走；key 不稳时按健康度自动降级。

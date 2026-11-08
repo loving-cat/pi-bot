@@ -161,8 +161,24 @@ export async function applyControl({
       return { ok: false, code: 'budget_paused', text: '预算用尽需先追加额度，不能用继续绕过' };
     }
     const resumed = await settle(taskRunId, { type: EVENT.resumed, revision: taskRun.revision, at: clock() });
-    if (resumed.ok) notify(taskRunId);
-    return resumed.ok ? { ok: true, applied: true } : resumed;
+    if (!resumed.ok) return resumed;
+    // ★ 暂停之前就已经受阻的，继续时要一起把阻塞解除。
+    //
+    //   否则会形成一个死循环：任务受阻 → 用户点暂停 → 再点继续 →
+    //   状态回到 blocked（阻塞事实还在），任务永远救不回来。
+    //   用户的意图很清楚：我要它继续干活。
+    const afterPause = resumed.taskRun ?? (await (async () => null)());
+    const stillBlocked = Boolean(
+      (resumed.taskRun?.flags?.blockedAt) || resumed.taskRun?.state === STATE.blocked,
+    );
+    if (stillBlocked) {
+      await settle(taskRunId, {
+        type: EVENT.unblocked, revision: resumed.taskRun.revision, at: clock(),
+        reason: '用户继续任务，同时解除原有阻塞',
+      });
+    }
+    notify(taskRunId);
+    return { ok: true, applied: true, alsoUnblocked: stillBlocked };
   }
   if (control.type === CONTROL.unblock) {
     // 只清阻塞事实：门禁、暂停、预算暂停、版本都不动，
