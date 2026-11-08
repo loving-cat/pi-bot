@@ -102,6 +102,17 @@
 | `app_state.dart` | 连接、房间、消息、流式、任务、定时任务、模型组…（**状态与请求**） |
 | `attachment_deletions.dart` | 附件删除版本与缓存过滤，拒绝旧请求结果；重连遗漏删除事件时使历史缓存失效 |
 | `models.dart` | 数据模型：Msg / Room / Bot / TaskItem / Automation / ChangedSummary… |
+| `task_run_models.dart` / `task_run_merge.dart` | TaskRun 用户投影解析与纯合并：revision/sequence/storeVersion、旧回包拒绝、缺口检测 |
+| `tasks/task-request-result.js` | 请求终态投影：WS request.result 与 HTTP 查询共用 |
+| `bootstrap/task-host.js` | 生产启动唯一任务宿主装配：一个 runtime、默认验收 access、recover/关闭生命周期 |
+| `coordination/task-insight-tool.js` | 主控自然语言任务进度查询/修订工具；稳定命令身份与重放 |
+| `tasks/task-expert-tool.js` | 负责人专业验收判断记录；机械验收消费同任务/版本/条件判断 |
+| `relay/agent.js` | relay 本地桥接；诊断 path query 脱敏 |
+| `tasks/task-commands.js` | 命令回执/阶段恢复/应用事实/作用域预检唯一入口；路由只翻译 HTTP |
+| `request_outbox.dart` | 请求完整信封持久化、原操作重传、服务归属与 ACK 阶段清理 |
+| `task_run_api.dart` / `task_run_controller.dart` | 任务 HTTP 协议与控制器：连接 epoch、快照/增量、幂等命令；协议见 `docs/TASK-RUN-PROTOCOL.md` |
+| `widgets/task_run_card.dart` / `widgets/task_run_sheet.dart` | 聊天入口状态卡与任务详情/任务级控制；只展示与回调 |
+| `ws_frame.dart` | 共享 WS 帧解码：文本/合法 UTF-8 二进制 JSON，直连与 relay 共用 |
 | `api.dart` | HTTP 封装（含分片上传 `uploadChunked`） |
 | `update_info.dart` | 更新响应解析 + 要不要提示的规则（纯逻辑，有测试） |
 | `widgets/update_prompt.dart` | 更新提示弹窗、带进度下载、下载完成提示 |

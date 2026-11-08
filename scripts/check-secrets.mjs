@@ -121,13 +121,32 @@ const RULES = [
 
 const MAX_BYTES = 2 * 1024 * 1024;
 
+/**
+ * 要扫哪些文件。
+ *
+ * ★ 除了已跟踪文件，还要扫**未跟踪但未被忽略**的新文件。
+ *   只扫 `git ls-files` 的话，"本批新增源码还没 git add"这种状态下
+ *   扫描输出"560 个文件通过"是有欺骗性的 —— 新增的那几个根本没扫。
+ *   （批次 01 审查 R09 指出的覆盖不足。）
+ */
 function trackedFiles() {
   const args = STAGED
     ? ['diff', '--cached', '--name-only', '--diff-filter=ACM']
     : ['ls-files'];
-  return execFileSync('git', args, { encoding: 'utf8' })
+  const tracked = execFileSync('git', args, { encoding: 'utf8' })
     .split(/\r?\n/)
     .filter(Boolean);
+  if (STAGED) return tracked;
+  // 未跟踪且未被 ignore 的新文件也要扫
+  let untracked = [];
+  try {
+    untracked = execFileSync('git', ['ls-files', '--others', '--exclude-standard'], { encoding: 'utf8' })
+      .split(/\r?\n/)
+      .filter(Boolean);
+  } catch {
+    untracked = [];
+  }
+  return [...new Set([...tracked, ...untracked])];
 }
 
 function readFile(file) {
