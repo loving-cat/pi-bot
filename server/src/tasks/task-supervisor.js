@@ -1146,7 +1146,35 @@ export function createTaskSupervisor({
   }
 
   async function bumpRevision(taskRunId, control = {}) {
-    return onControl(taskRunId, { ...control, type: CONTROL.revision });
+    const result = await onControl(taskRunId, { ...control, type: CONTROL.revision });
+    if (!result?.ok) return result;
+    // ★ 改版后，上一版的子任务必须收口。
+    //
+    //   childrenOf 按 parentRevision 过滤：父任务一改版，旧子任务立刻
+    //   不再参与推进、也不再进 childrenSummary —— 但它们仍然是非终态。
+    //   用户看到的是「成员还在跑，可任务列表里一个都看不到」，
+    //   而且这些子任务永远不会有结论。
+    //   这里显式取消它们，让状态与界面一致。
+    try {
+      const parent = read(taskRunId);
+      if (parent) {
+        const all = taskRuns.listAll?.();
+        const list = all?.taskRuns ?? all ?? [];
+        const stale = list.filter((run) => run.parentTaskId === parent.id
+          && (run.parentRevision ?? run.revision) !== parent.revision
+          && run.state !== STATE.completed && run.state !== STATE.cancelled);
+        for (const kid of stale) {
+          await settle(kid.id, {
+            type: EVENT.cancelled, revision: kid.revision, at: clock(),
+            reason: '父任务目标已改版，上一版子任务作废',
+          }).catch(() => null);
+        }
+        if (stale.length) log('改版收口旧子任务', taskRunId, stale.length);
+      }
+    } catch (err) {
+      log('改版收口旧子任务失败：', err?.message || err);
+    }
+    return result;
   }
 
   /** 扩额恢复：沿用既有扩展协议，唤醒等待中的任务。 */
