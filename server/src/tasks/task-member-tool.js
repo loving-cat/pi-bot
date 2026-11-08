@@ -93,6 +93,8 @@ export function buildMemberTaskTool({ runner, store, roomId, botId }) {
         expectRevision: submission.revision,
         attemptId: submission.attemptId,
         botId,
+        // 派活只能发生在任务自己的会话里（防跨部门串台）
+        roomId,
       });
       if (stale) return error(`这次派工已失效：${stale.text}`);
 

@@ -2754,7 +2754,19 @@ export class PiRunner {
    */
   #activateReportScope(key, collector) {
     if (!collector) return false;
-    if (this.#reportScopes.has(key)) return false;
+    // ★ 键被占说明上一轮的报告收集器没被释放（异常/早退漏清理）。
+    //
+    //   原来这里静默返回 false，而调用方不检查返回值 —— 于是这一轮的
+    //   task_report 会写进那个已经没人读的旧收集器，模型收到「报告已记录」，
+    //   账本里却是空的。用户看到任务在跑，实际交付全丢了。
+    //
+    //   这里直接把旧收集器替换掉（它属于上一轮、已经失效），
+    //   并留下明确记录，让泄漏可被看见而不是被掩埋。
+    const stale = this.#reportScopes.get(key);
+    if (stale) {
+      log('报告收集器键被占用，替换掉上一轮残留：', key);
+      this.#reportScopes.delete(key);
+    }
     this.#reportScopes.set(key, collector);
     return true;
   }
@@ -3197,7 +3209,12 @@ export class PiRunner {
     //   放在这里而不是函数入口，是因为 busy / 建会话失败都会在上面的 catch 返回，
     //   它们从未获得执行权，也就不该拥有报告身份。
     const scopeKey = roomId + ':' + botId;
-    this.#activateReportScope(scopeKey, reports);
+    const scopeReady = this.#activateReportScope(scopeKey, reports);
+    if (!scopeReady) {
+      // 拿不到报告通道就别装作有：这一轮的 task_report 必须明确失败，
+      // 而不是写进一个没人读的收集器还回「已记录」。
+      log('报告通道未能激活，本轮不接受阶段报告：', scopeKey);
+    }
     // DM/group 共用同一个实际执行租约的取消句柄：只在真正取得执行权后登记
     const managedCancelTask = managed.kind === 'managed' ? (managed.context?.taskRunId ?? null) : null;
     if (managedCancelTask) {

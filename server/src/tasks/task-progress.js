@@ -162,6 +162,7 @@ export function resolveManagedContext(ctx, {
   loadTaskRun = null,
   loadRootTaskRun = null,
   actualBotId = null,
+  actualRoomId = null,
 } = {}) {
   // ---- 没提供：旧调用
   if (ctx === null || ctx === undefined) {
@@ -264,6 +265,26 @@ export function resolveManagedContext(ctx, {
       'attempt_not_active',
       `尝试 ${attemptId} 当前是「${record.state}」，不是可执行的在途状态`,
     );
+  }
+
+  // ---- 执行房间必须是这条任务**合法可达**的地方
+  //
+  //   要挡的是「部门 A 的任务跑到部门 B 去执行」这种串台。
+  //   但不能简单地拿 origin.roomId 比：任务常从私聊进来、随后交给部门群执行，
+  //   两者本来就不同 —— 直接比对会把正常路径全判死。
+  //
+  //   合法集合 = 原会话（起源）+ 任务所属部门（真正干活的地方）。
+  if (isId(actualRoomId)) {
+    const allowed = new Set(
+      [stored.origin?.roomId, stored.owner?.departmentId].filter((v) => isId(v)),
+    );
+    if (allowed.size && !allowed.has(actualRoomId)) {
+      return invalid(
+        'room_mismatch',
+        '任务 ' + taskRunId + ' 只能在 ' + [...allowed].join(' / ')
+          + ' 执行，这次却在 ' + actualRoomId,
+      );
+    }
   }
 
   // ---- 必须有一份已开始的有效授权（不能用「重复扣款」来验证已预留的额度）

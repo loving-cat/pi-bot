@@ -93,7 +93,7 @@ export function readManagedSubmission({ runner, taskRuns, roomId, botId }) {
  * @returns {null|{ok:false, code:string, text:string}} null 表示仍然有效
  */
 export function revalidateManaged(taskRunSnapshot, {
-  taskRuns, expectRevision, attemptId, botId,
+  taskRuns, expectRevision, attemptId, botId, roomId = null,
 } = {}) {
   if (!taskRunSnapshot) {
     return { ok: false, code: 'task_not_found', text: '任务不存在' };
@@ -114,6 +114,7 @@ export function revalidateManaged(taskRunSnapshot, {
       loadTaskRun: asRecord,
       loadRootTaskRun: asRecord,
       actualBotId: botId,
+      actualRoomId: roomId,
     },
   );
   if (verdict.kind !== MANAGED.managed) {

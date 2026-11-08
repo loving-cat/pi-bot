@@ -211,6 +211,7 @@ async function runHandoff({
         expectRevision: revision,
         attemptId,
         botId: submission.botId,
+        roomId: submission.roomId ?? null,
       });
 
   /** 重读并复核；返回 null 表示仍然有效。 */
