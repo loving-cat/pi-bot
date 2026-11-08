@@ -1,0 +1,18 @@
+server/src/coordination/task-context.js
+  h_c2e638ff76b3b9 42-52,56-71,79-84
+server/src/tasks/task-contract.js
+  h_c2e638ff76b3b9 402-405,413
+server/src/tasks/task-reduce.js
+  h_c2e638ff76b3b9 914-919,940-953,957
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ef3a959f3651b94a446302031b4dab38111fae35",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
