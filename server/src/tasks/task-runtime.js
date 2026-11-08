@@ -452,12 +452,20 @@ export function createTaskRuntime({
       if (revision !== run.revision) {
         return { ok: false, code: 'stale_revision', text: '升级事件属于旧版本目标，不能放到新目标上' };
       }
-      if (run.owner?.leadBotId && run.owner.leadBotId !== botId) {
-        return { ok: false, code: 'invalid_context', text: '升级执行者不是该任务负责人' };
-      }
+      // ★ 升级允许「负责人」和「实际执行这次尝试的成员」，但不能是无关 Bot。
+      //
+      //   原来只允许负责人发起，而升级的语义恰恰是「我干不了，交回负责人」——
+      //   最需要发起的正是成员。于是成员的升级一律被 invalid_context 拒掉，
+      //   既不回落到负责人、也不重试、更不产生任何消息：
+      //   用户那边就是「这个任务悄无声息地停了」，群里什么都没发生。
       const attempt = (run.attempts ?? []).find((a) => a.attemptId === attemptId);
       if (!attempt || attempt.state !== 'registered') {
         return { ok: false, code: 'invalid_context', text: '升级引用的执行不属于该任务' };
+      }
+      const isLead = Boolean(run.owner?.leadBotId) && run.owner.leadBotId === botId;
+      const isExecutor = attempt.botId === botId;
+      if (!isLead && !isExecutor) {
+        return { ok: false, code: 'invalid_context', text: '升级只能由该任务负责人或这次执行者发起' };
       }
       return supervisor.onControl(taskRunId, { type: 'escalated', reason, attemptId }).catch(() => null);
     },

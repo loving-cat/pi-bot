@@ -3260,16 +3260,41 @@ export class PiRunner {
     const beat = () => {
       entry.progressAt = Date.now();
     };
-    const botMsg = store.appendMessage({
-      roomId,
-      authorType: 'bot',
-      authorId: bot.id,
-      authorName: bot.name,
-      authorEmoji: bot.emoji,
-      text: '',
-      status: 'streaming',
-      meta,
-    });
+    // ★ 从这里往后用到了「已取得的执行权」，建消息必须能安全失败。
+    //
+    //   原来 appendMessage 在主 try 之外：磁盘写失败/存储异常会直接抛出，
+    //   而归还 busy 的 finally 在下面几十行之后 —— 根本执行不到。
+    //   结果这个会话的 busy 永远是 true，同一个 (room,bot) 之后任何消息
+    //   都返回 SESSION_BUSY，而残留的受管身份还会把普通聊天判成 managed。
+    //   用户侧表现就是「这个 bot 突然不回话了，重启才好」。
+    let botMsg;
+    try {
+      botMsg = store.appendMessage({
+        roomId,
+        authorType: 'bot',
+        authorId: bot.id,
+        authorName: bot.name,
+        authorEmoji: bot.emoji,
+        text: '',
+        status: 'streaming',
+        meta,
+      });
+    } catch (err) {
+      // 归还本次占用的全部资源，绝不留下「忙」假象
+      try { this.#releaseReportScope(scopeKey, reports); } catch {}
+      try { entry.managedContext = null; } catch {}
+      try { entry.busy = false; } catch {}
+      try { entry.slotTicket?.release?.(); } catch {}
+      try { entry.slotTicket = null; } catch {}
+      if (managedCancelTask) {
+        try { this.managedInflight.delete(managedCancelTask); } catch {}
+      }
+      log('建消息失败，已归还执行权：', roomId, botId, err?.message || err);
+      return withAttempt({
+        ok: false, code: 'MESSAGE_WRITE_FAILED', text: '', ms: Date.now() - started,
+        error: '无法写入消息：' + String(err?.message ?? err).slice(0, 120), messageId: '',
+      }, {});
+    }
     entry.liveMsgId = botMsg.id;
     beat();
     bus.emit('event', { t: 'typing', roomId, botId: bot.id, active: true });

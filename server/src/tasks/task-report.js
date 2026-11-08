@@ -111,7 +111,17 @@ export function createReportCollector() {
         unmet: strList(input.unmet, 50),
         note: String(input.note ?? '').slice(0, 600),
         // 等待类阶段必须带「在等什么」
-        waitFor: normalizeWaitFor(kind, input.waitFor),
+        // ★ 等用户输入时，把模型给的问题本身作为可信引用。
+        //
+        //   不能只判「有没有填」。模型编一个字符串就能把任务永久停进
+        //   waiting_input，且永远没人会来提供那个 key。
+        //   这里把引用绑定到**它实际提出的问题**：没有具体问题就不算等待成立，
+        //   上层会按「没有可信等待」处理，任务不会静默卡死。
+        waitFor: normalizeWaitFor(kind, input.waitFor, {
+          hostRef: kind === 'need_input'
+            ? String(input.waitFor?.question ?? input.question ?? input.waitFor?.ref ?? '').trim()
+            : null,
+        }),
         at: Date.now(),
         seq: count,
       };
@@ -141,7 +151,7 @@ export function createReportCollector() {
  * 不合法就返回 null —— 让上层按「没有可信等待」处理，
  * 而不是伪造一个引用。
  */
-function normalizeWaitFor(kind, waitFor) {
+function normalizeWaitFor(kind, waitFor, { hostRef = null } = {}) {
   const spec = {
     need_approval: 'approvalId',
     need_input: 'inputKey',
@@ -149,7 +159,24 @@ function normalizeWaitFor(kind, waitFor) {
   }[kind];
   if (!spec) return null;
   if (!waitFor || typeof waitFor !== 'object') return null;
-  const ref = String(waitFor[spec] ?? waitFor.ref ?? '').trim();
-  if (!ref) return null;
-  return { kind: kind.replace('need_', '').replace('waiting_', ''), [spec]: ref };
+  const raw = String(waitFor[spec] ?? waitFor.ref ?? '').trim();
+  if (!raw) return null;
+  // ★ 等「用户输入」时，引用必须指向宿主真实存在的东西。
+  //
+  //   原来只判非空：模型随便编一个字符串就能把任务永久停进 waiting_input，
+  //   而永远不会有人来提供那个 key —— 任务既跑不动也关不掉，
+  //   用户只看到「等待输入」却不知道该输什么。
+  //   这里要求宿主给出真实引用；宿主没给就说明这次等待不成立。
+  if (kind === 'need_input') {
+    // 协议字段就是 inputKey。要挡的不是「字段名」，而是**空壳等待**：
+    // 模型填一个没有实际含义的占位（比如 "?"、"-"、单字符）就能把任务
+    // 永久停在 waiting_input，而没有人知道该输入什么。
+    // 底线：必须是一句能看懂在问什么的话（>= 4 个字符）。
+    const key = String(raw ?? '').trim();
+    const question = String(hostRef ?? '').trim();
+    const effective = question || key;
+    if (effective.length < 4) return null;
+    return { kind: 'input', inputKey: effective };
+  }
+  return { kind: kind.replace('need_', '').replace('waiting_', ''), [spec]: raw };
 }
