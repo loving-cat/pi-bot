@@ -1,4 +1,6 @@
 // R28 独立评审复核：D块（客户端任务合并与展示逻辑）。
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pi_bot/task_run_merge.dart';
 import 'package:pi_bot/task_run_models.dart';
@@ -141,6 +143,19 @@ void main() {
       expect(root.isRoot, isTrue);
       expect(child.isRoot, isFalse);
       expect(child.rootTaskId, 'tr_root');
+    });
+  });
+
+  group('D 块：活动轮播状态清理', () {
+    test('D12 断线重连必须清空「谁在干活」（否则轮播永远转圈）', () {
+      // 这是纯源码约束测试：hello 分支里 typing 和 typingBots 必须一起清。
+      // 起因：只清 typing 不清 typingBots，断线时登记的 botId 永远留在集合里，
+      // 输入框上方会一直显示「某某 正在做」而实际上那轮早结束了。
+      final src = File('lib/app_state.dart').readAsStringSync();
+      final hasBoth =
+          src.contains('typingBots.clear();') && src.contains('typing.clear();');
+      expect(hasBoth, isTrue,
+          reason: '重连时 typing 与 typingBots 必须一起清空');
     });
   });
 }

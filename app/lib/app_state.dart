@@ -2140,6 +2140,12 @@ class AppState extends ChangeNotifier {
         //   停在"正在调用工具…"，圈一直在转但什么也没发生。
         //   一份全新的快照进来了，这些临时状态就该归零。
         typing.clear();
+        // ★ 活动轮播的"谁在干活"也要一起清。
+        //
+        //   只清 typing 不清 typingBots 的话，断线那条路径上登记的
+        //   botId 永远留在集合里 —— 输入框上方会一直转圈显示
+        //   "某某 正在做：xxx"，而实际上那轮早结束了，再也不会发 false。
+        typingBots.clear();
         queued.clear();
         _invalidateAttachmentCache(ev['attachmentDeletionRevision']);
         // ★ 断线期间已经结束的 streaming 消息，本地必须处理掉。
