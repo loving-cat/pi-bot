@@ -399,6 +399,10 @@ export const EVENT_SOURCES = Object.freeze({
   [EVENT.input_provided]: [STATE.waiting_input],
   [EVENT.dependency_settled]: [STATE.waiting_dependency],
   // 暂停：任何未终态都能暂停
+  //
+  // ★ 包含 paused_budget：因额度停住的任务，用户仍然可以要求「别跑了」。
+  //   漏掉它的后果是——一个已经停住的任务点暂停被拒（illegal_source），
+  //   用户只会认为按钮坏了。两种暂停原因不同，可以同时成立。
   [EVENT.paused]: [
     STATE.queued,
     STATE.running,
@@ -406,6 +410,7 @@ export const EVENT_SOURCES = Object.freeze({
     STATE.waiting_approval,
     STATE.waiting_input,
     STATE.waiting_dependency,
+    STATE.paused_budget,
     STATE.blocked,
   ],
   // 恢复只从暂停来

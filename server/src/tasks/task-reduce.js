@@ -911,6 +911,12 @@ function eventRefFor(kind, event) {
  *   于是嵌套多少次暂停/阻塞都不会覆盖门槛 —— 结构上不可能丢（H04）。
  */
 function planPause(run, event) {
+  // ★ 「预算暂停」再被用户暂停也必须受理。
+  //
+  //   用户意图很明确：别跑了。原来 paused_budget 不在允许来源里，
+  //   点暂停直接 illegal_source —— 一个已经停住的任务拒绝被暂停，
+  //   用户只会觉得按钮坏了。两种暂停是不同原因，可以同时成立：
+  //   用户暂停优先，额度仍然记着。
   return {
     ok: true,
     patch: {
@@ -931,16 +937,24 @@ function planPause(run, event) {
  */
 function planResume(run, event) {
   if (run.state === STATE.paused_budget) {
-    const extended = Number(run.budget?.extraRuns ?? 0);
-    // 共享子任务不拥有独立额度：以根已追加的持久事实为准
-    const shared = run.budget?.sharedWithRoot === true ? Number(run.budget?.sharedExtraRuns ?? 0) : 0;
-    const hasCredit = (Number.isInteger(extended) && extended > 0)
-      || (Number.isInteger(shared) && shared > 0);
-    if (!hasCredit) {
+    // ★ 必须有**尚未花掉的**额度，而不是"曾经追加过"。
+    //
+    //   extraRuns 是累计追加次数，只看它 > 0 等于：追加过一次之后，
+    //   此后任何一次预算用尽都能直接点「继续」绕过 —— 额度形同虚设。
+    //   这里改成看剩余：追加额度 + 基础额度 - 已用。
+    const maxRuns = run.budget?.maxRuns ?? null;
+    const used = Number(run.budget?.usedRuns ?? 0);
+    const ownExtra = Number(run.budget?.extraRuns ?? 0);
+    const shared = run.budget?.sharedWithRoot === true
+      ? Number(run.budget?.sharedExtraRuns ?? 0) : 0;
+    const extra = ownExtra + shared;
+    const remaining = maxRuns === null ? Infinity
+      : (Number(maxRuns) + extra) - (Number.isInteger(used) ? used : 0);
+    if (!(remaining > 0) || (extra <= 0 && maxRuns !== null)) {
       return reject(
         REJECT.budgetNotExtended,
         'budget',
-        '预算没有实际追加，不能继续（请先追加额度）',
+        '预算没有可用的追加额度，不能继续（请先追加额度）',
       );
     }
   }

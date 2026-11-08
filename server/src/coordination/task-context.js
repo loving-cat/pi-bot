@@ -39,9 +39,35 @@ export const SUBMISSION = Object.freeze({
  *   revision?:number, rootTaskId?:string, botId?:string, acceptedGoal?:object|null,
  *   candidateDepartmentIds?:string[]}}
  */
-export function readManagedSubmission({ runner, taskRuns, roomId, botId }) {
+export function readManagedSubmission({ runner, taskRuns, roomId, botId,
+  /**
+   * 可选：调用方明确要求的任务/尝试。
+   *
+   * ★ 不传就只能拿到「这个 (room,bot) 当前挂着的那个上下文」——
+   *   调用方无法断言「我要的是不是这一条」。带 @ 的写计划/派活工具
+   *   因此可能作用到别的任务上。传了就严格核对。
+   */
+  expectedTaskRunId = null,
+  expectedAttemptId = null,
+} = {}) {
   const raw = runner.currentTaskContext?.(roomId, botId) ?? null;
   if (raw === null || raw === undefined) return { kind: SUBMISSION.legacy };
+
+  // 调用方点名要哪条：对不上就是失效，不能"凑合着用当前这条"
+  if (expectedTaskRunId && raw.taskRunId !== expectedTaskRunId) {
+    return {
+      kind: SUBMISSION.invalid,
+      code: 'task_context_mismatch',
+      text: '当前执行上下文属于任务 ' + raw.taskRunId + '，不是 ' + expectedTaskRunId,
+    };
+  }
+  if (expectedAttemptId && raw.attemptId !== expectedAttemptId) {
+    return {
+      kind: SUBMISSION.invalid,
+      code: 'attempt_context_mismatch',
+      text: '当前执行上下文属于尝试 ' + raw.attemptId + '，不是 ' + expectedAttemptId,
+    };
+  }
 
   const verdict = resolveManagedContext(
     {
@@ -50,7 +76,12 @@ export function readManagedSubmission({ runner, taskRuns, roomId, botId }) {
       attemptId: raw.attemptId,
       botId: raw.botId ?? botId,
     },
-    loaders(taskRuns, botId),
+    {
+      ...loaders(taskRuns, botId),
+      // ★ 把房间带上：受管上下文必须绑定任务所属部门，
+      //   否则部门 B 的会话能给部门 A 的任务写计划。
+      actualRoomId: roomId ?? null,
+    },
   );
   if (verdict.kind !== MANAGED.managed) {
     return {
