@@ -1,0 +1,16 @@
+server/src/coordination/task-context.js
+  h_c2e638ff76b3b9 72-93
+server/src/tasks/task-contract.js
+  h_c2e638ff76b3b9 233-238
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0fff26c45bf96b89f36e90f207459b30c199b166",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
