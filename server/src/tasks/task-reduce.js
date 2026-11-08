@@ -44,7 +44,6 @@ import {
   WAIT_KIND,
   WAIT_STATE_OF,
   allowedFrom,
-  canTransition,
   isTerminal,
   isWaiting,
   ok,

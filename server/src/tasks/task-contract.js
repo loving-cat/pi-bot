@@ -247,10 +247,6 @@ export function canTransition(from, to) {
   return (TRANSITIONS[from] ?? []).includes(to);
 }
 
-export function nextStates(from) {
-  return [...(TRANSITIONS[from] ?? [])];
-}
-
 // ---------------------------------------------------------------------------
 // 角色与接单意图
 // ---------------------------------------------------------------------------
