@@ -1,0 +1,35 @@
+docs/TASK-RUN-PROTOCOL.md
+  s_06973911ad2cd6::t_74e59a08a724de 1-171
+server/src/bootstrap/task-host.js
+  s_06973911ad2cd6::t_a32bb7498653b7 1-100
+server/src/coordination/task-request-gate.js
+  s_06973911ad2cd6::t_bb1cb453330caa 1-149
+server/src/tasks/attempt-ledger.js
+  s_06973911ad2cd6::t_7a692f0e113fa1 1-475
+server/src/tasks/task-expert-tool.js
+  s_06973911ad2cd6::t_daea8e884e1091 1-77
+server/src/tasks/task-projection.js
+  s_06973911ad2cd6::t_7d04708445cf5a 1-133
+server/src/tasks/task-reduce.js
+  s_06973911ad2cd6::t_0492825f0907de 1-1090
+server/src/tasks/task-request-result.js
+  s_06973911ad2cd6::t_bf9bb4d160b396 1-111
+server/src/tasks/task-verification.js
+  s_06973911ad2cd6::t_6a0160ffabe076 1-795
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "576f4d795a452c2c7249ba0b1cf5fab8b393a8af",
+  "prompts": {},
+  "sessions": {
+    "s_06973911ad2cd6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14873-5e64-72b3-a1f1-92c55db44594",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
