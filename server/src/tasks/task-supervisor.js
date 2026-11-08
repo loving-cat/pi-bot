@@ -990,7 +990,10 @@ export function createTaskSupervisor({
       type: EVENT.verification_finished, revision: taskRun.revision, at: clock(),
       passed: verification?.passed === true,
       unmet: verification?.unmet ?? [],
-      reason: verification?.reason ?? '',
+      // ★ 通过时必须给出依据，否则归约器不会接受（防「空壳完成」）。
+      //   验收器没写理由时由这里补一条可核对的说明，而不是让它被拒。
+      reason: String(verification?.reason ?? '').trim()
+        || (verification?.passed === true ? '已按条件完成验收' : '验收未通过'),
     });
     const after = read(taskRun.id);
     if (after) await patch(taskRun.id, { stall: bumpStall(after) });

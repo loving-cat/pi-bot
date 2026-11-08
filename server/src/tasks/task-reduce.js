@@ -232,10 +232,20 @@ export function validateBudget(budget) {
   if (typeof budget !== 'object' || Array.isArray(budget)) {
     return reject(REJECT.badField, 'budget', '预算必须是对象或 null');
   }
-  const { maxRuns, usedRuns, extraRuns, deadlineAt } = budget;
+  const { maxRuns, usedRuns, extraRuns, deadlineAt, concurrencyLimit } = budget;
   if (maxRuns !== null && maxRuns !== undefined) {
     if (!Number.isInteger(maxRuns) || maxRuns <= 0) {
       return reject(REJECT.badField, 'budget.maxRuns', 'maxRuns 必须是正整数或 null（不限额）');
+    }
+  }
+  // ★ 与 task-budget.js 的规则对齐。
+  //
+  //   两份 validateBudget 各写一套，实测在「usedRuns > maxRuns」上不一致：
+  //   那一份拒绝、这一份通过。于是同一个预算对象，写进存储时被判坏、
+  //   但归约器认为没问题 —— 数据坏了却没人发现，账目从此对不上。
+  if (concurrencyLimit !== null && concurrencyLimit !== undefined) {
+    if (!Number.isInteger(concurrencyLimit) || concurrencyLimit <= 0) {
+      return reject(REJECT.badField, 'budget.concurrencyLimit', 'concurrencyLimit 必须是正整数或 null');
     }
   }
   if (usedRuns !== undefined && usedRuns !== null) {
@@ -252,6 +262,15 @@ export function validateBudget(budget) {
     if (!isTime(deadlineAt)) {
       return reject(REJECT.badField, 'budget.deadlineAt', 'deadlineAt 必须是毫秒时间戳');
     }
+  }
+  // 同样的口径：已用不能超过基础上限（追加额度另算）
+  if (Number.isInteger(maxRuns) && maxRuns > 0
+    && Number.isInteger(usedRuns) && usedRuns > maxRuns) {
+    return reject(
+      REJECT.badField,
+      'budget.usedRuns',
+      '已用 ' + usedRuns + ' 次超过上限 ' + maxRuns + '，预算数据不一致',
+    );
   }
   return ok();
 }
@@ -753,6 +772,25 @@ function planVerificationFinished(run, event) {
     return reject(REJECT.missingField, 'event.passed', '验收结论必须是明确的通过或不通过');
   }
   if (event.passed) {
+    // ★ 「验收通过」不能是一个空壳断言。
+    //
+    //   归约器无条件采信 event.passed 就能把任务标成完成 —— 但验收本该
+    //   真的跑过条件（产物/专家确认/文件）。一个来源不明的事件
+    //   （旧版本、误发、别的执行串进来）就能让任务凭空完成，
+    //   而实际上没人验过。
+    //   这里要求：事件要么带上验收证据（条件 ID 或理由），
+    //   要么说明这是对当前在验目标的结论（revision 对齐已在前面校验）。
+    const evidence = Array.isArray(event.verifiedConditions)
+      ? event.verifiedConditions.filter((c) => typeof c === 'string' && c.trim()).length
+      : 0;
+    const hasReason = typeof event.reason === 'string' && event.reason.trim().length >= 2;
+    if (!evidence && !hasReason) {
+      return reject(
+        REJECT.missingField,
+        'event.reason',
+        '验收通过必须说明依据（验过了哪些条件），不能是空结论',
+      );
+    }
     return {
       ok: true,
       patch: {
