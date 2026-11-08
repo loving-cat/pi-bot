@@ -1,0 +1,16 @@
+app/lib/task_run_controller.dart
+  h_c2e638ff76b3b9 262-264
+app/lib/widgets/activity_monitor.dart
+  h_c2e638ff76b3b9 27-28,38,55-67,73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5a1e42aef8cb5d01f43776df5bfcb2a733b764a9",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
