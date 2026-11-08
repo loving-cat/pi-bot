@@ -259,6 +259,9 @@ class TaskRunController extends ChangeNotifier {
       reason: envelope['reason'] as String?,
       commandId: envelope['commandId'] as String,
       expectedRevision: envelope['expectedRevision'] as int,
+      // ★ 必须带上：同一个 commandId 的内容指纹要和第一次完全一致，
+      //   否则服务端按内容判指纹不符，重试会被拒（而且用户看不懂为什么）。
+      extraRuns: envelope['extraRuns'] as int?,
     );
   }
 
