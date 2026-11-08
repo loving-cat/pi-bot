@@ -1,0 +1,16 @@
+server/src/tasks/task-reduce.js
+  h_c2e638ff76b3b9 235,241-250,266-274,775-793
+server/src/tasks/task-supervisor.js
+  h_c2e638ff76b3b9 993-996
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "512fe379fa00a378fafcadcae61ab93cdc976c80",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
