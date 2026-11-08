@@ -16,7 +16,7 @@ import path from 'node:path';
 import { bus } from './bus.js';
 import { config } from './config.js';
 import { store } from './store.js';
-import { menuText, resolveMenu, menuEntries, matchMenuEntry } from './model-menu.js';
+import { menuText, menuEntries } from './model-menu.js';
 import { recommendModel } from './model-recommend.js';
 import { extractText } from './extract.js';
 import { webSearch, webFetch } from './web.js';
@@ -28,7 +28,9 @@ import { log, now, isBusyError, planDispatchRetry } from './util.js';
 import { CODING_BASELINE_TITLE, CODING_BASELINE_HOWTO, isCodingRole } from './coding-baseline.js';
 import { scanLocalCapabilities } from './local-capabilities.js';
 import { siteDrafts, describeDraftForConfirm, draftConfirmOptions } from './site-draft.js';
-import { departmentModelConflicts } from './model-dispatch.js';
+import { readManagedSubmission, SUBMISSION } from './coordination/task-context.js';
+import { makeSpecPreparer, checkAssignableModel } from './coordination/department-spec.js';
+import { handleIntake, ACTION } from './coordination/intake.js';
 
 /** 同一个 bot 连着私信多个人时，多久以内的引用气泡合并成一个（ms） */
 export const REF_MERGE_MS = 180_000;
@@ -91,36 +93,6 @@ function insideWorkspace(input) {
   const rel = path.relative(config.workspace, full);
   if (rel.startsWith('..') || path.isAbsolute(rel)) return null;
   return full;
-}
-
-/** 只接受启用目录中可解析且没有明确失败结论的模型。 */
-function checkModel(runner, slug, health) {
-  if (!slug) return { ok: true };
-  const picked = resolveMenu(slug, health);
-  if (!picked) {
-    const match = matchMenuEntry(slug);
-    if (match.reason === 'ambiguous') return { ok: false, suggestions: [
-      '名称对应多个模型，请选择完整标识：', ...match.candidates.slice(0, 10),
-    ] };
-    return { ok: false, suggestions: ['请从当前启用的模型组中选择：', ...menuText(health).split('\n')] };
-  }
-  // ★ 线路暂时不通**不该**阻止分配。
-  //
-  //   健康检查回答的是"这一刻这条路通不通"，而分配模型回答的是
-  //   "这个活该用哪个模型" —— 两件事。线路抖一下（限流、上游临时故障、
-  //   24h 内的旧记录）就硬拒绝，用户会遇到"模型明明在组里，主控却说
-  //   分配不了"，而且他刚配好的新 key 可能还没被重新探测过。
-  //
-  //   这里改成放行 + 提醒：分配照做，同时在返回里带一句警告，
-  //   让主控知道"现在是配上了，但这条路当前探测不通，跑起来可能失败"。
-  const warning = picked.alive
-    ? null
-    : `${picked.entry.alias} 当前的线路实测不可用（${picked.slug}），已照常分配，` +
-      '但运行可能失败 —— 建议检查该模型组的 key 与接口。';
-  if (!runner.resolveModel(picked.slug)) {
-    return { ok: false, suggestions: [`${picked.slug} 尚未注册成功，请检查模型组配置`] };
-  }
-  return { ok: true, resolved: picked.slug, warning };
 }
 
 function modelError(slug, suggestions) {
@@ -1113,7 +1085,7 @@ export function buildChiefTools({ runner, health, roomId, botId }) {
         ),
       }),
       execute: async (_toolCallId, params) => {
-        const check = checkModel(runner, params.model, health);
+        const check = checkAssignableModel({ runner, slug: params.model, health });
         if (!check.ok) return modelError(params.model, check.suggestions);
         const existing = store.listBots().find((b) => b.name === params.name);
         if (existing) {
@@ -1181,7 +1153,7 @@ export function buildChiefTools({ runner, health, roomId, botId }) {
         const { botId: target, ...patch } = params;
         let modelWarning = null;
         if (patch.model !== undefined && patch.model !== '') {
-          const check = checkModel(runner, patch.model, health);
+          const check = checkAssignableModel({ runner, slug: patch.model, health });
           if (!check.ok) return modelError(patch.model, check.suggestions);
           patch.model = check.resolved;
           if (check.warning) modelWarning = check.warning;
@@ -1423,8 +1395,51 @@ export function buildChiefTools({ runner, health, roomId, botId }) {
         ),
       }),
       execute: async (_toolCallId, params) => {
-        // ★ 照模板开：人 / 人设 / 模型 / 技能 全从模板来，不再要求 lead+members。
-        //   这是"这个班子不错，再来一个一样的"那条路 —— 用户不必重述一遍要求。
+        // 本轮是首次接单请求（含只讨论）：组织写必须走 accept_task 提案，
+        // 不允许 legacy 入口在讨论轮产生副作用。
+        if (typeof runner.currentRequestScope === 'function' && runner.currentRequestScope(roomId, botId)) {
+          return fail('本轮是接单请求，建部门必须通过 accept_task 提案；只讨论不产生副作用。');
+        }
+        // ★ 薄适配：只做「取可信提交 → 备规格 → 交统一入口」，不在这里编排。
+        const submission = readManagedSubmission({ runner, taskRuns: store.taskRuns, roomId, botId });
+        if (submission.kind === SUBMISSION.invalid) {
+          return fail(`这次执行不能建组：${submission.text}`);
+        }
+
+        // 只读准备器：模板展开、模型可分配性、同名冲突、能力字段统一在一处
+        const prepareSpec = makeSpecPreparer({ store, runner, health });
+        const request = {
+          templateId: params.templateId ?? null,
+          name: params.name,
+          topic: params.topic,
+          members: params.members ?? null,
+          lead: params.lead ?? null,
+        };
+        const prepared = prepareSpec(request);
+        if (!prepared.ok) return fail(prepared.text);
+
+        // ---- 受管：创建副作用只在持久认领之后发生
+        if (submission.kind === SUBMISSION.managed) {
+          const out = await handleIntake({
+            action: { type: ACTION.createDepartment, request },
+            submission,
+            store,
+            taskRuns: store.taskRuns,
+            prepareSpec,
+          });
+          if (!out.ok) return fail(`交接没完成：${out.text ?? out.code}`);
+          if (params.saveAs) store.saveTemplateFromRoom(out.departmentId, { name: params.saveAs });
+          const room = store.getRoom(out.departmentId);
+          const lead = store.getBot(out.leadBotId);
+          log(`chief 建部门（受管）：${room?.name}，老大=${lead?.name}`);
+          return ok(
+            `已建部门「${room?.name ?? prepared.spec.name}」(roomId=${out.departmentId})。\n` +
+              `用户往这个群发消息时，由 ${lead?.name} 先接单拆活。`,
+            { roomId: out.departmentId, leadBotId: out.leadBotId },
+          );
+        }
+
+        // ---- legacy：保持既有行为（模板原语、公告、模板保存、成员复用）
         if (params.templateId) {
           const r = store.applyTemplate(params.templateId, { name: params.name });
           if (r.error) {
@@ -1440,69 +1455,21 @@ export function buildChiefTools({ runner, health, roomId, botId }) {
               `负责人 ${store.getBot(r.room.leadBotId)?.name ?? '—'}）。«内部：roomId=${r.room.id}»`,
           );
         }
-        const members = params.members ?? [];
-        if (!members.length) return fail('至少要有一个成员');
-        if (!members.some((m) => m.name === params.lead)) {
-          return fail(`lead「${params.lead}」不在 members 里。members 有：${members.map((m) => m.name).join('、')}`);
-        }
 
-        // 先校验全部模型，有一个不行就整体不动，避免建出一半
-        const bad = [];
-        const resolved = [];
-        for (const m of members) {
-          if (!m.model) {
-            resolved.push({ ...m, model: null });
-            continue;
-          }
-          const check = checkModel(runner, m.model, health);
-          if (!check.ok) bad.push({ name: m.name, model: m.model, suggestions: check.suggestions });
-          else resolved.push({ ...m, model: check.resolved });
-        }
-        if (bad.length) {
-          return fail(
-            '有成员选了不可用的模型，什么都没建：\n' +
-              bad.map((b) => `  ${b.name} → ${b.model}；${b.suggestions.slice(0, 3).join('、')}`).join('\n'),
-          );
-        }
-
-        const conflicts = departmentModelConflicts(resolved, store.listBots(), runner.modelLabel?.());
-        if (conflicts.length) return fail(`成员配置存在冲突，什么都没建：\n${conflicts.join('\n')}`);
-        const created = [];
-        for (const m of resolved) {
-          const dup = store.listBots().find((b) => b.name === m.name);
-          if (dup) {
-            created.push(dup);
-            continue;
-          }
-          created.push(
-            store.createBot({
-              name: m.name,
-              persona: m.persona,
-              emoji: m.emoji,
-              tagline: m.tagline,
-              model: m.model,
-              thinking: m.thinking ?? undefined,
-              createdBy: 'chief',
-            }),
-          );
-        }
-
-        const leadBot = created.find((b) => b.name === params.lead);
-        const room = store.createGroup({
-          name: params.name,
-          topic: params.topic,
-          botIds: created.map((b) => b.id),
-          leadBotId: leadBot?.id,
+        const built = store.createDepartment({
+          name: prepared.spec.name,
+          topic: prepared.spec.topic,
+          members: prepared.spec.members,
+          lead: prepared.spec.lead,
           createdBy: 'chief',
         });
-        // 顺手存一份模板：下次"再开一个这样的"或"照这个改"就不用重描述一遍
+        const created = built.bots;
+        const room = built.room;
+        const leadBot = room.leadBotId ? store.getBot(room.leadBotId) : null;
         if (params.saveAs) store.saveTemplateFromRoom(room.id, { name: params.saveAs });
 
         const me = store.mainBot();
-        // ★ 给用户看的公告：像真人老板拉群那样说话。
-        //   不列成员名单、不标谁是老大、不提模型/思考等级 ——
-        //   职位（工程师/设计师/负责人）本身已经说明了分工和分量，
-        //   挨个点评“谁用什么工具、谁当头”只会显得像在念配置表。
+        // 给用户看的公告：像真人老板拉群那样说话，不列配置清单
         const announce = [`${room.name} 拉好了。`];
         if (params.topic) announce.push(`我们要做的事：${params.topic}`);
         announce.push(
@@ -1520,8 +1487,8 @@ export function buildChiefTools({ runner, health, roomId, botId }) {
         });
 
         log(`chief 建部门：${room.name}，老大=${leadBot?.name}，${created.length} 人`);
-        // 返回值里的模型/思考等级是给模型自己看的，用 «» 框起来并明说是内部参数，
-        // 否则它会原样转述给用户。
+
+        // «» 里是内部参数：给模型挑模型/派活用，不要转述给用户
         return ok(
           `已建部门「${room.name}」(roomId=${room.id})，共 ${created.length} 人。\n` +
             `用户往这个群发消息时，由 ${leadBot?.name} 先接单拆活。\n` +
@@ -1546,6 +1513,38 @@ export function buildChiefTools({ runner, health, roomId, botId }) {
         const room = store.getRoom(groupId);
         if (!room || room.kind !== 'group') return fail(`找不到部门 ${groupId}`);
         const lead = store.getBot(room.leadBotId);
+
+        // ★ 本轮是首次接单请求（理解轮）：派活必须走 accept_task 的正式交接。
+        //   放行的话会同时起一条旧群轮 + 一条受管执行，两个抢同一个负责人会话：
+        //   受管那次撞上「会话正在忙」立即失败，任务被标成阻塞，而团队其实在群里跑完了
+        //   —— 用户看到的正是「刚开始就受阻」。
+        if (typeof runner.currentRequestScope === 'function' && runner.currentRequestScope(roomId, botId)) {
+          return fail('本轮是接单请求，派活必须通过 accept_task 提案；不能直接起旧的群轮。');
+        }
+
+        // 受管执行：翻成 existing 交接，记进同一任务的待派；不起无任务的旧执行
+        const submission = readManagedSubmission({ runner, taskRuns: store.taskRuns, roomId, botId });
+        if (submission.kind === SUBMISSION.invalid) {
+          return fail(`这次执行不能派活：${submission.text}`);
+        }
+        if (submission.kind === SUBMISSION.managed) {
+          const out = await handleIntake({
+            action: {
+              type: ACTION.dispatchExisting,
+              departmentId: groupId,
+              leadBotId: room.leadBotId ?? null,
+            },
+            submission,
+            store,
+            taskRuns: store.taskRuns,
+          });
+          if (!out.ok) return fail(`没能记进这个部门的待办：${out.text ?? out.code}`);
+          return ok(
+            `已把这件事记进「${room.name}」的待办（负责人 ${lead?.name ?? '?'}），由持续任务统一推进。`,
+            { roomId: groupId, queueRef: out.queueRef },
+          );
+        }
+
         const res = await runner.dispatchToGroup({ roomId: groupId, text: task });
         if (!res.ok) return fail(res.error ?? '下达失败');
         return ok(

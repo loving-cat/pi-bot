@@ -17,7 +17,8 @@ export function modelFailure(error) {
     return { status, auth: false, error: '模型接口报告上下文超限，请核实容量配置或压缩会话。' };
   }
   if (/timeout|timed out|超时|超过.*未完成/i.test(raw) || status === 408 || status === 504) {
-    return { status, auth: false, error: '模型请求超时，已停止等待，请稍后重试。' };
+    // ★ timedOut 是运行失败事实，不是用户取消 —— 上层据此区分停止原因
+    return { status, auth: false, timedOut: true, error: '模型请求超时，已停止等待，请稍后重试。' };
   }
   return { status, auth: false, error: status
     ? `模型请求失败（HTTP ${status}），请检查接口配置或稍后重试。`

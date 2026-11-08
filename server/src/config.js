@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { migrateLegacyData, migratedWorkspace, repairSessionRefs, SERVER_BOOT } from './data-migration.js';
 
@@ -73,6 +74,8 @@ const tools = (process.env.PI_BOT_TOOLS || 'read,write,edit,ls,find,grep,bash')
   .filter(Boolean);
 
 export const config = {
+  // 服务进程实例：客户端用它隔离旧连接/旧服务回包
+  serverInstanceId: randomUUID(),
   pkgRoot,
   home,
   dataDir,

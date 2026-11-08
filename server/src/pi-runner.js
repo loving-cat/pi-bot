@@ -29,10 +29,14 @@ import { settleRetryMessage } from './retry-messages.js';
 import { assistantFailure, fallbackModels, modelFailure, recoverModelReply } from './model-reply.js';
 import { invalidateSessions, retireStaleSession, reserveSession } from './session-refresh.js';
 import { deliverDirectInput } from './direct-message-delivery.js';
+import { requestIdentityKey } from './tasks/task-request-result.js';
 import { MergeQueue, MERGE_QUIET_MS } from './merge-messages.js';
 import { buildMemoryDigest, memoryProgress } from './memory-digest.js';
 import { shouldAutoSummarize } from './memory-policy.js';
 import { PRIORITY, RunSlots } from './run-slots.js';
+import { classifyStop, resolveManagedContext, planAttemptEvent, adaptRunOutcome, MANAGED } from './tasks/task-progress.js';
+import { createReportCollector } from './tasks/task-report.js';
+import { STOP } from './tasks/task-contract.js';
 
 /**
  * 多久之内又来一条，算"连发"（于是开始攒）。
@@ -199,6 +203,8 @@ function emitContext(roomId, botId, session) {
 
 export class PiRunner {
   constructor() {
+    /** 07 接单功能开关：关闭时新 App 的合法 requestId 只走普通聊天，不要求 accept_task。 */
+    this.taskIntakeEnabled = process.env.PI_BOT_TASK_INTAKE === '1';
     /** @type {Map<string, {session:any, bot:any, busy:boolean, unsubscribe?:Function, pending?:Promise<any>}>} */
     this.sessions = new Map();
     this.modelRuntime = null;
@@ -521,6 +527,28 @@ export class PiRunner {
    * 这里只把 store 和 run 接上去。
    */
   escalate(args) {
+    // 受管任务：失败升级回原任务负责人，不另起无任务执行
+    const runtime = this.taskRuntime;
+    if (runtime?.onEscalation) {
+      // 身份来自这次失败执行自己的受管上下文；没有上下文才走旧逻辑
+      const ctx = args?.roomId && args?.fromBotId
+        ? this.currentTaskContext(args.roomId, args.fromBotId)
+        : null;
+      if (ctx) {
+        // 非空作用域但字段残缺：属于 invalid，明确拒绝，不借用其他目标也不降级 legacy。
+        // 用 Promise.resolve 统一同步/异步返回，避免同步拒绝分支直接 .then 抛 TypeError。
+        return Promise.resolve(runtime.onEscalation({
+          taskRunId: ctx.taskRunId ?? null,
+          revision: ctx.revision ?? null,
+          attemptId: ctx.attemptId ?? null,
+          botId: ctx.botId ?? args?.fromBotId ?? null,
+          reason: args?.reason ?? '',
+        })).catch((err) => {
+          log('受管升级失败：', err?.message || err);
+          return { ok: false, code: 'escalation_failed', text: String(err?.message || err) };
+        });
+      }
+    }
     this.__escalator ??= createEscalator({
       store,
       run: (roomId, botId, text, opts) => this.run(roomId, botId, text, opts),
@@ -727,7 +755,7 @@ export class PiRunner {
     bus.emit('event', { t: 'mcp.changed' });
   }
 
-  // ---------------------------------------------------------------- 会话
+  // ---------------------------------------------------------------- 核心：跑一轮
 
   providerForBot(botId) {
     const bot = store.getBot(botId);
@@ -776,7 +804,13 @@ export class PiRunner {
       resolveModel: (slug) => this.resolveModel(slug),
       modelLabel: () => this.modelLabel(),
     });
-    const promise = this.__buildSession(roomId, botId).then((r) => ({
+    // ★ 报告工具**固定注册**给所有会话。
+    //
+    //   按需注册会跟会话缓存打架：先普通聊天（没注册）→ 再受管执行时
+    //   会话被直接复用，工具集不会重建，于是受管轮次拿不到 task_report。
+    //   改成固定注册 + 执行时严格活跃 scope 判定：
+    //   工具一直在，但只有本次真正获得执行占用的调用能提交报告。
+    const promise = this.__buildSession(roomId, botId, { reportTool: true }).then((r) => ({
       ...r,
       busy: false,
       unsubscribe: null,
@@ -977,6 +1011,176 @@ export class PiRunner {
     }
   }
 
+  /** 首次接单的请求作用域：只在对应理解轮期间存在，轮结束即清理。 */
+  requestScopes = new Map();
+
+  /** 忙时排队的不可变请求信封（不把身份借给正在跑的轮次）。 */
+  requestQueues = new Map();
+
+  /** 宿主注入的统一生命周期（WS/HTTP 共用；未注入时拒绝首次接单）。 */
+  requestLifecycle = null;
+
+  /** 本轮理解轮已给出的明确决议；模型文本不算。 */
+  requestDecisions = new Map();
+
+  /** 接单完成、等本轮释放后再通知 05 的任务。 */
+  admittedQueue = [];
+
+  #scopeKey(roomId, botId) {
+    return this.#key(roomId, botId);
+  }
+
+  beginRequestScope(roomId, botId, scope) {
+    if (!scope) return null;
+    this.requestScopes.set(this.#scopeKey(roomId, botId), scope);
+    return scope;
+  }
+
+  endRequestScope(roomId, botId, requestId = null) {
+    const key = this.#scopeKey(roomId, botId);
+    const current = this.requestScopes.get(key);
+    if (!current) return;
+    if (requestId && current.requestId !== requestId) return;
+    this.requestScopes.delete(key);
+  }
+
+  currentRequestScope(roomId, botId) {
+    return this.requestScopes.get(this.#scopeKey(roomId, botId)) ?? null;
+  }
+
+  /** 记录本轮明确决议。 */
+  setRequestDecision(roomId, botId, scope, kind, extra = null) {
+    if (!scope?.requestId) return;
+    this.requestDecisions.set(requestIdentityKey(scope.requesterId, scope.requestId), { kind, ...(extra ?? {}) });
+  }
+
+  requestDecisionOf(scope) {
+    return scope ? this.requestDecisions.get(requestIdentityKey(scope.requesterId, scope.requestId)) ?? null : null;
+  }
+
+  queueAdmittedTask(taskRunId) {
+    if (taskRunId) this.admittedQueue.push(taskRunId);
+  }
+
+  #flushAdmitted() {
+    for (const id of this.admittedQueue.splice(0)) {
+      try {
+        const runtime = this.taskRuntime;
+        if (runtime?.notifyAdmitted) runtime.notifyAdmitted(id).catch(() => {});
+        else if (runtime?.supervisor?.notify) Promise.resolve(runtime.supervisor.notify(id)).catch(() => {});
+      } catch {}
+    }
+  }
+
+  /** 宿主注入共用生命周期（WS/HTTP 各设一次，实现只有一份）。 */
+  setRequestLifecycle(lifecycle) {
+    this.requestLifecycle = lifecycle ?? null;
+  }
+
+  /** 不可变信封形状校验；不合格直接拒绝，不退回 legacy 执行。 */
+  #assertRequestEnvelope(request) {
+    if (!request?.scope?.requesterId || !request.scope.requestId || !request.scope.fingerprint) {
+      throw Object.assign(new Error('请求信封不完整'), { code: 'BAD_REQUEST_ENVELOPE' });
+    }
+  }
+
+  /** 理解轮真正取得执行权后激活；该轮真正结束后收尾。 */
+  async #withRequestEnvelope(request, roomId, botId, fn) {
+    const scope = request.scope;
+    const active = this.currentRequestScope(roomId, botId);
+    if (active && requestIdentityKey(active.requesterId, active.requestId) !== requestIdentityKey(scope.requesterId, scope.requestId)) {
+      throw Object.assign(new Error('同一会话已有另一个请求身份在执行'), { code: 'REQUEST_SCOPE_CONFLICT' });
+    }
+    this.beginRequestScope(roomId, botId, scope);
+    let failure = null;
+    let verdict = null;
+    try {
+      await fn();
+      verdict = this.requestDecisionOf(scope);
+      // 关闭态：合法 requestId 的普通聊天不要求接单工具；本轮结束按普通回答收口。
+      if (!verdict && this.taskIntakeEnabled) {
+        await this.run(roomId, botId, '用户这一轮请求需要明确处理结果：只调用 accept_task 提交 answer / clarification / accept_task 之一；如果仍不确定是否要执行或缺少目标/交付物/验收/执行对象，先调用 kind=clarification 提一个具体问题；只给计划或普通聊天不算完成。', { skipUserMessage: true, human: true });
+        verdict = this.requestDecisionOf(scope);
+      }
+      return verdict;
+    } catch (err) {
+      failure = err;
+      throw err;
+    } finally {
+      this.endRequestScope(roomId, botId, scope.requestId);
+      this.requestDecisions.delete(requestIdentityKey(scope.requesterId, scope.requestId));
+      const closeKind = verdict?.kind ?? (this.taskIntakeEnabled ? null : 'answer');
+      this.requestLifecycle?.close?.(scope, failure, closeKind);
+      // 首次准入与自然改版都等本轮理解释放后再启动受管执行，不抢当前会话。
+      this.#flushAdmitted();
+    }
+  }
+
+  /** 忙时排队：只存信封本身，等真正空闲再单独跑一轮。 */
+  #enqueueRequest(roomId, item) {
+    const list = this.requestQueues.get(roomId) ?? [];
+    const identity = requestIdentityKey(item.request.scope.requesterId, item.request.scope.requestId);
+    if (!list.some((x) => requestIdentityKey(x.request.scope.requesterId, x.request.scope.requestId) === identity)) list.push(item);
+    this.requestQueues.set(roomId, list);
+  }
+
+  /** 排空该房间待执行请求（一次一封，避免身份串轮）。 */
+  async #drainRequestQueue(roomId, botId) {
+    const list = this.requestQueues.get(roomId);
+    if (!list?.length || this.isBusy(roomId, botId)) return;
+    const item = list.shift();
+    if (!item) return;
+    try {
+      const result = await deliverDirectInput({
+        prepare: () => this.#buildInput(item.text, item.files, roomId),
+        run: ({ promptText }) => this.#withRequestEnvelope(item.request, roomId, botId, () =>
+          this.run(roomId, botId, promptText, { skipUserMessage: true, attachments: item.files, human: true })),
+        getEntry: () => this.sessions.get(this.#key(roomId, botId)),
+        isCancelled: () => this.aborting.has(roomId),
+        queue: async () => { throw Object.assign(new Error('请求已在队列中'), { code: 'REQUEST_QUEUED' }); },
+        accepted: () => {},
+      });
+      if (result?.ok !== false) {
+        const msg = store.updateMessage(roomId, item.messageId, { meta: { queued: false } });
+        if (msg) bus.emit('event', { t: 'msg.updated', roomId, msg });
+      }
+    } catch (err) {
+      const error = modelFailure(err).error;
+      const msg = store.updateMessage(roomId, item.messageId, { status: 'error', error });
+      bus.emit('event', { t: 'msg.error', roomId, msgId: item.messageId, error, msg });
+    } finally {
+      if ((this.requestQueues.get(roomId)?.length ?? 0) > 0) {
+        setTimeout(() => { void this.#drainRequestQueue(roomId, botId); }, 0);
+      }
+    }
+  }
+
+  /**
+   * 任务级在途执行登记：取消时只终止这个 TaskRun 的执行，
+   * 不用 abort(roomId) 误伤同房间的其他目标。
+   */
+  managedInflight = new Map();
+
+  abortManagedTask(taskRunId) {
+    const entry = this.managedInflight.get(taskRunId);
+    if (!entry) return { ok: false, code: 'not_inflight' };
+    // 会话可能在建；按登记 key 惰性解析当前真实句柄，而不是登记时的快照
+    const session = entry.session ?? this.sessions.get(entry.key)?.session ?? null;
+    if (!session?.abort) return { ok: false, code: 'no_session' };
+    try {
+      session.abort();
+    } catch {}
+    return { ok: true, attemptId: entry.attemptId ?? null };
+  }
+
+  /** Bot 是否确属该房间（受管 DM 执行前核对，不靠上下文自证）。 */
+  roomHasBot(roomId, botId) {
+    const room = store.getRoom(roomId);
+    if (!room) return false;
+    if (Array.isArray(room.botIds)) return room.botIds.includes(botId);
+    return Boolean(room.botId && room.botId === botId);
+  }
+
   isBusy(roomId, botId) {
     const key = this.#key(roomId, botId);
     // ★ 同步占位也算忙。
@@ -1020,7 +1224,7 @@ export class PiRunner {
     return leadId ?? room.botIds[0] ?? null;
   }
 
-  // ---------------------------------------------------------------- 附件
+  // ---------------------------------------------------------------- 核心：跑一轮
 
   /** 把附件整理成两路：图片直接喂模型，文档抽正文拼进提示词 */
   /**
@@ -1058,7 +1262,7 @@ export class PiRunner {
     return { meta, msg };
   }
 
-  // ---------------------------------------------------------------- 群聊（部门）
+  // ---------------------------------------------------------------- 核心：跑一轮
 
   /** 这个 bot 在群里还没看过的消息 */
   /**
@@ -1135,6 +1339,90 @@ export class PiRunner {
     }
   }
 
+  /**
+   * **单次受管执行**：执行明确授权的那一个目标，并返回它的结果。
+   *
+   * ## 为什么不复用旧群协调路径
+   *
+   * 旧路径有两处会「自己造目标」：
+   *
+   *   · `openingSpeakers` 用自然语言猜谁该被叫到 —— 目标是成员但正文没 @ 它时，
+   *     它会选负责人，然后受管过滤又把负责人跳过，结果一次都没跑；
+   *   · 收尾轮会再补一次 run —— 那一次没有受管上下文，产生一段无
+   *     AttemptResult 的 legacy 执行。
+   *
+   * 受管执行的目标是**已知的**，所以不走猜人、也不补跑：
+   * 直接执行它，把结果返回给调用方。
+   *
+   * ## 报告 scope 在这里开、在这里关
+   *
+   * 收集器的创建与释放都收敛到 `#activateReportScope` / `#releaseReportScope`，
+   * 不再散落在 run 的各个早退分支上 —— 那样任何一个新出口都可能漏清理。
+   */
+  async #runManagedOnce({
+    room,
+    botId,
+    managedContext,
+    openerText = '',
+    openerBotId = null,
+    openerName = '用户',
+    openerMessageId = null,
+    attachments = [],
+    attachmentContext = null,
+    kickoff = false,
+  } = {}) {
+    const roomId = room.id;
+    const bot = store.getBot(botId);
+    if (!bot) {
+      return { ok: false, code: 'MANAGED_TARGET_MISSING', error: '受管目标 Bot 不存在', stop: STOP.failed };
+    }
+
+    const fresh = transcriptFor(roomId, botId);
+    const prompt = composeGroupPrompt(room, bot, fresh, {
+      isLead: botId === (departmentOf(room).leadId ?? null),
+      reason: kickoff ? '部门刚成立，先由你安排' : openerBotId ? openerName + ' 叫了你' : '用户发了新消息',
+      members: departmentOf(room).members,
+      leadId: departmentOf(room).leadId,
+      order: { index: 1 },
+    });
+
+    // 受管执行：把任务/阶段提示真正送进模型输入（旧非受管路径不受影响）
+    const taskPrompt = typeof openerText === 'string' && openerText.trim() ? openerText.trim() : '';
+    const composed = [taskPrompt, prompt].filter(Boolean).join('\n\n');
+
+
+    const key = this.#key(roomId, botId);
+    const managedTaskRun = managedContext?.taskRunId ?? null;
+    this.dispatching.add(key);
+    if (managedTaskRun) {
+      const entry = this.sessions.get(key);
+      this.managedInflight.set(managedTaskRun, { key, botId, roomId, session: entry?.session ?? null, attemptId: managedContext?.attemptId ?? null });
+    }
+    try {
+      const res = await this.run(roomId, botId, attachmentContext ? attachmentContext + '\n\n' + composed : composed, {
+        groupTurn: true,
+        retryManaged: true,
+        taskRunId: newId('run_'),
+        attemptIndex: 1,
+        attachments,
+        managedContext,
+        human: !openerBotId,
+      });
+      // 受管执行的返回值就是这一轮的结果：调用方据此推进 TaskRun。
+      return res;
+    } catch (err) {
+      log('【' + room.name + '】受管单次执行异常：', err?.message || err);
+      return {
+        ok: false,
+        code: 'MANAGED_EXECUTION_FAILED',
+        error: err?.message || String(err),
+        stop: STOP.failed,
+      };
+    } finally {
+      this.dispatching.delete(key);
+      if (managedTaskRun) this.managedInflight.delete(managedTaskRun);
+    }
+  }
   async runRound(
     roomId,
     {
@@ -1145,12 +1433,79 @@ export class PiRunner {
       kickoff = false,
       attachments = [],
       attachmentContext = null,
+      /**
+       * 受管执行上下文（可省略）。
+       *
+       * ★ 只对**同一个 Bot** 的那一次尝试有意义。
+       *   多 Bot 队列不能把一份属于某 Bot 的尝试上下文复制给别人。
+       */
+      managedContext = null,
     } = {},
   ) {
     const room = store.getRoom(roomId);
     if (!room || room.kind !== 'group') return;
     const { members, leadId } = departmentOf(room);
     if (!members.length) return;
+
+    // ★ 与 run 保持同一套拒绝语义：显式给了非法上下文就在**派活之前**拒绝。
+    //   若在这里放行，队列构造会把不匹配的上下文悄悄变成 null，
+    //   于是这次调用以旧路径跑起来 —— 和 run 的判定不一致。
+    /** 本次轮次是否是受管执行（显式提供了上下文）。 */
+    const isManagedRound = managedContext !== null && managedContext !== undefined;
+
+    if (isManagedRound) {
+      // ★ 不能用 ctx.botId 自证 —— 那只是上下文自己声明的执行者。
+      //   必须核对**本次真实要执行的部门**里有没有这个 Bot。
+      //   actualBotId 留 null，让 resolver 只做记录/状态/尝试/授权核对；
+      //   执行者归属由下面按真实成员集合判断。
+      const probe = resolveManagedContext(managedContext, {
+        loadTaskRun: (id) => store.taskRuns.read(id),
+        loadRootTaskRun: (id) => store.taskRuns.read(id),
+      });
+      if (probe.kind === MANAGED.invalid) {
+        return {
+          ok: false,
+          code: 'INVALID_MANAGED_CONTEXT',
+          error: `受管执行上下文不合法：${probe.text}`,
+          stop: STOP.failed,
+        };
+      }
+
+      // ★ 上下文有效 ≠ 能用于这次执行。
+      //   受管轮次只跑「上下文声明的那个 Bot」，而且它必须真在这个部门里。
+      //   不匹配就**在派活之前拒绝**，不能悄悄退回 legacy 跑一遍别的 Bot。
+      if (!members.some((m) => m.id === probe.context.botId)) {
+        return {
+          ok: false,
+          code: 'MANAGED_TARGET_NOT_IN_DEPARTMENT',
+          error:
+            `受管执行上下文授权给 ${probe.context.botId}，但这次部门里没有它 ——` +
+            '不能把这份授权用于别的成员',
+          stop: STOP.failed,
+        };
+      }
+
+      // ★ 受管单次执行与旧群协调**分开**。
+      //
+      //   旧路径的 opening 用自然语言猜「谁该被叫到」、closing 又会补一次
+      //   收尾跑 —— 两者都可能派给不是本次授权目标的 Bot，
+      //   或追加一次没有受管关联的 legacy 执行。
+      //
+      //   受管轮次的目标是**明确的**（就是 ctx 里的那个），所以直接执行它，
+      //   不进队列、不做开场/收尾决策，并把它这一次的结果原样返回。
+      return this.#runManagedOnce({
+        room,
+        botId: probe.context.botId,
+        managedContext,
+        openerText,
+        openerBotId,
+        openerName,
+        openerMessageId,
+        attachments,
+        attachmentContext,
+        kickoff,
+      });
+    }
 
     // 记下这一轮开始时的代数。用户插话会把它 +1 —— 那之后本轮的
     // 任何"继续派活 / 重试 / 失败回执 / 收尾 / 复盘"都不该再发生。
@@ -1437,8 +1792,17 @@ export class PiRunner {
                 ...progressSource,
               });
             }
+            // ★ 受管轮次只跑上下文声明的那个 Bot。
+            //   其他成员不进入执行：既不派活，也不建旧任务板条目 ——
+            //   否则会出现「用 A 的旧任务板跑了一次不该跑的执行」。
+            if (isManagedRound && managedContext.botId !== bot.id) {
+              log(`【${room.name}】${bot.name} 跳过：本轮是受管执行，只跑 ${managedContext.botId}`);
+              return;
+            }
+
             // 部门里"别人派给它"的活 → 任务板上登记一条（跑完再收尾）
-            const taskId = item.fromId
+            // ★ 受管执行不登记旧任务板：它的状态由 TaskRun 归约器负责。
+            const taskId = item.fromId && !isManagedRound
               ? store.upsertDispatchTask({
                   roomId,
                   ownerBotId: bot.id,
@@ -1463,6 +1827,12 @@ export class PiRunner {
             const gate = this.breakerFor(bot.id);
             const gateCheck = gate ? breakerAllows(gate.breaker, Date.now()) : { allow: true };
             const taskRunId = newId('run_');
+
+            // ★ 受管轮次走到这里，bot.id 一定就是上下文声明的执行者
+            //   （不匹配的成员在上面已经 return 了）。所以直接用整份上下文，
+            //   不再有「不匹配就置 null」的降级路径。
+            //   非受管轮次 managedContext 本就是 null。
+            const itemManaged = isManagedRound ? managedContext : null;
             let res;
             if (!gateCheck.allow) {
               log(`【${room.name}】${bot.name} 跳过：${gateCheck.reason}`);
@@ -1483,6 +1853,7 @@ export class PiRunner {
                 retryManaged: true,
                 taskRunId, attemptIndex: 1,
                 attachments,
+                managedContext: itemManaged,
                 // ★ 用户直接叫的人才能用保底槽（与打断特权同一个判据：fromId 为空）。
                 //   同事之间 @ 算常规派活，不占用给人留的那一位。
                 human: !item.fromId && isUserInitiatedRound({ openerBotId }),
@@ -1577,6 +1948,7 @@ export class PiRunner {
                 retryManaged: true,
                 taskRunId, attemptIndex: attempt,
                 attachments,
+                managedContext: itemManaged,
               });
               if (!res.ok) {
                 lastError = String(res.error ?? '未知原因');
@@ -1598,7 +1970,9 @@ export class PiRunner {
             //   否则用户会看到旧任务的红字和"XX 没能完成"，而他刚说过"按新的来"。
             if (stale()) {
               settleRetryMessage(store, roomId, res, { aborted: true });
-              if (taskId) {
+              // ★ 批次 03：受管 TaskRun 不走 finishTask(res.ok)。
+              //   它的完成由归约器 + 验收决定；这里只处理旧任务板。
+              if (taskId && !itemManaged) {
                 store.finishTask(taskId, {
                   ok: res.ok,
                   text: res.ok ? res.text : '用户插话，旧任务作废',
@@ -1612,7 +1986,10 @@ export class PiRunner {
             settleRetryMessage(store, roomId, res, res.ok
               ? { succeeded: true }
               : { error: lastError, aborted: this.aborting.has(roomId) });
-            if (taskId) {
+            // ★ 批次 03：受管 TaskRun 的完成必须经过验收，
+            //   不能用「这一轮 ok」直接判完成 ——
+            //   步数到上限时 ok 也是 true，但那只是让出。
+            if (taskId && !itemManaged) {
               store.finishTask(taskId, {
                 ok: res.ok,
                 text: res.ok ? res.text : `失败 ${attempt} 次：${lastError}`,
@@ -1791,7 +2168,7 @@ export class PiRunner {
     }
   }
 
-  // ---------------------------------------------------------------- 用户发消息
+  // ---------------------------------------------------------------- 核心：跑一轮
 
   /**
    * 用户发消息。
@@ -1799,7 +2176,7 @@ export class PiRunner {
    * - 群（部门）：交给部门老大先接，老大用 @ 往下派
    * - 正在跑：不报错，而是插话引导（steer）或排队（followUp）
    */
-  async send(roomId, text, { mode = 'steer', attachments = [], flushMerge = true } = {}) {
+  async send(roomId, text, { mode = 'steer', attachments = [], flushMerge = true, request = null } = {}) {
     const room = store.getRoom(roomId);
     if (!room) throw Object.assign(new Error('会话不存在'), { code: 'NO_ROOM' });
     const clean = String(text ?? '').trim();
@@ -1809,6 +2186,25 @@ export class PiRunner {
     const botId = this.targetBotFor(room);
     if (!botId) throw Object.assign(new Error('这个会话里没有 bot'), { code: 'NO_BOT' });
     const bot = store.getBot(botId);
+    if (request) {
+      this.#assertRequestEnvelope(request);
+      // 群聊轮次的身份绑定尚未接入：明确拒绝，不把请求默默降级成 legacy 执行
+      if (room.kind === 'group') {
+        throw Object.assign(new Error('群聊暂不支持首次接单请求'), { code: 'REQUEST_GROUP_UNSUPPORTED' });
+      }
+    }
+
+    // 正在跑：新的独立请求按信封排队，不把身份借给当前轮次
+    if (this.isBusy(roomId, botId) && request) {
+      const userMessage = store.appendMessage({
+        roomId, authorType: 'user', authorName: '我', text: clean, status: 'done',
+        meta: { queued: 'request', requestId: request.scope.requestId },
+        attachments: hydrate(files),
+      });
+      this.#enqueueRequest(roomId, { request, text: clean, files, messageId: userMessage.id });
+      bus.emit('event', { t: 'request.queued', roomId, requestId: request.scope.requestId, requesterId: request.scope.requesterId, messageId: userMessage.id });
+      return { userMessage, bot, queued: true, requestId: request.scope.requestId };
+    }
 
     // 正在跑：插话 / 排队
     if (this.isBusy(roomId, botId)) {
@@ -1939,7 +2335,16 @@ export class PiRunner {
       deliverDirectInput({
         prepare: () => this.#buildInput(clean, files, roomId),
         // DM 里的每一轮都是用户直接说话 → 走人的保底槽
-        run: ({ promptText }) => this.run(roomId, botId, promptText, { skipUserMessage: true, attachments: files, human: true }),
+        // 首次接单请求：作用域在真正取得执行权时激活、本轮真正结束时收尾
+        run: async ({ promptText }) => {
+          const execute = () => this.run(roomId, botId, promptText, { skipUserMessage: true, attachments: files, human: true });
+          if (!request) return execute();
+          try {
+            return await this.#withRequestEnvelope(request, roomId, botId, execute);
+          } finally {
+            void this.#drainRequestQueue(roomId, botId);
+          }
+        },
         getEntry: () => this.sessions.get(this.#key(roomId, botId)),
         isCancelled: () => this.aborting.has(roomId)
           || (this.directDeliveryEpochs.get(roomId) ?? 0) !== deliveryEpoch,
@@ -2306,9 +2711,233 @@ export class PiRunner {
    * @returns {Promise<{ok:boolean, text:string, ms:number, error?:string, messageId:string}>}
    */
 
+  /**
+   * 报告 scope：一次真实执行对应一份。
+   *
+   * ## 为什么封装
+   *
+   * 收集器原来是「登记 → 各出口清理」，于是 SESSION_BUSY、建会话失败这类
+   * 早退就漏了清理，后面的普通聊天还能往已结束的执行里报报告。
+   *
+   * ## 三种状态必须分清
+   *
+   *   · **未获得执行占用**（早退、busy）：不创建 scope，也不碰别人的；
+   *   · **持有 scope**：只有它自己能提交报告；
+   *   · **已释放**：提交一律拒绝。
+   *
+   * 同一个「房间:Bot」同时只允许一份活跃 scope —— 后到的调用不会覆盖
+   * 前者，前者也不会被后者摘掉。
+   */
+  #reportScopes = new Map();
+
+  /**
+   * 激活报告 scope。
+   *
+   * 只能在**已经取得会话执行权**之后调用 —— busy、建会话失败这类早退从未
+   * 获得执行权，不该拥有报告身份。否则没执行的调用会替别的执行发布报告。
+   *
+   * @param {string} key '房间:Bot'
+   * @param {object|null} collector
+   * @returns {boolean} 是否由本次调用激活（未激活=别人已占着，本次不拥有）
+   */
+  #activateReportScope(key, collector) {
+    if (!collector) return false;
+    if (this.#reportScopes.has(key)) return false;
+    this.#reportScopes.set(key, collector);
+    return true;
+  }
+
+  /**
+   * 释放报告 scope。
+   *
+   * 只摘自己那份：已有的别人 scope 不受影响。
+   */
+  #releaseReportScope(key, collector) {
+    if (!collector) return;
+    if (this.#reportScopes.get(key) === collector) {
+      this.#reportScopes.delete(key);
+    }
+  }
+
+  /**
+   * 从宿主盘点可交接的部门候选。
+   *
+   * ★ 只导出**真实存在、有可用负责人、且当前 Bot 有权派活**的群；
+   *   候选来自 Store，不由模型自报，也不读解析器没给的字段。
+   */
+  #candidateDepartmentIds(roomId, botId) {
+    const current = store.getRoom(roomId);
+    const departmentId = current?.departmentId ?? null;
+    const ids = [];
+    for (const room of store.listRooms?.() ?? []) {
+      if (room.kind !== 'group') continue;
+      // 不能把当前正在跑的群当成候选交给自己
+      if (room.id === roomId) continue;
+      if (departmentId && room.departmentId === departmentId) continue;
+      const lead = room.leadBotId ? store.getBot(room.leadBotId) : null;
+      if (!lead) continue;
+      ids.push(room.id);
+    }
+    return ids.slice(0, 50);
+  }
+
+  /**
+   * 当前受管执行的上下文（供接单工具取真实的 taskRunId / attemptId）。
+   *
+   * ★ 身份必须来自宿主，不能从模型输出读 —— 模型不该能指定自己"替哪个任务"办事。
+   *   只在受管执行期间有值；普通聊天返回 null，接单工具据此拒绝建组。
+   */
+  currentTaskContext(roomId, botId) {
+    const entry = this.sessions.get(this.#key(roomId, botId));
+    return entry?.managedContext ?? null;
+  }
+
+  /**
+   * 策略钩子报告的真实阻塞：记到**当前活跃**的受管执行上。
+   *
+   * ★ 这是「这次执行确实被某条审批挡住过」的唯一权威来源。
+   *   审批表里有记录、room/Bot 相符，都不能证明这一点 ——
+   *   同房间同 Bot 的另一个 TaskRun 完全可以引用一条与它无关的审批。
+   */
+  notePolicyBlocked(roomId, botId, approval, info = {}) {
+    const collector = this.#reportScopes.get(roomId + ':' + botId);
+    if (!collector) return;
+    collector.noteBlocked?.(approval, info);
+  }
+
+  /**
+   * 报告工具 execute 的落点 —— 唯一被验证的收集入口。
+   *
+   * ## 为什么要在这里核等待归属
+   *
+   * 模型说「我在等 ap_xyz」只是声明，不能证明这次操作真被那个审批挡住。
+   * 直接把字符串写成等待门槛，会产生两种假事实：
+   *
+   *   · 门槛指向一个根本不存在的审批；
+   *   · 拿着别的房间/别的 Bot 的真实审批 ID，让当前任务替别人等。
+   *
+   * 所以审批类等待必须核：它真实存在、状态是 pending、且属于当前房间与 Bot。
+   * 核不出来就拒绝整条报告，并且不覆盖已有的有效报告。
+   */
+  collectReport(roomId, botId, input) {
+    const collector = this.#reportScopes.get(roomId + ':' + botId);
+    if (!collector) {
+      return { ok: false, why: '这次执行没有报告通道（不是受管轮次，或已经结束）' };
+    }
+
+    const verdict = this.#verifyReportWait(roomId, botId, input);
+    if (!verdict.ok) {
+      // 拒绝时不 accept —— 已有报告保持不变
+      return verdict;
+    }
+    return collector.accept(input);
+  }
+
+  /**
+   * 核对一条报告里的等待对象是否真实、且属于这次执行。
+   *
+   * @returns {{ok:true}|{ok:false, why:string}}
+   */
+  #verifyReportWait(roomId, botId, input) {
+    const phase = String(input?.phase ?? input?.kind ?? '').trim();
+    if (!phase.startsWith('need_') && phase !== 'waiting_dependency') return { ok: true };
+
+    const waitFor = input?.waitFor;
+    if (!waitFor || typeof waitFor !== 'object') {
+      return { ok: false, why: phase + ' 必须说明在等什么（缺 waitFor）' };
+    }
+
+    // ---- 审批：必须真实存在、仍 pending、且属于本房间与本 Bot
+    if (phase === 'need_approval') {
+      const id = String(waitFor.approvalId ?? waitFor.ref ?? '').trim();
+      if (!id) return { ok: false, why: 'need_approval 缺少 approvalId' };
+
+      const approval = (store.state.approvals ?? []).find((a) => a.id === id);
+      if (!approval) {
+        return { ok: false, why: '找不到审批 ' + id + ' —— 不能凭空生成等待' };
+      }
+      if (approval.status !== 'pending') {
+        return { ok: false, why: '审批 ' + id + ' 当前是 ' + approval.status + '，不是待批准' };
+      }
+      if (approval.roomId !== roomId) {
+        return { ok: false, why: '审批 ' + id + ' 属于别的房间 —— 不能让当前任务替它等' };
+      }
+      if (approval.botId !== null && approval.botId !== undefined && approval.botId !== botId) {
+        return { ok: false, why: '审批 ' + id + ' 属于别的 Bot' };
+      }
+
+      // ★ 房间/Bot 相符还不够：必须证明**这次执行**真的被它挡住过。
+      //   否则同房间同 Bot 的另一个 TaskRun 可以借用一条与它无关的审批。
+      const collector = this.#reportScopes.get(roomId + ':' + botId);
+      if (!collector?.sawBlocked?.(id)) {
+        return {
+          ok: false,
+          why: '审批 ' + id + ' 不是这次执行实际遇到的操作阻塞 —— 不能借来当等待',
+        };
+      }
+      return { ok: true };
+    }
+
+    // ---- 输入：由运行时生成并绑定，不接受模型自造字符串
+    if (phase === 'need_input') {
+      const key = String(waitFor.inputKey ?? waitFor.ref ?? '').trim();
+      if (!key) return { ok: false, why: 'need_input 缺少 inputKey' };
+      return { ok: true };
+    }
+
+    // ---- 依赖：必须是真实存在的任务
+    if (phase === 'waiting_dependency') {
+      const depId = String(waitFor.dependencyTaskId ?? waitFor.ref ?? '').trim();
+      if (!depId) return { ok: false, why: 'waiting_dependency 缺少 dependencyTaskId' };
+      const loaded = store.taskRuns.read(depId);
+      if (loaded.status !== 'found' || !loaded.taskRun) {
+        return { ok: false, why: '找不到依赖任务 ' + depId + ' —— 不能凭空生成等待' };
+      }
+      return { ok: true };
+    }
+
+    return { ok: true };
+  }
+
+  // ---------------------------------------------------------------- 核心：跑一轮
+
+  /**
+   * @returns {Promise<{ok:boolean, text:string, ms:number, error?:string, messageId:string}>}
+   */
+
+  // ---------------------------------------------------------------- 核心：跑一轮
+
+  /**
+   * @returns {Promise<{ok:boolean, text:string, ms:number, error?:string, messageId:string}>}
+   */
+
   async run(roomId, botId, prompt, options = {}) {
     this.flushProviderUpdates();
-    return this.providerUpdates.withLease((lease) => this.#runWithLease(roomId, botId, prompt, { ...options, lease }));
+    // ★ 走 scope 包装：只有真正获得执行占用的受管调用会拿到报告通道。
+    return this.providerUpdates.withLease((lease) =>
+      this.#runInScope(roomId, botId, prompt, { ...options, lease }),
+    );
+  }
+
+  /**
+   * 在**报告 scope 内**执行一次 run。
+   *
+   * ★ 只有通过受管上下文校验、真正获得执行占用的调用才会创建 scope；
+   *   早退（busy / 建会话失败 / 非法上下文）根本不会走到这里，
+   *   所以既不会创建 scope，也不会碰到别人的。
+   */
+  async #runInScope(roomId, botId, prompt, options = {}) {
+    const managed = resolveManagedContext(options.managedContext, {
+      loadTaskRun: (id) => store.taskRuns.read(id),
+      loadRootTaskRun: (id) => store.taskRuns.read(id),
+      actualBotId: botId,
+    });
+    // ★ 这里只**准备**收集器，不激活 scope。
+    //   上下文合法只说明「这份授权可以用于这次调用」，
+    //   并不说明「这次调用真的拿到了会话执行权」。
+    //   提前激活会让没执行的调用替别的执行发布报告身份。
+    const collector = managed.kind === MANAGED.managed ? createReportCollector() : null;
+    return this.#runWithLease(roomId, botId, prompt, { ...options, reportCollector: collector });
   }
 
   async #runWithLease(
@@ -2330,15 +2959,188 @@ export class PiRunner {
        * 人发起的可以使用保底槽位，永远不被机器挤掉。
        */
       human = false,
+      /**
+       * 受管执行上下文（批次 03）：`{ taskRunId, revision, attemptId, botId }`。
+       *
+       * ★ 只有经 `resolveManagedContext` 校验通过的才放这里；
+       *   旧的部门任务 / 手工任务板 / 无任务调用一律传 null。
+       *   `taskRunId` 那个参数是统计关联 ID，**不是**持久任务，两者不能混。
+       */
+      managedContext = null,
+      /** 报告收集器（由 #runInScope 提供；早退路径没有）。 */
+      reportCollector = null,
     } = {},
   ) {
     const started = Date.now();
+
+    // ★ 记录本轮开始时的待批准集合，跑完据此判断「这一轮是不是停在等审批」。
+    //   真实创建了 pending 审批时，这一轮不是「正常说完」，而是 waiting。
+    const approvalsAtStart = new Set(
+      (store.state.approvals ?? []).filter((a) => a.status === 'pending').map((a) => a.id),
+    );
+
+    // ★ 受管上下文三态：未提供（旧调用）/ 核对通过（受管）/ 提供但非法（拒绝）。
+    //
+    //   核对用**真实存储记录**，不用命名约定也不信自报布尔。
+    //   执行者必须就是这次要跑的 botId —— 否则会出现「实际跑 A、事件署名 B」。
+    const managed = resolveManagedContext(managedContext, {
+      loadTaskRun: (id) => store.taskRuns.read(id),
+      // ★ 执行必须花掉一份**已经预留并开始**的额度，所以要读根记录核对授权
+      loadRootTaskRun: (id) => store.taskRuns.read(id),
+      actualBotId: botId,
+    });
+
+    // ★ 显式给了非法上下文：执行前拒绝，不能静默退回旧路径。
+    //   静默降级会让调用方以为任务被托管，实际什么都没记下。
+    if (managed.kind === MANAGED.invalid) {
+      return {
+        ok: false,
+        text: '',
+        ms: 0,
+        messageId: '',
+        error: `受管执行上下文不合法：${managed.text}`,
+        code: 'INVALID_MANAGED_CONTEXT',
+        stop: STOP.failed,
+      };
+    }
+    const isManaged = managed.kind === MANAGED.managed;
+
+    // ★ 受管执行才开报告通道：模型通过 task_report 显式声明阶段与完成申请。
+    //   非受管调用没有消费者，开了也没意义。
+    // ★ 收集器由外层 scope 提供（只有真正获得执行占用的调用才有）。
+    const reports = reportCollector ?? null;
+
+    // ★ 收集器不在这里登记 —— scope 只在真正取得执行权后由 #activateReportScope 激活，
+    //   这样任何早退分支都不会漏清理。
+
+    /**
+     * 把受管执行的结果附注挂到 run 的返回值上。
+     *
+     * ★ 只**附加**字段，不改旧字段（ok/text/ms/messageId/error/status）。
+     *   旧调用方读到的形状与以前完全一致；新调用方多拿到 stop 与 attemptEvent。
+     *
+     * ★ 这里**不**直接写归约器：验收与状态推进由调用方（受管通路）负责，
+     *   `run` 只负责如实报告「这一轮怎么结束的」以及「该发什么事件」。
+     */
+    /**
+     * 本次报告里声明的等待引用。
+     *
+     * ★ 返回**引用字符串**（approvalId/inputKey/dependencyTaskId），
+     *   不是整个 waitFor 对象 —— adaptRunOutcome 要的是可校验的 ID。
+     *   直接把对象塞进去会被 String() 成 `[object Object]`。
+     */
+    const reportWaiting = (kind) => {
+      const latest = reports?.latest();
+      if (!latest || latest.kind !== kind) return null;
+      const field = {
+        need_approval: 'approvalId',
+        need_input: 'inputKey',
+        waiting_dependency: 'dependencyTaskId',
+      }[kind];
+      const ref = latest.waitFor?.[field];
+      return typeof ref === 'string' && ref.trim() ? ref.trim() : null;
+    };
+
+    const withAttempt = (payload, facts = {}) => {
+      if (!isManaged) return payload;
+
+      // ★ 完整结果适配：用量、产物、阶段、等待都从这里进契约，
+      //   不能只传 stop —— 那样任务拿不到后续验收与等待所需的事实。
+      const adapted = adaptRunOutcome({
+        ok: payload.ok === true,
+        cancelled: facts.cancelled === true,
+        aborted: facts.aborted === true,
+        timedOut: facts.timedOut === true,
+        stepCapHit: facts.stepCapHit === true,
+        empty: facts.empty === true,
+        usage: facts.usage ?? null,
+        artifacts: facts.artifacts ?? [],
+        // ★ 完成申请来自**结构化报告**，不是正文里出现「完成」两个字
+        appliedCompletion: facts.appliedCompletion ?? reports?.appliedCompletion() === true,
+        // ★ 等待优先取本次报告里显式声明的门槛，其次才是运行时审批
+        needsApproval: facts.needsApproval ?? reportWaiting('need_approval') ?? firstNewApproval(),
+        needsInput: facts.needsInput ?? reportWaiting('need_input'),
+        waitingDependency: facts.waitingDependency ?? reportWaiting('waiting_dependency'),
+        // ★ 报告里的完整声明原样传下去，不能只留布尔再重建（会丢字段）
+        report: reports?.latest() ?? null,
+      });
+
+      const plan = planAttemptEvent({
+        stop: adapted.stop,
+        context: managed.context,
+        revision: managed.context.revision,
+        attemptId: managed.context.attemptId,
+        botId: managed.context.botId,
+        at: Date.now(),
+        usage: adapted.usage,
+        artifacts: adapted.artifacts,
+        phase: adapted.phase,
+        waiting: adapted.waiting,
+      });
+
+      return {
+        ...payload,
+        stop: adapted.stop,
+        managed: { context: managed.context },
+        ...(plan.emit ? { attemptEvent: plan.event } : {}),
+        ...(plan.emit ? {} : { attemptEventSkipped: plan.reason }),
+        ...(plan.waiting ? { waiting: plan.waiting } : {}),
+      };
+    };
+    /**
+     * 本次执行真实产生、且**属于这个房间与 Bot** 的待批准审批 ID（没有则 null）。
+     *
+     * ★ 只看「运行期间新增了什么」会把别的房间的审批串到当前任务上。
+     *   归属必须由 room + bot 共同确定。
+     */
+    const firstNewApproval = () => {
+      const pending = (store.state.approvals ?? []).filter(
+        (a) =>
+          a.status === 'pending' &&
+          !approvalsAtStart.has(a.id) &&
+          a.roomId === roomId &&
+          (a.botId === null || a.botId === undefined || a.botId === botId),
+      );
+      return pending.length ? pending[0].id : null;
+    };
+
+    /**
+     * 把已收集的附件转成契约里的产物引用。
+     *
+     * ★ 用附件的**唯一 ID** 而不是展示名 —— 两个不同文件可以同名，
+     *   拿 name 承担身份会互相覆盖。ID 是登记引用，能唯一定位。
+     *   字符串（已经是引用）原样保留。
+     */
+    const artifactPathsOf = (list) =>
+      (Array.isArray(list) ? list : [])
+        .map((a) => {
+          if (typeof a === 'string') return a;
+          // 附件元数据优先取 id；没有 id 才退回可解析的引用字段
+          return a?.id ?? a?.rel ?? a?.path ?? a?.ref ?? '';
+        })
+        .filter((a) => typeof a === 'string' && a.trim())
+        .slice(0, 200);
+
     const capMs = store.groupLimits().turnMaxMs;
     const effectiveTimeout = groupTurn ? Math.min(timeoutMs || capMs, capMs) : timeoutMs;
     const deadline = effectiveTimeout > 0 ? started + effectiveTimeout : 0;
+    // ★ 本轮是否因**运行超时**被中断。与用户取消是两回事：
+    //   超时是运行失败/可重试事实，取消是用户意图。
+    let timedOut = false;
     const room = store.getRoom(roomId);
-    if (!room) return { ok: false, text: '', ms: 0, error: '会话不存在', messageId: '' };
-    if (this.aborting.has(roomId)) return { ok: false, text: '', ms: 0, error: '已终止', messageId: '' };
+    if (!room) {
+      // ★ 有效受管尝试也要如实报告停止原因，否则调用方拿不到任何结论
+      return withAttempt({
+        ok: false, text: '', ms: 0, error: '会话不存在', messageId: '',
+        code: 'ROOM_MISSING',
+      }, { cancelled: false });
+    }
+    if (this.aborting.has(roomId)) {
+      return withAttempt({
+        ok: false, text: '', ms: 0, error: '已终止', messageId: '',
+        code: 'ALREADY_CANCELLED',
+      }, { cancelled: true });
+    }
     if (this.providerUpdates.has(this.providerForBot(botId))) {
       const error = '模型组正在处理配置切换，本次任务未执行。请稍后重试，或检查模型组配置。';
       const msg = store.appendMessage({
@@ -2346,15 +3148,22 @@ export class PiRunner {
         authorName: store.getBot(botId)?.name ?? botId,
         text: '', status: 'error', error,
       });
-      return { ok: false, text: '', ms: 0, error, messageId: msg.id };
+      return withAttempt({
+        ok: false, text: '', ms: 0, error, messageId: msg.id,
+        code: 'PROVIDER_UPDATES_PENDING',
+      }, {});
     }
 
     let entry;
+    // 已收集的真实产物附件。放在 try 外层，catch 分支也要能报告它。
+    let collectedArtifacts = [];
     try {
       entry = await this.#ensureSession(roomId, botId);
     } catch (err) {
       if (err?.code === 'SESSION_BUSY') {
-        return { ok: false, code: 'SESSION_BUSY', text: '', ms: 0, error: '会话正在忙', messageId: '' };
+        return withAttempt({
+          ok: false, code: 'SESSION_BUSY', text: '', ms: 0, error: '会话正在忙', messageId: '',
+        }, {});
       }
       const message = modelFailure(err).error;
       store.appendMessage({
@@ -2366,7 +3175,41 @@ export class PiRunner {
         status: 'error',
         error: `起不来：${message}`,
       });
-      return { ok: false, text: '', ms: Date.now() - started, error: message, messageId: '' };
+      return withAttempt({
+        ok: false, text: '', ms: Date.now() - started, error: message, messageId: '',
+        code: 'SESSION_BUILD_FAILED',
+      }, {});
+    }
+
+    // ★ 已成功取得会话执行权 —— 现在才激活报告 scope。
+    //   放在这里而不是函数入口，是因为 busy / 建会话失败都会在上面的 catch 返回，
+    //   它们从未获得执行权，也就不该拥有报告身份。
+    const scopeKey = roomId + ':' + botId;
+    this.#activateReportScope(scopeKey, reports);
+    // DM/group 共用同一个实际执行租约的取消句柄：只在真正取得执行权后登记
+    const managedCancelTask = managed.kind === 'managed' ? (managed.context?.taskRunId ?? null) : null;
+    if (managedCancelTask) {
+      this.managedInflight.set(managedCancelTask, {
+        key: this.#key(roomId, botId), botId, roomId,
+        session: entry?.session ?? null, attemptId: managed.context?.attemptId ?? null,
+      });
+    }
+
+    // ★ 把真实的执行上下文挂到会话上，供接单工具读取。
+    //   与 scope 同一时机：只有真正拿到执行权的调用才对外提供身份。
+    //   这里复用上面已经核对通过的 managed，不重复解析。
+    if (managed.kind === MANAGED.managed) {
+      // resolveManagedContext 把核对结果放在 context 里，不是顶层字段。
+      const ctx = managed.context;
+      entry.managedContext = {
+        taskRunId: ctx.taskRunId,
+        attemptId: ctx.attemptId,
+        revision: ctx.revision,
+        rootTaskId: ctx.rootTaskId,
+        botId: ctx.botId,
+        // 候选部门由宿主盘点，不接受模型自报
+        candidateDepartmentIds: this.#candidateDepartmentIds(roomId, botId),
+      };
     }
 
     const fallbackModel = this.model;
@@ -2537,6 +3380,9 @@ export class PiRunner {
           }
           break;
         case 'tool_execution_start': {
+          // ★ 报告只能经**工具 execute** 提交（那里有归属与真实性校验）。
+          //   这里只记展示用的步骤，不能抢先 accept —— 否则那条校验被旁路，
+          //   一条手工事件就能把未经核实的声明写进结果。
           steps.push({
             tool: event.toolName,
             detail: summarizeArgs(event.args),
@@ -2707,6 +3553,7 @@ export class PiRunner {
       if (effectiveTimeout > 0) {
         const timeout = new Promise((_, reject) => {
           timeoutHandle = setTimeout(() => {
+            timedOut = true;
             turnController.abort(new Error('模型请求超时'));
             entry.session.abort().catch(() => {});
             reject(new Error(`超过 ${Math.round(effectiveTimeout / 1000)}s 未完成，已中断`));
@@ -2789,6 +3636,10 @@ export class PiRunner {
         }
       }
 
+      // ★ 到这一步 produced 才包含完整交付物（图片 + 表格/文档等），
+      //   同步给外层，供受管事件报告真实产物。
+      collectedArtifacts = produced;
+
       // 两次都救不回来 → 退而给一份操作摘要（总比一片空白好），并标成错误
       if (!finalText && !stepCapHit) {
         const digest = steps.length
@@ -2812,7 +3663,13 @@ export class PiRunner {
         bus.emit('event', { t: 'msg.error', roomId, msgId: botMsg.id, error: msg.error, msg });
         this.#recordRun({ roomId, botId, startedAt: started, ok: false, usage: meter.snapshot(),
           taskRunId, attemptIndex, sdkRetries: meter.retries, kind: 'empty' });
-        return { ok: false, text: '', ms: Date.now() - started, error: msg.error, messageId: botMsg.id };
+        return withAttempt({
+          ok: false,
+          text: '',
+          ms: Date.now() - started,
+          error: msg.error,
+          messageId: botMsg.id,
+        }, { empty: true, usage: usage ?? null });
       }
 
       if (!finalText) finalText = '（在群里动手步数到上限，先收住）';
@@ -2839,7 +3696,21 @@ export class PiRunner {
         roomId, botId, startedAt: started, ok: true, usage: meter.snapshot(),
         taskRunId, attemptIndex, sdkRetries: meter.retries,
       });
-      return { ok: true, text: finalText, ms: Date.now() - started, messageId: botMsg.id };
+      return withAttempt({
+        ok: true,
+        text: finalText,
+        ms: Date.now() - started,
+        messageId: botMsg.id,
+        // ★ 批次 03：把「怎么结束的」与 ok 分开。
+        //   ok:true 只说明这轮说完了，不说明任务完成 ——
+        //   步数/轮数到上限被收住时 ok 也是 true，但那是**让出**。
+      }, {
+        usage: meter.snapshot(),
+        artifacts: artifactPathsOf(produced),
+        stepCapHit,
+        // 本轮新出现了待批准 → 这一轮停在等待，不是完成
+        needsApproval: firstNewApproval(),
+      });
     } catch (err) {
       const failure = cancelled() ? modelFailure(turnController.signal.reason ?? { name: 'AbortError' })
         : responseFailure ?? modelFailure(err);
@@ -2851,7 +3722,9 @@ export class PiRunner {
       //   （前端只认 status==='aborted' 才不渲染）。
       const keepAborted = cancelled() && current?.status === 'aborted';
       const partial = render().trim();
-      if (stepCapHit && !cancelled()) {
+      // ★ 步数上限是**运行器自己**发起的 abort，不是用户取消。
+      //   用 !cancelled() 判断会把这种让出误判成失败。
+      if (stepCapHit) {
         const msg = store.updateMessage(
           roomId,
           botMsg.id,
@@ -2866,7 +3739,18 @@ export class PiRunner {
         bus.emit('event', { t: 'msg.done', msg });
         this.#recordRun({ roomId, botId, startedAt: started, ok: true, usage: meter.snapshot(),
           taskRunId, attemptIndex, sdkRetries: meter.retries, kind: 'step-cap' });
-        return { ok: true, text: partial, ms: Date.now() - started, messageId: botMsg.id };
+        return withAttempt({
+          ok: true,
+          text: partial,
+          ms: Date.now() - started,
+          messageId: botMsg.id,
+        }, {
+          usage: meter.snapshot(),
+          // ★ catch 分支里 produced 不在作用域内（它在 try 内声明），
+          //   用外层已同步的 collectedArtifacts，否则步数中止会抛 ReferenceError。
+          artifacts: artifactPathsOf(collectedArtifacts),
+          stepCapHit: true,
+        });
       }
       const changedOnce = changes();
       // ★ 还有希望的失败先不标红。
@@ -2920,19 +3804,37 @@ export class PiRunner {
       //   于是把可恢复的临时故障当成永久失败，只试一次就放弃 ——
       //   用户的 key 一不稳，整条链路就卡在报错里跑不完。
       //   带上 status，让 decideRetry 能按真实类型判断。
-      return {
+      return withAttempt({
         ok: false,
         text: partial,
         ms: Date.now() - started,
         error: message,
         status: failure.status ?? null,
         messageId: botMsg.id,
-      };
+      }, {
+        // ★ 超时优先：超时也会 abort，但那是运行失败，不是用户取消。
+        cancelled: (cancelled() || keepAborted) && !timedOut,
+        aborted: failure.aborted === true && !timedOut,
+        timedOut: timedOut || failure.timedOut === true,
+        usage: meter.snapshot(),
+        // catch 块里 produced 不在作用域内 —— 用可访问的已收集附件
+        artifacts: artifactPathsOf(collectedArtifacts),
+      });
     } finally {
+      // ★ 只摘自己那份：别的执行可能已经在等这个键。
+      this.#releaseReportScope(scopeKey, reports);
+      if (entry) entry.managedContext = null;
       if (timeoutHandle) clearTimeout(timeoutHandle);
       unsubscribe?.();
       entry.unsubscribe = null;
       entry.busy = false;
+      if (managedCancelTask) {
+        const current = this.managedInflight.get(managedCancelTask);
+        if (!current || current.attemptId === (managed.context?.attemptId ?? null)) {
+          this.managedInflight.delete(managedCancelTask);
+        }
+      }
+      setTimeout(() => { void this.#drainRequestQueue(roomId, botId); }, 0);
       entry.turnController = null;
       entry.liveMsgId = null;
       entry.startedAt = null;

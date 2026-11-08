@@ -36,6 +36,15 @@ const QUEUE_MAX_BYTES = 4 * 1024 * 1024;
  * @param {string} [opts.secret]  中转的 RELAY_SECRET
  * @param {string} [opts.local]   本地服务端地址，默认 http://127.0.0.1:8787
  */
+export function redactRelayPath(path) {
+  try {
+    const u = new URL(String(path || '/ws'), 'http://relay.invalid');
+    return u.pathname + (u.search ? '?<redacted>' : '');
+  } catch {
+    return '/ws';
+  }
+}
+
 export function startRelayAgent({
   relay,
   code,
@@ -261,7 +270,7 @@ export function startRelayAgent({
     const url = new URL(path, localUrl);
     // 只许桥接到本地服务端：绝对 URL / 协议相对路径会让 URL 指向外部
     if (url.host !== localUrl.host) {
-      log(`拒绝外连的 WS 桥接：${path}`);
+      log(`拒绝外连的 WS 桥接：${redactRelayPath(path)}`);
       return shutdownStream(frame.id, 1008, 'bad path');
     }
     const headers = { 'x-pi-relay': '1' };
@@ -270,7 +279,7 @@ export function startRelayAgent({
     const stream = new WebSocket(url, { headers, maxPayload: MAX_FRAME_TEXT_BYTES });
     streams.set(frame.id, stream);
     stream.on('open', () => {
-      log(`WS 桥接已建立：${path}`);
+      log(`WS 桥接已建立：${redactRelayPath(path)}`);
       const q = queues.get(frame.id);
       if (q) {
         queues.delete(frame.id);

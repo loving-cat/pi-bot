@@ -154,6 +154,19 @@ export function pathFor(id) {
   return fs.existsSync(file) ? file : null;
 }
 
+/** 按附件登记名解析唯一 ID；同名多笔视为不明确。 */
+export function idForName(name) {
+  const raw = String(name ?? '').trim();
+  if (!raw) return null;
+  const base = path.basename(raw);
+  const hits = [];
+  for (const [id, meta] of Object.entries(index)) {
+    if (!meta || meta.deletedAt) continue;
+    if (meta.name === raw || meta.name === base) hits.push(id);
+  }
+  return hits.length === 1 ? hits[0] : null;
+}
+
 /** 返回有效附件 ID；单次请求内去重。 */
 function validIds(ids = []) {
   return [...new Set(ids.filter((id) => typeof id === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(id)))];

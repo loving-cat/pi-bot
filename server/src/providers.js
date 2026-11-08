@@ -15,7 +15,7 @@ import { config } from './config.js';
 import { modelGroups } from './model-groups.js';
 import { readJson, log } from './util.js';
 
-const AGENT_DIR = path.join(os.homedir(), '.pi', 'agent');
+const AGENT_DIR = process.env.PI_CODING_AGENT_DIR?.trim() || path.join(os.homedir(), '.pi', 'agent');
 
 /**
  * 镜像 ~/.pi/agent/extensions/cline-provider/index.ts 的 MODELS 定义。

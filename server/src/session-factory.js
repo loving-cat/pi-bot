@@ -20,10 +20,16 @@ import {
 
 import { config, resourceOptions } from './config.js';
 import { store } from './store.js';
-import { isDelegatingLead, isReadonlyPolicy, toolsForRole, customToolsForRole, roleConfigurationKey } from './role-tools.js';
+import { isDelegatingLead, isRoomLead, isReadonlyPolicy, toolsForRole, customToolsForRole, roleConfigurationKey } from './role-tools.js';
 import { applyCompactionBudget, withCapacity } from './context-budget.js';
 import { buildAppendSystemPrompt } from './system-prompt.js';
 import { buildChiefTools, buildCommonTools } from './tools.js';
+import { buildIntakeTools, intakeEnabled } from './coordination/intake-tool.js';
+import { buildReportTool } from './tasks/task-report-tool.js';
+import { buildMemberTaskTool } from './tasks/task-member-tool.js';
+import { buildPlanTool } from './tasks/task-plan-tool.js';
+import { buildExpertReviewTool } from './tasks/task-expert-tool.js';
+import { buildTaskInsightTools } from './coordination/task-insight-tool.js';
 import { createPolicyExtension } from './policy-hook.js';
 import { createMcpExtension, mcpSectionForPrompt } from './mcp-hook.js';
 import { capabilityGuideForPrompt } from './mcp-capability.js';
@@ -67,7 +73,17 @@ export function createSessionBuilder({
   sessionApi = { DefaultResourceLoader, SessionManager, createAgentSession, getAgentDir },
 }) {
   const { DefaultResourceLoader, SessionManager, createAgentSession, getAgentDir } = sessionApi;
-  return async function buildSession(roomId, botId) {
+  /**
+   * 建一个会话。
+   *
+   * @param {string} roomId
+   * @param {string} botId
+   * @param {{reportTool?: boolean}} [opts]
+   *   `reportTool`：这次会话要不要带受管阶段报告工具。
+   *   只有受管执行才需要 —— 普通调用拿到它也没有消费者。
+   */
+  return async function buildSession(roomId, botId, opts = {}) {
+    const wantsReportTool = opts.reportTool === true;
     const bot = store.getBot(botId);
     if (!bot) throw new Error(`找不到 bot ${botId}`);
 
@@ -86,8 +102,47 @@ export function createSessionBuilder({
     const roleKey = roleConfigurationKey(room, bot);
     // isMain 决定要不要给 ask_user（主控不给 —— 它直接跟用户对话，不弹卡片）
     const commonTools = buildCommonTools({ runner, roomId, botId, isMain: isChief });
+    // ★ 受管阶段报告工具：真的注册进 SDK，模型才能调用。
+    //   收集器由 runner 按「房间:Bot」挂，工具 execute 时取当前那个。
+    const reportTools = wantsReportTool
+      ? [buildReportTool({ collect: (input) => runner.collectReport?.(roomId, botId, input) })]
+      : [];
+    // 负责人派活工具：只有受管执行时注册，成员用不了（执行体里再核一次）
+    // ★ 负责人先列计划、再按计划派活。
+    //   正常团队是「先有分工方案，再照着分发」；没有计划的派活是
+    //   一次性的，出了偏差没人知道该对齐到哪里。
+    const memberTools = wantsReportTool && isDeptLead
+      ? [
+        buildPlanTool({ runner, store, roomId, botId }),
+        buildMemberTaskTool({ runner, store, roomId, botId }),
+      ]
+      : [];
+    // 验收能力与派工能力分开：单成员部门仍可有真实负责人做专业验收，只是不能派工。
+    const expertTools = wantsReportTool && isRoomLead(room, botId)
+      ? [buildExpertReviewTool({ runner, store, roomId, botId })]
+      : [];
+
+    // ★ 接单工具：正式内部入口。默认关闭，不影响真实用户路径。
+    const intakeTools =
+      isChief && intakeEnabled()
+        ? buildIntakeTools({
+            runner, store, roomId, botId, health,
+            requestScopeOf: () => runner.currentRequestScope?.(roomId, botId) ?? null,
+          })
+        : [];
+
+    // 自然进度/改版：主控在本轮理解里读任务权威状态或沿原任务升版。
+    const insightTools = isChief && intakeEnabled()
+      ? buildTaskInsightTools({ runner, store, roomId, botId })
+      : [];
+
     const customTools = customToolsForRole([
       ...commonTools,
+      ...reportTools,
+      ...memberTools,
+      ...expertTools,
+      ...intakeTools,
+      ...insightTools,
       ...(isChief ? buildChiefTools({ runner, health, roomId, botId }) : []),
     ], { room, bot, leadTools: config.leadTools, policy });
 
@@ -96,7 +151,13 @@ export function createSessionBuilder({
       agentDir: getAgentDir(),
       // 命令级规矩的拦截点：bash/powershell 调用前按部门规则判定
       extensionFactories: [
-        createPolicyExtension({ roomId, bot }),
+        createPolicyExtension({
+          roomId,
+          bot,
+          managedContextOf: () => runner.currentTaskContext?.(roomId, bot.id) ?? null,
+          // ★ 把真实的策略阻塞告诉 runner：受管执行据此记录「我在等哪个真实审批」。
+          onBlocked: (approval, info) => runner.notePolicyBlocked?.(roomId, bot.id, approval, info),
+        }),
         // ★ 用户在「设置 → MCP」里配的服务，按这个 bot 的选择逐个注册。
         //   注意这跟 resourceOptions.noMcp 不冲突：那个开关关掉的是
         //   pi 自己的 mcp.json（终端用户的外挂），这里挂的是 pi-bot 自己的服务库，

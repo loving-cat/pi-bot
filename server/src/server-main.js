@@ -10,6 +10,9 @@ import { attachWs } from './ws.js';
 import { log } from './util.js';
 import { shells } from './shells.js';
 import { createAutomationScheduler } from './automations.js';
+import { createTaskHost } from './bootstrap/task-host.js';
+import { createTaskCommands } from './tasks/task-commands.js';
+import { intakeEnabled } from './coordination/intake-tool.js';
 
 async function banner(pairing, runner) {
   const c = describeConfig();
@@ -86,6 +89,10 @@ async function main() {
   }
 
   const runner = await new PiRunner().init();
+  // 07：生产启动装配一个任务宿主；关闭态不要求接单工具。
+  runner.taskIntakeEnabled = intakeEnabled();
+  const taskHost = createTaskHost({ store, runner });
+  runner.taskCommands = createTaskCommands({ store, runner, taskRuns: store.taskRuns });
   // 探活结果 24 小时过期 —— 服务连跑几天也不会让「全员不可用」这种假结论冻在那儿
   if (config.autoProbe) runner.health?.startAutoRefresh();
   const pairing = new Pairing();
@@ -150,6 +157,13 @@ async function main() {
 
   server.listen(config.port, config.host, async () => {
     await banner(pairing, runner);
+    // API/WS 就绪后做一次持久恢复；失败如实记录，不阻断旧聊天。
+    try {
+      const recovered = await taskHost.recover();
+      log('任务恢复扫描完成：' + JSON.stringify({ ok: recovered?.ok !== false, recovered: recovered?.recovered ?? null }));
+    } catch (err) {
+      log('任务恢复扫描失败（不影响旧聊天）：' + (err?.message || err));
+    }
     log(`listening on http://${config.host}:${config.port}  (ws://…/ws)`);
   });
 
@@ -162,6 +176,7 @@ async function main() {
     scheduler.stop();
     runner.health?.stop();
     shells.stopAll();
+    taskHost.dispose();
     runner.disposeAll();
     store.saveNow();
     server.close(() => process.exit(0));

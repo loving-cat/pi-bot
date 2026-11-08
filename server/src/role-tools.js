@@ -10,7 +10,9 @@ export const READONLY_ALLOW = [
   'list_bots', 'list_departments', 'read_department', 'message_bot',
   'list_sites', 'query_site',
   'list_models', 'list_skills', 'list_department_templates', 'list_local_capabilities',
-  'ask_user', 'dispatch_to_department',
+  'ask_user', 'dispatch_to_department', 'assign_member_task',
+  // 受管阶段报告：只登记模型声明，不碰文件/命令，只读模式也可用
+  'task_report', 'task_expert_review',
 ];
 const READONLY_ALLOW_SET = new Set(READONLY_ALLOW);
 
@@ -32,6 +34,7 @@ export function opaqueScriptBlockReason(policy, tool) {
 const READ_ONLY_BUILTINS = new Set(['read', 'ls', 'grep', 'find']);
 const COORDINATION_TOOLS = new Set([
   'list_bots', 'list_departments', 'read_department', 'message_bot',
+  'task_report', 'assign_member_task', 'task_expert_review',
 ]);
 
 export function isReadonlyPolicy(policy) {
@@ -48,7 +51,11 @@ export function readonlyBlockReason(policy, tool) {
   return '当前是只读模式，不能改文件、跑命令或改配置。';
 }
 
-/** 群聊有至少两个不同成员，且 bot 是有效负责人时返回 true。 */
+/** 群聊有真实 leadBotId 且 bot 就是该负责人；验收能力不要求可派工成员数。 */
+export function isRoomLead(room, botId) {
+  return room?.kind === 'group' && Boolean(room.leadBotId) && room.leadBotId === botId;
+}
+
 export function isLeadOfRoom(room, botId) {
   if (room?.kind !== 'group') return false;
   const members = [...new Set((room.botIds ?? []).filter(Boolean))];

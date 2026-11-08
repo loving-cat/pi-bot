@@ -54,6 +54,10 @@ import {
 } from './mcp.js';
 import { bus } from './bus.js';
 import { createConnections } from './connections.js';
+import { createTaskRunRoutes } from './task-routes.js';
+import { createRequestResultService, createTerminalPublisher } from './tasks/task-request-result.js';
+import { openRequest, createRequestLifecycle, resumeAdmitted } from './coordination/task-request-gate.js';
+import { createRequestReceipts } from './tasks/task-request-receipts.js';
 import { routeConnections } from './connections-http.js';
 import { publicMcpCredentials } from './mcp-credentials.js';
 import { probeLogin } from './site-probe.js';
@@ -86,6 +90,8 @@ function publicDecision(d = {}) {
 }
 
 function send(res, status, body) {
+  // 防御：任何分支都不该在已发送响应后再次写头（路由重复处理时的兜底）
+  if (res.headersSent || res.writableEnded) return;
   const payload = JSON.stringify(body ?? {});
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
@@ -258,6 +264,13 @@ export function hostAllowed(hostHeader) {
 }
 
 export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ log }) }) {
+  const taskRunRoutes = createTaskRunRoutes({ store, runner });
+  const httpRequestReceipts = createRequestReceipts({ dir: path.join(config.dataDir, 'task-requests') });
+  const requestResultService = createRequestResultService({ receipts: httpRequestReceipts, taskRuns: store.taskRuns });
+  const publishTerminal = createTerminalPublisher({ service: requestResultService, emit: (event) => bus.emit('event', event) });
+  runner.setRequestLifecycle?.(createRequestLifecycle({
+    receipts: httpRequestReceipts, taskRuns: store.taskRuns, onTerminal: publishTerminal,
+  }));
   const connections = createConnections({ store, runner, onChange: () => bus.emit('event', { t: 'connections.changed' }) });
   const uploads = new UploadSessions({
     dir: path.join(config.dataDir, 'uploads', '_partial'),
@@ -458,7 +471,14 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
           });
         }
 
-        if (approval.status === 'approved') {
+        // 受管审批：回到原 TaskRun（可装配；未装配时保持旧行为）
+        const bridges = runner.taskBridges ?? null;
+        const managedApproval = approval && bridges
+          ? await bridges.onApprovalDecided(approval).catch(() => ({ routed: false }))
+          : { routed: false };
+        if (managedApproval.routed) {
+          // 已交回受管任务，不再启动无任务执行
+        } else if (approval.status === 'approved') {
           runner.resumeAfterApproval(approval).catch((err) =>
             log('批准后继续失败：', err?.message || err),
           );
@@ -565,6 +585,9 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         const okDeleted = store.deleteTask(taskMatch[1]);
         return send(res, okDeleted ? 200 : 404, { deleted: okDeleted });
       }
+
+      // ---------- 任务运行（独立 TaskRun） ----------
+      if (await taskRunRoutes({ req, res, url, pathname, readBody, send, fail, device })) return;
 
       if (pathname === '/api/models' && req.method === 'GET') {
         const keyword = (url.searchParams.get('q') || '').toLowerCase();
@@ -1379,11 +1402,75 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
       const sendMatch = pathname.match(/^\/api\/rooms\/([^/]+)\/send$/);
       if (sendMatch && req.method === 'POST') {
         const body = await readBody(req);
-        const result = await runner.send(sendMatch[1], body.text, {
-          mode: body.mode,
-          attachments: body.attachments,
+        const roomId = sendMatch[1];
+        const hasRequestId = body?.requestId !== undefined && body?.requestId !== null && String(body.requestId).length > 0;
+        const requestId = hasRequestId ? String(body.requestId) : '';
+        const requestIdValid = /^[A-Za-z0-9_-]{6,128}$/.test(requestId);
+
+        if (hasRequestId && !requestIdValid) {
+          return fail(res, 400, 'BAD_REQUEST_ID', 'requestId 必须是 6-128 位字母数字/下划线/连字符');
+        }
+
+        if (!hasRequestId) {
+          const result = await runner.send(roomId, body.text, {
+            mode: body.mode,
+            attachments: body.attachments,
+          });
+          return send(res, 200, { ok: true, message: result.userMessage, steered: result.steered ?? null });
+        }
+
+        const opened = openRequest({
+          receipts: httpRequestReceipts,
+          taskRuns: store.taskRuns,
+          requesterId: device?.id ?? 'device_unknown',
+          requestId, roomId, text: body?.text, attachments: body?.attachments, mode: body?.mode,
         });
-        return send(res, 200, { ok: true, message: result.userMessage, steered: result.steered ?? null });
+        if (opened.status === 'done') {
+          const resumed = await resumeAdmitted({ store, taskRuns: store.taskRuns, scope: opened.scope });
+          return send(res, 200, {
+            ok: true, duplicate: true, requestId,
+            accepted: resumed.ok !== false && resumed.accepted === true,
+            taskRunId: resumed.taskRunId ?? opened.receipt?.taskRunId ?? null,
+            admissionPending: resumed.ok === false,
+          });
+        }
+        if (opened.status === 'inflight') return send(res, 202, { ok: true, queued: true, inProgress: true, requestId });
+        if (opened.status === 'conflict' || opened.status === 'corrupt') {
+          return fail(res, opened.status === 'conflict' ? 409 : 500, opened.code ?? 'REQUEST_REJECTED', opened.text ?? '请求被拒绝');
+        }
+
+        const scope = opened.scope;
+        const room = store.getRoom(roomId);
+        if (room?.kind === 'group') {
+          // 普通群聊保持原行为：requestId 只做同键去重，不进入首次接单
+          let failure = null;
+          try {
+            const result = await runner.send(roomId, body.text, { mode: body.mode, attachments: body.attachments, requestId });
+            return send(res, 200, { ok: true, message: result.userMessage, steered: result.steered ?? null, requestId });
+          } catch (err) {
+            failure = err;
+            throw err;
+          } finally {
+            runner.requestLifecycle?.close?.(scope, failure, failure ? null : 'answer');
+          }
+        }
+        try {
+          // 信封交给 runner：作用域在真正取得执行权时激活，该轮真正结束时收尾
+          const result = await runner.send(roomId, body.text, {
+            mode: body.mode,
+            attachments: body.attachments,
+            requestId,
+            request: { scope },
+          });
+          const status = result.queued === true ? 202 : 200;
+          return send(res, status, {
+            ok: true, message: result.userMessage, steered: result.steered ?? null,
+            queued: result.queued === true, requestId,
+          });
+        } catch (err) {
+          runner.requestLifecycle?.close?.(scope, err);
+          throw err;
+        }
       }
 
       const abortMatch = pathname.match(/^\/api\/rooms\/([^/]+)\/abort$/);
@@ -1420,6 +1507,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
 export function serverInfo(runner) {
   return {
     version: VERSION,
+    serverInstanceId: config.serverInstanceId,
     hostname: config.hostname,
     workspace: config.workspace,
     // 数据目录也回给 App：这是用户最该知道、也最不该被“神秘换掉”的东西

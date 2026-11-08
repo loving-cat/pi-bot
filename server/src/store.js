@@ -17,9 +17,12 @@ import { config } from './config.js';
 import { bus } from './bus.js';
 import { newId, now, readJson, writeJsonAtomic, insertionPoint, log } from './util.js';
 import { normalizeRules } from './shell-policy.js';
+import { TaskRunStore } from './tasks/task-run-store.js';
 
 const STATE_FILE = path.join(config.dataDir, 'state.json');
 const ROOMS_DIR = path.join(config.dataDir, 'rooms');
+// ★ 持续任务独立存放：与任务板隔离，不受 500 条裁剪影响（批次 02）
+const TASKRUNS_DIR = path.join(config.dataDir, 'taskruns');
 const STATE_VERSION = 2;
 
 /** 正整数字符串/数字 → 正整数；其他（含空、null、负数、小数）→ null（= 用上层默认） */
@@ -357,6 +360,9 @@ export class Store {
     for (const room of Object.values(this.state.rooms)) {
       this.messages.set(room.id, this.#loadRoomMessages(room.id));
     }
+    // ★ 持续任务存储：独立目录、独立写入器，不参与 state.json 的合并保存
+    //   它自己管原子替换与单写入者，Store 只持有引用
+    this.taskRuns = new TaskRunStore({ dir: TASKRUNS_DIR });
     this.saveTimer = null;
     /** 有变更的房间 id —— 落盘时只写这些，不要全量重写 */
     this.dirtyRooms = new Set();
@@ -409,6 +415,38 @@ export class Store {
       this.saveTimer = null;
       this.saveNow();
     }, 300);
+  }
+
+  /**
+   * 同步把 state 与待写房间落盘，并**如实报告成败**。
+   *
+   * `saveNow` 失败只记日志（进程要活下去），所以它不能用来回答
+   * 「这次改动持久成功了吗」。需要确认落盘的调用方用这个方法：
+   * 失败会返回错误文本，调用方据此决定是否推进进度。
+   *
+   * @returns {{ok:boolean, text?:string}}
+   */
+  flushNow() {
+    try {
+      assertMcpCredentialsSealed(this.state.mcpServers ?? []);
+      writeJsonAtomic(STATE_FILE, this.state);
+    } catch (err) {
+      return { ok: false, text: `state.json 写入失败：${err?.message || err}` };
+    }
+
+    const failed = [];
+    for (const roomId of [...this.dirtyRooms]) {
+      try {
+        writeJsonAtomic(path.join(ROOMS_DIR, `${roomId}.json`), this.messages.get(roomId) ?? []);
+        this.dirtyRooms.delete(roomId);
+      } catch (err) {
+        failed.push(`${roomId}: ${err?.message || err}`);
+      }
+    }
+    if (failed.length) {
+      return { ok: false, text: `房间写入失败：${failed.join('；')}` };
+    }
+    return { ok: true };
   }
 
   saveNow() {
@@ -1392,9 +1430,13 @@ export class Store {
   }
 
   /** 同一个 hash 已经有"已批准但还没用掉"的，就放行一次 */
-  takeApproved(hash) {
+  takeApproved(hash, { taskRunId = null, taskRevision = null } = {}) {
+    // 受管审批只能消费本任务本版本的批准；legacy 只消费没有任务绑定的记录
+    const managed = Boolean(taskRunId);
     const hit = (this.state.approvals ?? []).find(
-      (a) => a.hash === hash && a.status === 'approved',
+      (a) => a.hash === hash && a.status === 'approved' && (managed
+        ? a.taskRunId === taskRunId && (taskRevision == null || (a.taskRevision ?? null) === taskRevision)
+        : !a.taskRunId),
     );
     if (!hit) return null;
     hit.status = 'consumed';
@@ -1403,14 +1445,20 @@ export class Store {
     return hit;
   }
 
-  findPendingApproval({ roomId, botId, hash }) {
+  findPendingApproval({ roomId, botId, hash, taskRunId = null, taskRevision = null }) {
+    // 受管审批按「任务 + 目标版本 + 动作哈希」去重；legacy 仍只按 room/bot/hash。
+    // 两边互不借用：另一个任务或旧版本的批准不能当成本任务的授权。
+    const managed = Boolean(taskRunId);
     return (
       (this.state.approvals ?? []).find(
         (a) =>
           a.roomId === roomId &&
           a.botId === botId &&
           a.hash === hash &&
-          a.status === 'pending',
+          a.status === 'pending' &&
+          (managed
+            ? a.taskRunId === taskRunId && (a.taskRevision ?? null) === (taskRevision ?? null)
+            : !a.taskRunId),
       ) ?? null
     );
   }
@@ -1424,8 +1472,11 @@ export class Store {
     input = null,
     hash,
     capabilityRevision = null,
+    taskRunId = null,
+    taskRevision = null,
+    attemptId = null,
   } = {}) {
-    const dup = this.findPendingApproval({ roomId, botId, hash });
+    const dup = this.findPendingApproval({ roomId, botId, hash, taskRunId, taskRevision });
     if (dup) return dup;
     if (!Array.isArray(this.state.approvals)) this.state.approvals = [];
     const approval = {
@@ -1434,6 +1485,7 @@ export class Store {
       botId,
       botName,
       tool: String(tool ?? ''),
+      ...(taskRunId ? { taskRunId: String(taskRunId), taskRevision: Number(taskRevision) || null, attemptId: String(attemptId ?? '') || null } : {}),
       summary: String(summary ?? '').slice(0, 500),
       input: input ?? null,
       hash,

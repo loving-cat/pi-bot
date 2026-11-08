@@ -52,7 +52,28 @@ ${JSON.stringify(input ?? {})}${scope ? `\n${JSON.stringify(scope)}` : ''}`)
  * @param {{roomId:string, bot:object}} ctx
  * @returns {{name:string, hidden:boolean, factory:Function}}
  */
-export function createPolicyExtension({ roomId, bot }) {
+/**
+ * 命令策略的执行点：拦截 shell 类工具调用，命中规则就阻止执行。
+ *
+ * @param {object} p
+ * @param {string} p.roomId
+ * @param {object} p.bot
+ * @param {(approval:object, info:{created:boolean})=>void} [p.onBlocked]
+ *   真实的**策略阻塞观察**回调：一次调用被 pending 审批挡住时通知调用方。
+ *   复用已有 pending 与新建 pending 两条路径都会触发。
+ *   仅供观察（例如受管执行记录「我在等哪个真实审批」），不参与放行判定。
+ */
+export function createPolicyExtension({ roomId, bot, onBlocked = () => {}, managedContextOf = null }) {
+  /** 通知观察者：这次调用被某条 pending 审批挡住了。 */
+  function notifyBlocked(approval, created) {
+    if (typeof onBlocked !== 'function') return;
+    try {
+      onBlocked(approval, { created: created === true });
+    } catch {
+      // 观察者出错不能影响策略判定
+    }
+  }
+
   return {
     name: 'policy',
     hidden: true,
@@ -109,19 +130,28 @@ export function createPolicyExtension({ roomId, bot }) {
         if (policy.dangerous === 'ask' && (MUTATING.has(tool) || isExternalMcpTool(tool))) {
           const capabilityRevision = isExternalMcpTool(tool)
             ? mcpAccessSignature(currentBot, store.mcpLibrary()) : null;
-          // 用户批准过"本次任务" → 这个 bot 在这个会话里有一段时间不用逐条点
-          if (store.hasApprovalGrant({ roomId, botId: bot?.id ?? null, capabilityRevision })) return undefined;
+          const managed = typeof managedContextOf === 'function' ? managedContextOf() : null;
+          // 用户批准过"本次任务" → 这个 bot 在这个会话里有一段时间不用逐条点。
+          // 受管执行必须由任务级审批放行，不能借用旧的 room 时间窗口。
+          if (!managed && store.hasApprovalGrant({ roomId, botId: bot?.id ?? null, capabilityRevision })) return undefined;
           const scope = capabilityRevision ? { roomId, botId: bot?.id ?? null, capabilityRevision } : null;
           const hash = approvalHash(tool, event?.input, scope);
-          // 批准过的那一次直接放行（而且只用一次）
-          if (store.takeApproved(hash)) return undefined;
+          // 批准过的那一次直接放行（而且只用一次）；受管只消费本任务本版本的批准
+          if (store.takeApproved(hash, {
+            taskRunId: managed?.taskRunId ?? null,
+            taskRevision: managed?.revision ?? null,
+          })) return undefined;
 
           const existing = store.findPendingApproval({
             roomId,
             botId: bot?.id ?? null,
             hash,
+            taskRunId: managed?.taskRunId ?? null,
+            taskRevision: managed?.revision ?? null,
           });
           if (existing) {
+            // ★ 真实阻塞观察：这次调用确实被这条既有审批挡住了
+            notifyBlocked(existing, false);
             return {
               block: true,
               reason: '这一次操作还在等用户批准（卡片已经发在会话里了），先别重复调用。',
@@ -135,10 +165,14 @@ export function createPolicyExtension({ roomId, bot }) {
             botName: bot?.name ?? '',
             tool,
             summary,
+            taskRunId: managed?.taskRunId ?? null,
+            taskRevision: managed?.revision ?? null,
+            attemptId: managed?.attemptId ?? null,
             input: isExternalMcpTool(tool) ? null : event?.input ?? null,
             hash,
             capabilityRevision,
           });
+          notifyBlocked(approval, true);
           const msg = store.appendMessage({
             roomId,
             authorType: 'bot',

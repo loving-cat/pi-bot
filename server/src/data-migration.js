@@ -21,6 +21,8 @@ import path from 'node:path';
 export const ENTRIES = Object.freeze([
   'state.json',
   'rooms',
+  // 持续任务的独立记录（批次 02）。不搬的话，用户换目录后所有在执行的任务凭空消失。
+  'taskruns',
   'sessions',
   'uploads',
   'uploads.json',
@@ -29,6 +31,9 @@ export const ENTRIES = Object.freeze([
   'hooks.json',
   'secret.key',
   'run-stats.json',
+  // 首次接单的持久请求回执与命令回执（批次 06）：不搬会丢去重与命令结果。
+  'task-requests',
+  'task-commands',
 ]);
 
 /** 迁移完成后写在新目录里的标记：来源目录、复制了哪些条目、沿用的工作目录 */
