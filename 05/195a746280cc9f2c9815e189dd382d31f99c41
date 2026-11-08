@@ -1,0 +1,18 @@
+server/src/bootstrap/task-host.js
+  h_c2e638ff76b3b9 74-92
+server/src/tasks/task-next-action.js
+  h_c2e638ff76b3b9 150-163
+server/src/tasks/task-progress.js
+  h_c2e638ff76b3b9 83,90-99
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "05195a746280cc9f2c9815e189dd382d31f99c41",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
