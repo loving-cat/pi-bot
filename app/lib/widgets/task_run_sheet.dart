@@ -164,7 +164,7 @@ class _TaskRunSheetBody extends StatelessWidget {
               ),
             if (task.needsUser && task.waiting?.kind == 'approval')
               OutlinedButton(
-                onPressed: () => onRun(context, (t) => state.taskRuns.control(t, type: 'approval', ref: t.waiting?.ref, decision: 'denied'), task),
+                onPressed: () => onRun(context, (t) => state.taskRuns.control(t, type: 'approval', ref: t.waiting?.ref, decision: 'rejected'), task),
                 child: const Text('拒绝'),
               ),
             if (task.canPause)

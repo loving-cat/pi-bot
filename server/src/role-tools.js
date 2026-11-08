@@ -34,7 +34,7 @@ export function opaqueScriptBlockReason(policy, tool) {
 const READ_ONLY_BUILTINS = new Set(['read', 'ls', 'grep', 'find']);
 const COORDINATION_TOOLS = new Set([
   'list_bots', 'list_departments', 'read_department', 'message_bot',
-  'task_report', 'assign_member_task', 'task_expert_review',
+  'task_report', 'task_plan', 'assign_member_task', 'task_expert_review',
 ]);
 
 export function isReadonlyPolicy(policy) {

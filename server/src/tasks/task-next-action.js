@@ -115,13 +115,24 @@ export function planNextAction(taskRun, {
  * 模型反复声明同一件事不会改变签名。
  */
 export function progressSignature(taskRun) {
-  const evidence = [...new Set((taskRun.progress?.evidence ?? [])
-    .filter((e) => e.kind === 'artifact' && e.source === 'attempt')
-    .map((e) => String(e.ref ?? ''))
-    .filter(Boolean))].sort();
+  // ★ 只统计"目标是否更接近完成"，不统计"又产出了多少文件"。
+  //
+  //   原来把每条新产物都算进签名：模型每轮丢一个新文件，签名就变一次，
+  //   停滞计数永远清零，于是一个做不完的任务会无限跑下去
+  //   （实测 8 秒内同一任务执行 71 次、验收 70 次仍在跑，
+  //   而默认额度是不限额，没有任何东西能拦住它）。
+  //
+  //   真正有意义的进展只有两件：
+  //     · 目标改版（revision 变）；
+  //     · 还缺什么变少了（unmet 收敛）；
+  //     · 门槛有变化（gates）。
+  //   产物数量不在此列 —— 交 100 个没用的文件不算进展。
   const unmet = [...(taskRun.progress?.unmet ?? [])].sort();
   const gates = (taskRun.openGates ?? []).map((g) => g.kind + ':' + g.ref).sort();
-  return JSON.stringify([taskRun.revision, evidence, unmet, gates]);
+  // 证据只取"是否为空"，不取具体内容：从 0 份变成有交付算进展，
+  // 从 3 份变成 4 份不算。
+  const hasEvidence = (taskRun.progress?.evidence ?? []).some((e) => e.kind === 'artifact');
+  return JSON.stringify([taskRun.revision, hasEvidence, unmet, gates]);
 }
 
 /** 占位已开始但未结算的尝试（结果未知）。 */

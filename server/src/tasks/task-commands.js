@@ -192,7 +192,17 @@ export function createTaskCommands({ store, runner, taskRuns = null, commandDir 
             taskRunId, inputKey: String(body.ref), revision: expectedRevision, text: body?.text ?? null,
           });
         } else if (type === 'approval') {
-          const decision = body?.decision === 'approved' ? 'approved' : body?.decision === 'rejected' ? 'rejected' : null;
+          // ★ 宽容接受几种同义写法。
+          //
+          //   客户端曾经发 'denied'，而这里只认 'approved'/'rejected'，
+          //   于是「拒绝审批」按钮必然 400，审批门槛只能批不能驳。
+          //   入口处统一归一，别让一个同义词把功能锁死。
+          const raw = String(body?.decision ?? '').toLowerCase();
+          const decision = ['approved', 'approve', 'granted', 'grant'].includes(raw)
+            ? 'approved'
+            : ['rejected', 'reject', 'denied', 'deny'].includes(raw)
+              ? 'rejected'
+              : null;
           if (!decision) return fail(400, 'BAD_DECISION', '审批决定必须明确');
           const decided = store.decideApproval(String(body.ref), { approved: decision === 'approved' });
           if (!decided) return fail(404, 'APPROVAL_NOT_FOUND', '审批记录不存在');

@@ -100,6 +100,8 @@ export function createTaskSupervisor({
   let draining = null;
   const running = new Set();
   const inflight = new Map(); // taskRunId → 本次进程内正在执行的标识
+  /** 正在推进的任务 → 那次推进的 Promise（防止同一任务被两条路径同时推进）。 */
+  const advanceLocks = new Map();
 
   function notify(taskRunId) {
     if (!taskRunId) return;
@@ -177,6 +179,15 @@ export function createTaskSupervisor({
 
         const canRun = (id, taskRun) => {
           if (running.has(id)) return false;
+          // ★ 已有在途尝试就别再派一次。
+          //
+          //   原来只查 running 集合（本进程正在推进的任务）。但一个任务
+          //   可能在别的路径上刚被推进到 running 并登记了尝试，
+          //   此时再 dispatch 会被状态机拒绝（执行中 不接受 dispatch），
+          //   那条错误被当成永久失败，任务就被毒化成 blocked ——
+          //   用户看到的是「受阻」，原因是一句内部错误串。
+          const active = (taskRun?.attempts ?? []).filter((a) => a.state === 'registered');
+          if (active.length) return false;
           const botId = taskRun?.owner?.leadBotId ?? null;
           if (botId && busyBots.has(botId)) return false;
           return true;
@@ -348,7 +359,37 @@ export function createTaskSupervisor({
   }
 
   async function runTask(taskRunId) {
+    // ★ 同一个任务不能被两条路径同时推进。
+    //
+    //   父任务推进时会递归 runTask(child)，而调度器也可能同时在跑这个
+    //   child（它的 notify 到了）。两边各看到一份过期快照、各派一次
+    //   dispatch，第二个必然被状态机拒（执行中 不接受 dispatch），
+    //   那条拒绝被当成永久失败 —— 任务就变成「受阻」，原因是内部错误串。
+    //
+    //   这里用 advanceLocks 做重入保护：已经在推进的，直接让调用方等它。
+    if (advanceLocks.has(taskRunId)) {
+      return advanceLocks.get(taskRunId);
+    }
+    const token = Promise.resolve().then(() => runTaskInner(taskRunId));
+    advanceLocks.set(taskRunId, token);
+    try {
+      return await token;
+    } finally {
+      advanceLocks.delete(taskRunId);
+    }
+  }
+
+  async function runTaskInner(taskRunId) {
     let yielded = false;
+    // ★ 连续无实质进展的唤醒次数上界。
+    //
+    //   maxSteps 只限制"一次唤醒里走多少步"，用尽后让出、下一个事件又唤醒它。
+    //   如果每个事件都让它跑一轮、每轮都产出新文件但目标始终不达成，
+    //   就会无界运行（实测高频事件下一直跑到进程被外部杀掉）。
+    //
+    //   这里用"本轮前后 progressSignature 是否变化"判定：连续 N 轮没变化
+    //   就明确停下并说明原因，而不是无限重跑。
+    const stallLimit = Math.max(1, Number(maxStallRounds) || 2);
     for (let step = 0; step < maxSteps; step += 1) {
       const taskRun = read(taskRunId);
       if (!taskRun) return { status: 'missing' };
@@ -556,7 +597,7 @@ export function createTaskSupervisor({
     if (executorBusy(botId, taskRun)) {
       const dueAt = clock() + BUSY_RETRY_MS;
       await patch(taskRun.id, { nextAction: null, retryAt: dueAt, retry: { count: (read(taskRun.id)?.retry?.count ?? 0) + 1, at: clock() } });
-      setTimer(dueAt);
+      setTimer(dueAt, taskRun.id);
       return { status: 'retry_scheduled', dueAt, why: '执行者还在忙，稍后重派' };
     }
 
@@ -604,12 +645,14 @@ export function createTaskSupervisor({
     //   直接判阻塞会让任务在团队还在干活时就死在「受阻」，用户只能看到红字。
     if (failedStop && isBusyOutcome(rawResult) && (read(taskRun.id)?.retry?.count ?? taskRun.retry?.count ?? 0) < MAX_TRANSIENT_ATTEMPTS) {
       const dueAt = clock() + BUSY_RETRY_MS;
-      await patch(taskRun.id, {
-        nextAction: null,
-        retryAt: dueAt,
-        retry: { count: (read(taskRun.id)?.retry?.count ?? taskRun.retry?.count ?? 0) + 1, at: clock() },
-      });
-      setTimer(dueAt);
+      // ★ 忙等待不算"失败次数"。
+      //
+      //   retry.count 的语义是「这个任务真实失败了几次」，decideRetry 用它
+      //   判断还值不值得再试。把「执行者正忙」也算进去，会让第一次真实失败
+      //   就被当成第 2 次尝试、直接 exhausted，一次都不重试。
+      //   忙等待只排时间，不动 count。
+      await patch(taskRun.id, { nextAction: null, retryAt: dueAt });
+      setTimer(dueAt, taskRun.id);
       return { status: 'retry_scheduled', dueAt, why: '执行者还在忙，稍后重派' };
     }
     if (failedStop) {
@@ -634,7 +677,7 @@ export function createTaskSupervisor({
           retryAt: dueAt,
           retry: { count: (read(taskRun.id)?.retry?.count ?? taskRun.retry?.count ?? 0) + 1, at: clock() },
         });
-        setTimer(dueAt);
+        setTimer(dueAt, taskRun.id);
         return { status: 'retry_scheduled', dueAt };
       }
       // 不再重试：清掉到期标记，交给状态机判定为明确失败
@@ -669,7 +712,7 @@ export function createTaskSupervisor({
             retryAt: clock() + AUTONOMY_RETRY_MS,
             nextAction: null,
           });
-          setTimer(clock() + AUTONOMY_RETRY_MS);
+          setTimer(clock() + AUTONOMY_RETRY_MS, taskRun.id);
           log('自主模式：第 ' + misses + ' 次失败，自动重试', taskRun.id);
           return { status: 'retry_scheduled', why: 'autonomous_retry_' + misses };
         }
@@ -696,9 +739,17 @@ export function createTaskSupervisor({
     await patch(taskRun.id, { nextAction: null, retryAt: null, retry: null, stall: bumpStall(after ?? taskRun) });
     await reconcileEarlyControls({ taskRuns, taskRunId: taskRun.id, settle, patch, notify, clock });
     await releaseDependencyFor(read(taskRun.id) ?? taskRun);
+    // ★ 只唤醒子任务，**绝不 notify 自己**。
+    //
+    //   原来这里 notify(kid.id) 后又 notify(taskRun.id) —— 等于告诉调度器
+    //   「这个任务又该跑一遍」，于是 runTask 结束立刻被重新入队，
+    //   配合「每轮新产物改变停滞签名」，就变成无界自旋：
+    //   实测 8 秒内同一任务执行 71 次、验收 70 次仍在跑。
+    //
+    //   一轮推进结束后是否还要继续，由真实事件（子任务交付、用户指令、
+    //   到期重试）驱动，而不是自己叫自己。
     for (const kid of childrenOf(taskRuns, read(taskRun.id) ?? taskRun)) {
-      notify(kid.id);
-      notify(taskRun.id);
+      if (!terminal(kid)) notify(kid.id);
     }
     return { status: 'ok' };
   }
@@ -740,7 +791,7 @@ export function createTaskSupervisor({
         retry: { count: (taskRun.retry?.count ?? 0) + 1, at: clock() },
       });
       await patch(id, { stall: bumpStall(read(id) ?? taskRun) });
-      setTimer(dueAt);
+      setTimer(dueAt, id);
       return { status: 'retry_scheduled', dueAt };
     }
     await patch(id, { nextAction: null, retryAt: null });
@@ -750,12 +801,22 @@ export function createTaskSupervisor({
 
   /** 到期重试的唤醒（事件驱动）；由运行时按最早到期时间调度。 */
   const timers = new Map();
-  function setTimer(dueAt) {
+  /**
+   * 安排一次到期唤醒。
+   *
+   * ★ 每个任务一个定时器，不再共用一个 'retry' key。
+   *
+   *   共用 key 时后设置的一定会 clearTimeout 掉先设置的：
+   *   A 还有 30 秒到期、B 排了 15 秒，B 一进来就把 A 的定时器清了，
+   *   A 永远等不到唤醒，停在 blocked —— 用户看到的是「任务无缘无故卡住」。
+   */
+  function setTimer(dueAt, taskRunId = null) {
     const delay = Math.max(0, dueAt - clock());
-    const key = 'retry';
+    const key = taskRunId ? 'retry:' + taskRunId : 'retry:*';
     clearTimeout(timers.get(key));
     timers.set(key, setTimeout(() => {
       timers.delete(key);
+      // 到点后统一扫一遍所有到期任务（不用关心是谁的定时器）
       for (const run of allRuns()) {
         if (run.retryAt && run.retryAt <= clock()) notify(run.id);
       }
@@ -1101,7 +1162,7 @@ export function createTaskSupervisor({
 
         if (st.stage === RECOVERY_STAGE.resume) {
           if (run.resumeIntent) await patch(run.id, { resumeIntent: null });
-          if (Number.isFinite(run.retryAt) && run.retryAt > clock()) setTimer(run.retryAt);
+          if (Number.isFinite(run.retryAt) && run.retryAt > clock()) setTimer(run.retryAt, run.id);
           report.resumed.push(run.id);
           notify(run.id);
           break;

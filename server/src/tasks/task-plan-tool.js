@@ -99,7 +99,12 @@ export function buildPlanTool({ runner, store, roomId, botId }) {
       const submission = readManagedSubmission({ runner, taskRuns, roomId, botId });
       if (submission.kind === SUBMISSION.invalid) return error('现在不能写计划：' + submission.text);
       if (submission.kind !== SUBMISSION.managed) return error('当前没有受管任务，不能写计划。');
-      const run = submission.taskRun;
+      // ★ 受管提交里没有 taskRun 对象，只有身份字段。
+      //   原来读 submission.taskRun 恒为 undefined，这个工具一调用就崩
+      //   （Cannot read properties of undefined），等于完全不可用。
+      const loaded = taskRuns.read(submission.taskRunId);
+      const run = loaded?.status === 'found' ? loaded.taskRun : null;
+      if (!run) return error('找不到当前任务，不能写计划。');
 
       const room = store.getRoom(roomId);
       const members = (room?.botIds ?? [])
@@ -114,7 +119,7 @@ export function buildPlanTool({ runner, store, roomId, botId }) {
       const updated = await taskRuns.mutate(run.id, {
         mutate: (current) => {
           if (!current) return null;
-          if (current.revision !== run.revision) return null;
+          if (current.revision !== submission.revision) return null;
           return {
             ...current,
             progress: { ...(current.progress ?? {}), checkpoint: text },

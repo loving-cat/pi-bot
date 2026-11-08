@@ -136,14 +136,25 @@ class TaskRunController extends ChangeNotifier {
       for (var page = 0; page < 10 && !complete; page += 1) {
         final body = await client.page(scope: 'active', limit: 200, cursor: cursor);
         if (epoch != _epoch) return;
-        final tasks = ((body['tasks'] as List?) ?? const [])
-            .whereType<Map>()
-            .map((m) => TaskRun.fromJson(m.cast<String, dynamic>()))
-            .toList();
-        for (final t in tasks) {
-          fetched.add(t.id);
+        // ★ 直接把服务端原始 Map 交给 applySnapshot，不要经 TaskRun 重建。
+        //
+        //   原来先 fromJson 成 TaskRun、再用 _toJson 转回去 —— 而 _toJson
+        //   只写了部分字段，phase / blockedReason / leadBotId / childrenSummary
+        //   等六个字段在这一次往返里被静默丢掉。
+        //
+        //   后果不是"显示不全"而是"操作死结"：
+        //   paused_budget 的任务被刷成 phase=active 后，
+        //   「继续」按钮只认 paused_user、「追加额度」按钮只认 needs_user，
+        //   两个都不出现 —— 任务既跑不动也关不掉。
+        final raws = ((body['tasks'] as List?) ?? const []).whereType<Map>().toList();
+        for (final raw in raws) {
+          final id = raw['id'];
+          if (id is String && id.isNotEmpty) fetched.add(id);
         }
-        _merge.applySnapshot({'tasks': tasks.map(_toJson).toList(), 'cursor': _merge.cursor});
+        _merge.applySnapshot({
+          'tasks': raws.map((m) => m.cast<String, dynamic>()).toList(),
+          'cursor': _merge.cursor,
+        });
         count = body['activeCount'] is num ? (body['activeCount'] as num).toInt() : count;
         complete = body['complete'] == true;
         final next = body['nextCursor'];
@@ -257,38 +268,8 @@ class TaskRunController extends ChangeNotifier {
         .replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
   }
 
-  Map<String, dynamic> _toJson(TaskRun t) => {
-        'id': t.id,
-        'roomId': t.roomId,
-        'rootTaskId': t.rootTaskId,
-        'parentTaskId': t.parentTaskId,
-        'revision': t.revision,
-        'sequence': t.sequence,
-        'storeVersion': t.storeVersion,
-        'state': t.state,
-        'stateText': t.stateText,
-        'title': t.title,
-        'scope': t.scope,
-        'deliverables': t.deliverables,
-        'verificationCount': t.verificationCount,
-        'unmet': t.unmet,
-        'waiting': t.waiting == null
-            ? null
-            : {'kind': t.waiting!.kind, 'ref': t.waiting!.ref, 'describe': t.waiting!.describe},
-        'budget': {
-          'maxRuns': t.budget.maxRuns,
-          'usedRuns': t.budget.usedRuns,
-          'extraRuns': t.budget.extraRuns,
-          'remaining': t.budget.remaining,
-        },
-        'result': {
-          'prepared': t.result.prepared,
-          'delivered': t.result.delivered,
-          'summary': t.result.summary,
-          'at': t.result.at,
-        },
-        'updatedAt': t.updatedAt,
-      };
+  // 注：_toJson 已删除。快照往返必须用服务端原始 Map ——
+  // 手工重建对象会静默丢字段（见 refresh() 里的说明）。
 
   void clearError() {
     _error = null;
