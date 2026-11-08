@@ -6,6 +6,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'api.dart';
+import 'request_outbox.dart';
+import 'task_run_controller.dart';
+import 'ws_frame.dart';
 import 'attachment_preview_request.dart';
 import 'browser_pane_state.dart';
 import 'models.dart';
@@ -83,7 +86,28 @@ class AppState extends ChangeNotifier {
   String? serverUrl;
   String? token;
   String deviceName = '我的手机';
-  Api? api;
+  Api? _api;
+  Api? get api => _api;
+  set api(Api? next) {
+    if (identical(_api, next)) return;
+    _api = next;
+    // API/凭据/服务代次切换：旧 hello 的设备绑定立即失效；
+    // 当前 HTTP 认证结果不依赖旧 WS 身份也能正确消费。
+    _deviceId = null;
+  }
+
+  /// 发送 outbox：身份/重传由独立模块负责，AppState 只接线。
+  final RequestOutbox outbox = RequestOutbox();
+
+  /// 当前服务身份（不含明文凭据；凭据变化也视为新一代服务）。
+  String get _serviceIdentity =>
+      '${serverUrl ?? ''}|${(token ?? '').hashCode}';
+
+  /// 本连接认证设备 id（hello 下发）；终态事件按来源核对。
+  String? _deviceId;
+
+  /// 独立 TaskRun 状态（不并入旧 TaskItem）；连接/事件只在这里接线。
+  final TaskRunController taskRuns = TaskRunController();
 
   /// 用户点过"以后再说"的版本号
   String skippedUpdateVersion = '';
@@ -127,11 +151,38 @@ class AppState extends ChangeNotifier {
   /// 否则会在有模型的情况下先闪一下"去配置模型"引导页。
   bool modelGroupsLoaded = false;
   final Map<String, List<Msg>> messages = {};
+
+  /// 每个会话未发送的草稿。切换 bot/会话时输入框会被重建，草稿必须放在
+  /// 会话之外的内存里，切回来才能恢复；发送成功或清空时移除。
+  final Map<String, String> _drafts = {};
+
+  /// 读取某会话的草稿；没有返回空串。
+  String draftFor(String roomId) => _drafts[roomId] ?? '';
+
+  /// 保存某会话草稿；空内容即删除，避免内存里留一堆空串。
+  void setDraft(String roomId, String text) {
+    if (text.isEmpty) {
+      _drafts.remove(roomId);
+    } else {
+      _drafts[roomId] = text;
+    }
+  }
   final AttachmentDeletions _attachmentDeletions = AttachmentDeletions();
 
   /// 记忆摘要缓存（roomId → 摘要）
   final Map<String, MemorySummary> memorySummaries = {};
+  /// 正在发言/干活的 Bot（roomId → botId 集合）。
+  ///
+  /// 以前只记 roomId → bool：知道「有人在写」，但不知道**是谁**。
+  /// 多 Agent 后台干活时，用户最想看的就是「现在谁在做、在做什么」。
+  final Map<String, Set<String>> typingBots = {};
+
+  /// 兼容旧用法：这个会话是否有人在写。
   final Map<String, bool> typing = {};
+
+  /// 这个会话当前在干活的 Bot id 列表（供输入框上方的轮播使用）。
+  List<String> typingBotIds(String roomId) =>
+      (typingBots[roomId] ?? const <String>{}).toList(growable: false);
 
   /// 每个会话里排队/插话中的用户消息条数
   final Map<String, int> queued = {};
@@ -377,6 +428,7 @@ class AppState extends ChangeNotifier {
   // ---------------------------------------------------------------- 启动
 
   Future<void> bootstrap() async {
+    await outbox.load();
     try {
       await _bootstrapInner();
     } catch (err) {
@@ -404,6 +456,7 @@ class AppState extends ChangeNotifier {
     layoutBrowserWidth = prefs.getDouble(_kBrowserWidth) ?? 520;
     if (paired) {
       api = Api(serverUrl!, token ?? '');
+      taskRuns.bindApi(api, identity: _serviceIdentity);
       unawaited(refresh());
       connect();
     } else if (isHostPlatform) {
@@ -562,6 +615,7 @@ class AppState extends ChangeNotifier {
     localNeedsToken = await localServerRequiresToken(serverUrl!);
     token = localNeedsToken ? localToken : '';
     api = Api(serverUrl!, token!);
+      taskRuns.bindApi(api);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kUrl, serverUrl!);
     await prefs.setString(_kToken, '');
@@ -611,6 +665,7 @@ class AppState extends ChangeNotifier {
     localMode = false;
     if (device != null && device.isNotEmpty) deviceName = device;
     api = Api(serverUrl!, token);
+      taskRuns.bindApi(api);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kUrl, serverUrl!);
     await prefs.setString(_kToken, token!);
@@ -625,6 +680,7 @@ class AppState extends ChangeNotifier {
     localMode = token!.isEmpty;
     if (device != null && device.isNotEmpty) deviceName = device;
     api = Api(serverUrl!, token);
+      taskRuns.bindApi(api);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kUrl, serverUrl!);
     await prefs.setString(_kToken, token!);
@@ -851,6 +907,7 @@ class AppState extends ChangeNotifier {
     devices = const [];
     pairing = null;
     api = null;
+    taskRuns.bindApi(null);
     rooms = const [];
     bots = const [];
     messages.clear();
@@ -1489,16 +1546,61 @@ class AppState extends ChangeNotifier {
   /// 服务端会立刻把之前攒着的连发消息连同这条一起投递，不等静默窗口。
   /// 用户连打三条然后按回车时，体感就应该是"咔一下全部生效"，
   /// 而不是再多等 700ms。
+  Map<String, dynamic> get outboxSnapshot => outbox.snapshot;
+
+  /// 原操作传输重试：复用同一 requestId，不创建新用户意图。
+  Future<void> retrySend(String requestId) async {
+    final entry = outbox.entry(requestId);
+    if (entry == null) return;
+    if (entry.serverIdentity != _serviceIdentity) {
+      throw StateError('原请求属于另一个服务连接，不能重发');
+    }
+    await sendMessageTracked(
+      entry.roomId,
+      entry.text,
+      mode: entry.mode,
+      attachments: entry.attachmentIds.map((id) => Attachment(id: id, name: id)).toList(),
+      requestId: requestId,
+    );
+  }
+
   Future<void> sendMessage(
     String roomId,
     String text, {
     String mode = 'steer',
     List<Attachment> attachments = const [],
     bool flushMerge = true,
+  }) =>
+      sendMessageTracked(roomId, text, mode: mode, attachments: attachments, flushMerge: flushMerge);
+
+  /// 可指定 requestId 的发送入口：仅原操作重传时复用。
+  Future<void> sendMessageTracked(
+    String roomId,
+    String text, {
+    String mode = 'steer',
+    List<Attachment> attachments = const [],
+    bool flushMerge = true,
+    String? requestId,
   }) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty && attachments.isEmpty) return;
     final ids = attachments.map((a) => a.id).toList();
+    final effectiveRequestId = requestId ?? outbox.newRequestId();
+    final identityAtSend = _serviceIdentity;
+    try {
+      await outbox.remember(
+        requestId: effectiveRequestId, roomId: roomId, text: trimmed, mode: mode,
+        attachmentIds: ids, serverIdentity: identityAtSend,
+      );
+    } catch (err) {
+      lastError = '$err';
+      _notify();
+      rethrow;
+    }
+    // 写盘期间切了服务：原请求属于旧服务，不能把它的文字发给新目标
+    if (_serviceIdentity != identityAtSend) {
+      throw StateError('发送期间服务连接已变化，原请求未发送；切回原服务后可重试');
+    }
     final channel = _channel;
     if (channel != null && link == LinkState.online) {
       channel.sink.add(
@@ -1510,6 +1612,7 @@ class AppState extends ChangeNotifier {
           if (flushMerge) 'flushMerge': true,
           if (ids.isNotEmpty) 'attachments': ids,
           'clientId': DateTime.now().microsecondsSinceEpoch.toString(),
+          'requestId': effectiveRequestId,
         }),
       );
       return;
@@ -1520,8 +1623,10 @@ class AppState extends ChangeNotifier {
       await client.post('/api/rooms/$roomId/send', {
         'text': trimmed,
         'mode': mode,
+        'requestId': effectiveRequestId,
         if (ids.isNotEmpty) 'attachments': ids,
       });
+      unawaited(_pollRequestResult(effectiveRequestId));
     } catch (err) {
       lastError = '$err';
       _notify();
@@ -1951,17 +2056,80 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  void _onFrame(dynamic raw) {
-    Map<String, dynamic> ev;
-    try {
-      ev = jsonDecode(raw as String) as Map<String, dynamic>;
-    } catch (_) {
-      return;
+  /// 把服务器持久回执投影应用到 outbox；不接受正文猜测。
+  bool _applyRequestResult(Map<String, dynamic> res) {
+    final requestId = res['requestId'];
+    if (requestId is! String || requestId.isEmpty) return false;
+    final entry = outbox.entry(requestId);
+    if (entry == null) return false;
+    if (entry.serverIdentity != _serviceIdentity) return false; // 旧服务确认不能清新服务
+    final source = res['requesterId'];
+    if (_deviceId != null && source is String && source.isNotEmpty && source != _deviceId) return false; // 不是发给本设备确认
+    final status = res['status'];
+    final accepted = res['accepted'] == true;
+    final retryable = res['retryable'] == true;
+    // 明确不确定/未知：不是可靠终态，保留确认依据
+    if (status == 'unknown' || res['source'] == 'uncertain') {
+      lastError = (res['error'] as String?) ?? '请求结果暂不确定';
+      _notify();
+      return false;
     }
+    final terminal = accepted || status == 'answer' || status == 'clarification' ||
+        status == 'discussion' || (status == 'failed' && !retryable);
+    if (terminal) {
+      unawaited(outbox.clear(requestId));
+      return true;
+    }
+    if (status == 'failed') {
+      lastError = (res['error'] as String?) ?? '请求未被受理';
+      _notify();
+    }
+    return false;
+  }
+
+  /// 断线/丢最终帧/HTTP fallback：按原服务身份与 requestId 查询持久回执。
+  Future<void> _pollRequestResult(String requestId, {int attempts = 40}) async {
+    final identity = _serviceIdentity;
+    final apiAtStart = api;
+    for (var i = 0; i < attempts; i++) {
+      if (_serviceIdentity != identity || !identical(api, apiAtStart)) return;
+      final entry = outbox.entry(requestId);
+      if (entry == null) return;
+      try {
+        final body = await api?.get('/api/request-results/$requestId');
+        if (body != null && _serviceIdentity == identity && identical(api, apiAtStart)) {
+          final terminal = _applyRequestResult(body);
+          if (terminal) return;
+          if (body['status'] == 'unknown' || body['source'] == 'uncertain') return;
+        }
+      } catch (_) {
+        return; // 网络错误保留原信封，等重连对账
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    }
+  }
+
+  Future<void> _reconcileOutbox() async {
+    final identity = _serviceIdentity;
+    for (final entry in outbox.entries.toList()) {
+      if (entry.serverIdentity != identity) continue;
+      if (_serviceIdentity != identity) return;
+      await _pollRequestResult(entry.requestId, attempts: 1);
+    }
+  }
+
+  void _onFrame(dynamic raw) {
+    // 直连文本帧与 relay 的二进制 UTF-8 JSON 走同一解码；坏帧忽略。
+    final ev = decodeWebSocketFrame(raw);
+    if (ev == null) return;
     switch (ev['t'] as String?) {
       case 'hello':
         connectionsRevision++;
         link = LinkState.online;
+        final helloDevice = ev['device'];
+        if (helloDevice is Map && helloDevice['id'] is String) _deviceId = helloDevice['id'] as String;
+        taskRuns.applyHello(ev);
+        unawaited(_reconcileOutbox());
         unawaited(Native.startService());
         _attempt = 0;
         lastError = null;
@@ -2100,6 +2268,10 @@ class AppState extends ChangeNotifier {
         }
         break;
 
+      case 'taskRun.updated':
+        taskRuns.applyEvent(ev);
+        return;
+
       case 'msg.steps':
         final msg = _find(ev['roomId'] as String, ev['msgId'] as String);
         if (msg != null) {
@@ -2175,7 +2347,19 @@ class AppState extends ChangeNotifier {
           break;
         }
       case 'typing':
-        typing[ev['roomId'] as String] = ev['active'] as bool? ?? false;
+        final rid = ev['roomId'] as String;
+        final active = ev['active'] as bool? ?? false;
+        final botId = ev['botId'] as String?;
+        typing[rid] = active;
+        if (botId != null) {
+          final set = typingBots.putIfAbsent(rid, () => <String>{});
+          if (active) {
+            set.add(botId);
+          } else {
+            set.remove(botId);
+          }
+          if (set.isEmpty) typingBots.remove(rid);
+        }
         if (ev['active'] != true) queued.remove(ev['roomId']);
         break;
 
@@ -2237,6 +2421,15 @@ class AppState extends ChangeNotifier {
 
       case 'pong':
       case 'ack':
+        // 收件 ACK / queued / inFlight 都不是受理终态；只有持久回执投影的
+        // request.result 或显式 accepted 终态才能清理原信封。
+        if (ev['accepted'] == true) {
+          unawaited(outbox.clear(ev['requestId'] as String?));
+        }
+        return;
+      case 'request.result':
+        _applyRequestResult(ev);
+        return;
       case 'room.reset':
         return;
     }
@@ -2421,6 +2614,7 @@ class AppState extends ChangeNotifier {
     _serverWatch?.cancel();
     _serverWatch = null;
     disconnect();
+    taskRuns.dispose();
     browser.dispose();
     streamTick.dispose();
     super.dispose();

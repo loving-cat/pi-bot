@@ -11,6 +11,8 @@ import 'attachment_view.dart';
 import 'blob_avatar.dart';
 import 'bot_run_section.dart';
 import 'bot_appearance_section.dart';
+import 'room_task_panel.dart';
+import 'task_run_sheet.dart';
 
 /// 点聊天顶部的胶囊 → 从右边滑出来的面板。
 ///
@@ -101,6 +103,11 @@ class _RoomPanelState extends State<RoomPanel> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               _header(context, room),
+              // 任务区挂在面板顶部：一直可见、不随消息滚走。
+              RoomTaskPanel(
+                roomId: room.id,
+                onOpen: (task) => showTaskRunSheet(context, AppScope.read(context), task),
+              ),
               _tabs(context, isGroup, tab),
               Container(height: 1, color: PB.borderTertiary),
               Expanded(

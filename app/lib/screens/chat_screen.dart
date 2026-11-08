@@ -23,6 +23,7 @@ import '../theme.dart';
 import '../window_chrome.dart';
 import '../widgets/toast.dart';
 import '../widgets/anchored_menu.dart';
+import '../widgets/activity_monitor.dart';
 import '../widgets/attachment_view.dart';
 import '../widgets/avatar_life.dart';
 import '../widgets/ask_card.dart';
@@ -150,12 +151,25 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _state = AppScope.read(context);
       _state!.openRoom(widget.room.id);
       unawaited(_state!.loadMessages(widget.room.id));
+      // 切换会话会销毁当前 ChatScreen；这里先接草稿监听，再恢复上次输入。
+      _input.addListener(_saveDraft);
+      if (widget.initialText == null) {
+        final draft = _state!.draftFor(widget.room.id);
+        if (draft.isNotEmpty) {
+          _input.text = draft;
+          _input.selection = TextSelection.collapsed(offset: draft.length);
+        }
+      }
       // 新消息计数：只在"往上翻着"的时候累加。
       // 用 state 的 notify（每来一条消息一次），不用 streamTick（那是 80ms 一次的
       // 流式增量，会把计数冲成天文数字）。
       _state!.addListener(_countIfScrolledUp);
       FocusManager.instance.addListener(_onFocusChanged);
     }
+  }
+
+  void _saveDraft() {
+    _state?.setDraft(widget.room.id, _input.text);
   }
 
   void _countIfScrolledUp() {
@@ -175,6 +189,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _scrollFollow.dispose();
     _scroll.dispose();
     _input.removeListener(_absorbPastedPaths);
+    _input.removeListener(_saveDraft);
+    _state?.setDraft(widget.room.id, _input.text);
     _input.dispose();
     _focus.dispose();
     super.dispose();
@@ -985,6 +1001,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           ],
                         ),
                 ),
+                // 任务条已移到右侧面板常驻展示：贴在输入框上方会随消息挤占视线，
+                // 而任务是持续状态，更适合一直挂在面板里。
+                // 谁在干活：输入框左上角轮播显示，没人干活就整块隐藏。
+                ActivityMonitor(
+                  roomId: room.id,
+                  tasks: state.taskRuns
+                      .forRoom(room.id)
+                      .map((t) => t.title)
+                      .where((t) => t.isNotEmpty)
+                      .toList(),
+                ),
                 _tapToReattach(
                   _Composer(
                     controller: _input,
@@ -1331,7 +1358,10 @@ class _ComposerState extends State<_Composer> {
           //   于是它**永远不会打开文本输入连接**。表现就是：
           //   发完第一条，光标在闪、打字没反应、点一下也没用（点它没有状态变化，
           //   引擎不会重连）。有 key 之后 Flutter 按 key 配对，输入框原地不动。
-          if (busy)
+          // ★ 只有**真的有排队消息**时才显示这一行。
+          //   原来条件是 if (busy)，删掉"正在干活"文案后就变成
+          //   "已发了 0 句" 常驻 —— 那是在说一件没发生的事。
+          if (busy && queuedCount > 0)
             Padding(
               key: const ValueKey('composer-busy-hint'),
               padding: const EdgeInsets.only(bottom: 6),
@@ -1355,12 +1385,11 @@ class _ComposerState extends State<_Composer> {
                     ),
                     const SizedBox(width: 5),
                     Text(
-                      // ★ 语义变了：用户一说话，正在跑的会**立刻停下**，
-                      //   不是"排队等它忙完"。
-                      //   所以这里不能说"下一步会看到"——那会让用户以为要等。
-                      queuedCount > 0
-                          ? s.tf('chat.busyQueued', {'n': queuedCount})
-                          : s.t('chat.busyHint'),
+                      // ★ 只在有排队消息时显示。
+                      //   "正在干活"这类泛提示已经由输入框上方的活动轮播表达，
+                      //   而那行能说出**谁在干、在干什么**，信息量更大；
+                      //   两行都说同一件事只会挤占视线。
+                      s.tf('chat.busyQueued', {'n': queuedCount}),
                       style: TextStyle(
                         fontSize: PB.fsXxs,
                         color: PB.textTertiary,
