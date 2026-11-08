@@ -71,6 +71,25 @@ async function recoverPendingAdmissions({ store, runner, log = () => {} }) {
 export function createTaskHost({ store, runner, clock = () => Date.now(), log = () => {} }) {
   if (!store?.taskRuns) throw new Error('任务宿主需要 TaskRunStore');
   const taskRuns = store.taskRuns;
+
+  // ★ runner 必须能拿到应用 store。
+  //
+  //   task-runtime / task-supervisor 里有 7 处 runner.store 读取
+  //   （查房间、查成员、查 Bot 名），但 PiRunner 从来没有 store 属性 ——
+  //   全仓零赋值。后果是负责人回合正文里的 @ 根本查不到成员名单，
+  //   一条子任务都不会建；任务终态回报也发不出去。
+  //   生产装配下「@ 派活」等于完全失效，任务第一次执行就卡死。
+  //
+  //   在这里补上（只在缺失时写，不覆盖宿主已有的注入）。
+  if (runner && !runner.store) {
+    try {
+      Object.defineProperty(runner, 'store', {
+        value: store, writable: true, configurable: true, enumerable: false,
+      });
+    } catch {
+      runner.store = store;
+    }
+  }
   const access = createTaskAccess({ log });
   const runtime = createTaskRuntime({
     taskRuns,

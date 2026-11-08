@@ -147,7 +147,20 @@ export function progressSignature(taskRun) {
   // 证据只取"是否为空"，不取具体内容：从 0 份变成有交付算进展，
   // 从 3 份变成 4 份不算。
   const hasEvidence = (taskRun.progress?.evidence ?? []).some((e) => e.kind === 'artifact');
-  return JSON.stringify([taskRun.revision, hasEvidence, unmet, gates]);
+  // 「已经申请完成」必须算进展。
+  //
+  //   子任务正常交付（appliedCompletion）后如果还停在原状态等待验收，
+  //   签名不变就会被判「连续 N 轮没有新进展」而阻塞 ——
+  //   等于把每一次成功交付都当成停滞。
+  //   父任务也会因此永远等不到子任务完成。
+  const claimedDone = (taskRun.attempts ?? []).some(
+    (a) => a.state === 'settled'
+      && Array.isArray(a.result?.completionSelection)
+      && a.result.completionSelection.length >= 0
+      && a.result?.stop === 'returned'
+      && a.result?.phaseKind === 'apply_completion',
+  );
+  return JSON.stringify([taskRun.revision, hasEvidence, unmet, gates, claimedDone]);
 }
 
 /** 占位已开始但未结算的尝试（结果未知）。 */

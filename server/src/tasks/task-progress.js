@@ -80,14 +80,23 @@ export function classifyStop({ ok, error, aborted, stepCapHit, roundCapHit, canc
  *
  * @param {{stop:string, appliedCompletion?:boolean}} p
  */
-export function isCompletionCandidate({ stop, appliedCompletion } = {}) {
+export function isCompletionCandidate({ stop, appliedCompletion, phase } = {}) {
   // ★ 复用契约里那份**唯一**的候选集合，不另写一套判断。
   //   批次 01 审查 R04 实测过两处各判一套的后果：
   //   辅助函数说「不算候选」，归约器却把任务推进了 verifying。
   if (!isCompletionEligibleStop(stop)) {
     return { candidate: false, why: whyNotCandidate(stop) };
   }
-  if (!appliedCompletion) {
+  // ★ 完成申请的权威标记是 phase.kind。
+  //
+  //   受管执行结算时，attempt 对象上只有 phase（apply_completion），
+  //   appliedCompletion 这个布尔在构造阶段就转成了 phase，并不随事件传递。
+  //   原来只认 appliedCompletion，于是「模型申请了完成」这件事在这里
+  //   永远读不到 —— 子任务交完了也不进验收，反复执行后被判停滞阻塞，
+  //   父任务永远等不到它。这是任务链断掉的关键一环。
+  const wantsCompletion = appliedCompletion === true
+    || (phase && phase.kind === 'apply_completion');
+  if (!wantsCompletion) {
     return { candidate: false, why: '模型没有申请完成' };
   }
   return { candidate: true, why: '模型申请完成，进入验收' };
