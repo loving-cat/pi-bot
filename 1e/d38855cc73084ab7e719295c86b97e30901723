@@ -1,0 +1,16 @@
+app/lib/widgets/task_run_sheet.dart
+  h_c2e638ff76b3b9 135-139,412
+app/test/task_run_null_guard_test.dart
+  h_c2e638ff76b3b9 1-72
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1ed38855cc73084ab7e719295c86b97e30901723",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
