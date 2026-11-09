@@ -1,0 +1,20 @@
+server/src/pi-runner.js
+  h_c2e638ff76b3b9 1431-1435
+server/src/tasks/run-managed-attempt.js
+  h_c2e638ff76b3b9 147-149
+server/src/tasks/task-progress.js
+  h_c2e638ff76b3b9 587,607
+server/src/tasks/task-runtime.js
+  h_c2e638ff76b3b9 437-440,445,450-461,466-467,483,485
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b7632217f87ae0f8fedaa79ba7678bce699edf22",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
