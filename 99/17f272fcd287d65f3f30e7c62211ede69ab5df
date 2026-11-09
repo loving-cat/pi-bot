@@ -1,0 +1,16 @@
+app/pubspec.yaml
+  h_c2e638ff76b3b9 4
+server/package.json
+  h_c2e638ff76b3b9 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9917f272fcd287d65f3f30e7c62211ede69ab5df",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
