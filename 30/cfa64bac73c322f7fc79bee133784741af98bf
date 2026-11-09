@@ -1,0 +1,16 @@
+app/lib/widgets/task_board.dart
+  h_c2e638ff76b3b9 9,12,204-277,336-343,349-362,418-424,440-454,675-717
+app/test/task_board_visual_test.dart
+  h_c2e638ff76b3b9 1-68
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "30cfa64bac73c322f7fc79bee133784741af98bf",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
