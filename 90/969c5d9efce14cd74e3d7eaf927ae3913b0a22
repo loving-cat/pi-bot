@@ -1,0 +1,24 @@
+app/lib/app_state.dart
+  h_c2e638ff76b3b9 822-830,835-836,838-852
+app/lib/models.dart
+  h_c2e638ff76b3b9 93,131,145-147
+app/lib/widgets/activity_monitor.dart
+  h_c2e638ff76b3b9 55,74-78,80-88,90-123,125,129
+app/lib/widgets/task_board.dart
+  h_c2e638ff76b3b9 60-71
+server/src/task-routes.js
+  h_c2e638ff76b3b9 94-133
+server/src/tasks/task-runtime.js
+  h_c2e638ff76b3b9 19-22,423-476
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "90969c5d9efce14cd74e3d7eaf927ae3913b0a22",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
