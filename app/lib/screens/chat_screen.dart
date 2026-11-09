@@ -21,6 +21,7 @@ import '../scope.dart';
 import '../desktop_shortcuts.dart';
 import '../theme.dart';
 import '../window_chrome.dart';
+import '../widgets/message_anchor_rail.dart';
 import '../widgets/toast.dart';
 import '../widgets/anchored_menu.dart';
 import '../widgets/activity_monitor.dart';
@@ -98,6 +99,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final _moreAnchor = GlobalKey();
 
   final _scroll = ScrollController();
+
+  /// 上一次触发追底时的"内容指纹"（条数 + 末条 id + 末条长度）。
+  /// 内容没变就不重复追底，避免流式输出期间每帧都排一轮。
+  String? _lastFollowKey;
   final _input = TextEditingController();
   final _focus = FocusNode();
   AppState? _state;
@@ -584,8 +589,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       });
     }
 
+    // ★ 追底请求必须去重：build 里每次重建都会走到这儿，
+    //   而流式输出时消息每几十毫秒更新一次 —— 等于每帧都排一轮追底。
+    //   chat_scroll_follow 的每一轮是"最多 10 帧 jumpTo"，
+    //   于是 pixels 每帧都在变，右侧滑块跟着反复重算 = 抽搐。
+    //   这里按消息条数+末条长度做键，内容真的变了才请求。
     if (_stick && msgs.isNotEmpty) {
-      _scrollFollow.request();
+      final last = msgs.last;
+      final key = '${msgs.length}:${last.id}:${last.text.length}';
+      if (key != _lastFollowKey) {
+        _lastFollowKey = key;
+        _scrollFollow.request();
+      }
     }
 
     // 焦点兜底（见 _keepComposerFocused）—— 放在帧后，别在 build 里抢焦点
@@ -704,30 +719,30 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 return KeyedSubtree(
                   key: _taskAnchor,
                   child: IconButton(
-                  padding: EdgeInsets.zero,
-                  alignment: Alignment.center,
-                  visualDensity: VisualDensity.compact,
-                  constraints: const BoxConstraints(
-                    minWidth: 40,
-                    minHeight: 40,
-                  ),
-                  tooltip: pending > 0
-                      ? s.tf('chat.tasksWithCount', {'n': pending})
-                      : s.t('chat.tasks'),
-                  onPressed: () =>
-                      showTaskBoard(ctx, state, room, anchorKey: _taskAnchor),
-                  icon: Badge(
-                    isLabelVisible: pending > 0,
-                    label: Text('$pending'),
-                    backgroundColor: PB.colors(context).accent,
-                    child: Icon(
-                      LucideIcons.checkCircle2,
-                      size: 18,
-                      color: pending > 0
-                          ? PB.colors(context).accentBright
-                          : PB.textTertiary,
+                    padding: EdgeInsets.zero,
+                    alignment: Alignment.center,
+                    visualDensity: VisualDensity.compact,
+                    constraints: const BoxConstraints(
+                      minWidth: 40,
+                      minHeight: 40,
                     ),
-                  ),
+                    tooltip: pending > 0
+                        ? s.tf('chat.tasksWithCount', {'n': pending})
+                        : s.t('chat.tasks'),
+                    onPressed: () =>
+                        showTaskBoard(ctx, state, room, anchorKey: _taskAnchor),
+                    icon: Badge(
+                      isLabelVisible: pending > 0,
+                      label: Text('$pending'),
+                      backgroundColor: PB.colors(context).accent,
+                      child: Icon(
+                        LucideIcons.checkCircle2,
+                        size: 18,
+                        color: pending > 0
+                            ? PB.colors(context).accentBright
+                            : PB.textTertiary,
+                      ),
+                    ),
                   ),
                 );
               },
@@ -811,27 +826,36 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                       0.0,
                                       colW - kChatContentMax,
                                     );
+                                    // 右侧留白必须比滑轮宽 —— 否则窄窗口时
+                                    // 滑轨（18px）会直接压在正文上。
                                     final pad = math.max(
                                       kChatSidePad,
                                       extra / 2,
                                     );
+                                    final rightPad = math.max(pad, 24.0);
                                     final leftPadForGroup = room.isGroup
                                         ? math.max(12.0, pad - 42)
                                         : pad;
-                                    return Scrollbar(
-                                      // ★ 常显 + 不渐变：快速滑动时默认滚动条会「滚动时出现、
-                                      //   停了就淡出」，一快一慢看着像滑块在抽搐/被抽走。
-                                      //   固定可见、宽度不变就不会有这种视觉跳动。
-                                      thumbVisibility: true,
-                                      controller: _scroll,
-                                      thickness: 6,
-                                      radius: const Radius.circular(3),
+                                    // ★ 不再显示滚动条。
+                                    //
+                                    //   抽搐的根因：消息列表在流式输出时每条消息都在
+                                    //   长高，内容总高度每几十毫秒变一次 ——
+                                    //   滚动条滑块必须跟着重算尺寸和位置，
+                                    //   看起来就是不停抖动。这不是配置问题，
+                                    //   只要"内容高度高频变化 + 常显滚动条"就会发生。
+                                    //
+                                    //   关掉它最实在：滚轮/触控板照样能滚，
+                                    //   而用户视觉上少一个一直抽搐的东西。
+                                    return NotificationListener<
+                                      ScrollNotification
+                                    >(
+                                      onNotification: (_) => false,
                                       child: ListView.builder(
                                         controller: _scroll,
                                         padding: EdgeInsets.fromLTRB(
                                           leftPadForGroup,
                                           20,
-                                          pad,
+                                          rightPad,
                                           20,
                                         ),
                                         itemCount: display.length,
@@ -977,6 +1001,40 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                 ),
                               ),
                             ),
+                            // ★ 谁在干活：悬浮在消息区底部的胶囊。
+                            //
+                            //   原来它作为 Column 的一行**独占一条高度**，
+                            //   在消息和输入框之间形成一条横带（用户看到的
+                            //   「胶囊后面总有一整个长条背景」就是那条高度）。
+                            //   现在用 Positioned 叠在消息区内部，
+                            //   不占任何布局高度，胶囊本身才是唯一可见元素。
+                            Positioned(
+                              left: 0,
+                              right: 0,
+                              bottom: 0,
+                              child: IgnorePointer(
+                                child: ActivityMonitor(
+                                  roomId: room.id,
+                                  tasks: state.taskRuns
+                                      .forRoom(room.id)
+                                      .map((t) => t.title)
+                                      .where((t) => t.isNotEmpty)
+                                      .toList(),
+                                ),
+                              ),
+                            ),
+                            // 右侧导航轨：滑块 + 用户消息锚点二合一。
+                            //
+                            // 系统滚动条在这里无法稳定工作：位置按
+                            // pixels / maxScrollExtent 算，而流式输出与懒渲染
+                            // 都会让总高度突变 → 滑块反复跳。
+                            // 这里改用增量 + 静止后校准（见组件内注释）。
+                            Positioned(
+                              right: 0,
+                              top: 0,
+                              bottom: 0,
+                              child: MessageAnchorRail(controller: _scroll),
+                            ),
                             // 顶部渐变：消息滚上去时柔和淡出，而不是被标题栏硬切
                             Positioned(
                               left: 0,
@@ -1000,17 +1058,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             ),
                           ],
                         ),
-                ),
-                // 任务条已移到右侧面板常驻展示：贴在输入框上方会随消息挤占视线，
-                // 而任务是持续状态，更适合一直挂在面板里。
-                // 谁在干活：输入框左上角轮播显示，没人干活就整块隐藏。
-                ActivityMonitor(
-                  roomId: room.id,
-                  tasks: state.taskRuns
-                      .forRoom(room.id)
-                      .map((t) => t.title)
-                      .where((t) => t.isNotEmpty)
-                      .toList(),
                 ),
                 _tapToReattach(
                   _Composer(

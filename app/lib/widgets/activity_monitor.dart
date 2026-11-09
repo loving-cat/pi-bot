@@ -76,16 +76,30 @@ class _ActivityMonitorState extends State<ActivityMonitor> {
     // 之前是「小圆点 + 一行字」直接跟在消息下面，视觉上和上一条消息连成一片，
     // 用户会以为那是正文的一部分（截图里「研究审校员 正在处理」贴着正文结尾）。
     // 胶囊有明确边界，一眼能看出这是独立的运行状态，而不是消息内容。
-    return Padding(
-      padding: const EdgeInsets.only(top: 2, bottom: 8),
-      child: Center(
+    // ★ 用 Align + 明确的紧凑约束，绝不让它被父级拉成通栏。
+    //
+    //   Column 的交叉轴默认是 stretch：直接放一个 Padding 会拿到整行宽度，
+    //   里面即使写了 Center，外层那块区域仍然是"满宽"的 ——
+    //   用户看到的就是输入框上方多出一条通栏背景。
+    //   这里在根部就锁死宽度上限，从布局上保证它只是个胶囊。
+    return Align(
+      alignment: Alignment.centerLeft,
+      heightFactor: 1,
+      child: Padding(
+        padding: const EdgeInsets.only(left: 4, top: 2, bottom: 8),
+        child: Center(
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           decoration: BoxDecoration(
-            // 不要实心底：和背景同色会被看成一条黑长条
-            color: Colors.transparent,
+            // ★ 必须是不透明实底。
+            //
+            //   透明胶囊悬浮在消息上层时，下面的正文会从胶囊里透出来，
+            //   文字叠文字 —— 用户明确反馈了这个重叠问题。
+            //   用比面板略亮一档的 bgElevated + 阴影，既遮住下面又能浮起来。
+            color: PB.bgElevated,
             borderRadius: BorderRadius.circular(999),
             border: Border.all(color: PB.borderTertiary),
+            boxShadow: PB.shadow(y: 2, blur: 10, alpha: 0.35),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -120,6 +134,7 @@ class _ActivityMonitorState extends State<ActivityMonitor> {
               ],
             ],
           ),
+        ),
         ),
       ),
     );

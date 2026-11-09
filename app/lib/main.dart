@@ -366,6 +366,14 @@ class _PiBotThemedApplicationState extends State<PiBotThemedApplication> {
     navigatorKey: widget.navigatorKey,
     title: 'pi-bot',
     debugShowCheckedModeBanner: false,
+    // ★ 关掉桌面端默认自动绘制的滚动条。
+    //
+    //   MaterialScrollBehavior 在桌面平台会给每个可滚动组件包一层
+    //   滚动条。聊天区在流式输出时内容高度每几十毫秒变一次，
+    //   滑块要跟着重算尺寸和位置 —— 快速滑动时就是明显的抽搐。
+    //   这不是某个 Scrollbar 组件的配置问题，而是框架默认行为。
+    //   滚轮/触控板滚动完全不受影响，只是不再画那个滑块。
+    scrollBehavior: const _NoScrollbarBehavior(),
     // ★ themeMode 必须跟着当前模式走。
     //
     //   原来写死 ThemeMode.dark，于是即使 _theme 已经按浅色算好，
@@ -458,5 +466,20 @@ class _Root extends StatelessWidget {
       if (match.isNotEmpty) return HomeShell(initialRoomId: match.first.id);
     }
     return const HomeShell();
+  }
+}
+
+/// 桌面端不画滚动条（滚动本身照常可用）。
+///
+/// 为什么需要：MaterialScrollBehavior 在桌面平台会自动给可滚动组件
+/// 套一层 Scrollbar。聊天内容在流式输出时高度高频变化，
+/// 滑块跟着反复重算 —— 观感就是"抽搐"。关掉它最直接。
+class _NoScrollbarBehavior extends MaterialScrollBehavior {
+  const _NoScrollbarBehavior();
+
+  @override
+  Widget buildScrollbar(BuildContext context, Widget child, ScrollableDetails details) {
+    // 直接返回内容，不套 Scrollbar
+    return child;
   }
 }

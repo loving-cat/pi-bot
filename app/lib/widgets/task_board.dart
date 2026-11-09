@@ -647,12 +647,39 @@ class _TaskBoardPopoverState extends State<_TaskBoardPopover> {
   Widget build(BuildContext context) {
     return Stack(
       children: [
-        Positioned.fill(
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: widget.onClose,
-          ),
+        // 点空白处关闭：用 Listener 而非 GestureDetector。
+        //
+        // Listener 只旁听指针按下，不进入手势竞技场，
+        // 所以滚轮/拖拽照常穿透到下面的消息列表 —— 而 GestureDetector
+        // （无论 opaque 还是 translucent）都会吃掉 PointerSignal。
+        Listener(
+          behavior: HitTestBehavior.translucent,
+          onPointerDown: (event) {
+            final box = context.findRenderObject() as RenderBox?;
+            if (box == null) return;
+            final local = box.globalToLocal(event.position);
+            final withinX = local.dx >= widget.left
+                && local.dx <= widget.left + widget.width;
+            final withinY = widget.top != null
+                ? local.dy >= widget.top!
+                : true;
+            final aboveBottom = widget.bottom == null
+                ? true
+                : local.dy <= box.size.height - widget.bottom!;
+            if (!(withinX && withinY && aboveBottom)) widget.onClose();
+          },
+          child: const SizedBox.expand(),
         ),
+        // ★ 这层只为"点外面关闭"，必须对滚动手势完全透明。
+        //
+        //   原来是 Positioned.fill + GestureDetector(opaque)：铺满全屏、
+        //   对所有指针事件都不透明，任务板一打开主对话就滚不动。
+        //   改成 translucent 也不够 —— GestureDetector 仍会参与
+        //   PointerSignal（滚轮）的命中测试，滚轮照样被吞。
+        //
+        //   现在用 IgnorePointer 彻底不参与命中测试，
+        //   关闭改用下面浮层自身的「失焦点击」——见 _TaskBoardPopover
+        //   外层的 Listener 处理，滚动与拖拽全部穿透到消息列表。
         Positioned(
           left: widget.left,
           top: widget.top,

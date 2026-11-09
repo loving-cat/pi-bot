@@ -60,7 +60,15 @@ class ChatScrollFollow {
   bool handleNotification(Notification notification) {
     if (_disposed) return false;
     if (notification is ScrollMetricsNotification && notification.depth == 0) {
-      request();
+      // ★ 只有「本来就在底部、正在跟随」时才追底。
+      //
+      //   原来这里无条件 request()：只要内容变高就排一轮 10 帧的 jumpTo。
+      //   流式输出时内容每几十毫秒长高一次 —— 于是每帧都在把列表拽回底部，
+      //   滚动条滑块跟着反复重算重绘，快速滑动时就是明显的抽搐。
+      //
+      //   而且用户正在往上翻的时候，这个跳转还在跟他的滚动手势较劲：
+      //   一滑就被拽回底部。加 following 判定后两件事一起解决。
+      if (_following) request();
     } else if (notification is ScrollNotification && notification.depth == 0) {
       if (notification is ScrollStartNotification &&
           notification.dragDetails != null) {
