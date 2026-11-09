@@ -1,0 +1,18 @@
+server/src/role-tools.js
+  h_c2e638ff76b3b9 103-118,124-125
+server/tests/all.mjs
+  h_c2e638ff76b3b9 43
+server/tests/session-signature.mjs
+  h_c2e638ff76b3b9 1-64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d341fede9d011f454803771273d6192559b04e93",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
