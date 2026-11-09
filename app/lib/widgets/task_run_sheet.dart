@@ -132,7 +132,11 @@ class _TaskRunSheetBody extends StatelessWidget {
                   color: p.done ? PB.success : PB.textTertiary,
                 ),
               ),
-          if (task.childrenSummary!.truncatedHint.isNotEmpty)
+          // ★ 必须判空：外层是 "leadBotName 非空 || childrenSummary 非空"，
+          //   所以走到这里时 childrenSummary 完全可能是 null。
+          //   原来直接 .! 解包，取消任务把子任务清空后这一行就抛异常，
+          //   整块渲染变成灰色错误占位。
+          if (task.childrenSummary?.truncatedHint.isNotEmpty ?? false)
             Text(
               "· ${task.childrenSummary!.truncatedHint}",
               style: TextStyle(fontSize: 12, color: PB.textTertiary),
