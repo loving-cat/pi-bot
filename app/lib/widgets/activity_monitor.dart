@@ -77,13 +77,13 @@ class _ActivityMonitorState extends State<ActivityMonitor> {
     // 用户会以为那是正文的一部分（截图里「研究审校员 正在处理」贴着正文结尾）。
     // 胶囊有明确边界，一眼能看出这是独立的运行状态，而不是消息内容。
     return Padding(
-      padding: const EdgeInsets.only(left: 4, top: 2, bottom: 8),
-      child: Align(
-        alignment: Alignment.centerLeft,
+      padding: const EdgeInsets.only(top: 2, bottom: 8),
+      child: Center(
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           decoration: BoxDecoration(
-            color: PB.bgPane,
+            // 不要实心底：和背景同色会被看成一条黑长条
+            color: Colors.transparent,
             borderRadius: BorderRadius.circular(999),
             border: Border.all(color: PB.borderTertiary),
           ),
@@ -99,8 +99,7 @@ class _ActivityMonitorState extends State<ActivityMonitor> {
                 ),
               ),
               const SizedBox(width: 7),
-              Flexible(
-                child: AnimatedSwitcher(
+              AnimatedSwitcher(
                   duration: const Duration(milliseconds: 260),
                   child: Text(
                     doing.isEmpty
@@ -112,7 +111,6 @@ class _ActivityMonitorState extends State<ActivityMonitor> {
                     style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
                   ),
                 ),
-              ),
               if (ids.length > 1) ...[
                 const SizedBox(width: 6),
                 Text(

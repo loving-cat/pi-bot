@@ -57,18 +57,16 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
   @override
   Widget build(BuildContext context) {
     final strings = L10n.s(context);
-    // ★ 只显示"人真正关心"的任务。
+    // 全部都要：用户自己加的和系统派活记录。
     //
-    //   系统过去会把每一次派活都塞进这张表（createdBy == 'dispatch'），
-    //   累积了几百条、标题就是一段 bot 回复 —— 于是界面上显示
-    //   「已完成 130」，而用户根本不知道这 130 条是哪来的。
-    //   这里把它们排除掉：这张板只承载用户自己加的、以及真实执行的任务。
-    final visible = widget.tasks
-        .where((t) => t.createdBy != 'dispatch')
-        .toList();
-    final doing = visible.where((t) => t.isDoing).toList();
-    final open = visible.where((t) => !t.isDone && !t.isDoing).toList();
-    final done = visible.where((t) => t.isDone).toList();
+    // ★ 之前我一度过滤掉 createdBy=='dispatch'，结果整块板全空了 ——
+    //   因为历史上这 300 条**全部**是 dispatch 标记的（系统把每次派活
+    //   都记成一条），于是「过滤噪音」变成了「过滤掉一切」。
+    //   这个过滤已撤回；真正要解决的是「已完成 130」这个统计口径，
+    //   以及这块板与真实 TaskRun 的关系（另见右侧任务区）。
+    final doing = widget.tasks.where((t) => t.isDoing).toList();
+    final open = widget.tasks.where((t) => !t.isDone && !t.isDoing).toList();
+    final done = widget.tasks.where((t) => t.isDone).toList();
 
     return SafeArea(
       child: Padding(
