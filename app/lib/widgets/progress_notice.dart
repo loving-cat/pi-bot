@@ -280,7 +280,6 @@ class _ProgressPeekLayerState extends State<_ProgressPeekLayer>
   }
 
   Widget _receipt(AppState state, Msg m, {int depth = 0}) {
-    final fromId = (m.meta?['fromId'] as String?) ?? '';
     final fromName = ((m.meta?['fromName'] as String?) ?? '').trim();
     final dept = _deptName(state, [m], L10n.s(context));
     final result = progressResult(m);
@@ -289,8 +288,17 @@ class _ProgressPeekLayerState extends State<_ProgressPeekLayer>
       ProgressResult.failure => PB.danger,
       _ => PB.textQuaternary,
     };
-    final who = fromName.isNotEmpty ? fromName : dept;
+    // ★ 卡片头部显示「谁说的」，也就是这条消息的作者。
+    //
+    //   原来用 meta.fromName（派活人），于是每条都写着负责人的名字，
+    //   正文明明是成员交的活 —— 读者会以为是负责人自己在汇报。
+    //   派活人改在下面一行用「↳ 派给」标出来。
+    final who = m.authorName.trim().isNotEmpty ? m.authorName.trim() : dept;
     final author = m.authorId ?? m.authorName;
+    // 副标题：部门；如果这条是别人派的活，再标一句「派给」。
+    final subline = fromName.isNotEmpty && fromName != who
+        ? '\$dept · 派给\$fromName'
+        : dept;
 
     final body = Padding(
       padding: const EdgeInsets.only(bottom: 14),
@@ -299,9 +307,11 @@ class _ProgressPeekLayerState extends State<_ProgressPeekLayer>
         children: [
           Row(
             children: [
+              // 头像跟着作者走：颜色和名字必须同源，
+              // 否则会出现「名字是成员、头像颜色是负责人」的错位。
               BlobAvatar(
-                seed: fromId.isNotEmpty ? fromId : author,
-                color: PB.colorFor(fromId.isNotEmpty ? fromId : author),
+                seed: author,
+                color: PB.colorFor(author),
                 size: 18,
                 animate: false,
               ),
@@ -340,9 +350,9 @@ class _ProgressPeekLayerState extends State<_ProgressPeekLayer>
             children: [
               Expanded(
                 child: Tooltip(
-                  message: dept,
+                  message: subline,
                   child: Text(
-                    dept,
+                    subline,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(

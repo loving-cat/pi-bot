@@ -22,15 +22,27 @@ String progressResultLabel(ProgressResult result) => switch (result) {
 };
 
 /// 按身份去重并保持出现顺序；无身份的旧记录使用名字作为标识。
+/// 这批回执是**谁发来的**。
+///
+/// ★ 必须用消息的作者，不能用 meta.fromName。
+///
+///   两者的语义正好相反：
+///     · authorId/authorName = 实际干完活、把结果交出来的那个 bot
+///     · meta.fromId/fromName = 当初把活派给它的那个人
+///   标题要回答的是「我收到了谁的消息」，所以该用作者。
+///   用 fromName 会显示成「收到负责人的消息」——但正文明明是成员交的活，
+///   读起来就是方向反了。
 List<({String id, String name})> progressSenders(List<Msg> messages) {
   final seen = <String>{};
   final result = <({String id, String name})>[];
   for (final message in messages) {
-    final rawName = message.meta?['fromName'];
-    final name = rawName is String ? rawName.trim() : '';
+    final rawName = message.authorName.trim();
+    final name = rawName.isNotEmpty
+        ? rawName
+        : ((message.meta?['fromName'] as String?) ?? '').trim();
     if (name.isEmpty) continue;
-    final rawId = message.meta?['fromId'];
-    final id = rawId is String && rawId.isNotEmpty ? rawId : name;
+    final rawId = message.authorId;
+    final id = (rawId != null && rawId.isNotEmpty) ? rawId : name;
     if (seen.add(id)) result.add((id: id, name: name));
   }
   return result;
