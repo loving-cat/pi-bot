@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:screen_retriever/screen_retriever.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:window_manager/window_manager.dart';
@@ -361,11 +362,55 @@ class _PiBotThemedApplicationState extends State<PiBotThemedApplication> {
     if (oldWidget.navigatorKey != widget.navigatorKey) _application = null;
   }
 
+  /// 上一次构建时用的语言。变了就把缓存的 MaterialApp 丢掉重建。
+  ///
+  /// _application 是缓存的（??=），不重建的话切换语言后
+  /// 框架文案（返回按钮等）会停在旧语言，而我们自己的文案已经换了 ——
+  /// 界面半中半英。
+  String? _lastLocaleCode;
+
+  /// 框架文案跟随应用自己的语言设置（不是系统语言）。
+  ///
+  /// 用户在设置里选了中文，返回按钮的 tooltip 就该是「返回」，
+  /// 不能因为系统是英文就跟着变英文 —— 那是两套不同的设置。
+  Locale _appLocale(BuildContext context) {
+    final controller = L10n.maybeControllerOf(context);
+    return controller?.language == AppLanguage.en
+        ? const Locale('en')
+        : const Locale('zh');
+  }
+
   @override
-  Widget build(BuildContext context) => _application ??= MaterialApp(
+  Widget build(BuildContext context) {
+    // 语言变了必须重建 MaterialApp，否则框架文案停在旧语言
+    final locale = _appLocale(context);
+    if (_lastLocaleCode != locale.languageCode) {
+      _lastLocaleCode = locale.languageCode;
+      _application = null;
+    }
+    return _application ??= _buildApplication(locale);
+  }
+
+  Widget _buildApplication(Locale locale) => MaterialApp(
     navigatorKey: widget.navigatorKey,
     title: 'pi-bot',
     debugShowCheckedModeBanner: false,
+    // ★ 框架内置组件的文案全靠这些 delegate 本地化。
+    //
+    //   不配的话，Flutter 只认英文：AppBar 自动生成的返回按钮
+    //   tooltip 会一直是 "Back"，关闭按钮是 "Close" ——
+    //   即使我们自己的界面全是中文。用户看到的就是一个中文 App 里
+    //   突然蹦出几个英文单词。
+    //
+    //   locale 跟着我们自己的语言设置走，不要用系统语言：
+    //   用户在设置里选了中文，框架文案也得跟着中文。
+    locale: locale,
+    supportedLocales: const [Locale('zh'), Locale('en')],
+    localizationsDelegates: const [
+      GlobalMaterialLocalizations.delegate,
+      GlobalWidgetsLocalizations.delegate,
+      GlobalCupertinoLocalizations.delegate,
+    ],
     // ★ 关掉桌面端默认自动绘制的滚动条。
     //
     //   MaterialScrollBehavior 在桌面平台会给每个可滚动组件包一层

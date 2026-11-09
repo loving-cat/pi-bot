@@ -9,6 +9,11 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # ★ 框架内置组件的文案（返回按钮的 tooltip、关闭按钮、日期选择器…）
+  #   全靠它本地化。没装的话，AppBar 自动生成的返回按钮 tooltip 会一直是
+  #   英文 "Back" —— 即使我们自己的界面全是中文。
+  flutter_localizations:
+    sdk: flutter
   cupertino_icons: ^1.0.8
   http: ^1.2.2
   web_socket_channel: ^3.0.1
