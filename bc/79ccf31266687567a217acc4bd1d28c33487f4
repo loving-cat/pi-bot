@@ -1,0 +1,24 @@
+app/lib/widgets/room_panel.dart
+  h_c2e638ff76b3b9 63-68,113-144,146,149,151-156
+app/lib/widgets/room_task_panel.dart
+  h_c2e638ff76b3b9 124-138
+app/lib/widgets/task_run_sheet.dart
+  h_c2e638ff76b3b9 365-408
+app/test/inline_detail_scroll_test.dart
+  h_c2e638ff76b3b9 1-75
+app/test/task_sheet_scroll_test.dart
+  h_c2e638ff76b3b9 1-45
+server/src/tasks/task-supervisor.js
+  h_c2e638ff76b3b9 653-672
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bc79ccf31266687567a217acc4bd1d28c33487f4",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
