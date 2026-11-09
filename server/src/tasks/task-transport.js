@@ -155,6 +155,23 @@ export function projectTaskRun(taskRun, { root = null, children = null, nameOf =
     leadBotName,
     // 子任务进度（谁在做什么）：由调用方传入本版本子任务，缺省为空。
     childrenSummary,
+    // ★ 负责人列的分工计划。
+    //
+    //   计划一直存在 taskRun.plan.steps 里，但从来没投影出去 ——
+    //   用户根本看不出「模型到底有没有先列计划」，这一项等于不可验证。
+    //   带上 steps 与生成时间，界面才能把它显示出来。
+    plan: Array.isArray(taskRun.plan?.steps) && taskRun.plan.steps.length
+      ? {
+          steps: taskRun.plan.steps.slice(0, 20).map((s, i) => ({
+            index: i + 1,
+            title: String(s?.title ?? s?.text ?? s ?? '').slice(0, 200),
+            owner: String(s?.owner ?? s?.botName ?? '').slice(0, 80),
+            status: String(s?.status ?? 'pending'),
+          })),
+          at: taskRun.plan.at ?? null,
+          revision: taskRun.plan.revision ?? null,
+        }
+      : null,
     updatedAt: taskRun.updatedAt ?? null,
   };
 }

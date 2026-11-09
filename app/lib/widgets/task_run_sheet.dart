@@ -142,6 +142,29 @@ class _TaskRunSheetBody extends StatelessWidget {
           const SizedBox(height: 8),
           Text('范围：${task.scope}', style: TextStyle(fontSize: 12, color: PB.textSecondary)),
         ],
+        // ★ 分工计划：让用户看得出模型有没有先列计划、列了什么、谁负责哪步。
+        //   以前计划只存在服务端记录里，界面上完全没有 —— 等于不可验证。
+        if (task.plan != null && !task.plan!.isEmpty) ...[
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              const Text('分工计划',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+              const SizedBox(width: 6),
+              Text('共 ${task.plan!.count} 步',
+                  style: TextStyle(fontSize: 12, color: PB.textTertiary)),
+            ],
+          ),
+          const SizedBox(height: 4),
+          for (final step in task.plan!.steps)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 2),
+              child: Text(
+                '${step.owner.isEmpty ? '' : '${step.owner}：'}${step.title}',
+                style: TextStyle(fontSize: 13, color: PB.textSecondary),
+              ),
+            ),
+        ],
         if (task.unmet.isNotEmpty) ...[
           const SizedBox(height: 8),
           const Text('缺项：', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),

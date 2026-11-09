@@ -166,6 +166,7 @@ class TaskRun {
     required this.blockedReason,
     required this.phase,
     this.childrenSummary,
+    this.plan,
     this.leadBotId = '',
     this.leadBotName = '',
     required this.budget,
@@ -198,6 +199,9 @@ class TaskRun {
 
   /// 子任务进度（没有子任务时为 null）。
   final TaskRunChildren? childrenSummary;
+
+  /// 分工计划（负责人列的步骤）。没列计划时为 null。
+  final TaskRunPlan? plan;
 
   /// 负责人 Bot（谁在带这个任务）。
   final String leadBotId;
@@ -238,6 +242,9 @@ class TaskRun {
       childrenSummary: json['childrenSummary'] is Map
           ? TaskRunChildren.fromJson((json['childrenSummary'] as Map).cast<String, dynamic>())
           : null,
+      plan: json['plan'] is Map
+          ? TaskRunPlan.fromJson((json['plan'] as Map).cast<String, dynamic>())
+          : null,
       budget: TaskRunBudget.fromJson(
         json['budget'] is Map ? (json['budget'] as Map).cast<String, dynamic>() : null,
       ),
@@ -265,4 +272,51 @@ class TaskRun {
     final left = budget.remaining ?? (max - (budget.usedRuns ?? 0));
     return '$left / $max';
   }
+}
+
+
+/// 负责人列的分工计划。
+///
+/// 计划一直存在服务端 taskRun.plan.steps 里，但以前从来没投影出来 ——
+/// 用户看不出模型到底有没有先列计划，这一项等于不可验证。
+class TaskRunPlan {
+  const TaskRunPlan({this.steps = const [], this.at = 0, this.revision = 0});
+
+  final List<TaskRunPlanStep> steps;
+  final int at;
+  final int revision;
+
+  factory TaskRunPlan.fromJson(Map<String, dynamic> json) => TaskRunPlan(
+    steps: ((json['steps'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => TaskRunPlanStep.fromJson(e.cast<String, dynamic>()))
+        .toList(growable: false),
+    at: _asInt(json['at']),
+    revision: _asInt(json['revision']),
+  );
+
+  bool get isEmpty => steps.isEmpty;
+  int get count => steps.length;
+}
+
+/// 计划里的一步。
+class TaskRunPlanStep {
+  const TaskRunPlanStep({
+    this.index = 0,
+    this.title = '',
+    this.owner = '',
+    this.status = 'pending',
+  });
+
+  final int index;
+  final String title;
+  final String owner;
+  final String status;
+
+  factory TaskRunPlanStep.fromJson(Map<String, dynamic> json) => TaskRunPlanStep(
+    index: _asInt(json['index']),
+    title: _asString(json['title']),
+    owner: _asString(json['owner']),
+    status: _asString(json['status'], 'pending'),
+  );
 }
