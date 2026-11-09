@@ -1,0 +1,18 @@
+app/lib/main.dart
+  h_c2e638ff76b3b9 5,365-382,384-394,398-413
+app/pubspec.lock
+  h_c2e638ff76b3b9 273-277,384-391
+app/pubspec.yaml
+  h_c2e638ff76b3b9 12-16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d42aa3cc4ade194c8c97f0658f2c74f2babefdca",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
