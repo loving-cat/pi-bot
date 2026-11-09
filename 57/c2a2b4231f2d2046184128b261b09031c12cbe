@@ -1,0 +1,24 @@
+app/lib/chat_scroll_follow.dart
+  h_c2e638ff76b3b9 63-71
+app/lib/main.dart
+  h_c2e638ff76b3b9 369-376,471-485
+app/lib/screens/chat_screen.dart
+  h_c2e638ff76b3b9 24,102-105,592-596,598-603,722-744,829-830,835,839-852,858,1004-1037
+app/lib/widgets/activity_monitor.dart
+  h_c2e638ff76b3b9 79-90,94-99,102,138
+app/lib/widgets/message_anchor_rail.dart
+  h_c2e638ff76b3b9 1-245
+app/lib/widgets/task_board.dart
+  h_c2e638ff76b3b9 650-671,673-682
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "57c2a2b4231f2d2046184128b261b09031c12cbe",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
