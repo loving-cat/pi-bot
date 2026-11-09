@@ -269,7 +269,9 @@ const areaPanel2 = StringArea(
     // 私聊里没有「收到谁的消息」这回事 —— 回执的作者就是会话对象本身。
     // 这些消息的实质是「它在部门里干了什么」，所以要换个说法。
     'dept.dmProgress': '在部门里干了 {n} 件事',
-    'dept.dmProgressMore': '在部门里的进展',
+    // 必须带部门名：bot 可能同时挂好几个部门，只说「在部门里」用户不知道是哪个。
+    'dept.dmProgressIn': '在「{dept}」那边 {n} 件事',
+    'dept.dmProgressMore': '「{dept}」那边的进展',
     'dept.messageSuffix': '消息 · {n} 条',
     'dept.unknown': '部门',
     'dept.fromRoom': '「{room}」的消息',
@@ -663,7 +665,8 @@ const areaPanel2 = StringArea(
     // ---- group progress ----
     'dept.received': 'From',
     'dept.dmProgress': '{n} updates from the department',
-    'dept.dmProgressMore': 'Department updates',
+    'dept.dmProgressIn': '{n} updates from {dept}',
+    'dept.dmProgressMore': 'Updates from {dept}',
     'dept.messageSuffix': '· {n} messages',
     'dept.unknown': 'Group',
     'dept.fromRoom': 'Messages in {room}',

@@ -59,7 +59,10 @@ class ProgressNotice extends StatelessWidget {
                       ),
                       const SizedBox(width: 5),
                       Text(
-                        strings.tf('dept.dmProgress', {
+                        // ★ 必须带部门名。只说「在部门里」用户不知道是哪个部门 ——
+                        //   bot 可能同时挂好几个部门。
+                        strings.tf('dept.dmProgressIn', {
+                          'dept': dept,
                           'n': messages.length,
                         }),
                         style: TextStyle(
@@ -184,6 +187,11 @@ class _ProgressPeekLayerState extends State<_ProgressPeekLayer>
     final state = AppScope.of(context);
     final senders = progressSenders(widget.messages);
     final dept = _deptName(state, widget.messages, strings);
+    // 私聊里回执的作者就是会话对象自己，
+    // 说「收到它的消息」等于说「收到自己的消息」。
+    final roomId = widget.messages.first.roomId;
+    final isDm =
+        state.rooms.where((r) => r.id == roomId).firstOrNull?.kind == 'dm';
 
     return Material(
       type: MaterialType.transparency,
@@ -213,13 +221,19 @@ class _ProgressPeekLayerState extends State<_ProgressPeekLayer>
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        senders.isEmpty
-                            ? strings.tf('dept.fromRoom', {'room': dept})
-                            : strings.tf('dept.fromPeople', {
-                                'names': senders
-                                    .map((s) => s.name)
-                                    .join(strings.t('misc.listSeparator')),
-                              }),
+                        // 私聊里同样不能说「收到谁的消息」——
+                        // 那些回执的作者就是会话对象自己。
+                        isDm
+                            ? strings.tf('dept.dmProgressMore', {'dept': dept})
+                            : (senders.isEmpty
+                                  ? strings.tf('dept.fromRoom', {'room': dept})
+                                  : strings.tf('dept.fromPeople', {
+                                      'names': senders
+                                          .map((s) => s.name)
+                                          .join(
+                                            strings.t('misc.listSeparator'),
+                                          ),
+                                    })),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -329,7 +343,7 @@ class _ProgressPeekLayerState extends State<_ProgressPeekLayer>
     final author = m.authorId ?? m.authorName;
     // 副标题：部门；如果这条是别人派的活，再标一句「派给」。
     final subline = fromName.isNotEmpty && fromName != who
-        ? '\$dept · 派给\$fromName'
+        ? '$dept · 派给 $fromName'
         : dept;
 
     final body = Padding(
