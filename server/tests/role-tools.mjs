@@ -92,7 +92,7 @@ try {
   await test('真实会话工厂只注册负责人的只读和调度工具，并禁止外部扩展', async () => {
     const f = fixture(), { room, lead } = department();
     const o = (await f.builder(room.id, lead.id)).session.options;
-    assert.deepEqual([...o.tools].sort(), ['read', 'ls', 'grep', 'find', 'list_bots', 'list_departments', 'read_department', 'message_bot'].sort());
+    assert.deepEqual([...o.tools].sort(), ['read', 'ls', 'grep', 'find', 'list_bots', 'list_departments', 'read_department', 'message_bot', 'reply_bot'].sort());
     assert.equal(o.resourceLoader.options.noExtensions, true);
     assert.equal(o.resourceLoader.options.noMcp, true);
     assert.equal(guard(o, 'read'), undefined);

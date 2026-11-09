@@ -271,6 +271,20 @@ class Msg {
   /// 部门进度回执，用于聚合展示与明细查看。
   bool get isProgress => meta?['progress'] == true;
 
+  /// 这条消息在回应哪条（服务端写 meta.re）。null = 不是回应，是主动发言。
+  ///
+  /// 有它才能在气泡上方画引用条，让「谁在接谁的话」看得出来。
+  String? get replyToId {
+    final v = meta?['re'];
+    return v is String && v.isNotEmpty ? v : null;
+  }
+
+  /// 被回应那条的作者 id，用于原消息找不到时兜底显示名字。
+  String? get replyToAuthorId {
+    final v = meta?['reFrom'];
+    return v is String && v.isNotEmpty ? v : null;
+  }
+
   /// 卡片上的选项
   List<AskOption> get askOptions {
     final raw = meta?['options'];

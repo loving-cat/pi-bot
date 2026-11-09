@@ -26,19 +26,16 @@ export function dmOpeningPrompt(bot = {}) {
   ].join('\n');
 }
 
-/** 接到活时的私聊回执 */
-export function progressStartText({ roomName = '', task = '' } = {}) {
-  const where = roomName ? `「${roomName}」` : '部门里';
-  const what = excerpt(task, 70);
-  return what ? `在${where}接到活，开始处理：${what}` : `在${where}接到活，开始处理。`;
-}
-
 /** 做完（或没做成）时的私聊回执 */
-export function progressDoneText({ roomName = '', text = '', ok = true } = {}) {
-  const where = roomName ? `「${roomName}」` : '部门';
-  const what = excerpt(text, 70);
-  if (!ok) return what ? `${where}那件事没跑通：${what}` : `${where}那件事没跑通。`;
-  return what ? `${where}那件事做完了：${what}` : `${where}那件事做完了。`;
+/**
+ * 没产出正文时的兜底文案。
+ *
+ * 正常情况下不用它：模型说了什么就发什么，不套模板。
+ * 只有模型这一轮一个字都没产出（异常/超时）时才兜一句，
+ * 免得私聊里出现一条空消息让人以为界面坏了。
+ */
+export function progressFallbackText({ ok = true } = {}) {
+  return ok ? '（这一轮没有产出正文）' : '（这一轮没有跑通，也没有产出说明）';
 }
 
 /**
@@ -73,12 +70,18 @@ export function mirrorProgress({
   dispatchId = null,
   sourceMessageId = null,
 }) {
+  // ★ 接到活不再往私聊回执。
+  //
+  //   "我接到了" 对用户不是新信息（任务派出去了他已经知道），
+  //   却要占一条消息。memory-digest 那边早就把这类回执当噪音过滤掉，
+  //   既然不够格进摘要，也不该进会话。
+  if (phase === 'start') return false;
+
   const dm = store.findDm(bot.id);
   if (!dm || dm.id === room.id) return false;
-  const content =
-    phase === 'start'
-      ? progressStartText({ roomName: room.name, task: text })
-      : progressDoneText({ roomName: room.name, text, ok });
+  // 正常路径：模型说了什么就发什么，一个字都不套。
+  const raw = String(text ?? '').trim();
+  const content = raw || progressFallbackText({ ok });
   store.appendMessage({
     roomId: dm.id,
     authorType: 'bot',
@@ -95,6 +98,10 @@ export function mirrorProgress({
       fromName,
       dispatchId,
       sourceMessageId,
+      // ★ re = 这条在回应哪条消息。
+      //   有它，界面才能画成「引用 + 回应」的对话，
+      //   而不是一排互不相干的卡片。
+      re: sourceMessageId ?? null,
       ...(phase === 'done' ? { outcome: ok ? 'success' : 'failure' } : {}),
     },
   });

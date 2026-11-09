@@ -1800,15 +1800,9 @@ export class PiRunner {
               fromId: item.fromId ?? null,
               fromName: item.fromName || (item.fromId ? (store.getBot(item.fromId)?.name ?? '') : ''),
             };
-            if (mirror) {
-              this.#mirrorProgress({
-                room,
-                bot,
-                phase: 'start',
-                text: item.fromText || item.reason,
-                ...progressSource,
-              });
-            }
+            // ★ 不再写"接到活"回执。
+            //   它对用户不是新信息，却要占一条消息，还会把真正的结论挤下去。
+            //   中间过程看群里的 @ 往来就够了。
             // ★ 受管轮次只跑上下文声明的那个 Bot。
             //   其他成员不进入执行：既不派活，也不建旧任务板条目 ——
             //   否则会出现「用 A 的旧任务板跑了一次不该跑的执行」。
@@ -2011,6 +2005,23 @@ export class PiRunner {
                 ok: res.ok,
                 text: res.ok ? res.text : `失败 ${attempt} 次：${lastError}`,
               });
+            }
+            // ★ 给这条回复标上「在回应哪条」。
+            //
+            //   没有它，界面只能把每条消息画成独立卡片，
+            //   读不出谁在接谁的话；有了它就能渲染成引用 + 回应。
+            if (res.messageId && progressSource.sourceMessageId) {
+              try {
+                store.updateMessage(roomId, res.messageId, {
+                  meta: {
+                    ...(store.getMessage(roomId, res.messageId)?.meta ?? {}),
+                    re: progressSource.sourceMessageId,
+                    reFrom: progressSource.fromId ?? null,
+                  },
+                }, { silent: true });
+              } catch {
+                // 标注失败不影响主流程：这条消息本身已经发出去了
+              }
             }
             if (mirror) {
               this.#mirrorProgress({

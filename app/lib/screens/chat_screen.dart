@@ -34,6 +34,7 @@ import '../widgets/context_chip.dart';
 import '../widgets/floating_menu.dart';
 import '../widgets/md_text.dart';
 import '../widgets/progress_notice.dart';
+import '../widgets/msg_quote_strip.dart';
 import '../widgets/msg_ref_chip.dart';
 import '../widgets/changed_files.dart';
 import '../widgets/task_board.dart';
@@ -1997,6 +1998,24 @@ class _MessageRow extends StatelessWidget {
     await AppScope.read(context).sendMessage(msg.roomId, text);
   }
 
+  /// 这条消息在回应谁 —— 找出被引用的那条，渲染成引用条。
+  Widget _quoteStripFor(BuildContext context, Msg m) {
+    final state = AppScope.of(context);
+    final target = m.replyToId;
+    Msg? quoted;
+    if (target != null) {
+      for (final x in state.messages[m.roomId] ?? const <Msg>[]) {
+        if (x.id == target) {
+          quoted = x;
+          break;
+        }
+      }
+    }
+    final fromId = m.replyToAuthorId;
+    final fallback = fromId == null ? '' : (state.botById(fromId)?.name ?? '');
+    return MsgQuoteStrip(quoted: quoted, fallbackName: fallback);
+  }
+
   @override
   Widget build(BuildContext context) {
     // 引用行（bot 私信了别的 bot）不画气泡，只渲染一个可点的小浮动条。
@@ -2229,6 +2248,11 @@ class _MessageRow extends StatelessWidget {
                         ],
                       ),
                     ),
+                  // ★ 这条在回应谁：气泡上方一条引用。
+                  //
+                  //   没有它，bot 之间的往来就只是一排独立卡片，
+                  //   读不出谁在接谁的话；加上之后才是「引用 + 回应」。
+                  if (msg.replyToId != null) _quoteStripFor(context, msg),
                   // ★ 工具调用卡片：**平时根本不显示**。
                   //
                   //   用户看的是结论，不是“它跑了什么命令”—— 截屏里一长串

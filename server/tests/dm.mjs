@@ -13,8 +13,7 @@ fs.rmSync(HOME, { recursive: true, force: true });
 const {
   excerpt,
   dmOpeningPrompt,
-  progressStartText,
-  progressDoneText,
+  progressFallbackText,
   shouldMirrorProgress,
   mirrorProgress,
   backfillProgressSenders,
@@ -47,16 +46,19 @@ await test('开场指令：报名字、要求用询问卡片、不许提模型�
   assert.match(p, /不要复述这段说明/);
 });
 
-await test('进度回执：带部门名与任务摘要', () => {
-  const start = progressStartText({ roomName: '量化算法组', task: '把日线拉全并算因子' });
-  assert.match(start, /量化算法组/);
-  assert.match(start, /日线/);
+await test('★ 接到活不再产生回执文案（模板已删除）', async () => {
+  // 老实现有 progressStartText，会拼一句「在「X」接到活，开始处理：…」。
+  // 那句话对用户不是新信息，却占一条消息，还会把真正的结论挤下去。
+  const mod = await import('../src/dm.js');
+  assert.equal('progressStartText' in mod, false, 'progressStartText 必须已移除');
+});
 
-  const done = progressDoneText({ roomName: '量化算法组', text: '做完了，输出在 data/x.csv', ok: true });
-  assert.match(done, /做完了/);
-
-  const failed = progressDoneText({ roomName: '量化算法组', text: '报错：端口占用', ok: false });
-  assert.match(failed, /没跑通/);
+await test('★ 模型有正文时原样发出，一个字都不套', () => {
+  const body = '10 个对象是我本轮打开官方文档核实的，2 个没核到就写未核实';
+  // 兜底只在该轮完全没产出时生效
+  assert.equal(progressFallbackText({ ok: true }).includes('那件事做完了'), false);
+  assert.equal(progressFallbackText({ ok: false }).includes('没有跑通'), true);
+  assert.equal(body.length > 0, true);
 });
 
 await test('★ 只在部门里、且是别人派给它的时候回执', () => {
@@ -88,12 +90,25 @@ await test('★ mirrorProgress：写进私聊并带上来源，自己房间不�
   const dm = store.findDm(bot.id);
   const before = store.listMessages(dm.id, { limit: 100 }).length;
 
-  const wrote = mirrorProgress({
+  // ★ start 阶段不写私聊（"接到活"对用户没有新信息）
+  const skipped = mirrorProgress({
     store,
     room,
     bot,
     phase: 'start',
     text: '把日线拉全',
+    fromId: 'b_assigner',
+    fromName: '派活的人',
+  });
+  assert.equal(skipped, false, 'phase=start 不该产生消息');
+  assert.equal(store.listMessages(dm.id, { limit: 100 }).length, before);
+
+  const wrote = mirrorProgress({
+    store,
+    room,
+    bot,
+    phase: 'done',
+    text: '日线拉全了，口径已核对',
     fromId: 'b_assigner',
     fromName: '派活的人',
     dispatchId: 'dispatch-fixture',
@@ -111,8 +126,9 @@ await test('★ mirrorProgress：写进私聊并带上来源，自己房间不�
   assert.equal(last.meta?.fromName, '派活的人');
   assert.equal(last.meta?.dispatchId, 'dispatch-fixture');
   assert.equal(last.meta?.sourceMessageId, 'source-fixture');
-  assert.equal(last.meta?.outcome, undefined);
-  assert.match(last.text, /回执测试组/);
+  assert.equal(last.meta?.outcome, 'success');
+  // ★ 正文原样：模型说什么就发什么，不套「「X」那件事做完了：」
+  assert.equal(last.text, '日线拉全了，口径已核对');
   for (const ok of [true, false]) {
     mirrorProgress({ store, room, bot, phase: 'done', text: '结果', ok, dispatchId: 'dispatch-fixture', sourceMessageId: 'source-fixture' });
     const done = store.listMessages(dm.id, { limit: 1 })[0];
@@ -186,10 +202,7 @@ await test('backfillProgressSenders：按明确来源与调度关联补齐，重
     authorType: 'bot',
     authorId: worker.id,
     authorName: worker.name,
-    text: progressStartText({
-      roomName: group.name,
-      task: '请把日线行情拉全并核对，交一份 CSV，标明口径',
-    }),
+    text: '我先把日线拉全，再核对口径，最后出 CSV', 
     status: 'done',
     meta: { progress: true, fromRoomId: group.id, phase: 'start', sourceMessageId: source.id, dispatchId: 'run-fixture' },
   });

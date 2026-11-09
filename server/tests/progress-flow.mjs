@@ -1,4 +1,6 @@
-/** 群调度回执接线：使用会话替身验证来源、同次调度关联与完成结果。 */
+/** 群调度回执接线：验证来源、调度关联与完成结果。
+ *
+ * 注意："接到活"回执已删除，每个成员每次调度只留一条完成回执。 */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -58,15 +60,16 @@ await test('并行成员共享正确来源消息，各次调度的start/done稳�
   const dispatches = [];
   for (const worker of workers) {
     const rows = receipts(worker);
-    assert.equal(rows.length, 2);
-    assert.deepEqual(rows.map((m) => m.meta.phase), ['start', 'done']);
-    assert.equal(rows[0].meta.dispatchId, rows[1].meta.dispatchId);
+    // ★ 现在只有完成回执："接到活"不再占用一条消息。
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].meta.phase, 'done');
     assert.ok(rows[0].meta.dispatchId);
     assert.equal(rows[0].meta.sourceMessageId, sourceId);
-    assert.equal(rows[1].meta.sourceMessageId, sourceId);
     assert.equal(rows[0].meta.fromId, lead.id);
-    assert.equal(rows[1].meta.fromName, lead.name);
-    assert.equal(rows[1].meta.outcome, 'success');
+    assert.equal(rows[0].meta.fromName, lead.name);
+    assert.equal(rows[0].meta.outcome, 'success');
+    // ★ 正文原样，不套「「X」那件事做完了：」
+    assert.equal(rows[0].text, '任务结果已生成');
     dispatches.push(rows[0].meta.dispatchId);
   }
   assert.equal(new Set(dispatches).size, workers.length);
@@ -84,12 +87,15 @@ await test('成员失败的完成回执明确保存failure，保留调度关联'
     return appendReply(room, bot, '未完成', false);
   };
   await runner.runRound(room.id, { openerText: '执行任务' });
-  const [start, done] = receipts(worker);
+  const only = receipts(worker);
+  // ★ 只剩一条完成回执（失败），不再有 start
+  assert.equal(only.length, 1);
+  const done = only[0];
   assert.equal(done.meta.phase, 'done');
   assert.equal(done.meta.outcome, 'failure');
-  assert.equal(done.meta.dispatchId, start.meta.dispatchId);
-  assert.equal(done.meta.sourceMessageId, start.meta.sourceMessageId);
-  assert.match(done.text, /没跑通/);
+  assert.ok(done.meta.dispatchId);
+  // 模型这一轮说了「未完成」，就原样发它自己那句 —— 不再拼「没跑通」模板
+  assert.equal(done.text, '未完成');
 });
 
 await test('带明确起始消息的跨部门派活保留来源ID', async () => {
@@ -101,7 +107,7 @@ await test('带明确起始消息的跨部门派活保留来源ID', async () => 
   runner.run = async (_roomId, botId) => appendReply(room, store.getBot(botId), '结果已核对');
   await runner.runRound(room.id, { openerText: opener.text, openerBotId: chief.id, openerName: chief.name, openerMessageId: opener.id });
   const rows = receipts(lead);
-  assert.equal(rows.length, 2);
+  assert.equal(rows.length, 1);
   assert.ok(rows.every((m) => m.meta.sourceMessageId === opener.id && m.meta.fromId === chief.id));
 });
 
@@ -113,6 +119,30 @@ await test('dispatchToGroup传递刚保存的消息ID，不依赖房间最后一
   const result = await runner.dispatchToGroup({ roomId: room.id, text: '分配任务', fromBotId: lead.id });
   assert.equal(opener.openerMessageId, result.messageId);
   assert.equal(store.getMessage(room.id, result.messageId).authorId, lead.id);
+});
+
+await test('★ 回复消息带上 re，指出在回应哪条', async () => {
+  const { room, lead, workers: [worker] } = department('引用');
+  const runner = new PiRunner();
+  runner.reflect = async () => null;
+  let sourceId = null;
+  let leadRuns = 0;
+  runner.run = async (_roomId, botId) => {
+    const bot = store.getBot(botId);
+    if (botId === lead.id && leadRuns++ === 0) {
+      const r = appendReply(room, bot, `@${worker.name} 核对一下口径`);
+      sourceId = r.messageId;
+      return r;
+    }
+    return appendReply(room, bot, '口径已核对，没有冲突');
+  };
+  await runner.runRound(room.id, { openerText: '核对口径' });
+  // 成员那条回复应当带 re 指向派活消息
+  const msgs = store.listMessages(room.id, { limit: 100 });
+  const workerReply = msgs.find((m) => m.authorId === worker.id);
+  assert.ok(workerReply, '成员应当有一条回复');
+  assert.equal(workerReply.meta?.re, sourceId, 're 必须指向派活那条消息');
+  assert.equal(workerReply.meta?.reFrom, lead.id, 'reFrom 必须是派活的人');
 });
 
 console.log(`\n群调度回执接线：${passed}/${passed + failed} 通过`);

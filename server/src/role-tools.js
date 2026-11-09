@@ -7,7 +7,7 @@
 export const READONLY_ALLOW = [
   'read', 'ls', 'grep', 'find',
   'extract_file', 'web_search', 'web_fetch', 'read_shell',
-  'list_bots', 'list_departments', 'read_department', 'message_bot',
+  'list_bots', 'list_departments', 'read_department', 'message_bot', 'reply_bot',
   'list_sites', 'query_site',
   'list_models', 'list_skills', 'list_department_templates', 'list_local_capabilities',
   'ask_user', 'dispatch_to_department', 'assign_member_task',
@@ -33,7 +33,7 @@ export function opaqueScriptBlockReason(policy, tool) {
 
 const READ_ONLY_BUILTINS = new Set(['read', 'ls', 'grep', 'find']);
 const COORDINATION_TOOLS = new Set([
-  'list_bots', 'list_departments', 'read_department', 'message_bot',
+  'list_bots', 'list_departments', 'read_department', 'message_bot', 'reply_bot',
   'task_report', 'task_plan', 'assign_member_task', 'task_expert_review',
 ]);
 

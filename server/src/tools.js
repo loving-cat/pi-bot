@@ -520,6 +520,69 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
     }),
 
     defineTool({
+      name: 'reply_bot',
+      label: '回一句话给某个 bot',
+      description:
+        '就近回一句话，用于澄清、确认、追问 —— **不是派活**。\n' +
+        '派活请用：群里 @名字，或跨部门用 message_bot。\n' +
+        '这个工具让对方直接回你一段话，不会开工、不会建任务、不计入任务板。\n' +
+        '★ 什么时候该用：同事的消息里有一处你无法自行判断（缺前提、前提矛盾、范围不清），' +
+        '先问一句，不要凭猜继续做。问要具体：说清你卡在哪、需要它给什么。',
+      parameters: Type.Object({
+        botId: Type.String({ description: '对方 bot id（先 list_bots）' }),
+        text: Type.String({
+          description: '要说的话。像同事之间说话，别写成工作说明书。',
+        }),
+        reMessageId: Type.Optional(
+          Type.String({ description: '在回应哪条消息（默认取最近一条相关消息）' }),
+        ),
+      }),
+      execute: async (_toolCallId, params) => {
+        const target = store.getBot(params.botId);
+        if (!target) return fail(`找不到 bot ${params.botId}`);
+        if (target.id === botId) return fail('不能回给自己');
+        const text = String(params.text ?? '').trim();
+        if (!text) return fail('要说点什么');
+        if (text.length > 800) return fail('一句话别超过 800 字：这是对话，不是报告');
+
+        const dm = store.ensureDm(target.id);
+        if (!dm) return fail('开不了私信会话');
+
+        const prompt = [
+          '【同事在问你一句话，只需要回话，不要开工】',
+          '',
+          text,
+          '',
+          '直接回答。不要执行任务、不要改文件、不要建任务、不要 @ 别人。',
+          '如果你确实需要更多信息才能回答，就直接说清需要什么。',
+        ].join('\n');
+
+        const result = await runner.runBotOnce({
+          roomId: dm.id,
+          botId: target.id,
+          prompt,
+          timeoutMs: 120_000,
+          meta: {
+            via: 'reply_bot',
+            from: botId,
+            re: params.reMessageId ?? null,
+            dialog: true,
+          },
+        });
+        if (!result?.ok) {
+          return fail(
+            `${target.name} 没回上：${result?.error || '超时或忙'}。` +
+              '如果这件事不能再等，把问题上升给用户决定。',
+          );
+        }
+        return ok(`【${target.name} 回你】\n${result.text}`, {
+          botId: target.id,
+          ms: result.ms,
+        });
+      },
+    }),
+
+    defineTool({
       name: 'extract_file',
       label: '读文件正文',
       description:
