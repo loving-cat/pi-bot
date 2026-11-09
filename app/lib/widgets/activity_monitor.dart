@@ -52,12 +52,7 @@ class _ActivityMonitorState extends State<ActivityMonitor> {
     final state = AppScope.of(context);
     final ids = state.typingBotIds(widget.roomId);
     final running = ids.isNotEmpty;
-    // ★ 定时器的创建/销毁放到 build 之后做。
-    //
-    //   build 必须是纯函数：在里面 start/stop Timer 会在每次重建时
-    //   产生副作用（调试热重载、父级重建都会走到这里），
-    //   而且「提前 return」的那条路径会把表留在跑 —— 明明没人干活，
-    //   UI 却每 2.2 秒重建一次。
+    // 定时器的创建/销毁放到 build 之后做：build 必须是纯函数。
     if (running != _timerRunning) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
@@ -76,38 +71,58 @@ class _ActivityMonitorState extends State<ActivityMonitor> {
         ? widget.tasks[_index % widget.tasks.length]
         : '';
 
+    // 做成悬浮胶囊，而不是一行裸文字。
+    //
+    // 之前是「小圆点 + 一行字」直接跟在消息下面，视觉上和上一条消息连成一片，
+    // 用户会以为那是正文的一部分（截图里「研究审校员 正在处理」贴着正文结尾）。
+    // 胶囊有明确边界，一眼能看出这是独立的运行状态，而不是消息内容。
     return Padding(
-      padding: const EdgeInsets.only(left: 4, bottom: 6),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          SizedBox(
-            width: 11,
-            height: 11,
-            child: CircularProgressIndicator(
-              strokeWidth: 1.6,
-              color: PB.textTertiary,
-            ),
+      padding: const EdgeInsets.only(left: 4, top: 2, bottom: 8),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: PB.bgPane,
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: PB.borderTertiary),
           ),
-          const SizedBox(width: 7),
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 260),
-            child: Text(
-              doing.isEmpty ? '${bot.name} 正在处理' : '${bot.name} 正在做：$doing',
-              key: ValueKey('$current|$doing'),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
-            ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 11,
+                height: 11,
+                child: CircularProgressIndicator(
+                  strokeWidth: 1.6,
+                  color: PB.textTertiary,
+                ),
+              ),
+              const SizedBox(width: 7),
+              Flexible(
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 260),
+                  child: Text(
+                    doing.isEmpty
+                        ? '${bot.name} 正在处理'
+                        : '${bot.name} 正在做：$doing',
+                    key: ValueKey('$current|$doing'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+                  ),
+                ),
+              ),
+              if (ids.length > 1) ...[
+                const SizedBox(width: 6),
+                Text(
+                  '+${ids.length - 1}',
+                  style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+                ),
+              ],
+            ],
           ),
-          if (ids.length > 1) ...[
-            const SizedBox(width: 6),
-            Text(
-              '+${ids.length - 1}',
-              style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
-            ),
-          ],
-        ],
+        ),
       ),
     );
   }

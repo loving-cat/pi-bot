@@ -57,9 +57,18 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
   @override
   Widget build(BuildContext context) {
     final strings = L10n.s(context);
-    final doing = widget.tasks.where((t) => t.isDoing).toList();
-    final open = widget.tasks.where((t) => !t.isDone && !t.isDoing).toList();
-    final done = widget.tasks.where((t) => t.isDone).toList();
+    // ★ 只显示"人真正关心"的任务。
+    //
+    //   系统过去会把每一次派活都塞进这张表（createdBy == 'dispatch'），
+    //   累积了几百条、标题就是一段 bot 回复 —— 于是界面上显示
+    //   「已完成 130」，而用户根本不知道这 130 条是哪来的。
+    //   这里把它们排除掉：这张板只承载用户自己加的、以及真实执行的任务。
+    final visible = widget.tasks
+        .where((t) => t.createdBy != 'dispatch')
+        .toList();
+    final doing = visible.where((t) => t.isDoing).toList();
+    final open = visible.where((t) => !t.isDone && !t.isDoing).toList();
+    final done = visible.where((t) => t.isDone).toList();
 
     return SafeArea(
       child: Padding(

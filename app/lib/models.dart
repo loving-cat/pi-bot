@@ -90,6 +90,7 @@ class Automation {
 
   final String id;
   final String title;
+
   final String? roomId;
   final String prompt;
   final bool enabled;
@@ -127,6 +128,7 @@ class TaskItem {
     this.ownerName,
     this.roomId,
     this.detail = '',
+    this.createdBy = '',
     this.unreadAt = 0,
     this.pinnedAt = 0,
     this.updatedAt = 0,
@@ -140,6 +142,9 @@ class TaskItem {
   final String? ownerName;
   final String? roomId;
   final String detail;
+
+  /// 谁建的：'dispatch' 是系统自动记的派活流水，界面上不该当任务显示。
+  final String createdBy;
   final int unreadAt;
   final int pinnedAt;
   final int updatedAt;

@@ -16,6 +16,10 @@ import { createManagedBridges } from './task-bridge.js';
 import { bus } from '../bus.js';
 import { projectTaskRun } from './task-transport.js';
 import { normalizeDecision } from './task-controls.js';
+import { createTaskRun } from './task-run-factory.js';
+import { admissionBudget } from '../coordination/task-admission.js';
+import { newId } from '../util.js';
+import { resumeAdmission } from '../coordination/task-admission.js';
 
 /**
  * 建一个运行时接线。
@@ -415,6 +419,60 @@ export function createTaskRuntime({
     /** 解除受阻：清掉阻塞事实并重新推进（不动门槛/暂停/预算/版本）。 */
     onUnblock({ taskRunId, reason = '手动解除阻塞' }) {
       return supervisor.onControl(taskRunId, { type: 'unblock', reason });
+    },
+    /**
+     * 用户在任务板里直接加一条任务。
+     *
+     * ★ 这是「加一条任务」与执行引擎之间缺失的那座桥。
+     *   以前这条输入只写进 /api/tasks 备忘清单，永远不会被派去执行。
+     *
+     * 走的是和模型接单完全相同的准入链路（createTaskRun + acceptRequest +
+     * resumeAdmission），只是路由固定为 direct：不另建部门，交给主控在这个
+     * 会话里执行。这样用户手建的任务和模型接的任务在数据上完全同构，
+     * 推进/验收/受阻/完成全都走同一套逻辑，不需要特殊分支。
+     */
+    async onUserCreate({ requesterId, requestId, roomId, goal, fingerprint, title = '' }) {
+      const at = clock();
+      const id = newId('tr_');
+      const built = createTaskRun({
+        id, requestId, requesterId,
+        goal,
+        origin: { roomId, messageId: null, requesterId },
+        budget: admissionBudget(process.env, store.groupLimits?.() ?? null),
+        at,
+      });
+      if (!built.ok) return { ok: false, code: 'bad_goal', text: built.text };
+
+      const admissionIntent = {
+        status: 'pending_handoff',
+        requesterId, requestId, fingerprint, roomId, revision: 1,
+        operationId: newId('hop_'),
+        route: 'direct',
+        routeSpec: { route: 'direct', execute: true, createOnly: false },
+        createOnly: false, execute: true,
+        mode: 'user_task', at,
+      };
+      const accepted = await taskRuns.acceptRequest({
+        requesterId, requestId, fingerprint,
+        build: () => ({ ...built.taskRun, admission: admissionIntent }),
+        at,
+      });
+      if (!accepted.ok && accepted.created !== false) return accepted;
+      const taskRun = accepted.taskRun ?? built.taskRun;
+      if (accepted.created === false) {
+        // 同一请求已存在：幂等返回，不重复建
+        return { ok: true, taskRunId: taskRun.id, duplicate: true };
+      }
+      // 走真实准入：绑定主控为执行者并置为可调度
+      const out = await resumeAdmission({
+        store, taskRuns, taskRun: taskRuns.read(taskRun.id)?.taskRun ?? taskRun, clock,
+      });
+      if (!out?.ok) {
+        return { ok: false, code: out?.code ?? 'admission_failed', text: out?.text ?? '任务准入失败', taskRunId: taskRun.id };
+      }
+      // 立刻唤醒推进器，别等下一轮扫描
+      supervisor.notify(taskRun.id);
+      return { ok: true, taskRunId: out.taskRunId ?? taskRun.id, leadBotId: out.leadBotId ?? null };
     },
     /** 取消某个目标（只影响它和它的子任务）。 */
     onCancel({ taskRunId, reason }) {

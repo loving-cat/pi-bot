@@ -91,6 +91,46 @@ export function createTaskRunRoutes({ store, runner, commandDir = null }) {
       });
     }
 
+    // ---- 用户直接建任务：来自任务板的「加一条任务」。
+    //
+    //   ★ 这是任务板与执行引擎之间缺失的那座桥。
+    //
+    //     以前「加一条任务」走的是 /api/tasks —— 纯备忘清单，
+    //     和 TaskRun 执行引擎没有任何关系，所以用户加的任务永远不会被执行。
+    //     用户的原话：「待办进了 但是也没有真实去执行」。
+    //
+    //   这里直接把用户输入建成一个真实 TaskRun，并走准入（direct 路由：
+    //   不另建部门，交给主控在该会话里执行），之后由推进器正常调度。
+    if (pathname === '/api/task-runs' && req.method === 'POST') {
+      const body = await readBody(req);
+      const title = String(body?.title ?? '').trim();
+      if (!title) return fail(res, 400, 'TITLE_REQUIRED', '任务需要一个标题');
+      const roomId = String(body?.roomId ?? '').trim();
+      const room = roomId ? store.getRoom(roomId) : null;
+      if (!room) return fail(res, 400, 'ROOM_REQUIRED', '任务必须属于一个会话');
+
+      const requesterId = device?.id ?? 'device_unknown';
+      const requestId = String(body?.requestId ?? '').trim()
+        || ('user_task_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10));
+      const goal = {
+        requirement: title,
+        scope: String(body?.scope ?? '').trim(),
+        deliverables: Array.isArray(body?.deliverables) ? body.deliverables.slice(0, 20) : [],
+        // 用户手写的任务没有专家复核流程，默认按「交付物存在 + 负责人确认」验收。
+        // 没有验收条件任务无法完成，这是硬要求。
+        verification: [{ id: 'done', kind: 'expert', description: '负责人确认已按要求交付', required: true }],
+      };
+      const fingerprint = 'user_' + String(roomId) + '_' + title.slice(0, 120);
+
+      const out = await runner.taskRuntime?.onUserCreate?.({
+        requesterId, requestId, roomId, goal, fingerprint, title,
+      });
+      if (!out) return fail(res, 503, 'TASK_RUNTIME_OFF', '任务运行时未启用');
+      if (!out.ok) return fail(res, 400, out.code ?? 'CREATE_FAILED', out.text ?? '建任务失败');
+      const created = findRun(out.taskRunId);
+      return respond(send, res, 200, { task: created ? snapshotOf(created) : null, taskRunId: out.taskRunId });
+    }
+
     const match = pathname.match(/^\/api\/task-runs\/([^/]+)(\/events|\/control)?$/);
     if (!match) return respond(send, res, 404, { error: 'not found' });
     const taskRunId = decodeURIComponent(match[1]);
