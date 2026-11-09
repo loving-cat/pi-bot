@@ -1,0 +1,18 @@
+server/src/dm.js
+  h_c2e638ff76b3b9 29-31,83-88,90-91
+server/src/pi-runner.js
+  h_c2e638ff76b3b9 24-29,1320-1332
+server/tests/dm.mjs
+  h_c2e638ff76b3b9 17,231-256
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "daa2319197d4eb09ab95b81e87abfa0bdac2f333",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
