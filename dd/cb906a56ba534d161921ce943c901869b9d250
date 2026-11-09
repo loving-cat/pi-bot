@@ -1,0 +1,18 @@
+server/src/tasks/task-transport.js
+  h_c2e638ff76b3b9 167-176
+server/tests/all.mjs
+  h_c2e638ff76b3b9 40,116
+server/tests/task-projection.mjs
+  h_c2e638ff76b3b9 1-95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ddcb906a56ba534d161921ce943c901869b9d250",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
