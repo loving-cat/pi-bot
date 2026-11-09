@@ -1428,6 +1428,11 @@ export class PiRunner {
         ok: false,
         code: 'MANAGED_EXECUTION_FAILED',
         error: err?.message || String(err),
+        // ★ reason 必须一起给：归约器读的是 reason，不是 error。
+        //   只给 error 的话，账本里 stop=failed 但 reason 为空，
+        //   用户看到的就只是一句「执行失败」—— 说不出为什么，
+        //   也没法判断该重试还是该改需求。
+        reason: '执行失败：' + String(err?.message ?? err).slice(0, 200),
         stop: STOP.failed,
       };
     } finally {

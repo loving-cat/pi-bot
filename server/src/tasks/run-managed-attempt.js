@@ -144,6 +144,9 @@ export function buildAttemptEvent(raw, { taskRunId, attemptId, botId, revision, 
     artifacts: raw.artifacts ?? [],
     phase: adapted.phase,
     waiting: adapted.waiting,
+    // ★ reason 要透传：归约器把 result.reason 存进账本，
+    //   这正是用户看到的那句「为什么失败」。漏了它只剩一个 stop=failed。
+    reason: String(raw.reason ?? raw.error ?? '').slice(0, 300),
   });
   return planned.emit ? planned.event : null;
 }

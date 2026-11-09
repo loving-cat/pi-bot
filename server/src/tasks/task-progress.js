@@ -584,6 +584,7 @@ export function planAttemptEvent({
   artifacts = [],
   phase = null,
   waiting = null,
+  reason = '',
 } = {}) {
   if (!context) {
     return { emit: false, reason: '不是受管执行，不向归约器发事件' };
@@ -603,6 +604,7 @@ export function planAttemptEvent({
     usage,
     artifacts,
     phase,
+    reason: String(reason ?? '').slice(0, 300),
     at,
   });
   if (!built.ok) {

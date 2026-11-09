@@ -434,21 +434,37 @@ export function createTaskRuntime({
     async onUserCreate({ requesterId, requestId, roomId, goal, fingerprint, title = '' }) {
       const at = clock();
       const id = newId('tr_');
+      const appStore = runner.store ?? null;
+      if (!appStore) {
+        return { ok: false, code: 'no_store', text: '运行时缺少应用存储，无法建任务' };
+      }
       const built = createTaskRun({
         id, requestId, requesterId,
         goal,
         origin: { roomId, messageId: null, requesterId },
-        budget: admissionBudget(process.env, store.groupLimits?.() ?? null),
+        budget: admissionBudget(process.env, runner.store?.groupLimits?.() ?? null),
         at,
       });
       if (!built.ok) return { ok: false, code: 'bad_goal', text: built.text };
 
+      // 任务该派给谁：看这个会话是什么。
+      //
+      // 部门群里必须派给该部门的负责人；派给主控会直接失败 ——
+      // 主控不在那个群里，受管执行的身份校验会拒绝
+      // （实测报「上下文授权给 chief，但这次部门里没有它」）。
+      // 私聊里才走 direct（交给主控在该会话执行）。
+      const room = appStore.getRoom?.(roomId) ?? null;
+      const deptLead = room?.kind === 'group' ? (room.leadBotId ?? null) : null;
+      const route = deptLead ? 'existing' : 'direct';
+      const routeSpec = deptLead
+        ? { route: 'existing', departmentId: roomId, execute: true, createOnly: false }
+        : { route: 'direct', execute: true, createOnly: false };
       const admissionIntent = {
         status: 'pending_handoff',
         requesterId, requestId, fingerprint, roomId, revision: 1,
         operationId: newId('hop_'),
-        route: 'direct',
-        routeSpec: { route: 'direct', execute: true, createOnly: false },
+        route,
+        routeSpec,
         createOnly: false, execute: true,
         mode: 'user_task', at,
       };
@@ -464,8 +480,9 @@ export function createTaskRuntime({
         return { ok: true, taskRunId: taskRun.id, duplicate: true };
       }
       // 走真实准入：绑定主控为执行者并置为可调度
+      //   store 来自 runner（task-host 装配时注入），顶层没有裸 store 变量。
       const out = await resumeAdmission({
-        store, taskRuns, taskRun: taskRuns.read(taskRun.id)?.taskRun ?? taskRun, clock,
+        store: appStore, taskRuns, taskRun: taskRuns.read(taskRun.id)?.taskRun ?? taskRun, clock,
       });
       if (!out?.ok) {
         return { ok: false, code: out?.code ?? 'admission_failed', text: out?.text ?? '任务准入失败', taskRunId: taskRun.id };
