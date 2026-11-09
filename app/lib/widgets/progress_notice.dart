@@ -28,6 +28,15 @@ class ProgressNotice extends StatelessWidget {
     final senders = progressSenders(messages);
     final dept = _deptName(state, messages, strings);
 
+    // ★ 私聊里不能说「收到谁的消息」。
+    //
+    //   私聊只有用户和这个 bot 两个人，而这些回执的作者就是它自己 ——
+    //   于是「收到 竞品研究员 消息」变成了「收到自己的消息」，语义反了。
+    //   这些消息的实质是「它在部门里交付了什么」，所以换成陈述式。
+    final roomId = messages.first.roomId;
+    final isDm =
+        state.rooms.where((r) => r.id == roomId).firstOrNull?.kind == 'dm';
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Center(
@@ -39,12 +48,35 @@ class ProgressNotice extends StatelessWidget {
           onTap: () => showProgressPeek(context, messages: messages),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            child: ConversationPeople(
-              prefix: strings.t('dept.received'),
-              people: senders,
-              fallback: strings.tf('misc.quoted', {'name': dept}),
-              suffix: strings.tf('dept.messageSuffix', {'n': messages.length}),
-            ),
+            child: isDm
+                ? Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        LucideIcons.folderInput,
+                        size: 12,
+                        color: PB.textTertiary,
+                      ),
+                      const SizedBox(width: 5),
+                      Text(
+                        strings.tf('dept.dmProgress', {
+                          'n': messages.length,
+                        }),
+                        style: TextStyle(
+                          fontSize: PB.fsXs,
+                          color: PB.textTertiary,
+                        ),
+                      ),
+                    ],
+                  )
+                : ConversationPeople(
+                    prefix: strings.t('dept.received'),
+                    people: senders,
+                    fallback: strings.tf('misc.quoted', {'name': dept}),
+                    suffix: strings.tf('dept.messageSuffix', {
+                      'n': messages.length,
+                    }),
+                  ),
           ),
         ),
       ),

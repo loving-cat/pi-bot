@@ -9,7 +9,9 @@ import 'package:pi_bot/widgets/msg_ref_chip.dart';
 import 'package:pi_bot/widgets/progress_notice.dart';
 
 const names = ['部门负责人甲', '数据核验员乙', '报告设计师丙', '接口测试员丁'];
-final dm = Room(id: 'fixture-dm', name: '验证私聊', kind: 'dm', botIds: const []);
+// 这些用例测的是群里「收到 X 消息」的聚合行为 ——
+// 私聊里已经换成陈述式文案（"在部门里干了 N 件事"），不再走这条路径。
+final dm = Room(id: 'fixture-dm', name: '验证群', kind: 'group', botIds: const []);
 
 class _State extends AppState {
   final loaded = <String>[];

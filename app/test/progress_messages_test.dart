@@ -54,19 +54,30 @@ void main() {
     expect(progressResultLabel(ProgressResult.ended), '已结束');
   });
 
-  test('普通消息断开连续回执，十分钟内的相邻回执保留全部明细', () {
+  test('普通消息断开连续回执，窗口内的相邻回执合成一组', () {
+    // 窗口从 10 分钟放宽到 6 小时：部门工作常常断断续续跨很久，
+    // 10 分钟会把每段都拆成独立气泡，私聊里就成了几十行「收到 X 消息」。
     final groups = groupProgressMessages([
       message(0, progress: false),
       message(1, time: 10),
       message(2, time: 600010),
       message(3, progress: false),
       message(4, time: 600012),
-      message(5, time: 1200013),
+      message(5, time: kProgressGroupGapMs + 600020),
     ]);
     expect(groups.keys, [1, 4, 5]);
     expect(groups[1]!.map((m) => m.id), ['fixture-1', 'fixture-2']);
     expect(groups[4]!.single.id, 'fixture-4');
-    expect(groups[5]!.single.id, 'fixture-5');
+    expect(groups[5]!.single.id, 'fixture-5', reason: '超出窗口就开新组');
+  });
+
+  test('★ 六小时内的部门回执收成一组，不再一行一条', () {
+    // 真实场景：40 条回执跨 76 小时，旧的 10 分钟窗口会切出十几条气泡。
+    final groups = groupProgressMessages([
+      for (var i = 0; i < 8; i++) message(i, time: i * 20 * 60 * 1000),
+    ]);
+    expect(groups.length, 1, reason: '同一段工作应当收成一条');
+    expect(groups[0]!.length, 8);
   });
 
   test('跨房间与倒序时间不并入前一组', () {

@@ -49,9 +49,14 @@ List<({String id, String name})> progressSenders(List<Msg> messages) {
 }
 
 /// 相邻回执按时间间隔分组，键为首条消息索引；普通消息、跨房间或倒序时间会断组。
+/// 分组窗口：同一个部门的工作往往断断续续跨几小时，
+/// 10 分钟会把每一段都拆成独立气泡，私聊里就变成一长串「收到 X 消息」，
+/// 每行还只有 1~8 条。放宽到 6 小时，一次部门工作大体能收成一条。
+const int kProgressGroupGapMs = 6 * 60 * 60 * 1000;
+
 Map<int, List<Msg>> groupProgressMessages(
   List<Msg> messages, {
-  int maxGapMs = 10 * 60 * 1000,
+  int maxGapMs = kProgressGroupGapMs,
 }) {
   final groups = <int, List<Msg>>{};
   List<Msg>? current;
