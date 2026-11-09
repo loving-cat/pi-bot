@@ -1,0 +1,24 @@
+server/src/http.js
+  h_c2e638ff76b3b9 1101-1114
+server/src/pi-runner.js
+  h_c2e638ff76b3b9 2030-2034,2043
+server/src/tools.js
+  h_c2e638ff76b3b9 39-67,586-596,603,617-652,654-656,658-663,666-674,1283-1291
+server/tests/all.mjs
+  h_c2e638ff76b3b9 41-42
+server/tests/dm-greeting.mjs
+  h_c2e638ff76b3b9 1-82
+server/tests/reply-bot-guard.mjs
+  h_c2e638ff76b3b9 1-96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b35537a130e3637ddadbfdb7b1ce290f0dec28dd",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
