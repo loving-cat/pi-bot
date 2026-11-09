@@ -1,0 +1,18 @@
+app/lib/l10n/strings/panel2.dart
+  h_c2e638ff76b3b9 272-274,668-669
+app/lib/widgets/progress_notice.dart
+  h_c2e638ff76b3b9 62-65,190-194,224-236,346,469
+app/test/progress_dm_copy_test.dart
+  h_c2e638ff76b3b9 1-48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b626c57b33189dceb5b34fcad93739b9c18ee66b",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
