@@ -1,0 +1,18 @@
+app/test/progress_interaction_test.dart
+  h_c2e638ff76b3b9 57-58,272
+app/test/progress_messages_test.dart
+  h_c2e638ff76b3b9 10-11,17-18,82-86,88-90,92,94-103
+app/test/progress_notice_test.dart
+  h_c2e638ff76b3b9 30,46,82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "17b04ef60ef048dee822d9126eaa1dacf6d37e99",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
