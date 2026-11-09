@@ -100,11 +100,28 @@ export function customToolsForRole(tools, { room, bot, leadTools = [], policy = 
     ? list.filter((tool) => readonlyToolAllowed(tool.name)) : list;
 }
 
-/** 房间角色和成员配置变化时签名变化，用于重建缓存会话。 */
+/**
+ * 工具集/提示词的版本号。
+ *
+ * ★ 每次**改动 bot 能用的工具或群提示词**就要 +1。
+ *
+ *   为什么：会话按 roomId:botId 缓存复用，靠 roleConfigurationKey 判断要不要重建。
+ *   原来这个 key 只看「房间角色 + 成员」，升级代码后老会话的 key 没变 ——
+ *   于是继续复用旧会话，**新加的工具、改过的提示词全部不生效**。
+ *   用户看到的就是「更新了但没变化」，而且没有任何报错。
+ *
+ *   +1 会让所有老会话在下次使用时重建一次（丢的只是进程内的会话缓存，
+ *   聊天记录都在库里，不受影响）。
+ */
+export const SESSION_TOOLS_VERSION = 2;
+
+/** 房间角色、成员或工具集版本变化时签名变化，用于重建缓存会话。 */
 export function roleConfigurationKey(room, bot) {
   const members = [...new Set((room?.botIds ?? []).filter(Boolean))];
   const leadId = members.includes(room?.leadBotId) ? room.leadBotId : members[0] ?? null;
   return JSON.stringify([
     bot?.role ?? '', room?.kind ?? '', leadId, members.sort(),
+    // 工具集版本：改了工具/提示词就 bump，让老会话重建一次
+    SESSION_TOOLS_VERSION,
   ]);
 }

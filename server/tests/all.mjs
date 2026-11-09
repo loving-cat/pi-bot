@@ -40,6 +40,7 @@ const TESTS = [
   'task-projection',
   'reply-bot-guard',
   'dm-greeting',
+  'session-signature',
   'automations',
   'uploads',
   'approvals',
