@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
@@ -175,11 +177,7 @@ class _ProgressPeekLayerState extends State<_ProgressPeekLayer>
                 padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
                 child: Row(
                   children: [
-                    Icon(
-                      LucideIcons.inbox,
-                      size: 15,
-                      color: PB.textTertiary,
-                    ),
+                    Icon(LucideIcons.inbox, size: 15, color: PB.textTertiary),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
@@ -211,9 +209,7 @@ class _ProgressPeekLayerState extends State<_ProgressPeekLayer>
               Expanded(
                 child: ListView(
                   padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
-                  children: [
-                    for (final m in widget.messages) _receipt(state, m),
-                  ],
+                  children: _threads(state, widget.messages),
                 ),
               ),
               Container(height: 1, color: PB.borderTertiary),
@@ -249,7 +245,41 @@ class _ProgressPeekLayerState extends State<_ProgressPeekLayer>
     );
   }
 
-  Widget _receipt(AppState state, Msg m) {
+  /// 把一批回执按「谁在回应谁」排成线程。
+  ///
+  /// 平铺成一排独立卡片时，读的人找不出谁在接谁的话 —— 那看起来像
+  /// 播报。有引用关系就缩进一层，视觉上就是「A 说 → B 接」的对话。
+  List<Widget> _threads(AppState state, List<Msg> messages) {
+    // 按 id 建索引，用于把 re 解析成被回应的那条
+    final byId = <String, Msg>{for (final m in messages) m.id: m};
+    // 找出「这条是在回应批次内的另一条」的消息 → 它是子节点
+    final childrenOf = <String, List<Msg>>{};
+    final roots = <Msg>[];
+    for (final m in messages) {
+      final re = m.replyToId;
+      if (re != null && byId.containsKey(re) && re != m.id) {
+        childrenOf.putIfAbsent(re, () => []).add(m);
+      } else {
+        roots.add(m);
+      }
+    }
+
+    final out = <Widget>[];
+    void emit(Msg m, int depth) {
+      // 深度最多两层：再深就缩进到没有横向空间了
+      out.add(_receipt(state, m, depth: depth));
+      for (final child in childrenOf[m.id] ?? const <Msg>[]) {
+        emit(child, math.min(depth + 1, 2));
+      }
+    }
+
+    for (final r in roots) {
+      emit(r, 0);
+    }
+    return out;
+  }
+
+  Widget _receipt(AppState state, Msg m, {int depth = 0}) {
     final fromId = (m.meta?['fromId'] as String?) ?? '';
     final fromName = ((m.meta?['fromName'] as String?) ?? '').trim();
     final dept = _deptName(state, [m], L10n.s(context));
@@ -262,7 +292,7 @@ class _ProgressPeekLayerState extends State<_ProgressPeekLayer>
     final who = fromName.isNotEmpty ? fromName : dept;
     final author = m.authorId ?? m.authorName;
 
-    return Padding(
+    final body = Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -325,10 +355,7 @@ class _ProgressPeekLayerState extends State<_ProgressPeekLayer>
               const SizedBox(width: 8),
               Text(
                 _fmtTime(m.createdAt),
-                style: TextStyle(
-                  fontSize: PB.fsXxs,
-                  color: PB.textQuaternary,
-                ),
+                style: TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
               ),
             ],
           ),
@@ -354,6 +381,32 @@ class _ProgressPeekLayerState extends State<_ProgressPeekLayer>
             ),
           ),
         ],
+      ),
+    );
+
+    // ★ 有引用关系就缩进一层，并在左侧画一条竖线。
+    //   这是「A 说 → B 接」的唯一视觉依据；不缩进的话，
+    //   读者只能看到两张并列的卡片，读不出因果关系。
+    if (depth == 0) return body;
+    // IntrinsicHeight 让左侧竖线能长到和内容同高。
+    // 这里每条回执最多出现两次（父/子），开销可接受。
+    return Padding(
+      padding: EdgeInsets.only(left: 18.0 * depth),
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(
+              width: 2,
+              margin: const EdgeInsets.only(top: 2, bottom: 16, right: 10),
+              decoration: BoxDecoration(
+                color: PB.borderSecondary,
+                borderRadius: BorderRadius.circular(1),
+              ),
+            ),
+            Expanded(child: body),
+          ],
+        ),
       ),
     );
   }
