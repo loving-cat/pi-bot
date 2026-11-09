@@ -14,6 +14,7 @@ const {
   excerpt,
   dmOpeningPrompt,
   progressFallbackText,
+  MIRROR_SKIPPED_NO_DM,
   shouldMirrorProgress,
   mirrorProgress,
   backfillProgressSenders,
@@ -225,6 +226,32 @@ await test('backfillProgressSenders：按明确来源与调度关联补齐，重
   assert.equal(last.meta?.sourceMessageId, source.id);
   assert.equal(last.meta?.outcome, undefined);
   assert.equal(backfillProgressSenders(store), 0);
+});
+
+await test('★ 没有私聊会话时返回跳过原因，不静默丢弃', () => {
+  // 真实场景：负责人 @ 了某个成员，成员干完活，但用户从没点开过
+  // 那个成员的私聊 —— findDm 返回 null，回执被丢弃。
+  // 原来返回 false，调用方分不清「写成功」和「没会话所以跳过」。
+  const bot = store.createBot({ name: '无会话测试员', persona: '测试' });
+  const room = store.createGroup({ name: '无会话测试组', botIds: [bot.id] });
+  // createBot 会自动开一个私聊（像加好友），要模拟「用户没点开过」，
+  // 得先把它删掉。删私聊不影响 bot 本身。
+  const autoDm = store.findDm(bot.id);
+  assert.ok(autoDm, 'createBot 应当自动建了私聊');
+  store.deleteRoom(autoDm.id);
+  assert.equal(store.findDm(bot.id), null, '前置条件：现在不该有私聊');
+
+  const result = mirrorProgress({
+    store,
+    room,
+    bot,
+    phase: 'done',
+    text: '干完了',
+    fromId: 'b_lead',
+    fromName: '负责人',
+  });
+  assert.equal(result, MIRROR_SKIPPED_NO_DM, '必须能区分出「没有私聊」');
+  assert.equal(store.findDm(bot.id), null, '不该替它建会话');
 });
 
 const passed = results.filter((r) => r.ok).length;

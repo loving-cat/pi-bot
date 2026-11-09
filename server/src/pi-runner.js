@@ -21,7 +21,12 @@ import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { config } from './config.js';
 import { bus } from './bus.js';
 import { store, toolsForPolicy } from './store.js';
-import { dmOpeningPrompt, shouldMirrorProgress, mirrorProgress } from './dm.js';
+import {
+  dmOpeningPrompt,
+  shouldMirrorProgress,
+  mirrorProgress,
+  MIRROR_SKIPPED_NO_DM,
+} from './dm.js';
 import { loadExtraProviders, settingsDefaultModel } from './providers.js';
 import { modelGroups, rotateCursor } from './model-groups.js';
 import { ProviderUpdates, providerLeaseScope } from './provider-updates.js';
@@ -1312,7 +1317,19 @@ export class PiRunner {
    */
   #mirrorProgress(progress) {
     try {
-      mirrorProgress({ store, ...progress });
+      const result = mirrorProgress({ store, ...progress });
+      // ★ 区分「写成功」和「因为没有私聊会话而跳过」。
+      //
+      //   后者原来是完全无声的：负责人 @ 了成员、成员干完活了，
+      //   但用户从没点开过那个成员的私聊 → 没有任何提示，
+      //   看起来就像"部门里发生的事没同步过来"。
+      //   现在至少能在日志里看到原因。
+      if (result === MIRROR_SKIPPED_NO_DM) {
+        log(
+          `私聊回执跳过：${progress.bot?.name ?? '某个 bot'} 还没和用户开过私聊 — ` +
+            `在侧边栏点开它一次，之后的部门回执才会同步到这里`,
+        );
+      }
     } catch (err) {
       log('私聊进度回执失败：', err?.message || err);
     }

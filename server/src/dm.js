@@ -26,6 +26,9 @@ export function dmOpeningPrompt(bot = {}) {
   ].join('\n');
 }
 
+/** mirrorProgress 的跳过原因：用户还没打开过这个 bot 的私聊，不替它建会话。 */
+export const MIRROR_SKIPPED_NO_DM = 'no-dm';
+
 /** 做完（或没做成）时的私聊回执 */
 /**
  * 没产出正文时的兜底文案。
@@ -77,8 +80,15 @@ export function mirrorProgress({
   //   既然不够格进摘要，也不该进会话。
   if (phase === 'start') return false;
 
+  // ★ 只查不建：不替用户没打开过的 bot 造会话，否则侧边栏会被塞满。
+  //
+  //   代价是：如果用户从没点开过这个 bot 的私聊，回执会被**静默丢弃** ——
+  //   「负责人 @ 了某成员，但用户看不到它在部门里干了什么」就是这么来的。
+  //   所以这里返回一个带原因的结果，让调用方能区分「写成功了」和
+  //   「因为没会话所以跳过」。原来的 false 什么都不说明。
   const dm = store.findDm(bot.id);
-  if (!dm || dm.id === room.id) return false;
+  if (!dm) return MIRROR_SKIPPED_NO_DM;
+  if (dm.id === room.id) return false;
   // 正常路径：模型说了什么就发什么，一个字都不套。
   const raw = String(text ?? '').trim();
   const content = raw || progressFallbackText({ ok });
