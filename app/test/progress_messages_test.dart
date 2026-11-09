@@ -7,12 +7,15 @@ Msg message(
   int? time,
   bool progress = true,
   String roomId = 'fixture-room',
+  String authorName = '验证成员',
+  String? authorId,
   Map<String, dynamic>? meta,
 }) => Msg(
   id: 'fixture-$index',
   roomId: roomId,
   authorType: 'bot',
-  authorName: '验证成员',
+  authorId: authorId,
+  authorName: authorName,
   text: '验证回执',
   status: 'done',
   createdAt: time ?? index,
@@ -76,15 +79,25 @@ void main() {
     expect(groupProgressMessages([]), isEmpty);
   });
 
-  test('同名不同身份保留，重复身份与缺少名字的记录不重复展示', () {
+  test('★ 发信人取作者，不取派活人', () {
+    // 真实语义：authorName = 干完活交出来的 bot，
+    //           meta.fromName = 当初派活的负责人。
+    // 弹窗要回答「我收到了谁的消息」，所以必须用作者；
+    // 用 fromName 会显示成「收到负责人的消息」—— 方向反了。
     final senders = progressSenders([
-      message(0, meta: {'fromId': 'a', 'fromName': '同名成员'}),
-      message(1, meta: {'fromId': 'a', 'fromName': '同名成员'}),
-      message(2, meta: {'fromId': 'b', 'fromName': '同名成员'}),
-      message(3, meta: {'fromName': '旧记录成员'}),
-      message(4, meta: {'fromName': '旧记录成员'}),
-      message(5, meta: {'fromId': 'c'}),
+      message(0, authorId: 'a', authorName: '成员甲', meta: {'fromId': 'lead', 'fromName': '负责人'}),
+      message(1, authorId: 'a', authorName: '成员甲', meta: {'fromId': 'lead', 'fromName': '负责人'}),
+      message(2, authorId: 'b', authorName: '成员乙', meta: {'fromId': 'lead', 'fromName': '负责人'}),
     ]);
-    expect(senders.map((sender) => sender.id), ['a', 'b', '旧记录成员']);
+    expect(senders.map((s) => s.name), ['成员甲', '成员乙']);
+  });
+
+  test('同名不同作者不合并，重复作者只出现一次', () {
+    final senders = progressSenders([
+      message(0, authorId: 'a', authorName: '同名成员'),
+      message(1, authorId: 'a', authorName: '同名成员'),
+      message(2, authorId: 'b', authorName: '同名成员'),
+    ]);
+    expect(senders.length, 2);
   });
 }

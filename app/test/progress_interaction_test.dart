@@ -54,8 +54,8 @@ Msg receipt(
   id: 'receipt-$index',
   roomId: dm.id,
   authorType: 'bot',
-  authorId: 'worker',
-  authorName: '执行成员',
+  authorId: 'b${index % 4}',
+  authorName: name ?? names[index % 4],
   text: phase == 'done'
       ? outcome == 'success'
             ? '验证任务已经完成'
