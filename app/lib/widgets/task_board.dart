@@ -6,8 +6,10 @@ import '../app_state.dart';
 import '../l10n/l10n.dart';
 import '../models.dart';
 import '../ime_guard.dart';
+import '../text_utils.dart';
 import '../theme.dart';
 import 'floating_menu.dart';
+import 'md_text.dart';
 
 /// 任务板：一个房间里"要做什么 / 在做 / 做完"的清单。
 ///
@@ -199,6 +201,80 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
     );
   }
 
+  /// 点开一条任务看全文（二级视图）。
+  ///
+  /// 列表里只能放两三行，而模型的原始内容经常是整段带 Markdown 的正文 ——
+  /// 截断之后用户根本没法读到关键结论。这里给一个居中浮层：全文 + 执行者 +
+  /// 状态，Markdown 正常渲染。
+  void _showTaskDetail(BuildContext context, TaskItem task) {
+    final strings = L10n.s(context);
+    showDialog<void>(
+      context: context,
+      barrierColor: const Color(0x99000000),
+      builder: (_) => Dialog(
+        backgroundColor: PB.bgPane,
+        insetPadding: const EdgeInsets.all(24),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(PB.rXl),
+          side: BorderSide(color: PB.borderTertiary),
+        ),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 620, maxHeight: 640),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 14, 12, 6),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        task.isDone
+                            ? strings.t('task.done')
+                            : task.isDoing
+                                ? strings.t('task.doing')
+                                : strings.t('task.todo'),
+                        style: TextStyle(
+                          fontSize: PB.fsXs,
+                          color: PB.textTertiary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    if (task.ownerName != null && task.ownerName!.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: Text(
+                          task.ownerName!,
+                          style: TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
+                        ),
+                      ),
+                    IconButton(
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: Icon(LucideIcons.x, size: 16, color: PB.textTertiary),
+                    ),
+                  ],
+                ),
+              ),
+              Divider(height: 1, color: PB.borderTertiary),
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(18, 12, 18, 18),
+                  child: MdText(
+                    task.detail.isNotEmpty ? task.detail : task.title,
+                    style: TextStyle(fontSize: PB.fsSm, color: PB.textSecondary),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _section(String title) => Padding(
     padding: const EdgeInsets.only(top: 4, bottom: 4),
     child: Text(
@@ -257,30 +333,33 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
               first.isDone ? 'task.markOpenAll' : 'task.markDoneAll',
               {'n': group.length},
             ),
-            icon: Icon(
-              first.isDone
-                  ? LucideIcons.circleCheck
-                  : first.isDoing
-                  ? LucideIcons.loader
-                  : LucideIcons.circle,
-              size: 16,
-              color: color,
-            ),
+            icon: first.isDoing && !first.isDone
+                // 进行中就让它真的转起来
+                ? _SpinningIcon(icon: LucideIcons.loader, size: 16, color: color)
+                : Icon(
+                    first.isDone ? LucideIcons.circleCheck : LucideIcons.circle,
+                    size: 16,
+                    color: color,
+                  ),
           ),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  first.title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: PB.fsSm,
-                    color: color,
-                    decoration: first.isDone
-                        ? TextDecoration.lineThrough
-                        : null,
+                InkWell(
+                  onTap: () => _showTaskDetail(context, first),
+                  borderRadius: BorderRadius.circular(4),
+                  child: Text(
+                    stripMarkdown(first.title),
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: PB.fsSm,
+                      color: color,
+                      decoration: first.isDone
+                          ? TextDecoration.lineThrough
+                          : null,
+                    ),
                   ),
                 ),
                 Text(
@@ -336,15 +415,13 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
             constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
             onPressed: () => widget.onToggleDone(task),
             tooltip: strings.t(task.isDone ? 'task.markOpen' : 'task.markDone'),
-            icon: Icon(
-              task.isDone
-                  ? LucideIcons.circleCheck
-                  : task.isDoing
-                  ? LucideIcons.loader
-                  : LucideIcons.circle,
-              size: 16,
-              color: color,
-            ),
+            icon: task.isDoing && !task.isDone
+                ? _SpinningIcon(icon: LucideIcons.loader, size: 16, color: color)
+                : Icon(
+                    task.isDone ? LucideIcons.circleCheck : LucideIcons.circle,
+                    size: 16,
+                    color: color,
+                  ),
           ),
           if (task.isUnread && !task.isDone)
             Container(
@@ -360,14 +437,21 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  task.title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: PB.fsSm,
-                    color: color,
-                    decoration: task.isDone ? TextDecoration.lineThrough : null,
+                // 列表里必须压成纯文本：模型给的常是整段带 **加粗** 的正文，
+                // 直接塞 Text 会露出裸星号；MdText 又不支持 maxLines 截断。
+                // 所以列表走 stripMarkdown + 截断，完整内容点开看（见 _showTaskDetail）。
+                InkWell(
+                  onTap: () => _showTaskDetail(context, task),
+                  borderRadius: BorderRadius.circular(4),
+                  child: Text(
+                    stripMarkdown(task.title),
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: PB.fsSm,
+                      color: color,
+                      decoration: task.isDone ? TextDecoration.lineThrough : null,
+                    ),
                   ),
                 ),
                 if (task.ownerName != null)
@@ -585,6 +669,49 @@ class _TaskBoardPopoverState extends State<_TaskBoardPopover> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// 正在进行的任务：图标真的转起来。
+///
+/// 之前用静态的 LucideIcons.loader —— 那形状像个转轮，但它不动，
+/// 用户看到的是"卡在那里的一个图标"，分不出是在跑还是死了。
+class _SpinningIcon extends StatefulWidget {
+  const _SpinningIcon({required this.icon, required this.size, required this.color});
+
+  final IconData icon;
+  final double size;
+  final Color color;
+
+  @override
+  State<_SpinningIcon> createState() => _SpinningIconState();
+}
+
+class _SpinningIconState extends State<_SpinningIcon>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c;
+
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RotationTransition(
+      turns: _c,
+      child: Icon(widget.icon, size: widget.size, color: widget.color),
     );
   }
 }
