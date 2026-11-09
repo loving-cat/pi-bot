@@ -1098,6 +1098,20 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         const body = await readBody(req);
         if (!body.name) return fail(res, 400, 'NAME_REQUIRED', '需要 name');
         const bot = store.createBot({ ...body, createdBy: device.id });
+        // ★ 建完就让 bot 主动来打招呼，而不是等用户去侧边栏点它。
+        //
+        //   只建了空会话、什么都不说的话，用户面对的是一个空白私聊，
+        //   不知道这 bot 能干什么。让它自己开口 + 递一张询问卡片，
+        //   才是「刚认识一个同事」该有的样子。
+        //
+        //   不 await：开场要跑一轮模型（可能十几秒），
+        //   不能让创建接口一直挂着；失败也不该让建档失败。
+        const dm = store.findDm(bot.id);
+        if (dm) {
+          runner.greetDm(dm.id, bot.id).catch((err) =>
+            log('新建 bot 开场失败：', err?.message || err),
+          );
+        }
         return send(res, 200, { bot });
       }
 

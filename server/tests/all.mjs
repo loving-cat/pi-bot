@@ -38,6 +38,8 @@ const TESTS = [
   'unit',
   'tasks',
   'task-projection',
+  'reply-bot-guard',
+  'dm-greeting',
   'automations',
   'uploads',
   'approvals',

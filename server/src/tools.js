@@ -36,6 +36,35 @@ import { handleIntake, ACTION } from './coordination/intake.js';
 // 这条只是防止两个 bot 互相 reply 到天荒地老。
 const PEER_DIALOG_TTL_MS = 600_000;
 
+/**
+ * bot 间对话的记账表：key = "调用方→被叫方"，value = 这段对话开始的时间。
+ *
+ * 为什么放内存而不是消息 meta：
+ *   原来把 dialogId 写进"被叫方 DM 里那条消息"，却在"呼叫方房间"里读，
+ *   两个房间不同永远读不到 → 每次新建 → TTL 永不触发。
+ *   按 id 对记账跟消息落在哪个房间无关，也不依赖模型回传 id。
+ *
+ * 为什么在无活动时清理：对话结束后没人会主动删，不管就一直涨。
+ * 每次写入顺手清掉过期的（开销 O(n)，n 是同时进行中的对话数，很小）。
+ */
+const peerDialogStarts = new Map();
+
+function peerDialogKey(fromId, toId) {
+  return `${fromId}>${toId}`;
+}
+
+/** 取这对 bot 当前对话的开始时间；没有就现在开始，并返回 now。 */
+function peerDialogStart(pair, nowMs) {
+  const existing = peerDialogStarts.get(pair);
+  if (existing && nowMs - existing <= PEER_DIALOG_TTL_MS) return existing;
+  peerDialogStarts.set(pair, nowMs);
+  // 顺手清过期项，别让表无限长
+  for (const [k, t] of peerDialogStarts) {
+    if (nowMs - t > PEER_DIALOG_TTL_MS) peerDialogStarts.delete(k);
+  }
+  return nowMs;
+}
+
 /** 同一个 bot 连着私信多个人时，多久以内的引用气泡合并成一个（ms） */
 export const REF_MERGE_MS = 180_000;
 
@@ -554,28 +583,24 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
         //   轮次不设上限（用户裁决：任务没完成前的往返是必要的，
         //   硬截断会让它们带着没解掉的问题收工）。但两个 bot 可以
         //   互相 reply 个没完，必须有一道纯防死循环的闸。
-        const reId = params.reMessageId ?? null;
-        let dialogId = null;
-        let startedAt = 0;
-        if (reId) {
-          const reMsg = store.getMessage(roomId, reId);
-          const m = reMsg?.meta ?? {};
-          if (typeof m.dialogId === 'string' && m.dialogId) {
-            dialogId = m.dialogId;
-            startedAt = Number(m.dialogStartedAt) || 0;
-          }
-        }
-        if (!dialogId) {
-          dialogId = newId('dlg_');
-          startedAt = Date.now();
-        }
-        if (startedAt && Date.now() - startedAt > PEER_DIALOG_TTL_MS) {
+        //
+        //   ★ 记账必须在服务端做，不能靠模型回传的 reMessageId。
+        //     原来把 dialogId 写进"被叫方 DM 里那条消息"的 meta，
+        //     却在"呼叫方所在的房间"里读 —— 两个房间不同，永远读不到，
+        //     于是每次都新建 dialogId、startedAt=now，TTL 恒不触发。
+        //     按「调用方↔被叫方」这一对 id 在内存里记滑动窗口，
+        //     跟消息落在哪个房间无关，也不依赖模型有没有回传 id。
+        const nowMs = Date.now();
+        const pair = peerDialogKey(botId, target.id);
+        const startedAt = peerDialogStart(pair, nowMs);
+        if (nowMs - startedAt > PEER_DIALOG_TTL_MS) {
           const mins = Math.round(PEER_DIALOG_TTL_MS / 60000);
           return fail(
             `这次对话已经持续 ${mins} 分钟了。` +
               '请把当前结论发出来，需要用户决定的部分上升给他。',
           );
         }
+        const reId = params.reMessageId ?? null;
 
         const dm = store.ensureDm(target.id);
         if (!dm) return fail('开不了私信会话');
@@ -589,28 +614,64 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
           '如果你确实需要更多信息才能回答，就直接说清需要什么。',
         ].join('\n');
 
-        const result = await runner.runBotOnce({
-          roomId: dm.id,
-          botId: target.id,
-          prompt,
-          timeoutMs: 120_000,
-          meta: {
-            via: 'reply_bot',
-            from: botId,
-            re: reId,
-            dialog: true,
-            // 对话串：同一次往返沿用，用于 TTL 判定
-            dialogId,
-            dialogStartedAt: startedAt,
-          },
-        });
+        // ★ 对方正忙时等一下，别立刻宣布"没回上"。
+        //
+        //   最需要澄清的时刻恰恰是对方在干活的时候。立刻失败会让模型
+        //   改回群里 @ 它（又触发一次完整执行），或者干脆放弃凭猜继续做 ——
+        //   那正是 reply_bot 要消除的行为。message_bot 早就这么做了，
+        //   reply_bot 是照着抄漏的。
+        let result = null;
+        let waited = 0;
+        for (let attempt = 1; attempt <= 3 && !result?.ok; attempt++) {
+          result = await runner.runBotOnce({
+            roomId: dm.id,
+            botId: target.id,
+            prompt,
+            timeoutMs: 120_000,
+            meta: {
+              via: 'reply_bot',
+              from: botId,
+              re: reId,
+              dialog: true,
+              // 对话窗口的起点。TTL 判定不看它（服务端按 id 对自行记账），
+              // 但留在 meta 里方便排查「这段往来是什么时候开始的」。
+              dialogStartedAt: startedAt,
+            },
+          });
+          if (result?.ok) break;
+          // 只是"它在忙"才等；其它错误（配置/鉴权）等也没用
+          if (!isBusyError(result?.error)) break;
+          if (attempt >= 3) break;
+          // 等它空下来，而不是睡一个固定时长 ——
+          // 它那一轮可能还要跑好几分钟。
+          const deadline = Date.now() + 60_000;
+          while (runner.isBusy(dm.id, target.id) && Date.now() < deadline) {
+            await new Promise((r) => setTimeout(r, 2000));
+          }
+          waited += Date.now() - (deadline - 60_000);
+        }
         if (!result?.ok) {
+          const waitedHint = waited >= 1000
+            ? `（已经等它 ${Math.round(waited / 1000)} 秒）`
+            : '';
           return fail(
-            `${target.name} 没回上：${result?.error || '超时或忙'}。` +
-              '如果这件事不能再等，把问题上升给用户决定。',
+            `${target.name} 没回上：${result?.error || '超时或忙'}${waitedHint}。` +
+              // ★ 明确禁止改道：它只是忙，不是不在。
+              //   不写这句，模型会改成群里 @ 它 —— 那会触发一次完整执行，
+              //   而它本来就只是在忙。
+              '它可能只是在忙，别改用 @ 派活（那会让它重开一轮）。' +
+              '如果确实等不了，先把能做的做完，把这个问题上升给用户。',
           );
         }
-        return ok(`【${target.name} 回你】\n${result.text}`, {
+        // ★ 回复侧也限长。
+        //
+        //   输入限了 800 字，输出却是对方整轮正文，可达数万字符。
+        //   几轮往返就能把调用方上下文吃掉一大截。
+        const raw = String(result.text ?? '');
+        const shown = raw.length > 1200
+          ? `${raw.slice(0, 1200)}\n\n（回复已截断，原文 ${raw.length} 字）`
+          : raw;
+        return ok(`【${target.name} 回你】\n${shown}`, {
           botId: target.id,
           ms: result.ms,
         });
@@ -1219,6 +1280,15 @@ export function buildChiefTools({ runner, health, roomId, botId }) {
           `chief 招了：${bot.emoji} ${bot.name} (${bot.model ?? '默认'}/${bot.thinking})` +
             (coding ? ' ＋工程基线' : ''),
         );
+        // ★ 招完让它主动去和用户打招呼（自我介绍 + 询问卡片），
+        //   而不是等用户自己去侧边栏找到它、点开一个空白私聊。
+        //   不 await：开场要跑一轮模型，不能让招人这个动作卡住。
+        const dm = store.findDm(bot.id);
+        if (dm) {
+          runner.greetDm(dm.id, bot.id).catch((err) =>
+            log('新建 bot 开场失败：', err?.message || err),
+          );
+        }
         return ok(`已招到 ${bot.emoji} ${bot.name}（id=${bot.id}）。«内部：${bot.model ?? '默认'}/${bot.thinking}，不要写进给用户看的话»`, {
           botId: bot.id,
         });

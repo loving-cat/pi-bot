@@ -2027,6 +2027,11 @@ export class PiRunner {
             //
             //   没有它，界面只能把每条消息画成独立卡片，
             //   读不出谁在接谁的话；有了它就能渲染成引用 + 回应。
+            // ★ 这里必须发事件（silent:false）。
+            //
+            //   标注发生在 run() 返回**之后**，而那条消息的 msg.done 早就发过了 ——
+            //   用 silent 写的话，客户端要等重连/重载才看得到引用条，
+            //   实时看着还是两段孤立发言，"谁在接谁的话"等于没做。
             if (res.messageId && progressSource.sourceMessageId) {
               try {
                 store.updateMessage(roomId, res.messageId, {
@@ -2035,7 +2040,7 @@ export class PiRunner {
                     re: progressSource.sourceMessageId,
                     reFrom: progressSource.fromId ?? null,
                   },
-                }, { silent: true });
+                });
               } catch {
                 // 标注失败不影响主流程：这条消息本身已经发出去了
               }
