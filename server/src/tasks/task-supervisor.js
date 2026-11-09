@@ -650,6 +650,26 @@ export function createTaskSupervisor({
           && (taskRun.plan?.steps ?? []).length !== (afterRun.plan?.steps ?? []).length;
         if (hasPlan) return { status: 'ok', why: '已登记分工计划' };
 
+        // ★ 已经交付过产物，就不该按「没有产出」阻塞。
+        //
+        //   真实用户场景：负责人第一轮就产出了文件（evidence 1~7 份），
+        //   第二轮只是接着讨论/补细节、没有新增文件 —— 签名因此不变，
+        //   于是被判「负责人这一轮没有产出可核验的交付」。
+        //   但他的交付早就在那儿了，任务却被判失败：
+        //   用户原话「我都不知道是完成了还是失败了」。
+        //
+        //   有交付物时正确做法是**去验收**，而不是判它没干活。
+        const delivered = (afterRun.progress?.evidence ?? []).some((e) => e.kind === 'artifact');
+        if (delivered) {
+          // 已有交付 → 让下一轮走验收，而不是继续催它"再产出点东西"。
+          // 不伪造事件、不改状态：只把它排回队列，由 planNextAction
+          // 按「有交付 → 验收」的自然路径推进。
+          const resumeAt = clock() + YIELD_RESUME_MS;
+          await patch(taskRunId, { nextAction: null, retryAt: resumeAt });
+          setTimer(resumeAt, taskRunId);
+          return { status: 'ok', why: '已有交付，安排验收' };
+        }
+
         // ★ 刚从暂停/阻塞里恢复的那一轮，不该因「这一轮没产出」被判死。
         //
         //   用户暂停一个正在跑的任务 → 那次执行被中断（账本标 abandoned）、

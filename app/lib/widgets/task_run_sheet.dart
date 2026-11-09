@@ -363,3 +363,46 @@ Future<void> showTaskRunHistorySheet(BuildContext context, AppState state, Strin
     ),
   );
 }
+/// 右栏内嵌的任务详情。
+///
+/// ★ 与弹出式 TaskRunSheet 的区别：它不占模态屏障，
+///   用户看详情时主对话仍然能正常上下滚动。
+class TaskRunDetailInline extends StatelessWidget {
+  const TaskRunDetailInline({super.key, required this.state, required this.taskRunId});
+
+  final AppState state;
+  final String taskRunId;
+
+  Future<void> _run(
+    BuildContext context,
+    Future<TaskRun?> Function(TaskRun) action,
+    TaskRun task,
+  ) async {
+    try {
+      await action(task);
+    } catch (err) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$err')));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: state.taskRuns,
+      builder: (context, _) {
+        final task = state.taskRuns.merge.byId(taskRunId);
+        if (task == null) {
+          return Center(
+            child: Text('任务不存在', style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary)),
+          );
+        }
+        return SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(14, 10, 14, 16),
+          child: _TaskRunSheetBody(state: state, task: task, onRun: _run),
+        );
+      },
+    );
+  }
+}

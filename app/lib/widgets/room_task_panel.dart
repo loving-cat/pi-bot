@@ -121,6 +121,21 @@ class _TaskRow extends StatelessWidget {
                 color: task.state == 'blocked' ? PB.danger : PB.textTertiary,
               ),
             ),
+            // ★ 受阻必须给出原因。
+            //
+            //   用户原话：「这些任务我都不知道是完成了还是失败了。」
+            //   只显示「阻塞」两个字，等于没说 —— 得让他知道为什么停、
+            //   是缺信息、缺验收、还是执行出错。
+            if (task.blockedReason.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Text(
+                  task.blockedReason,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: PB.fsXxs, color: PB.danger),
+                ),
+              ),
           ],
         ),
       ),

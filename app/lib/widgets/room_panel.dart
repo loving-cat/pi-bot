@@ -60,6 +60,12 @@ class RoomPanel extends StatefulWidget {
 }
 
 class _RoomPanelState extends State<RoomPanel> {
+  /// 当前在右栏里查看的任务（null = 显示任务列表）。
+  ///
+  /// ★ 原来点任务开的是模态弹窗：showDialog 的屏障会吃掉所有手势，
+  ///   于是「看任务详情时主对话滚不动」—— 用户明确反馈了这个。
+  ///   改成右栏内嵌：详情占右栏，主对话始终可滚。
+  String? _openTaskId;
   /// 0 = 详情，1 = 资料库，2 = 成员（只有群才有），3 = 记忆。
   ///
   /// ★ 真正的值存在 AppState 里并落盘 —— 面板会随会话切换重新挂载，
@@ -104,17 +110,50 @@ class _RoomPanelState extends State<RoomPanel> {
             children: [
               _header(context, room),
               // 任务区挂在面板顶部：一直可见、不随消息滚走。
-              RoomTaskPanel(
-                roomId: room.id,
-                onOpen: (task) => showTaskRunSheet(context, AppScope.read(context), task),
-                onOpenHistory: () => showTaskRunHistorySheet(
-                  context, AppScope.read(context), room.id,
+              if (_openTaskId != null)
+                // 详情占右栏，主对话不受影响（可继续滚动）
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 8, 10, 0),
+                  child: Row(
+                    children: [
+                      InkWell(
+                        onTap: () => setState(() => _openTaskId = null),
+                        borderRadius: BorderRadius.circular(4),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(LucideIcons.chevronLeft, size: 14, color: PB.textTertiary),
+                              const SizedBox(width: 2),
+                              Text('任务列表',
+                                  style: TextStyle(fontSize: PB.fsXxs, color: PB.textTertiary)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              else
+                RoomTaskPanel(
+                  roomId: room.id,
+                  onOpen: (task) => setState(() => _openTaskId = task.id),
+                  onOpenHistory: () => showTaskRunHistorySheet(
+                    context, AppScope.read(context), room.id,
+                  ),
                 ),
-              ),
+              if (_openTaskId == null) ...[
               _tabs(context, isGroup, tab),
               Container(height: 1, color: PB.borderTertiary),
+              ],
               Expanded(
-                child: switch (tab) {
+                child: _openTaskId != null
+                    ? TaskRunDetailInline(
+                        state: AppScope.read(context),
+                        taskRunId: _openTaskId!,
+                      )
+                    : switch (tab) {
                   0 => _detail(context, room, ctxInfo),
                   1 => _Library(room: room),
                   2 when isGroup => _members(context, room),
