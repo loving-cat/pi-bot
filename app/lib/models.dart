@@ -161,6 +161,7 @@ class TaskItem {
     ownerName: json['ownerName'] as String?,
     roomId: json['roomId'] as String?,
     detail: json['detail'] as String? ?? '',
+    createdBy: json['createdBy'] as String? ?? '',
     unreadAt: (json['unreadAt'] as num?)?.toInt() ?? 0,
     pinnedAt: (json['pinnedAt'] as num?)?.toInt() ?? 0,
     updatedAt: (json['updatedAt'] as num?)?.toInt() ?? 0,
