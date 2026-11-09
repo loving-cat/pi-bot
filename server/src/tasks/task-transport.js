@@ -164,8 +164,16 @@ export function projectTaskRun(taskRun, { root = null, children = null, nameOf =
       ? {
           steps: taskRun.plan.steps.slice(0, 20).map((s, i) => ({
             index: i + 1,
-            title: String(s?.title ?? s?.text ?? s ?? '').slice(0, 200),
-            owner: String(s?.owner ?? s?.botName ?? '').slice(0, 80),
+            // ★ 字段名必须和 normalizePlan 存的保持一致。
+            //
+            //   存储层（task-plan-tool.js 的 normalizePlan）写的是
+            //   { task, memberName, memberBotId, deliverable }，
+            //   而这里原来读的是 title/text、owner/botName —— 全都读不到，
+            //   于是退回整个对象，String(对象) 就成了 "[object Object]"。
+            //
+            //   保留 title/text/owner 作为兼容读法：老数据可能用过别的写法。
+            title: String(s?.task ?? s?.title ?? s?.text ?? '').slice(0, 200),
+            owner: String(s?.memberName ?? s?.owner ?? s?.botName ?? '').slice(0, 80),
             status: String(s?.status ?? 'pending'),
           })),
           at: taskRun.plan.at ?? null,
@@ -184,4 +192,3 @@ export function projectTaskRunList(taskRuns, { includeDone = true, limit = 50, r
   const visible = includeDone ? list : list.filter((t) => t.state !== 'completed' && t.state !== 'cancelled');
   return visible.slice(0, limit);
 }
-

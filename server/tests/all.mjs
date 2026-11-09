@@ -37,6 +37,7 @@ const TESTS = [
   'relay-frames',
   'unit',
   'tasks',
+  'task-projection',
   'automations',
   'uploads',
   'approvals',
