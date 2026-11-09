@@ -32,6 +32,10 @@ import { readManagedSubmission, SUBMISSION } from './coordination/task-context.j
 import { makeSpecPreparer, checkAssignableModel } from './coordination/department-spec.js';
 import { handleIntake, ACTION } from './coordination/intake.js';
 
+// 单次 bot 间对话的最长时间。轮次不设上限（任务没完成前的往返是必要的），
+// 这条只是防止两个 bot 互相 reply 到天荒地老。
+const PEER_DIALOG_TTL_MS = 600_000;
+
 /** 同一个 bot 连着私信多个人时，多久以内的引用气泡合并成一个（ms） */
 export const REF_MERGE_MS = 180_000;
 
@@ -545,6 +549,34 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
         if (!text) return fail('要说点什么');
         if (text.length > 800) return fail('一句话别超过 800 字：这是对话，不是报告');
 
+        // ★ 唯一硬边界：单次对话最多 10 分钟。
+        //
+        //   轮次不设上限（用户裁决：任务没完成前的往返是必要的，
+        //   硬截断会让它们带着没解掉的问题收工）。但两个 bot 可以
+        //   互相 reply 个没完，必须有一道纯防死循环的闸。
+        const reId = params.reMessageId ?? null;
+        let dialogId = null;
+        let startedAt = 0;
+        if (reId) {
+          const reMsg = store.getMessage(roomId, reId);
+          const m = reMsg?.meta ?? {};
+          if (typeof m.dialogId === 'string' && m.dialogId) {
+            dialogId = m.dialogId;
+            startedAt = Number(m.dialogStartedAt) || 0;
+          }
+        }
+        if (!dialogId) {
+          dialogId = newId('dlg_');
+          startedAt = Date.now();
+        }
+        if (startedAt && Date.now() - startedAt > PEER_DIALOG_TTL_MS) {
+          const mins = Math.round(PEER_DIALOG_TTL_MS / 60000);
+          return fail(
+            `这次对话已经持续 ${mins} 分钟了。` +
+              '请把当前结论发出来，需要用户决定的部分上升给他。',
+          );
+        }
+
         const dm = store.ensureDm(target.id);
         if (!dm) return fail('开不了私信会话');
 
@@ -565,8 +597,11 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
           meta: {
             via: 'reply_bot',
             from: botId,
-            re: params.reMessageId ?? null,
+            re: reId,
             dialog: true,
+            // 对话串：同一次往返沿用，用于 TTL 判定
+            dialogId,
+            dialogStartedAt: startedAt,
           },
         });
         if (!result?.ok) {

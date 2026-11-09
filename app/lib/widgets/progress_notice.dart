@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
@@ -296,33 +294,10 @@ class _ProgressPeekLayerState extends State<_ProgressPeekLayer>
   /// 平铺成一排独立卡片时，读的人找不出谁在接谁的话 —— 那看起来像
   /// 播报。有引用关系就缩进一层，视觉上就是「A 说 → B 接」的对话。
   List<Widget> _threads(AppState state, List<Msg> messages) {
-    // 按 id 建索引，用于把 re 解析成被回应的那条
-    final byId = <String, Msg>{for (final m in messages) m.id: m};
-    // 找出「这条是在回应批次内的另一条」的消息 → 它是子节点
-    final childrenOf = <String, List<Msg>>{};
-    final roots = <Msg>[];
-    for (final m in messages) {
-      final re = m.replyToId;
-      if (re != null && byId.containsKey(re) && re != m.id) {
-        childrenOf.putIfAbsent(re, () => []).add(m);
-      } else {
-        roots.add(m);
-      }
-    }
-
-    final out = <Widget>[];
-    void emit(Msg m, int depth) {
-      // 深度最多两层：再深就缩进到没有横向空间了
-      out.add(_receipt(state, m, depth: depth));
-      for (final child in childrenOf[m.id] ?? const <Msg>[]) {
-        emit(child, math.min(depth + 1, 2));
-      }
-    }
-
-    for (final r in roots) {
-      emit(r, 0);
-    }
-    return out;
+    return [
+      for (final entry in threadLayout(messages))
+        _receipt(state, entry.message, depth: entry.depth),
+    ];
   }
 
   Widget _receipt(AppState state, Msg m, {int depth = 0}) {
@@ -466,4 +441,54 @@ class _ProgressPeekLayerState extends State<_ProgressPeekLayer>
       ),
     );
   }
+}
+
+/// 一条回执在弹窗里的位置：消息本身 + 缩进层级。
+class ThreadEntry {
+  const ThreadEntry(this.message, this.depth);
+  final Msg message;
+  final int depth;
+}
+
+/// 把一批回执按「谁在回应谁」排成线程（纯函数，便于测试）。
+///
+/// 平铺成一排独立卡片时，读的人找不出谁在接谁的话 —— 那看起来像播报。
+/// 有引用关系就缩进一层，视觉上就是「A 说 → B 接」的对话。
+///
+/// ★ 必须记已渲染的 id：如果有人把两条消息互相标成"在回应对方"
+///   （A.re=B 且 B.re=A），它们都进不了 roots（各自都有 re），
+///   于是永远不会被渲染 —— 弹窗少几条，而且没有任何报错。
+///   实测纯循环时两条消息会渲染出 0 条。宁可平铺，也不能让消息消失。
+List<ThreadEntry> threadLayout(List<Msg> messages) {
+  final byId = <String, Msg>{for (final m in messages) m.id: m};
+  final childrenOf = <String, List<Msg>>{};
+  final roots = <Msg>[];
+  for (final m in messages) {
+    final re = m.replyToId;
+    if (re != null && byId.containsKey(re) && re != m.id) {
+      childrenOf.putIfAbsent(re, () => []).add(m);
+    } else {
+      roots.add(m);
+    }
+  }
+
+  final out = <ThreadEntry>[];
+  final emitted = <String>{};
+  void emit(Msg m, int depth) {
+    if (!emitted.add(m.id)) return;
+    out.add(ThreadEntry(m, depth));
+    for (final child in childrenOf[m.id] ?? const <Msg>[]) {
+      // 缩进最多两层：再深就没有横向空间了
+      emit(child, depth < 2 ? depth + 1 : 2);
+    }
+  }
+
+  for (final r in roots) {
+    emit(r, 0);
+  }
+  // 兜底：循环里的节点没有 root 可达，单独补上
+  for (final m in messages) {
+    if (!emitted.contains(m.id)) emit(m, 0);
+  }
+  return out;
 }
