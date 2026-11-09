@@ -1,0 +1,20 @@
+app/lib/widgets/progress_notice.dart
+  h_c2e638ff76b3b9 297-300,445-494
+app/test/progress_thread_cycle_test.dart
+  h_c2e638ff76b3b9 1-49
+docs/spec-peer-dialog.md
+  h_c2e638ff76b3b9 121,123-126,129,132-133,135,138-139,142-143,218
+server/src/tools.js
+  h_c2e638ff76b3b9 35-38,552-579,600,602-604
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "48c37d29fd1f1fa4033a11772fcef5b28d56a111",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
