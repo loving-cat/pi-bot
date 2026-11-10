@@ -68,9 +68,28 @@ class _RoomPanelState extends State<RoomPanel> {
   String? _openTaskId;
   /// 0 = 详情，1 = 资料库，2 = 成员（只有群才有），3 = 记忆。
   ///
-  /// ★ 真正的值存在 AppState 里并落盘 —— 面板会随会话切换重新挂载，
-  ///   放本地的话用户点开「资料库」、切个会话回来就又跳回「详情」了。
+  /// ★ 真正的值存在 AppState 里并落盘 —— 用户点开「资料库」、切个会话
+  ///   回来时不该跳回「详情」。
+  ///
+  /// ★ 注意：**面板不会随会话切换重新挂载**。
+  ///   宽屏下它挂在 TweenAnimationBuilder(key: ValueKey(PaneKind.roomPanel))
+  ///   下面，切换会话只走 didUpdateWidget，State 是复用的 ——
+  ///   原来这里的注释写反了。所以凡是「记在 State 里、又跟会话有关」的东西，
+  ///   都必须在 didUpdateWidget 里清掉（见下面 _openTaskId）。
   int get _tab => AppScope.read(context).panelTab;
+
+  @override
+  void didUpdateWidget(RoomPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // ★ 切换会话时把「当前在看的任务」清掉。
+    //
+    //   State 是复用的（见 _tab 上方的说明），不清的话：在 A 会话点开某个
+    //   任务详情，切到 B 会话，右栏还在显示 A 的那个任务 —— 用户会以为
+    //   那是 B 的任务。
+    if (oldWidget.room.id != widget.room.id) {
+      _openTaskId = null;
+    }
+  }
 
   void _selectTab(int i) {
     // 面板重挂载后要立刻用新 tab 渲染，所以这里同时 setState + 落盘
@@ -155,9 +174,16 @@ class _RoomPanelState extends State<RoomPanel> {
                       )
                     : switch (tab) {
                   0 => _detail(context, room, ctxInfo),
-                  1 => _Library(room: room),
+                  // ★ 这两个子组件按会话加 key。
+                  //   它们都在 State 里缓存了「这是哪个 bot」并只在 initState
+                  //   读一次，切会话时 State 复用就会继续显示上一个会话的内容。
+                  //   加 key 让它们跟着会话重建。
+                  //
+                  //   不给整个 RoomPanel 加 ValueKey(room.id)：会和 S1 的
+                  //   GlobalKey 打架，也会让 header 的头像等无谓重建。
+                  1 => _Library(key: ValueKey(room.id), room: room),
                   2 when isGroup => _members(context, room),
-                  _ => _MemoryTab(room: room),
+                  _ => _MemoryTab(key: ValueKey(room.id), room: room),
                 },
               ),
             ],
@@ -742,7 +768,7 @@ class _AddMemberButtonState extends State<_AddMemberButton> {
 /// 数据不用服务端帮忙：附件本来就挂在每条消息上（msg.attachments），
 /// 按作者是不是人分两组就行。
 class _Library extends StatefulWidget {
-  const _Library({required this.room});
+  const _Library({super.key, required this.room});
 
   final Room room;
 
@@ -1140,7 +1166,7 @@ class _LibraryState extends State<_Library> {
 /// 私聊右侧「记忆」页：显示这个 bot 记住的东西（记忆摘要）。
 /// 点摘要卡片进二级页面看全文；有新消息时提示摘要可能过期，可手动重新整理。
 class _MemoryTab extends StatefulWidget {
-  const _MemoryTab({required this.room});
+  const _MemoryTab({super.key, required this.room});
 
   final Room room;
 
@@ -1159,10 +1185,27 @@ class _MemoryTabState extends State<_MemoryTab> {
   @override
   void initState() {
     super.initState();
-    _botId = widget.room.isGroup
-        ? (widget.room.leadBotId ?? widget.room.botIds.firstOrNull)
-        : widget.room.botIds.firstOrNull;
+    _botId = _defaultBotId();
     WidgetsBinding.instance.addPostFrameCallback((_) => _bootstrap());
+  }
+
+  String? _defaultBotId() => widget.room.isGroup
+      ? (widget.room.leadBotId ?? widget.room.botIds.firstOrNull)
+      : widget.room.botIds.firstOrNull;
+
+  @override
+  void didUpdateWidget(_MemoryTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // ★ 兜底：正常情况下父级用 ValueKey(room.id) 让这个 State 随会话重建
+    //   （见 room_panel.dart 里 _MemoryTab 的 key）。这里再守一道 ——
+    //   万一以后有人去掉那个 key，至少不会出现「新房间配旧 botId」
+    //   （刷新会把 A 的 bot 记忆写到 B 房间的请求里）。
+    if (oldWidget.room.id != widget.room.id) {
+      _botId = _defaultBotId();
+      _data = null;
+      _loading = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _bootstrap());
+    }
   }
 
   Future<void> _bootstrap() async {

@@ -2115,10 +2115,15 @@ export class PiRunner {
               // ★ 批次 03：受管 TaskRun 不走 finishTask(res.ok)。
               //   它的完成由归约器 + 验收决定；这里只处理旧任务板。
               if (taskId && !itemManaged) {
-                store.finishTask(taskId, {
-                  ok: res.ok,
-                  text: res.ok ? res.text : '用户插话，旧任务作废',
-                });
+                // ★ 用 voidTask 而不是 finishTask。
+                //
+                //   两个原因：
+                //   · finishTask(ok:false) 会把条目重新标成待办（open），
+                //     而作废恰恰相反 —— 这条不该再出现在待办里；
+                //   · finishTask 成功时会把 unreadAt 写成当前时间，
+                //     于是每作废一条任务板上就多一个红点，用户以为有结果要看。
+                //   作废没有结果要确认，所以用专门的 voidTask（done + 不提醒）。
+                store.voidTask(taskId);
               }
               log(`【${room.name}】用户插话 → ${bot.name} 这一条作废（不重试、不上报）`);
               return;
@@ -2159,7 +2164,20 @@ export class PiRunner {
                 // 标注失败不影响主流程：这条消息本身已经发出去了
               }
             }
-            if (mirror) {
+            // ★ 先判 PASS，再决定要不要 mirror。
+            //
+            //   PASS 是"这轮没我的事"的约定信号。原来顺序反了：
+            //   先 mirror（写成员私聊 + 生成「已交付」进展卡片），
+            //   之后才删群里的那条 —— 于是私聊和进展卡片里留下一条
+            //   字面意义的「[PASS]」，用户看到成员"交付"了一个 PASS。
+            //
+            //   这里提前把它摘出去：PASS 不 mirror、不留痕，只删原消息。
+            // ★ res.text 不保证存在：run() 被中止时返回
+            //   { ok:false, reason:'aborted' }，里面没有 text 字段。
+            //   直接 .trim() 会抛 TypeError，把后面的失败回执和上报全带走。
+            const passText = (res.text ?? '').trim();
+            const isPass = res.ok && /^\[?PASS\]?$/i.test(passText);
+            if (mirror && !isPass) {
               this.#mirrorProgress({
                 room,
                 bot,
@@ -2207,7 +2225,9 @@ export class PiRunner {
             return;
           }
           const text = res.text.trim();
-          if (/^\[?PASS\]?$/i.test(text)) {
+          // PASS 的删除也收在这里 —— 上面已经判过 isPass 并跳过 mirror，
+          // 这里负责把那条「[PASS]」从群里真删掉（否则用户看到一条空的群消息）。
+          if (isPass) {
             store.deleteMessage(roomId, res.messageId);
             log(`${bot.name} PASS`);
             return;

@@ -52,7 +52,7 @@ const areaSettings2 = StringArea(
     'settings.actions.reconnectLocalSubtitle': '重新连 127.0.0.1:8787（桌面端就是宿主）',
     'settings.actions.switchServer': '切到别的服务端',
     'settings.actions.repair': '断开重新配对',
-    'settings.update.failed': '检查更新失败（服务端没连上或网络不通）',
+    'settings.update.failed': '检查更新失败（连不上本机服务，先看服务有没有在跑）',
     'settings.update.latest': '已经是最新版本（{version}）',
     'settings.update.checking': '检查中…',
     'settings.update.check': '检查更新',
@@ -110,7 +110,7 @@ const areaSettings2 = StringArea(
     'settings.actions.switchServer': 'Switch server',
     'settings.actions.repair': 'Disconnect and pair again',
     'settings.update.failed':
-        'Update check failed (server unreachable or offline)',
+        'Update check failed (cannot reach the local service — is it running?)',
     'settings.update.latest': 'You are on the latest version ({version})',
     'settings.update.checking': 'Checking…',
     'settings.update.check': 'Check for updates',

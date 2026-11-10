@@ -80,6 +80,7 @@ const areaChat = StringArea(
     'chat.resetMenu': '开新会话（清记忆）',
     'chat.automations': '定时任务…',
     'chat.reloadMessages': '重新拉取消息',
+    'chat.openBrowser': '打开浏览器',
     'chat.more': '更多',
     'chat.dropEmptyFolder': '拖进来的文件夹是空的（或全是跳过的目录）',
     'chat.dropTooMany': '文件太多（{n} 个封顶），只收了前 {n} 个',
@@ -255,6 +256,7 @@ const areaChat = StringArea(
     'chat.resetMenu': 'New session (clear memory)',
     'chat.automations': 'Scheduled tasks…',
     'chat.reloadMessages': 'Reload messages',
+    'chat.openBrowser': 'Open browser',
     'chat.more': 'More',
     'chat.dropEmptyFolder':
         'The dropped folder is empty (or holds only skipped folders)',

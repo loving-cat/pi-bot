@@ -372,7 +372,9 @@ const areaPanel2 = StringArea(
     'browser.addressHint': '输入网址或搜索词',
     'browser.openExternal': '用系统浏览器打开',
     'browser.desktopOnly': '内置浏览器只在桌面端提供（Windows / macOS）。',
-    'browser.emptyHint': '在聊天里点任何链接，都会在这里打开。',
+    'browser.emptyHint': '在上面的地址栏输入网址，或点聊天里的链接。',
+    'browser.backToFile': '回到刚才的文件',
+    'browser.loading': '正在加载…',
 
     // ---- 网页预览失败 ----
     'offline.timeout': '网页加载超时，可以切换源码或下载文件。',
@@ -773,7 +775,9 @@ const areaPanel2 = StringArea(
     'browser.openExternal': 'Open in system browser',
     'browser.desktopOnly':
         'The built-in browser is desktop only (Windows / macOS).',
-    'browser.emptyHint': 'Any link you click in a chat opens here.',
+    'browser.emptyHint': 'Type a URL above, or click any link in a chat.',
+    'browser.backToFile': 'Back to the file',
+    'browser.loading': 'Loading…',
 
     // ---- offline preview failures ----
     'offline.timeout':

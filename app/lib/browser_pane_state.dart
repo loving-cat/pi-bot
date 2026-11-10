@@ -78,6 +78,23 @@ class _BrowserLocation {
   final AttachmentPreviewRequest? fileRequest;
 }
 
+/// 上一次在展示栏里打开的文件（切到网页后用来回退）。
+class _FileSnapshot {
+  const _FileSnapshot({
+    required this.name,
+    required this.url,
+    required this.title,
+    required this.nativeViewer,
+    required this.request,
+  });
+
+  final String name;
+  final String url;
+  final String title;
+  final bool nativeViewer;
+  final AttachmentPreviewRequest? request;
+}
+
 /// 内置浏览器 / 通用展示栏的状态。
 class BrowserPaneState extends ChangeNotifier {
   bool _open = false;
@@ -92,6 +109,16 @@ class BrowserPaneState extends ChangeNotifier {
   bool _nativeViewer = false;
   AttachmentPreviewRequest? _fileRequest;
   AttachmentPreviewRequest? get fileRequest => _fileRequest;
+
+  /// 切到网页模式前正在看的文件（用于"回到刚才的材料"）。
+  ///
+  /// ★ 为什么要记：用户在文件预览里点地址栏想输网址，输完却没输就退出时，
+  ///   原文件已经被 openEmpty() 清掉了 —— 回不去，只能重新点一遍附件。
+  ///   这里留一份快照，菜单里给"回到上一个文件"的入口。
+  _FileSnapshot? _lastFile;
+
+  /// 有没有可回退的文件
+  bool get hasLastFile => _lastFile != null;
   final List<_BrowserLocation> _history = [];
   int _navigationRevision = 0;
 
@@ -224,6 +251,88 @@ class BrowserPaneState extends ChangeNotifier {
     }
     _pushHistory();
     activity.touched(PaneKind.browser);
+    notifyListeners();
+  }
+
+  /// 打开浏览器栏（不加载任何地址）。
+  ///
+  /// ★ 两种情况要分开处理：
+  ///   · 栏根本没开 → 打开。
+  ///   · 栏开着正显示某个文件 → **切到网页模式**。
+  ///     以前这里判断 `if (_open) return;`，于是「先打开文件、再从菜单点
+  ///     打开浏览器」完全没反应：栏已经开着（被文件占着），菜单只是
+  ///     标了一下活跃，屏幕上什么都不变。
+  ///   · 已经停在网页模式 → 只标活跃，不动地址和历史（从菜单再点一次
+  ///     不该把正在看的页面弄丢）。
+  void openEmpty() {
+    final opening = !_open;
+    if (opening) {
+      _open = true;
+      activity.opened(PaneKind.browser);
+    } else {
+      activity.touched(PaneKind.browser);
+    }
+    // 已经停在网页模式且地址没变 → 没什么可切的，只标活跃
+    if (!opening && _kind == PaneContentKind.web && _url.isEmpty) {
+      notifyListeners();
+      return;
+    }
+    // 从文件切过来：先把文件存一份快照，再清掉当前文件态。
+    // 网页地址留着（切回来还能继续看）；文件地址必须丢掉 ——
+    // 那是 /html 或原文件地址，拿去当网页地址没意义。
+    final wasFile = _kind == PaneContentKind.file;
+    if (wasFile) {
+      _lastFile = _FileSnapshot(
+        name: _fileName,
+        url: _url,
+        title: _title,
+        nativeViewer: _nativeViewer,
+        request: _fileRequest,
+      );
+    }
+    final keepUrl = _kind == PaneContentKind.web && _url.isNotEmpty;
+    _kind = PaneContentKind.web;
+    _fileName = '';
+    _nativeViewer = false;
+    _fileRequest = null;
+    _title = '';
+    if (!keepUrl) _url = '';
+    // 历史是跟着内容的：从文件切过来时清掉，免得"后退"退到文件页
+    if (!keepUrl) {
+      _history.clear();
+      _historyIndex = -1;
+    }
+    // ★ 地址为空时**不要**压历史。
+    //   _pushHistory 不看 url 是否为空，压进去就是一条空记录 ——
+    //   用户接着输网址后，history 变成 ['', 'https://…']，
+    //   点「后退」会回到一片空白。
+    if (_url.isNotEmpty) _pushHistory();
+    _navigationRevision++;
+    notifyListeners();
+  }
+
+  /// 回到切到网页之前正在看的那个文件。
+  ///
+  /// 用户在文件预览里点地址栏、又没输网址就退出时，用这个把材料找回来。
+  /// 没有快照就什么都不做。
+  void backToLastFile() {
+    final snap = _lastFile;
+    if (snap == null) return;
+    _lastFile = null;
+    _open = true;
+    _kind = PaneContentKind.file;
+    _fileName = snap.name;
+    _title = snap.title;
+    _url = snap.url;
+    _nativeViewer = snap.nativeViewer;
+    _fileRequest = snap.request;
+    activity.touched(PaneKind.browser);
+    // 文件的历史栈和网页不通用，重新起一条
+    _history
+      ..clear()
+      ..add(_location);
+    _historyIndex = 0;
+    _navigationRevision++;
     notifyListeners();
   }
 

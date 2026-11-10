@@ -78,7 +78,16 @@ void main() {
 
     expect(state.browser.open, isTrue);
     expect(state.browser.nativeViewer, isFalse);
-    expect(state.browser.url.endsWith('/html'), isTrue, reason: '表格走 /html');
+    // 存的地址必须是干净的 /html。
+    // 主题**不进 URL**（切换主题后不跟随、地址栏和历史带脏参数），
+    // 由 BrowserPane 在加载时按当前主题临时拼上去。
+    final rendered = Uri.parse(state.browser.url);
+    expect(rendered.path.endsWith('/html'), isTrue, reason: '表格走 /html');
+    expect(
+      rendered.queryParameters['theme'],
+      isNull,
+      reason: '存下来的地址不该带 UI 参数',
+    );
   });
 
   testWidgets('CSV 也能进展示栏', (tester) async {

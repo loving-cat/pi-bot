@@ -1071,8 +1071,12 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
             error: `${path.extname(file) || '该格式'} 不能转成网页查看，请下载后用系统应用打开`,
           });
         }
+        // 主题由 App 显式传（它的深浅色是独立设置，和系统不一定一致）。
+        // 认不出的值不传，页面回退到 prefers-color-scheme。
+        const themeParam = String(url.searchParams.get('theme') || '').toLowerCase();
+        const theme = themeParam === 'light' || themeParam === 'dark' ? themeParam : undefined;
         try {
-          const out = await renderFileAsHtml(file, { displayName: meta.name });
+          const out = await renderFileAsHtml(file, { displayName: meta.name, theme });
           res.writeHead(200, {
             'content-type': 'text/html; charset=utf-8',
             // 内容可能含用户数据，不让中间层/浏览器缓存

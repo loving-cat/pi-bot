@@ -344,6 +344,20 @@ class AppState extends ChangeNotifier {
     _notify();
   }
 
+  /// 打开浏览器栏（空栏，不加载地址）。
+  ///
+  /// ★ 必须经过 AppState —— 理由同 closeBrowserPane：栏是 HomeShell 布局里
+  ///   的一列，而 HomeShell 只依赖 AppScope.of（AppState.notifyListeners）。
+  ///   BrowserPaneState 自己的 notifyListeners 没有布局层在听。
+  void openBrowserPane() {
+    // ★ 不要在这里判断 browser.open 就早退。
+    //   栏可能已经开着但正显示**文件预览** —— 这时直接 return 只有
+    //   "标一下活跃"的效果，屏幕毫无变化，用户以为点了没反应。
+    //   openEmpty() 自己会区分：没开就打开、开着文件就切到网页模式。
+    browser.openEmpty();
+    _notify();
+  }
+
   /// 关闭展示栏。
   ///
   /// ★ 必须经过 AppState：展示栏是 HomeShell 布局里的一列，
@@ -2378,6 +2392,35 @@ class AppState extends ChangeNotifier {
         taskRuns.applyEvent(ev);
         return;
 
+      // ★ 旧任务板（state.tasks）的增量事件。
+      //
+      //   这两个事件服务端一直在发，但前端从没处理过 —— 于是任务板上
+      //   「已完成」的条目要等重连/重新拉取才消失，看起来像卡住了。
+      //   字段名以服务端实际下发为准（store.js）：
+      //     task.updated → { t, task }
+      //     task.deleted → { t, taskId }
+      case 'task.updated':
+        final raw = ev['task'];
+        if (raw is! Map) return;
+        final updated = TaskItem.fromJson(Map<String, dynamic>.from(raw));
+        final at = tasks.indexWhere((t) => t.id == updated.id);
+        // ★ 必须整表替换，不能就地改。
+        //   tasks 的初始值是 const []（不可变），往里 add / 下标赋值
+        //   会直接抛 UnsupportedError，整条事件链断掉。
+        tasks = at >= 0
+            ? [for (final t in tasks) t.id == updated.id ? updated : t]
+            : [...tasks, updated];
+        _notify();
+        return;
+
+      case 'task.deleted':
+        final id = ev['taskId'];
+        if (id is! String || id.isEmpty) return;
+        // 同上：where().toList() 产生新列表，不碰 const []
+        tasks = tasks.where((t) => t.id != id).toList();
+        _notify();
+        return;
+
       case 'msg.steps':
         final msg = _find(ev['roomId'] as String, ev['msgId'] as String);
         if (msg != null) {
@@ -2421,6 +2464,28 @@ class AppState extends ChangeNotifier {
         final msgId = ev['msgId'] as String?;
         if (roomId != null && msgId != null) {
           messages[roomId]?.removeWhere((m) => m.id == msgId);
+          // ★ 左边会话列表的预览也要跟着退。
+          //
+          //   原来只删了 messages 里的那条，room.lastMessage 还指着它 ——
+          //   于是列表里继续显示一条已经不存在的消息（典型场景：成员的
+          //   「[PASS]」被删了，左侧预览还挂着 [PASS]）。
+          //   这里在被删的正好是"最后一条"时，退回该房间剩下的最后一条。
+          final at = rooms.indexWhere((r) => r.id == roomId);
+          if (at >= 0 && rooms[at].lastMessage?.id == msgId) {
+            final left = messages[roomId];
+            // ★ 只有拿到确切的新"最后一条"才替换。
+            //
+            //   messages[roomId] 为空**不代表这个房间没消息** ——
+            //   可能只是没打开过、列表里还没加载过（或者被 [PASS] 一条条删空）。
+            //   这时把 lastMessage 置 null / lastMessageAt 置 0，
+            //   左侧预览会变空白、房间排序也会沉到底部 —— 比留着旧值更糟。
+            if (left != null && left.isNotEmpty) {
+              final room = rooms[at];
+              room.lastMessage = left.last;
+              room.lastMessageAt = left.last.createdAt;
+            }
+            // left 为空：保持原值不动。
+          }
         }
         break;
 
@@ -2547,6 +2612,12 @@ class AppState extends ChangeNotifier {
     if (msg.authorType != 'bot') return;
     final text = msg.text.trim();
     if (text.isEmpty) return;
+    // ★ PASS 不弹通知。
+    //
+    //   「[PASS]」是 bot 之间的约定信号（"这轮没我的事"），不是给用户看的内容。
+    //   它随后会被服务端删掉，但 msg.done 那一刻还来不及删 ——
+    //   不拦的话用户会收到一条"XX：[PASS]"的系统通知，点进去那条消息已经没了。
+    if (_isPassText(text)) return;
     if (foreground && _openRoomId == msg.roomId) return;
     final room = rooms.where((r) => r.id == msg.roomId).firstOrNull;
     Notifier.show(
@@ -2557,6 +2628,17 @@ class AppState extends ChangeNotifier {
       body: preview(text, 120),
       roomId: msg.roomId,
     );
+  }
+
+  /// 「[PASS]」这类"没有内容"的约定信号。
+  ///
+  /// 放这里而不是散在各处：服务端用它判"不写私聊/不建进展卡"，
+  /// 客户端用它判"不弹通知"，两边口径要一致。
+  static bool _isPassText(String text) {
+    final t = text.trim();
+    // ★ 必须转义方括号：不转义时 [PASS] 是字符集（匹配单个 P/A/S），
+    //   实际的「[PASS]」文本反而匹配不上。和服务端 r'^\[?PASS\]?$' 保持一字不差。
+    return t.isNotEmpty && RegExp(r'^\[?PASS\]?$', caseSensitive: false).hasMatch(t);
   }
 
   void _touchRoom(String roomId, Msg msg) {

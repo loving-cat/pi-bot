@@ -65,43 +65,109 @@ export function sanitizeHtml(html) {
  * 包一层页面外壳。样式内联（不引外部资源），深浅色跟随系统。
  * 表格用 position: sticky 的表头，长表滚动时还能看见列名。
  */
-function pageShell({ title, body, subtitle = '' }) {
+/**
+ * 页面根 class：把 App 的显式主题写进去。
+ *
+ * 为什么不只靠 prefers-color-scheme：App 的主题是独立设置
+ * （存 SharedPreferences、默认深色），和系统深浅色可以不一致。
+ * 不传 theme 时返回空串 —— 这时页面跟随系统，旧的 /html 链接照样能看。
+ */
+function themeClass(theme) {
+  if (theme === 'light') return 'theme-light';
+  if (theme === 'dark') return 'theme-dark';
+  return '';
+}
+
+function pageShell({ title, body, subtitle = '', theme } = {}) {
   return `<!DOCTYPE html>
-<html lang="zh-CN"><head><meta charset="utf-8">
+<html lang="zh-CN" class="${themeClass(theme)}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${escapeHtml(title)}</title>
 <style>
-  :root { color-scheme: dark light; }
+  /* ★ 颜色全部走 CSS 变量，跟随系统深浅色。
+     以前是硬编码深色：浏览器栏工具栏跟着 App 主题变浅，网页内容却一直是深色，
+     浅色模式下割裂得很明显。
+     color-scheme 也要跟着变 —— 它决定滚动条、表单控件的默认配色。 */
+  :root {
+    color-scheme: light dark;
+    --bg: #121212;
+    --fg: #e6e6e6;
+    --muted: #8a8a8a;
+    --sub: #cfcfcf;
+    --border: #2a2a2a;
+    --cell: #242424;
+    --head: #1d1d1d;
+    --stripe: #161616;
+    --hover: #1f1f1f;
+    --tag: #7a7a7a;
+  }
+  /* 显式主题（App 传了 theme 时）优先于系统偏好：
+     App 的主题是独立设置，和系统深浅色可以不一致。 */
+  /* ★ 显式主题：由 App 传参决定，优先级高于系统偏好。
+     App 的深浅色是独立设置（存本地偏好、默认深色），和系统深浅色可以不一致
+     —— 只写 color-scheme 是不够的，必须把颜色变量也一起换掉。
+     （之前只改了 color-scheme，于是系统是深色时网页永远深色，
+       浅色 App 里看表格页就是一块黑。） */
+  html.theme-dark { color-scheme: dark; }
+  html.theme-dark, html.theme-dark body {
+    --bg: #121212; --fg: #e6e6e6; --muted: #8a8a8a; --sub: #cfcfcf;
+    --border: #2a2a2a; --cell: #242424; --head: #1d1d1d;
+    --stripe: #161616; --hover: #1f1f1f; --tag: #7a7a7a;
+  }
+  html.theme-light { color-scheme: light; }
+  html.theme-light, html.theme-light body {
+    --bg: #fdfdfd; --fg: #1c1c1e; --muted: #6b6b70; --sub: #3a3a3e;
+    --border: #e2e2e6; --cell: #ececef; --head: #f4f4f6;
+    --stripe: #fafafb; --hover: #f0f0f3; --tag: #85858b;
+  }
+  /* 没传 theme 时跟随系统（旧的 /html 链接仍然正常） */
+  @media (prefers-color-scheme: light) {
+    :root:not(.theme-dark) {
+      --bg: #fdfdfd;
+      --fg: #1c1c1e;
+      --muted: #6b6b70;
+      --sub: #3a3a3e;
+      --border: #e2e2e6;
+      --cell: #ececef;
+      --head: #f4f4f6;
+      --stripe: #fafafb;
+      --hover: #f0f0f3;
+      --tag: #85858b;
+    }
+  }
+  /* html 和 body 都要给底色：内容不满一屏或滚动越界时，
+     露出来的是 WebView 自己的默认底（白/黑），不跟着页面走。 */
+  html { background: var(--bg); min-height: 100%; }
   * { box-sizing: border-box; }
   body {
     margin: 0; padding: 16px 18px 40px;
     font: 13px/1.55 -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
-    color: #e6e6e6; background: #121212;
+    color: var(--fg); background: var(--bg);
   }
   h1 { font-size: 15px; font-weight: 600; margin: 0 0 2px; }
-  .sub { font-size: 11px; color: #8a8a8a; margin-bottom: 14px; }
+  .sub { font-size: 11px; color: var(--muted); margin-bottom: 14px; }
   .sheet { margin-bottom: 26px; }
-  .sheet h2 { font-size: 13px; font-weight: 600; margin: 0 0 8px; color: #cfcfcf; }
-  .wrap { overflow: auto; max-height: 78vh; border: 1px solid #2a2a2a; border-radius: 8px; }
+  .sheet h2 { font-size: 13px; font-weight: 600; margin: 0 0 8px; color: var(--sub); }
+  .wrap { overflow: auto; max-height: 78vh; border: 1px solid var(--border); border-radius: 8px; }
   table { border-collapse: collapse; font-size: 12px; width: max-content; min-width: 100%; }
   th, td {
-    border-right: 1px solid #242424; border-bottom: 1px solid #242424;
+    border-right: 1px solid var(--cell); border-bottom: 1px solid var(--cell);
     padding: 6px 10px; text-align: left; vertical-align: top;
     max-width: 420px; overflow-wrap: anywhere; white-space: pre-wrap;
   }
-  th { position: sticky; top: 0; background: #1d1d1d; font-weight: 600; z-index: 1; }
-  tbody tr:nth-child(even) { background: #161616; }
-  tbody tr:hover { background: #1f1f1f; }
+  th { position: sticky; top: 0; background: var(--head); font-weight: 600; z-index: 1; }
+  tbody tr:nth-child(even) { background: var(--stripe); }
+  tbody tr:hover { background: var(--hover); }
   .num { text-align: right; font-variant-numeric: tabular-nums; }
   .page { margin-bottom: 22px; }
   .page-tag {
-    font-size: 10px; color: #7a7a7a; letter-spacing: .06em;
+    font-size: 10px; color: var(--tag); letter-spacing: .06em;
     margin-bottom: 6px; text-transform: uppercase;
   }
   pre.body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
   img { max-width: 100%; height: auto; border-radius: 6px; }
-  .more { font-size: 11px; color: #8a8a8a; padding: 6px 2px; }
-  .empty { font-size: 12px; color: #8a8a8a; padding: 20px 2px; }
+  .more { font-size: 11px; color: var(--muted); padding: 6px 2px; }
+  .empty { font-size: 12px; color: var(--muted); padding: 20px 2px; }
 </style></head>
 <body>
 <h1>${escapeHtml(title)}</h1>
@@ -237,7 +303,7 @@ export function cleanDocxHtml(html) {
     .replace(/<img\b[^>]*>/gi, (tag) => (/\bsrc\s*=\s*(?:""|'')/.test(tag) ? '' : tag));
 }
 
-export async function docxToHtml(buffer, baseUrl) {
+export async function docxToHtml(buffer, { theme } = {}) {
   const result = await mammoth.convertToHtml(
     { buffer },
     {
@@ -250,7 +316,7 @@ export async function docxToHtml(buffer, baseUrl) {
   // 清洗逻辑收在 cleanDocxHtml 里（单测覆盖），这里不重复一遍
   const cleaned = cleanDocxHtml(result?.value ?? '');
   return {
-    html: pageShell({ title: 'Word 文档', body: `<div class="doc">${cleaned}</div>` }),
+    html: pageShell({ title: 'Word 文档', body: `<div class="doc">${cleaned}</div>`, theme }),
     warnings: result?.messages?.length ?? 0,
   };
 }
@@ -259,7 +325,14 @@ export async function docxToHtml(buffer, baseUrl) {
  * 主入口：把文件渲染成 HTML 页面。
  * @returns {Promise<{html:string, kind:string}>}
  */
-export async function renderFileAsHtml(filePath, { displayName } = {}) {
+/**
+ * @param {string} filePath
+ * @param {object} [opts]
+ * @param {string} [opts.displayName] 界面上显示的文件名
+ * @param {'dark'|'light'} [opts.theme] App 当前主题。页面据此决定深浅，
+ *   不传就跟随系统 prefers-color-scheme（旧的 /html 链接仍然能正常看）。
+ */
+export async function renderFileAsHtml(filePath, { displayName, theme } = {}) {
   const ext = path.extname(filePath).toLowerCase();
   const kind = htmlRenderKind(ext);
   const name = displayName || path.basename(filePath);
@@ -273,16 +346,17 @@ export async function renderFileAsHtml(filePath, { displayName } = {}) {
         html: pageShell({
           title: name,
           body: delimitedToHtml(text, { delimiter: ext === '.tsv' ? '\t' : ',' }),
+          theme,
         }),
       };
     }
     const workbook = XLSX.readFile(filePath, { cellDates: true });
-    return { kind, html: pageShell({ title: name, body: sheetToHtml(workbook) }) };
+    return { kind, html: pageShell({ title: name, body: sheetToHtml(workbook), theme }) };
   }
 
   if (kind === 'docx') {
     const buffer = fs.readFileSync(filePath);
-    const out = await docxToHtml(buffer);
+    const out = await docxToHtml(buffer, { theme });
     return { kind, html: out.html.replace('<h1>Word 文档</h1>', `<h1>${escapeHtml(name)}</h1>`) };
   }
 

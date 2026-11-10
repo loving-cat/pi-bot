@@ -27,15 +27,47 @@ async function test(name, fn) {
   }
 }
 
-/** 造一个假的 fetch，记录调用次数 */
-function fakeFetch(response, { throws = null } = {}) {
+/**
+ * 造一个假的 fetch，记录调用次数。
+ *
+ * ★ 现在默认走 **atom feed**（见 update-checker.js：API 有 60 次/小时的匿名限流，
+ *   被用户用光后就一直报 HTTP 403）。所以假的响应要能当 XML 读 ——
+ *   只给 json() 的话 atom 那条路会失败、回退到 API，调用次数就变成 2 了。
+ *
+ * 默认给一份含 `tag_name` 对应版本的最小 atom，让 atom 路径直接命中；
+ * 用例想测 API 兜底时传 { atom: false }。
+ */
+function fakeFetch(response, { throws = null, atom = true } = {}) {
   let calls = 0;
-  const impl = async () => {
+  let atomCalls = 0;
+  const impl = async (url) => {
     calls++;
     if (throws) throw throws;
+    const isAtom = atom && String(url ?? '').endsWith('.atom');
+    if (isAtom) {
+      atomCalls++;
+      // 从 response.json 里的 tag_name 推断 atom 的 tag ——
+      // 这样「远端比当前旧」这类用例在 atom 路径上也成立
+      let tag = 'v9.9.9';
+      try {
+        const raw = await response.json();
+        if (raw?.tag_name) tag = raw.tag_name;
+      } catch {}
+      return {
+        ok: true,
+        status: 200,
+        text: async () =>
+          '<feed><entry><updated>2026-10-17T00:00:00Z</updated>' +
+          '<link rel="alternate" type="text/html" href="https://example.com/releases/tag/' + tag + '"/>' +
+          '<title>Release ' + tag + '</title></entry></feed>',
+        json: async () => ({}),
+      };
+    }
     return response;
   };
   impl.calls = () => calls;
+  /// atom 请求次数（不含补 assets 的 API 调用）
+  impl.atomCalls = () => atomCalls;
   return impl;
 }
 
@@ -85,7 +117,9 @@ await test('缓存命中时不重复请求', async () => {
   const f = fakeFetch({ ok: true, json: async () => okRelease });
   await checkForUpdate({ platform: 'win32', fetchImpl: f });
   const second = await checkForUpdate({ platform: 'win32', fetchImpl: f });
-  assert.equal(f.calls(), 1, '第二次应该走缓存');
+  // 断言 atom 请求次数：这是"是否真的又查了一次"的准确指标
+  // （有新版本时还会补一次 API 拿下载包，那是另一回事）
+  assert.equal(f.atomCalls(), 1, '第二次应该走缓存');
   assert.equal(second.cached, true);
 });
 
@@ -94,13 +128,15 @@ await test('force 跳过缓存', async () => {
   const f = fakeFetch({ ok: true, json: async () => okRelease });
   await checkForUpdate({ platform: 'win32', fetchImpl: f });
   await checkForUpdate({ platform: 'win32', fetchImpl: f, force: true });
-  assert.equal(f.calls(), 2);
+  assert.equal(f.atomCalls(), 2);
 });
 
 await test('HTTP 非 200 → ok:false 且说明状态码', async () => {
   clearUpdateCache();
+  // atom: false —— 这条测的是 API 兜底路径的错误处理
+  // （atom 正常时不会走到 API；两条路都失败才报错）
   const info = await checkForUpdate({
-    fetchImpl: fakeFetch({ ok: false, status: 404, json: async () => ({}) }),
+    fetchImpl: fakeFetch({ ok: false, status: 404, json: async () => ({}) }, { atom: false }),
   });
   assert.equal(info.ok, false);
   assert.equal(info.update, false);
@@ -131,7 +167,7 @@ await test('失败不进缓存，下次能立刻重试', async () => {
   const good = fakeFetch({ ok: true, json: async () => okRelease });
   const retry = await checkForUpdate({ platform: 'win32', fetchImpl: good });
   assert.equal(retry.ok, true, '失败后重试应该真的再请求一次');
-  assert.equal(good.calls(), 1);
+  assert.equal(good.atomCalls(), 1);
 });
 
 await test('没有 fetch 时给出明确原因而不是崩', async () => {

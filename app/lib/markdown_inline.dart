@@ -1,3 +1,5 @@
+import 'package:characters/characters.dart';
+
 import 'text_utils.dart';
 
 enum MarkdownInlineKind {
@@ -123,6 +125,103 @@ List<MarkdownInlineToken> markdownInlineTokens(
     );
   }
   return tokens;
+}
+
+/// markdownPreviewText 用到的正则，提到文件顶层只建一次。
+///
+/// 这些正则原来在函数体里 —— 每次调用都要新建十几个 RegExp 对象，
+/// 而引用条在流式回复时每帧都会重建，白白产生大量分配。
+final RegExp _reFence = RegExp(r'```[^\n]*\n?');
+final RegExp _reBlockMark = RegExp(
+  r'^[ \t]*(#{1,6}|>|[-*+]|\d+\.)[ \t]+',
+  multiLine: true,
+);
+final RegExp _reHr = RegExp(
+  r'^[ \t]*(-{3,}|\*{3,}|_{3,})[ \t]*$',
+  multiLine: true,
+);
+final RegExp _reCodeSpan = RegExp(r'`([^`]*)`');
+final RegExp _reStrongStar = RegExp(r'\*\*([^*]+)\*\*');
+final RegExp _reStrongUnderscore = RegExp(r'__([^_]+)__');
+final RegExp _reStrike = RegExp(r'~~([^~]+)~~');
+final RegExp _reEmStar = RegExp(r'\*([^*\n]+)\*');
+final RegExp _reEmUnderscore = RegExp(
+  r'(?<![A-Za-z0-9_])_([^_\n]+)_(?![A-Za-z0-9_])',
+);
+final RegExp _reLinkImage = RegExp(r'!?\[([^\]]*)\]\([^)]*\)');
+final RegExp _reAutoLink = RegExp(r'<((?:https?|mailto):[^>]+)>');
+final RegExp _reMidHash = RegExp(r'(?<=[\s。！？；：，、.,!?;:]|^)#{1,6}[ \t]+');
+final RegExp _reMidQuote = RegExp(r'(?<=[\s。！？；：，、.,!?;:]|^)>[ \t]+');
+final RegExp _reSpace = RegExp(r'\s+');
+final RegExp _reLooseMarks = RegExp(r'(^|\s)[*#`~]+(?=\s|$)');
+final RegExp _reLeadMarks = RegExp(r'^[*#`~]+');
+
+/// 预览只需要前面一小段：引用原文可能几千字，全文跑正则没必要。
+const int _previewScanLimit = 500;
+
+/// 把一段 Markdown 压成适合「单行预览」的纯文本。
+///
+/// 引用条、通知这类地方只显示一行摘要，不能直接把原文丢给 MdText：
+///   · 原文里的 ## 是块级标记，必须**在行首**才生效 ——
+///     预览把整段压成一行后 ## 跑到句子中间，渲染器不认，就原样显示出来了；
+///   · 按长度截断还可能切在 ** 中间，标记一半配对不上，也是原样显示。
+/// 所以这里按「先剥标记、再截断」的顺序处理。
+///
+/// 只剥常见的行内/块级标记，目标是「读起来干净」，不是完整 Markdown 解析。
+String markdownPreviewText(String source, {int maxChars = 60}) {
+  // 先截一段再处理：引用条最多显示一行，后面上千字剥不剥都一样看不见
+  var s = source.length > _previewScanLimit
+      ? source.substring(0, _previewScanLimit)
+      : source;
+
+  // 1) 围栏代码块整体塌成一行（内容保留首行，后面用省略号）
+  s = s.replaceAll(_reFence, ' ');
+
+  // 2) 行首块级标记：标题、引用、列表、任务框、分隔线
+  s = s.replaceAll(_reBlockMark, '');
+  s = s.replaceAll(_reHr, '');
+
+  // 3) 行内标记：行内代码、强调、删除线、链接文字
+  //    注意 Dart 里引用分组要用 replaceAllMapped —— replaceAll 的 $1 是字面量。
+  String unwrap(RegExp re, String input) =>
+      input.replaceAllMapped(re, (m) => m.group(1) ?? '');
+  s = unwrap(_reCodeSpan, s);
+  s = unwrap(_reStrongStar, s);
+  s = unwrap(_reStrongUnderscore, s);
+  s = unwrap(_reStrike, s);
+  s = unwrap(_reEmStar, s);
+  s = unwrap(_reEmUnderscore, s);
+
+  // 4) 链接/图片：留文字，丢地址
+  s = unwrap(_reLinkImage, s);
+  s = unwrap(_reAutoLink, s);
+
+  // 4.5) 被压平后跑到句子中间的块级标记。
+  //      原文里的「## ① 本期结论」换行被压掉后变成「实测。## ①」，
+  //      前面是标点而不是空格，所以这里把常见的句子边界都算上。
+  //      只在「前面像句子边界 + 后面跟空格」时剥 —— 正文里正常出现的
+  //      #1、C#、#tag 这类（前面是字母数字或后面没有空格）不动。
+  s = s.replaceAll(_reMidHash, '');
+  s = s.replaceAll(_reMidQuote, '');
+
+  // 5) 摊平空白（这一步放到最后：上面几步都依赖换行判断行首）
+  s = s.replaceAll(_reSpace, ' ').trim();
+
+  // 6) 残留的孤立标记符号（截断/不成对时留下的）直接去掉。
+  //    ★ 这里必须用 replaceAllMapped：replaceAll 的 $1 不会展开，
+  //      会把 a * b 变成 a$1b。
+  s = s.replaceAllMapped(_reLooseMarks, (m) => m.group(1) ?? '');
+  s = s.replaceAll(_reLeadMarks, '');
+  s = s.trim();
+
+  // 7) 截断。用 characters 而不是 substring / runes ——
+  //    substring 按 UTF-16 code unit 切会切坏代理对；
+  //    runes 会把组合 emoji（如 👨‍👩‍👧）拆成多个码点。
+  final chars = s.characters;
+  if (chars.length > maxChars) {
+    s = '${chars.take(maxChars)}…';
+  }
+  return s;
 }
 
 /// 提取与行内渲染一致的可见文字，保留换行并以标签代替链接目标。

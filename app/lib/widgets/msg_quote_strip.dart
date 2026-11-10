@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../markdown_inline.dart';
 import '../models.dart';
 import '../theme.dart';
 
@@ -27,20 +28,21 @@ class MsgQuoteStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final text = quoted?.text.replaceAll(RegExp(r'\s+'), ' ').trim() ?? '';
     if (quoted == null && fallbackName.isEmpty) return const SizedBox.shrink();
 
     final who = quoted == null
         ? fallbackName
         : (quoted!.authorName.isNotEmpty ? quoted!.authorName : fallbackName);
-    final preview = text.isEmpty
-        ? '（原消息）'
-        // ★ 按「字符」截断，不是按 UTF-16 code unit。
-        //   substring 数的是 code unit，第 60 个正好落在代理对中间时，
-        //   预览尾部会渲染成「�」。characters 会按字素簇切。
-        : (text.characters.length > 60
-              ? '${text.characters.take(60)}…'
-              : text);
+
+    // ★ 用 markdownPreviewText 而不是直接截原文。
+    //
+    //   早先的做法先把整段空白压成一个空格、再按 60 字截断。两个坑：
+    //     · ## 是块级标记，必须位于行首才生效；压成一行后它跑到句子中间，
+    //       渲染器不认，就原样显示成 ##；
+    //     · ** 被截断切掉一半时配对不上，也原样显示。
+    //   所以引用条这里显示的是**剥掉标记后的纯文本预览**，
+    //   而不是把一小段 Markdown 丢给渲染器 —— 一行摘要也确实排不下标题块。
+    final preview = markdownPreviewText(quoted?.text ?? '', maxChars: 60);
 
     // ★ onTap 为空时不要套 GestureDetector。
     //
@@ -74,6 +76,8 @@ class MsgQuoteStrip extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 1),
+              // 这里是**剥净标记后的纯文本**（见上面 markdownPreviewText），
+              // 所以用普通 Text。一行摘要排不下标题块，不该走 MdText。
               Text(
                 preview,
                 maxLines: 1,

@@ -846,7 +846,13 @@ class _UpdateRowState extends State<_UpdateRow> {
       return;
     }
     if (!info.ok) {
-      toast(context, info.reason);
+      // 原样显示服务端给的原因（例如 HTTP 403、超时 8 秒）。
+      // 以前统一说「服务端没连上或网络不通」，可实际失败经常是
+      // GitHub API 限流 —— 用户看到「网络不通」会去查网络，白折腾。
+      toast(
+        context,
+        info.reason.isEmpty ? s.t('settings.update.failed') : info.reason,
+      );
       return;
     }
     if (!info.update) {

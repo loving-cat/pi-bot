@@ -40,6 +40,121 @@ class _HomeShellState extends State<HomeShell> {
   bool _fileInlineAvailable = false;
   int? _pendingFileHandoff;
 
+  // ★ 让 pane 的 Element/State 跟着**迁移**而不是销毁重建。
+  //
+  //   同一个 pane 在并排模式（Row → _animatedPane → _pane）和浮层模式
+  //   （Stack → Positioned → _pane）下挂在完全不同的父链上。没有 GlobalKey 时，
+  //   父链一换 Flutter 就 dispose 旧子树再 init 新的：
+  //     · 浏览器是无痕 WebView —— 重建后白屏重载、丢滚动和表单，还容易掉登录
+  //     · RoomPanel 的任务详情、记忆 tab 一起丢
+  //   默认窗口约 1180px 就能踩中（两个 pane 都开时阈值约 1198px）。
+  //
+  //   加上 GlobalKey 后 Element（含 InAppWebView 的平台视图）会整体迁过去。
+  //
+  //   同一帧里同一个 kind 只能出现在一处：并排和浮层互斥（见 _buildShell 的 assert）。
+  final _browserPaneKey = GlobalKey(debugLabel: 'shell-browser-pane');
+  final _roomPanelKey = GlobalKey(debugLabel: 'shell-room-panel');
+
+  // ★ 拖动分隔条时缓存子树 widget 实例。
+  //
+  //   拖一下每帧都 setState，_buildShell 每次都会 new 出 RoomsScreen、
+  //   RoomPanel、BrowserPane —— Element.updateChild 看到 widget 实例变了
+  //   就会 rebuild 整棵子树。输入（参数）没变时返回**同一个实例**，
+  //   Flutter 会判定「widget 没变」直接跳过 rebuild。
+  //
+  //   能省的是：会话列表、右栏、以及它们下面的所有东西。
+  //   聊天栏本身的宽度在变，可见气泡必须经 LayoutBuilder 重排，这块省不掉。
+  //
+  //   ★ 依赖一个前提：主题切换会整树重挂（main.dart 里那个
+  //     ValueListenableBuilder + KeyedSubtree）。缓存只在**本地 setState**
+  //     （拖动、选会话）的帧里生效；一旦主题/语言/MediaQuery 变化，
+  //     didChangeDependencies 会先清空缓存，行为和改前一致。
+  //     以后如果改掉 main.dart 那个「整树重挂」机制，这里的缓存会让
+  //     颜色/文案停在旧值上 —— 到时候必须一并清缓存。
+  RoomsScreen? _cachedRooms;
+  String? _cachedRoomsSelectedId;
+  Widget? _cachedRoomPanel;
+  String? _cachedRoomPanelRoomId;
+  double? _cachedRoomPanelWidth;
+  bool? _cachedRoomPanelTrailing;
+  Widget? _cachedBrowserPane;
+  double? _cachedBrowserPaneWidth;
+  bool? _cachedBrowserPaneTrailing;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // 依赖变了（主题 / 语言 / MediaQuery / AppScope 通知）→ 缓存全部作废，
+    // 走和改前完全一样的重建路径。
+    _cachedRooms = null;
+    _cachedRoomsSelectedId = null;
+    _cachedRoomPanel = null;
+    _cachedRoomPanelRoomId = null;
+    _cachedRoomPanelWidth = null;
+    _cachedRoomPanelTrailing = null;
+    _cachedBrowserPane = null;
+    _cachedBrowserPaneWidth = null;
+    _cachedBrowserPaneTrailing = null;
+  }
+
+  /// 参数没变就返回上一次的实例，让 Element.updateChild 跳过 rebuild。
+  Widget _roomsPane(AppState state, String? selectedId) {
+    if (_cachedRooms != null && _cachedRoomsSelectedId == selectedId) {
+      return _cachedRooms!;
+    }
+    _cachedRoomsSelectedId = selectedId;
+    return _cachedRooms = RoomsScreen(
+      embedded: true,
+      selectedId: selectedId,
+      onSelect: (room) => setState(() => _selectedId = room.id),
+    );
+  }
+
+  Widget _browserPane(
+    AppState state,
+    double width, {
+    required bool trailing,
+  }) {
+    if (_cachedBrowserPane != null &&
+        _cachedBrowserPaneWidth == width &&
+        _cachedBrowserPaneTrailing == trailing) {
+      return _cachedBrowserPane!;
+    }
+    _cachedBrowserPaneWidth = width;
+    _cachedBrowserPaneTrailing = trailing;
+    return _cachedBrowserPane = _pane(
+      state,
+      null,
+      PaneKind.browser,
+      width,
+      trailing: trailing,
+    );
+  }
+
+  Widget _roomPanelPane(
+    AppState state,
+    Room room,
+    double width, {
+    required bool trailing,
+  }) {
+    if (_cachedRoomPanel != null &&
+        _cachedRoomPanelRoomId == room.id &&
+        _cachedRoomPanelWidth == width &&
+        _cachedRoomPanelTrailing == trailing) {
+      return _cachedRoomPanel!;
+    }
+    _cachedRoomPanelRoomId = room.id;
+    _cachedRoomPanelWidth = width;
+    _cachedRoomPanelTrailing = trailing;
+    return _cachedRoomPanel = _pane(
+      state,
+      room,
+      PaneKind.roomPanel,
+      width,
+      trailing: trailing,
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -117,6 +232,18 @@ class _HomeShellState extends State<HomeShell> {
       browserPreference: _browserWidth,
     );
 
+    // ★ 同一个 pane 在同一帧里只能出现一处 —— 否则两个 GlobalKey 会撞。
+    //   并排（panelWidth/browserWidth > 0）和浮层（overlay*Width > 0）互斥，
+    //   这条 assert 就是用来守住这个前提的：以后改布局算法时它先炸，
+    //   而不是等到 WebView 白屏才发现。
+    assert(() {
+      final panelBoth =
+          layout.panelWidth > 0 && layout.overlayPanelWidth > 0;
+      final browserBoth =
+          layout.browserWidth > 0 && layout.overlayBrowserWidth > 0;
+      return !panelBoth && !browserBoth;
+    }(), '同一个 pane 不能同时出现在并排和浮层两处');
+
     void closeOverlay() {
       if (layout.overlayBrowserWidth > 0) {
         state.closeBrowserPane();
@@ -139,12 +266,7 @@ class _HomeShellState extends State<HomeShell> {
                     child: WindowChromeRegion(
                       leading: true,
                       trailing: false,
-                      child: RoomsScreen(
-                        embedded: true,
-                        selectedId: selected?.id,
-                        onSelect: (room) =>
-                            setState(() => _selectedId = room.id),
-                      ),
+                      child: _roomsPane(state, selected?.id),
                     ),
                   ),
                 ),
@@ -193,12 +315,16 @@ class _HomeShellState extends State<HomeShell> {
                     }),
                     onDragEnd: () => state.saveLayoutWidths(right: _rightWidth),
                   ),
-                  _animatedPane(
-                    state,
-                    selected,
-                    PaneKind.roomPanel,
-                    layout.panelWidth,
-                    trailing: !layout.hasOverlay && layout.browserWidth == 0,
+                  // 缓存版：宽度和会话没变就复用同一个实例（见 _roomPanelPane）
+                  _animatedPaneWith(
+                    kind: PaneKind.roomPanel,
+                    width: layout.panelWidth,
+                    child: _roomPanelPane(
+                      state,
+                      selected!,
+                      layout.panelWidth,
+                      trailing: !layout.hasOverlay && layout.browserWidth == 0,
+                    ),
                   ),
                 ],
                 if (layout.browserWidth > 0) ...[
@@ -214,12 +340,15 @@ class _HomeShellState extends State<HomeShell> {
                     onDragEnd: () =>
                         state.saveLayoutWidths(browser: _browserWidth),
                   ),
-                  _animatedPane(
-                    state,
-                    selected,
-                    PaneKind.browser,
-                    layout.browserWidth,
-                    trailing: !layout.hasOverlay,
+                  _animatedPaneWith(
+                    child: _browserPane(
+                      state,
+                      layout.browserWidth,
+                      // 并排且浏览器是最右 pane 时要给窗口按钮让位（非 macOS 用）
+                      trailing: !layout.hasOverlay,
+                    ),
+                    kind: PaneKind.browser,
+                    width: layout.browserWidth,
                   ),
                 ],
               ],
@@ -320,12 +449,11 @@ class _HomeShellState extends State<HomeShell> {
     });
   }
 
-  Widget _animatedPane(
-    AppState state,
-    Room? room,
-    PaneKind kind,
-    double width, {
-    bool trailing = false,
+  /// 展开动画外壳；内容由调用方先构建好（可能是缓存实例）。
+  Widget _animatedPaneWith({
+    required Widget child,
+    required PaneKind kind,
+    required double width,
   }) => TweenAnimationBuilder<double>(
     key: ValueKey(kind),
     duration: const Duration(milliseconds: 240),
@@ -342,7 +470,7 @@ class _HomeShellState extends State<HomeShell> {
         ),
       ),
     ),
-    child: _pane(state, room, kind, width, trailing: trailing),
+    child: child,
   );
 
   Widget _pane(
@@ -352,16 +480,20 @@ class _HomeShellState extends State<HomeShell> {
     double width, {
     bool leading = false,
     bool trailing = false,
-  }) => WindowChromeRegion(
-    leading: leading,
-    trailing: trailing,
-    child: Listener(
-      onPointerDown: (_) => state.browser.activity.touched(kind),
-      onPointerSignal: (_) => state.browser.activity.touched(kind),
-      child: RepaintBoundary(
-        child: kind == PaneKind.browser
-            ? BrowserPane(state: state.browser, width: width)
-            : RoomPanel(room: room!, width: width),
+  }) => KeyedSubtree(
+    // 并排 ↔ 浮层切换时靠这个 GlobalKey 保住子树（见字段处说明）
+    key: kind == PaneKind.browser ? _browserPaneKey : _roomPanelKey,
+    child: WindowChromeRegion(
+      leading: leading,
+      trailing: trailing,
+      child: Listener(
+        onPointerDown: (_) => state.browser.activity.touched(kind),
+        onPointerSignal: (_) => state.browser.activity.touched(kind),
+        child: RepaintBoundary(
+          child: kind == PaneKind.browser
+              ? BrowserPane(state: state.browser, width: width)
+              : RoomPanel(room: room!, width: width),
+        ),
       ),
     ),
   );

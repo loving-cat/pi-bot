@@ -41,6 +41,7 @@ import '../widgets/changed_files.dart';
 import '../widgets/task_board.dart';
 import '../widgets/automation_sheet.dart';
 import '../widgets/tool_steps.dart';
+import '../widgets/browser_pane.dart';
 import '../widgets/room_panel.dart';
 import '../widgets/message_actions.dart';
 import '../widgets/teach_dialog.dart';
@@ -542,6 +543,36 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             if (ok == true) await state.resetSession(room.id);
           },
         ),
+        // ★ 唯一能主动打开浏览器栏的入口。
+        //
+        //   原来只能点聊天里的链接把栏带出来 —— 栏有地址栏、能前进后退，
+        //   却没有任何入口打开它，想搜个网址都做不到。
+        //
+        //   宽屏走右栏；窄屏右栏根本不存在（HomeShell 直接返回会话列表），
+        //   所以改成整页打开 —— 否则状态变了但屏幕上什么都看不到。
+        //
+        //   ★ 判断条件必须和上面「切右侧面板」那一处一致（embedded && 宽屏）。
+        //     只看宽度不够：从助手列表 Navigator.push 出来的私聊页盖在 HomeShell
+        //     上面，这时改 AppState 只会让下层的右栏打开 —— 用户眼前什么都看不到，
+        //     还以为点了没反应。
+        AnchoredMenuItem(
+          icon: LucideIcons.globe,
+          title: s.t('chat.openBrowser'),
+          onTap: () {
+            final twoPane =
+                widget.embedded &&
+                MediaQuery.sizeOf(context).width >= kTwoPaneMinWidth;
+            if (twoPane) {
+              state.openBrowserPane();
+              return;
+            }
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (ctx) => _FullPageBrowser(state: state),
+              ),
+            );
+          },
+        ),
         AnchoredMenuItem(
           icon: LucideIcons.clock,
           title: s.t('chat.automations'),
@@ -572,6 +603,24 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     //   否则先开始、后完成的 bot 的占位会被后完成 bot 的长内容顶上去。
     final display = displayOrderMsgs(msgs);
     final progressGroups = groupProgressMessages(display);
+
+    // ★ Key → index 表，喂给 ListView.builder 的 findChildIndexCallback。
+    //
+    //   列表项本来就有 ValueKey(msg.id) / ValueKey('progress-…')，但**只有 key
+    //   没有回调**时，Flutter 仍按 index 对位：一旦消息重排（占位消息写出第一个字
+    //   后跳回时间位置、insertBefore、msg.moved、用户发消息时末尾占位后移），
+    //   同一 index 上是另一条消息，key 对不上 → 旧元素销毁、新元素 init →
+    //   _Appear 的 240ms 入场动画重播。群聊多个 bot 并发时能看到最新几条闪跳。
+    //
+    //   有了回调，delegate 会先解开 _SaltedValueKey、拿着 item 原来的 key 来问
+    //   「它现在在第几个」，元素就能跟着挪而不是重建。
+    final keyIndex = <Key, int>{
+      for (var i = 0; i < display.length; i++)
+        if (!display[i].isProgress)
+          ValueKey(display[i].id): i
+        else if (progressGroups[i] != null)
+          ValueKey('progress-${display[i].id}'): i,
+    };
     final busy = state.typing[room.id] == true;
     final lead =
         state.botById(room.leadBotId) ??
@@ -882,6 +931,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                       behavior: const NoScrollbarBehavior(),
                                       child: ListView.builder(
                                         controller: _scroll,
+                                        // 重排时按 key 找回位置，避免整行重建
+                                        // （见上面 keyIndex 的说明）
+                                        findChildIndexCallback: (key) =>
+                                            keyIndex[key],
                                         padding: EdgeInsets.fromLTRB(
                                           leftPadForGroup,
                                           20,
@@ -1165,6 +1218,83 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 ),
               ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 整页打开的浏览器（窄屏 / 非 embedded 时用）。
+///
+/// ★ 为什么单独抽一个组件、而不是内联在菜单回调里：
+///   关闭时必须把 browser.open 复位。原来只给 BrowserPane 传了 onClose，
+///   那**只挂在工具栏的 ✕ 按钮上** —— 系统返回键、Esc、侧滑返回走的是
+///   Navigator.pop，根本不会进 onClose。结果是：整页关掉了，但
+///   browser.open 还是 true；用户随后把窗口拉宽，右栏自己冒出来
+///   （显示一个他以为已经关掉的浏览器）。
+///
+///   PopScope 能覆盖所有退出路径，所以用它在真正出栈前统一复位。
+class _FullPageBrowser extends StatefulWidget {
+  const _FullPageBrowser({required this.state});
+
+  final AppState state;
+
+  @override
+  State<_FullPageBrowser> createState() => _FullPageBrowserState();
+}
+
+class _FullPageBrowserState extends State<_FullPageBrowser> {
+  void _close() {
+    // 必须过 AppState：栏是 HomeShell 布局里的一列，
+    // 只有 AppState.notifyListeners 能让它重新布局。
+    // 直接 browser.close() 只会改状态，布局层收不到通知。
+    widget.state.closeBrowserPane();
+    if (mounted) Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      // canPop: false → 拦截**系统返回键/手势**，改由我们自己先复位再 pop。
+      //
+      // ★ 分工：Esc 由下面的 CallbackShortcuts 负责；PopScope 只管
+      //   系统返回（macOS 的 ⌘[ / 触控板滑动、Windows 的 Alt+←）。
+      //   两者最后都走同一个 _close()，行为和 ✕ 按钮一致。
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        _close();
+      },
+      child: CallbackShortcuts(
+        bindings: {
+          // Esc 关闭整页浏览器（焦点在页面本体或普通控件时走这里）
+          const SingleActivator(LogicalKeyboardKey.escape): _close,
+        },
+        child: Focus(
+          // 页面一打开就拿到焦点，否则快捷键收不到按键
+          autofocus: true,
+          // ★ 真正兜住"光标在地址栏里按 Esc"的是这一层。
+          //
+          //   按键先到最内层焦点（TextField），再沿焦点链往上冒泡。
+          //   这里返回 handled 就把事件吃掉，CallbackShortcuts 不会再响应 ——
+          //   所以两条机制不会重复触发关闭（实测：三种焦点位置各只触发一次）。
+          //
+          //   之所以不依赖 CallbackShortcuts 单独完成：它在焦点链**外部**，
+          //   TextField 这类控件若把 Esc 就地消费，事件就冒不到它那里。
+          onKeyEvent: (node, event) {
+            if (event is KeyDownEvent &&
+                event.logicalKey == LogicalKeyboardKey.escape) {
+              _close();
+              return KeyEventResult.handled;
+            }
+            return KeyEventResult.ignored;
+          },
+          child: Scaffold(
+            backgroundColor: PB.bgPane,
+            body: SafeArea(
+              child: BrowserPane(state: widget.state.browser, onClose: _close),
+            ),
+          ),
         ),
       ),
     );
@@ -1790,23 +1920,40 @@ class _AppearState extends State<_Appear> with SingleTickerProviderStateMixin {
   late final AnimationController _c = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 240),
-  )..forward();
+  );
+
+  // ★ CurvedAnimation 只建一次。
+  //
+  //   原来在 build 里 new 一个：每次重建都注册一个新的 listener 到 _c 上，
+  //   而且从不 dispose —— CurvedAnimation 自己会往 parent 加监听，
+  //   不 dispose 就一直挂着，行被反复重建时会累积。
+  //   现在在 initState 建、dispose 里释放。
+  late final CurvedAnimation _curve = CurvedAnimation(
+    parent: _c,
+    curve: Curves.easeOutCubic,
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    _c.forward();
+  }
 
   @override
   void dispose() {
+    _curve.dispose();
     _c.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final curve = CurvedAnimation(parent: _c, curve: Curves.easeOutCubic);
     return FadeTransition(
-      opacity: curve,
+      opacity: _curve,
       child: AnimatedBuilder(
-        animation: curve,
+        animation: _curve,
         builder: (context, child) => Transform.translate(
-          offset: Offset(0, (1 - curve.value) * 8),
+          offset: Offset(0, (1 - _curve.value) * 8),
           child: child,
         ),
         child: widget.child,

@@ -310,6 +310,9 @@ class _RoomsScreenState extends State<RoomsScreen> {
                   ),
                 for (final room in rooms)
                   _RoomRow(
+                    // 按会话 id 加 key：列表重排（新消息把会话顶上来）时
+                    // 元素跟着挪，而不是整行销毁重建（会重播 hover/动画状态）
+                    key: ValueKey(room.id),
                     room: room,
                     state: state,
                     selected: widget.selectedId == room.id,
@@ -514,6 +517,7 @@ class _Banner extends StatelessWidget {
 
 class _RoomRow extends StatefulWidget {
   const _RoomRow({
+    super.key,
     required this.room,
     required this.state,
     required this.onOpen,

@@ -1749,18 +1749,26 @@ export class Store {
   upsertDispatchTask({ roomId, ownerBotId, title, sourceMessageId = null }) {
     const clean = String(title ?? '').trim().slice(0, 200);
     if (!clean || !ownerBotId) return null;
-    const at = now();
+    // ★ 匹配范围：同房间 + 同负责人 + 未完成 + 标题完全相同。
+    //
+    //   原来还要求 10 分钟内有更新，于是"同一件事第二次派下来"会新开一条 ——
+    //   旧的那条继续挂在待办里，看起来像重复劳动。
+    //   去掉时间窗口后，同一条活会被复用；标题必须完全一致，
+    //   不同标题绝不合并（那是两次不同的派活）。
     const existing = (this.state.tasks ?? []).find(
       (t) =>
         t.roomId === roomId &&
         t.ownerBotId === ownerBotId &&
         t.status !== 'done' &&
-        t.title === clean &&
-        at - t.updatedAt < 10 * 60 * 1000,
+        t.title === clean,
     );
     if (existing) {
-      existing.updatedAt = at;
-      this.scheduleSave();
+      // ★ 复用时要回到 doing。
+      //
+      //   旧条目可能停在 open（比如上次被中断后放回待办），
+      //   直接改 updatedAt 不改状态的话，任务板上它仍然显示为「待办」，
+      //   而实际上活已经又派下来了 —— 这就是"已完成/已派还在待办里"的来源之一。
+      this.updateTask(existing.id, { status: 'doing' });
       return existing.id;
     }
     const task = this.createTask({
@@ -1844,6 +1852,28 @@ export class Store {
   }
 
   /** 一轮跑完后收尾：成功/失败都记下来，完成的置为 done 并标记未读 */
+  /**
+   * 作废一条任务（用户插话，这条活作废）。
+   *
+   * ★ 和 finishTask 的区别只在 unreadAt：
+   *   finishTask 会写 unreadAt = now()，那是给"真的干完了、等用户看结果"用的。
+   *   作废不是交付 —— 没有结果要用户确认。用 finishTask 的话每作废一条
+   *   任务板上就多一个红点，用户会以为有一堆新完成的东西等着看。
+   *
+   * 也不引入"已作废"状态：状态仍记为 done，只是不提醒。
+   */
+  voidTask(id) {
+    const task = this.getTask(id);
+    if (!task) return null;
+    task.detail = '用户插话，旧任务作废';
+    task.status = 'done';
+    task.unreadAt = 0;
+    task.updatedAt = now();
+    this.scheduleSave();
+    bus.emit('event', { t: 'task.updated', task });
+    return task;
+  }
+
   finishTask(id, { ok = true, text = '' } = {}) {
     const task = this.getTask(id);
     if (!task) return null;
