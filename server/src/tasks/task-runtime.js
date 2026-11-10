@@ -135,14 +135,20 @@ export function createTaskRuntime({
       const rootId = run.rootTaskId ?? run.id;
       const rootLoaded = rootId === run.id ? loaded : taskRuns.read(rootId);
       const root = rootLoaded?.status === 'found' ? rootLoaded.taskRun : null;
-      const kidsOf = (target) => {
-        try {
-          const scan = taskRuns.listAll?.();
-          const all = scan?.taskRuns ?? scan ?? [];
-          return all.filter((r) => r.parentTaskId === target.id
-            && (r.parentRevision ?? r.revision) === target.revision);
-        } catch { return null; }
-      };
+      // ★ 只扫一次，两个 kidsOf 查询共用。
+      //
+      //   原来 kidsOf(run) 和 kidsOf(root) 各调一次 listAll()，
+      //   每次都是全量 readFileSync + JSON.parse + 契约校验。
+      //   而每次 settle 成功都会触发这个通知，所以是热路径。
+      let scanned = null;
+      try {
+        const scan = taskRuns.listAll?.();
+        scanned = scan?.taskRuns ?? scan ?? [];
+      } catch { scanned = null; }
+      const kidsOf = (target) => (scanned
+        ? scanned.filter((r) => r.parentTaskId === target.id
+            && (r.parentRevision ?? r.revision) === target.revision)
+        : null);
       const nameOf = (botId) => runner.store?.getBot?.(botId)?.name ?? '';
       emit({ t: 'taskRun.updated', taskRun: projectTaskRun(run, { root, children: kidsOf(run), nameOf }) });
       if (root && root.id !== run.id) emit({ t: 'taskRun.updated', taskRun: projectTaskRun(root, { root, children: kidsOf(root), nameOf }) });

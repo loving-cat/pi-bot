@@ -2263,12 +2263,27 @@ class _MessageRow extends StatelessWidget {
                   //     · 正在跑：一行“正在干活…”给人一个反馈（不然以为什么都没发生）
                   //     · 出错了：把失败露出来（失败不能藏）
                   //   跑完且没出错 → 整块消失。
+                  // ★ 工具步骤也要跟着 streamTick 刷新。
+                  //
+                  //   msg.steps 的处理和 msg.delta 一样：改完自增
+                  //   streamTick 就 return，不调 notifyListeners
+                  //   （见 app_state.dart 的 msg.steps 分支）。
+                  //   不订阅的话，「正在干活…」这行和失败卡片同样不会更新。
                   if (msg.steps.isNotEmpty)
-                    ToolSteps(
-                      steps: msg.steps,
-                      // 消息跑完且无错时不渲染（组件自己返回 SizedBox.shrink）
-                      quietWhenDone: true,
-                    ),
+                    streaming
+                        ? ValueListenableBuilder<int>(
+                            valueListenable:
+                                AppScope.read(context).streamTick,
+                            builder: (_, __, ___) => ToolSteps(
+                              steps: msg.steps,
+                              quietWhenDone: true,
+                            ),
+                          )
+                        : ToolSteps(
+                            steps: msg.steps,
+                            // 消息跑完且无错时不渲染（组件自己返回 SizedBox.shrink）
+                            quietWhenDone: true,
+                          ),
                   if (msg.changes != null)
                     ChangedFilesView(summary: msg.changes!),
                   if (msg.attachments.isNotEmpty)
@@ -2308,11 +2323,24 @@ class _MessageRow extends StatelessWidget {
                           ),
                           boxShadow: PB.shadow(y: 1, blur: 4, alpha: 0.22),
                         ),
-                        child: streaming && msg.text.isEmpty
-                            ? const _TypingDots()
-                            : MdText(
-                                streaming ? '${msg.text}▍' : msg.text,
-                                selectable: !streaming,
+                        // ★ 流式气泡单独订阅 streamTick。
+                        //
+                        //   为什么必须这么做：msg.delta 只改 msg.text 然后
+                        //   自增 streamTick，**不调 notifyListeners**
+                        //   （见 app_state.dart 的 msg.delta 分支，末尾是 return）。
+                        //   而 chat_screen 是靠 AppScope.of（InheritedNotifier）
+                        //   在 notifyListeners 时才重建的 —— 所以纯文字流式时
+                        //   气泡内容根本不刷新，要等某个无关事件触发整屏重建
+                        //   才突然显示出全文。这是个显示 bug，不只是性能问题。
+                        //
+                        //   ★ 只让**正在流式的这一条**订阅，绝不能让整个
+                        //   ChatScreen 订阅：否则每 80ms 整屏重建一次，
+                        //   所有可见气泡都会重新解析 Markdown，比现在更卡。
+                        //   用 AppScope.read（不建立依赖），不是 of。
+                        child: !streaming
+                            ? MdText(
+                                msg.text,
+                                selectable: true,
                                 onMentionTap: (name) =>
                                     openBotDm(context, name),
                                 onLinkTap: (url) =>
@@ -2324,6 +2352,28 @@ class _MessageRow extends StatelessWidget {
                                   height: 1.5,
                                   color: PB.textPrimary,
                                 ),
+                              )
+                            : ValueListenableBuilder<int>(
+                                valueListenable:
+                                    AppScope.read(context).streamTick,
+                                builder: (_, __, ___) => msg.text.isEmpty
+                                    ? const _TypingDots()
+                                    : MdText(
+                                        '${msg.text}▍',
+                                        selectable: false,
+                                        onMentionTap: (name) =>
+                                            openBotDm(context, name),
+                                        onLinkTap: (url) => AppScope.read(
+                                          context,
+                                        ).openInBrowser(url),
+                                        mentionOf: mentionOf,
+                                        mentions: mentions,
+                                        style: TextStyle(
+                                          fontSize: PB.fsBase,
+                                          height: 1.5,
+                                          color: PB.textPrimary,
+                                        ),
+                                      ),
                               ),
                       ),
                     ),

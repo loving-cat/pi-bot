@@ -132,6 +132,43 @@ export function attachWs(server, { runner }) {
       socket.isAlive = true;
     });
 
+    // ★ 任务快照只扫一次盘，三个字段共用这一份结果。
+    //
+    //   原来 taskRuns / taskRunMeta / recentTaskRuns 各是一个 IIFE，
+    //   每个都调一次 listAll()（全量读盘 + JSON.parse + 契约校验），
+    //   rootOf 还要逐条 read()。每次设备建立 WS 连接都要付三份成本。
+    //   重连频繁时这一下很明显，所以先算好再交给 hello 载荷。
+    const scan = store.taskRuns.listAll?.();
+    const runs = scan?.taskRuns ?? scan ?? [];
+    const byId = new Map(runs.map((r) => [r.id, r]));
+    const rootOf = (run) => {
+      const rootId = run.rootTaskId ?? run.id;
+      if (rootId === run.id) return run;
+      const hit = byId.get(rootId);
+      if (hit) return hit;
+      // 根不在扫描结果里（损坏/缺失）时回落直读，结果与原来相同
+      const loaded = store.taskRuns.read(rootId);
+      return loaded?.status === 'found' ? loaded.taskRun : null;
+    };
+    const activeCount = runs.filter(
+      (r) => r.state !== 'completed' && r.state !== 'cancelled',
+    ).length;
+    const snap = {
+      // 活跃任务权威快照：断线重连靠它补齐；仍以 taskRun.* 增量更新
+      // 活跃任务权威快照（含完整性与根预算）+ 最近终态（历史入口）
+      taskRuns: projectTaskRunList(runs, { includeDone: false, limit: 200, rootOf }),
+      taskRunMeta: {
+        activeCount,
+        activeComplete: activeCount <= 200,
+        activeLimit: 200,
+      },
+      recentTaskRuns: projectTaskRunList(runs, {
+        includeDone: true, limit: 500, rootOf,
+      })
+        .filter((t) => t.state === 'completed' || t.state === 'cancelled')
+        .slice(0, 30),
+    };
+
     socket.send(
       JSON.stringify({
         t: 'hello',
@@ -142,36 +179,9 @@ export function attachWs(server, { runner }) {
         rooms: store.listRooms().map((r) => store.roomSummary(r)),
         bots: store.listBots(),
         attachmentDeletionRevision: attachmentDeletionRevision(),
-        // 活跃任务权威快照：断线重连靠它补齐；仍以 taskRun.* 增量更新
-        // 活跃任务权威快照（含完整性与根预算）+ 最近终态（历史入口）
-        taskRuns: (() => {
-          const scan = store.taskRuns.listAll?.();
-          const runs = scan?.taskRuns ?? scan ?? [];
-          const rootOf = (run) => {
-            const rootId = run.rootTaskId ?? run.id;
-            if (rootId === run.id) return run;
-            const loaded = store.taskRuns.read(rootId);
-            return loaded?.status === 'found' ? loaded.taskRun : null;
-          };
-          return projectTaskRunList(runs, { includeDone: false, limit: 200, rootOf });
-        })(),
-        taskRunMeta: (() => {
-          const scan = store.taskRuns.listAll?.();
-          const runs = scan?.taskRuns ?? scan ?? [];
-          const activeCount = runs.filter((r) => r.state !== 'completed' && r.state !== 'cancelled').length;
-          return { activeCount, activeComplete: activeCount <= 200, activeLimit: 200 };
-        })(),
-        recentTaskRuns: (() => {
-          const scan = store.taskRuns.listAll?.();
-          const rootOf = (run) => {
-            const rootId = run.rootTaskId ?? run.id;
-            if (rootId === run.id) return run;
-            const loaded = store.taskRuns.read(rootId);
-            return loaded?.status === 'found' ? loaded.taskRun : null;
-          };
-          const all = projectTaskRunList(scan?.taskRuns ?? scan ?? [], { includeDone: true, limit: 500, rootOf });
-          return all.filter((t) => t.state === 'completed' || t.state === 'cancelled').slice(0, 30);
-        })(),
+        taskRuns: snap.taskRuns,
+        taskRunMeta: snap.taskRunMeta,
+        recentTaskRuns: snap.recentTaskRuns,
       }),
     );
     log(`📱 ${device.name} 已连接（在线 ${wss.clients.size}）`);

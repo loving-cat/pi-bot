@@ -73,6 +73,8 @@ import { log, newId, pickEscalationHost, isSuperiorCall } from './util.js';
 import { planItem, shouldStopRound, leftBehind, planClosing, isUserInitiatedRound } from './group-round.js';
 import {
   applyCompactionBudget,
+  capRecentTokens,
+  estimateTokenRatio,
   readContext,
   withCapacity,
 } from './context-budget.js';
@@ -116,8 +118,9 @@ import { collectArtifacts } from './artifact-watch.js';
 import {
   composeGroupPrompt,
   departmentOf,
+  isStrictlyAfter,
+  lastDoneIdOf,
   lastDoneIndexAll,
-  lastDoneIndexOf,
   lastMessageId,
   openingSpeakers,
   transcriptFor,
@@ -871,6 +874,108 @@ export class PiRunner {
   }
 
   /** 记录本次执行的消耗与重试次数；统计失败不影响任务结果。 */
+  /**
+   * 按实测偏差校准 keepRecentTokens，让"保留 N 万"是真实 token 而非估算。
+   *
+   * ## 两档（Xiao 定）
+   *
+   *   · 工程档（**默认**）：保留 200000 真实 token，触发 0.6 × 窗口。
+   *     做工程调研、读大量资料、写代码都用这档 —— 材料完整比延迟重要。
+   *   · 精简档：保留 80000 真实 token，触发仍 0.6。
+   *     只适合闲聊/短问答。**本批不接入自动分类**：没有 task-run 不等于闲聊
+   *     （用户常在私聊里让主控读资料做调研），自动降档会误伤。
+   *     需要时由调用方显式传 bot.keepRecentTokens 覆盖。
+   *
+   * ## 回退
+   *
+   *   r 算不出来（新会话还没真实 usage、或 r 超出合理区间）→ 完全不覆盖，
+   *   沿用 applyCompactionBudget 已经设好的值。不猜、不硬改。
+   */
+  #calibrateKeepRecent(session, bot) {
+    try {
+      const sm = session?.settingsManager;
+      if (!sm || typeof sm.applyOverrides !== 'function') return;
+      // 用户/主控显式设过保留量就不动它 —— 显式配置优先于自动校准
+      if (bot?.keepRecentTokens != null) return;
+
+      const ratio = estimateTokenRatio(session);
+      if (ratio == null) return; // 回退：保持原行为
+
+      const target = PiRunner.TARGET_RECENT_TOKENS;
+      const rawKeep = Math.max(1, Math.round(target / ratio));
+
+      // ★ 校准结果必须再过一遍 capRecentTokens。
+      //
+      //   20 万真实 token 在 128k 窗口上根本放不下：r 折算出来的估算保留量
+      //   会大于触发线，等于"什么都保留、压不动"，会话一路顶到 100% 再炸。
+      //   capRecentTokens 负责夹到「触发线 - 摘要预算 - 固定开销」以内。
+      //
+      //   固定开销用 step 1 的 fixedOverheadOf 之外的口径：
+      //   这里拿 session 的 system + tools 估算（拿不到就是 0，不猜）。
+      //   ★ 夹持必须放在「真实 token」这一侧换算。
+      //
+      //     capRecentTokens 的入参是**估算 token**。而我们的目标是
+      //     20 万「真实」token —— 直接拿 rawKeep(估算) 去夹会夹不住：
+      //     128k 窗口下 rawKeep=25000 看起来远小于触发线 60416，
+      //     但 25000×r=200000 真实 token 早就超窗口了。
+      //
+      //     所以先算出「这个窗口最多能留多少**真实** token」，
+      //     再折回估算值：maxRealInWindow = capRecentTokens(窗口) × r。
+      const cw = Number(session?.model?.contextWindow ?? 0);
+      let keep = rawKeep;
+      let maxReal = target;
+      if (cw > 0) {
+        const existing = (() => {
+          try { return sm.getCompactionSettings?.(session.model) ?? {}; } catch { return {}; }
+        })();
+        // 这个窗口按"估算 token"最多能留多少原文
+        const maxEstInWindow = capRecentTokens({
+          contextWindow: cw,
+          // 传一个足够大的值，让 capRecentTokens 只受窗口约束、不受 keep 约束
+          keepRecentTokens: Number.MAX_SAFE_INTEGER,
+          reserveTokens: existing.reserveTokens ?? config.reserveTokens ?? 16384,
+          threshold: config.compactAtPercent ?? 0.6,
+        });
+        // ★ 真实上限还要再受窗口本身约束。
+        //
+        //   maxEstInWindow 本身已经是「窗口 × 0.6 - 摘要预算」的估算值，
+        //   折算成真实 token 后理论上不会超窗口 —— 但 ratio 是估出来的，
+        //   有误差；而且 128k 窗口上"20 万真实"这个目标本身就不可能达成。
+        //   所以再夹一次 min(窗口触发线, 目标)，保证物理上放得下。
+        const triggerReal = Math.min(cw, Math.floor(cw * (config.compactAtPercent ?? 0.6)));
+        maxReal = Math.min(target, Math.round(maxEstInWindow * ratio), triggerReal);
+        keep = Math.min(rawKeep, Math.max(1, Math.round(maxReal / ratio)));
+      }
+      // ★ 必须包在 compaction 下面，和 applyCompactionBudget 一致。
+      //
+      //   依赖读的是 settings.compaction.keepRecentTokens（以及
+      //   settings.compaction.modelOverrides[provider/id].keepRecentTokens），
+      //   见 settings-manager 的 getCompactionTokenSetting —— 它只看
+      //   this.settings.compaction，从不读顶层 keepRecentTokens。
+      //   写成顶层字段等于没生效，而且不报错、看不出来。
+      const compaction = { keepRecentTokens: keep };
+      const model = session?.model;
+      if (model?.provider && model?.id) {
+        // 同时写 modelOverrides：解析顺序是 model override > 普通 setting，
+        // 而 applyCompactionBudget 在会话创建时写的正是 modelOverrides ——
+        // 只写普通 setting 会被它盖掉。
+        compaction.modelOverrides = {
+          [`${model.provider}/${model.id}`]: { keepRecentTokens: keep },
+        };
+      }
+      sm.applyOverrides({ compaction });
+      log(
+        `【${bot?.name ?? 'bot'}】上下文校准：r=${ratio.toFixed(2)} → ` +
+          `保留 ${keep} 估算 token（目标 ${target} 真实 token）` +
+          (keep < rawKeep
+            ? `，已按窗口上限从 ${rawKeep} 夹到 ${keep}`
+            : ''),
+      );
+    } catch (err) {
+      log('上下文校准失败（忽略，保持原行为）：', err?.message || err);
+    }
+  }
+
   #recordRun({ roomId, botId, startedAt, ok, usage, taskRunId = '', attemptIndex = 1, sdkRetries = 0, kind = '' }) {
     try {
       const bot = store.getBot(botId);
@@ -1571,8 +1676,17 @@ export class PiRunner {
         .join('、')}`,
     );
 
-    // 本轮开始的房间位置 + 参与者集合：收尾轮判定要拿它们做基准
+    // 本轮开始的房间位置 + 参与者集合：收尾轮判定要拿它们做基准。
+    //
+    // ★ roundStartIndex（数组下标）**只**给 reflect 用，收尾判定不要用它。
+    //   房间满 500 条后 appendMessage 会从头部裁剪，下标整体前移，
+    //   而这个变量是开轮时算的局部值，不会跟着改 ——
+    //   满 500 后它会卡在 499，导致老大发言位置恒 ≤ 497，收尾永不触发。
+    //   收尾判定改用 roundStartMsgId（消息 id 不受裁剪影响）。
+    //
+    //   reflect 那边本批不动（L11/D12 待 Xiao 决定），所以保留下标语义。
     const roundStartIndex = lastDoneIndexAll(roomId);
+    const roundStartMsgId = lastMessageId(roomId);
     const participants = [leadId, ...members.map((m) => m.id)].filter(Boolean);
 
     let runs = 0;
@@ -2155,9 +2269,27 @@ export class PiRunner {
       const lead = store.getBot(leadId);
       const closing = lead
         ? planClosing({
-            roundStartIndex,
-            lastLeadIndex: lastDoneIndexOf(roomId, [leadId]),
-            lastMemberIndex: lastDoneIndexOf(roomId, participants),
+            // ★ 也必须用**严格**大于（和 memberSpokeAfterLead 同理）。
+            //
+            //   roundStartMsgId 是开轮时的最后一条。如果开轮那一刻最后一条
+            //   正好是老大上次收口说的，两个 id 相同 —— 用 >= 会判成
+            //   "老大本轮已发言"，于是紧接着 memberSpokeAfterLead 又成立，
+            //   它被叫回来做一次没有新内容的收尾（白烧一轮调用）。
+            //
+            //   原来的口径是 `lastLeadIndex > roundStartIndex`，相等不算。
+            //   空房间时 roundStartMsgId 为 null，两个函数都给 false ——
+            //   与原来 -1 > -1 === false 一致。
+            leadSpokeThisRound: isStrictlyAfter(
+              roomId, roundStartMsgId, lastDoneIdOf(roomId, [leadId]),
+            ),
+            // ★ 必须用**严格**大于。
+            //   participants 含老大，老大最后发言时两个 id 是同一条消息 ——
+            //   用 >= 会判成"成员在老大之后说过话"，已经收口还要再收一轮。
+            memberSpokeAfterLead: isStrictlyAfter(
+              roomId,
+              lastDoneIdOf(roomId, [leadId]),
+              lastDoneIdOf(roomId, participants),
+            ),
           })
         : { needed: false, why: '找不到老大' };
 
@@ -2550,7 +2682,9 @@ export class PiRunner {
    *   pi 的触发线是 contextWindow - reserveTokens（1M 窗口 / 16k reserve ≈ 98.4%），
    *   压完只剩 1.6% 余量 —— 随便读一份数据又满了，群聊长任务就进入
    *   「99% → 压缩 → 读一下 → 100% → 再压缩」的死循环。
-   *   这里提前到 80% 触发，压完通常只剩 5% 左右，能撑很多轮。
+   *   这里提前到 60% 触发（config.compactAtPercent 默认 0.6，可用
+   *   环境变量 PI_BOT_COMPACT_AT_PERCENT 调），压完留出约 40% 余量，
+   *   能撑很多轮 —— 用户做工程调研时要的是资料完整，不是延迟。
    */
   /**
    * 压缩时追加给摘要模型的额外指引。**默认不传。**
@@ -2575,6 +2709,17 @@ export class PiRunner {
    * 收益约等于零，风险是实的 —— 所以默认不传。
    * 需要额外强调某类信息时再临时传。
    */
+  /**
+   * 目标「真实保留量」（token，不是估算值）。
+   *
+   * 工程档：默认。工程调研、读大量资料、写代码都用这档。
+   * 精简档：只适合闲聊/短问答，本批**不自动接入** ——
+   *   没有 task-run 不等于闲聊（用户常在私聊里让主控读资料做调研），
+   *   自动降档会误伤。需要时由调用方显式设 bot.keepRecentTokens。
+   */
+  static TARGET_RECENT_TOKENS = 200_000;
+  static TARGET_RECENT_TOKENS_LIGHT = 80_000;
+
   static COMPACT_PROMPT = null;
 
   /**
@@ -2619,10 +2764,12 @@ export class PiRunner {
    *   pi 的触发线是 contextWindow - reserveTokens（1M 窗口 / 16k reserve ≈ 98.4%），
    *   压完只剩 1.6% 余量 —— 随便读一份数据又满了，群聊长任务就进入
    *   「99% → 压缩 → 读一下 → 100% → 再压缩」的死循环。
-   *   这里提前到 80% 触发，压完通常只剩 5% 左右，能撑很多轮。
+   *   这里提前到 60% 触发（config.compactAtPercent 默认 0.6，可用
+   *   环境变量 PI_BOT_COMPACT_AT_PERCENT 调），压完留出约 40% 余量，
+   *   能撑很多轮 —— 用户做工程调研时要的是资料完整，不是延迟。
    *
    * 失败不再"记一行日志就放行"：
-   *   放行的后果是这一轮带着 85%+ 的上下文继续跑，很快撞到 pi 的 98% 线，
+   *   放行的后果是这一轮带着 60%+ 的上下文继续跑，很快撞到 pi 的 98% 线，
    *   在那里再压一次 —— 用户经历**两段**卡顿，而且第二段他完全不知道为什么。
    *   现在按指数退避重试（复用 retry-policy 的 transientBackoffMs），
    *   退避期间放行本轮（不无限拖住用户），但把失败记在条目上，
@@ -2635,9 +2782,10 @@ export class PiRunner {
     if (!session) return { compacted: false, failed: false, attempts: 0, why: '没有会话' };
 
     const usage = session.getContextUsage?.();
-    // 下限 0.2 而不是 0.5：默认值已经调到 0.4（见 config.compactAtPercent），
-    // 夹在 0.5 会把配置悄悄改成一半 —— 用户以为改了，实际没生效。
-    const threshold = Math.min(0.95, Math.max(0.2, config.compactAtPercent || 0.4)) * 100;
+    // 下限 0.2 而不是 0.5：默认值是 0.6（见 config.compactAtPercent），
+    // 夹在 0.5 虽然不影响默认值，但会把用户主动调低的 0.3/0.4 悄悄改成一半 ——
+    // 用户以为改了，实际没生效。
+    const threshold = Math.min(0.95, Math.max(0.2, config.compactAtPercent || 0.6)) * 100;
     const plan = PiRunner.planCompaction({
       percent: typeof usage?.percent === 'number' ? usage.percent : null,
       threshold,
@@ -2673,6 +2821,20 @@ export class PiRunner {
       return { compacted: false, failed: false, attempts: 0, why: '后台槽位不可用' };
     }
 
+    // ★ D6：按真实 token 校准保留量。
+    //
+    //   依赖里的 estimateTokens 是 chars/4，对中文低估约 4 倍
+    //   （中文约 1 字 1 token）。而切保留点用的正是它 ——
+    //   名义"保留 6 万"实际留了 25–29 万原文（Xiao 实测：压缩前 60.5 万、
+    //   压缩请求 input 32–36 万，正是这个比例）。
+    //
+    //   这里测出偏差系数 r，把 keepRecentTokens 设成 目标/r，
+    //   使压完**实际**保留约 TARGET_RECENT_TOKENS 原文。
+    //
+    //   回退：算不出 r（新会话没有真实 usage、或 r 离谱）就不覆盖，
+    //   保持原行为 —— 宁可留多点，也不要拿错系数把会话压垮。
+    this.#calibrateKeepRecent(session, bot);
+
     entry.compactingOnly = true;
     // 压缩可能跑好几分钟：续心跳 + 5 分钟硬上限（否则这个 bot 永远轮不到）
     const beat = setInterval(() => {
@@ -2692,12 +2854,37 @@ export class PiRunner {
         let compactTimer;
         try {
           const limitMs = deadline ? Math.max(1, Math.min(5 * 60 * 1000, deadline - Date.now())) : 5 * 60 * 1000;
-          await Promise.race([
+          const compactStartedAt = Date.now();
+          // ★ 接住返回值：压缩本身是一次真实的 LLM 调用，有 usage 和耗时。
+          //   原来直接 await 丢掉了 —— 于是 run-stats 里压缩的 cost 全是 0，
+          //   用户看到的开销比实际少一截（Xiao 的用量里压缩 input 有 32–36 万，
+          //   cacheRead 几乎为 0，这部分此前完全没入账）。
+          //
+          //   注意从**返回值**取 usage，不要从 session/entry 上取：
+          //   压缩失败后调用方会带着超阈值上下文继续跑主请求，
+          //   那次请求的 usage 属于主请求，不能记成压缩的。
+          const compactResult = await Promise.race([
             session.compact(PiRunner.COMPACT_PROMPT),
             new Promise((_, reject) => {
               compactTimer = setTimeout(() => reject(new Error('上下文压缩超时')), limitMs);
             }),
           ]);
+          // 记账单独 try：统计失败不能影响压缩本身的结果
+          try {
+            if (compactResult?.usage) {
+              this.#recordRun({
+                roomId,
+                botId: bot.id,
+                startedAt: compactStartedAt,
+                ok: true,
+                usage: compactResult.usage,
+                // 单独一个 kind，和普通发言区分开，便于按类型看开销
+                kind: 'compact',
+              });
+            }
+          } catch (err) {
+            log('记录压缩开销失败：', err?.message || err);
+          }
           entry.compactRetryAfter = 0;
           entry.progressAt = Date.now();
           // ★ 主动压缩和 pi 自己压一样，会把老消息收成摘要 ——
@@ -3564,6 +3751,10 @@ export class PiRunner {
       // ★ 技能库按任务挑：库可以很大，但每个 bot 这轮只拿相关的几条。
       //   不放进 appendSystemPrompt —— 那是建会话时固化的，而"相关不相关"
       //   取决于这一轮具体要干什么。
+      // 本轮 withSkills 实际新增登记了哪些技能指纹。
+      // 兜底投递失败时只回滚这些，不动此前各轮已成功投递的登记。
+      let skillsAddedThisTurn = [];
+
       const withSkills = (text) => {
         try {
           const library = store.skillLibrary();
@@ -3591,7 +3782,13 @@ export class PiRunner {
           if (!lines.length) return text;
           // 记下这次给了哪些 —— 下一轮同样的就不再重复
           if (!entry.skillsInjected) entry.skillsInjected = new Set();
-          for (const s of fresh) entry.skillsInjected.add(skillFingerprint(s));
+          // 同时记下"本轮新增的那几个"，供兜底投递失败时精确回滚 ——
+          // 不能整表清空，那会丢掉此前各轮已成功投递的登记，让它们被重复注入。
+          for (const s of fresh) {
+            const fp = skillFingerprint(s);
+            if (!entry.skillsInjected.has(fp)) skillsAddedThisTurn.push(fp);
+            entry.skillsInjected.add(fp);
+          }
           return lines.join("\n") + "\n\n" + text;
         } catch (err) {
           // 技能挑不出来不能影响正常干活
@@ -3628,8 +3825,14 @@ export class PiRunner {
       };
 
       const startTurn = async () => {
+        // ★ finalPrompt 必须在 try **外面**计算。
+        //
+        //   withSkills / withLessons 是同步的纯加工，不会抛「already processing」；
+        //   把它写在 try 里再用 const 声明，catch 里就引用不到 ——
+        //   那是块级作用域，兜底路径会在 followUp 之前直接 ReferenceError，
+        //   随后被外层当成"投递失败"，本轮技能登记白清一场。
+        const finalPrompt = withLessons(withSkills(prompt));
         try {
-          const finalPrompt = withLessons(withSkills(prompt));
           return images.length
             ? await entry.session.prompt(finalPrompt, { images })
             : await entry.session.prompt(finalPrompt);
@@ -3637,7 +3840,35 @@ export class PiRunner {
           const msg = String(err?.message || err);
           if (!/already processing/i.test(msg) || !entry.session.followUp) throw err;
           log(`${bot.name} 那一轮还没完，这条改成排队投递（followUp）`);
-          return entry.session.followUp(prompt);
+          // ★ 兜底投递**加工过**的提示词和图片，不能投原始 prompt。
+          //
+          //   finalPrompt 里已经拼进了技能正文和经验，而 withSkills 里
+          //   **当场就把这些技能登记成"已给过"**（entry.skillsInjected.add）。
+          //   如果这里投回裸 prompt：
+          //     · 技能正文和经验没跟着走 —— 这一轮的 bot 拿不到它们；
+          //     · 而它们已经被记成"给过"，下一轮也不会再给。
+          //   等于这批技能和经验被永久吞掉一次。
+          //
+          //   图片同理：原来 followUp(prompt) 把 images 丢了，
+          //   用户发的截图在兜底路径上就消失了。
+          //   followUp(text, images?, options?) 是支持图片的。
+          try {
+            return images.length
+              ? await entry.session.followUp(finalPrompt, images)
+              : await entry.session.followUp(finalPrompt);
+          } catch (followErr) {
+            // ★ 投递失败只回滚**本轮**新增的技能登记。
+            //
+            //   不能整表清空（entry.skillsInjected = null）：
+            //   那会丢掉此前各轮已经成功投递过的登记，下次唤醒把它们
+            //   重新注入一遍 —— 正是 skillsInjected 这套机制要避免的
+            //   上下文膨胀 + 缓存失效。
+            if (entry.skillsInjected && skillsAddedThisTurn.length) {
+              for (const fp of skillsAddedThisTurn) entry.skillsInjected.delete(fp);
+            }
+            skillsAddedThisTurn = [];
+            throw followErr;
+          }
         }
       };
       if (deadline && Date.now() >= deadline) throw new Error('本轮等待超时，尚未发起模型请求');

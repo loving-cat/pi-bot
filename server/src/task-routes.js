@@ -32,27 +32,52 @@ export function createTaskRunRoutes({ store, runner, commandDir = null }) {
     }
     if (pathname !== '/api/task-runs' && !pathname.startsWith('/api/task-runs/')) return false;
 
-    const allRuns = () => {
+    /**
+     * 扫一次磁盘，建好按 id 和按父任务的两个索引。
+     *
+     * ★ 为什么需要：`listAll()` 会对每个文件做 readFileSync + JSON.parse +
+     *   完整契约校验。原来 `snapshotOf` 在**每条**任务上都调一次它来找子任务，
+     *   列表接口于是变成 O(N²) 次文件读 —— 500 条时实测 3 秒级，
+     *   而且全程同步阻塞事件循环，所有房间的流式输出都跟着卡住。
+     *   这里只扫一次，后续查询都是内存 Map 操作。
+     */
+    const scanIndex = () => {
       const scan = store.taskRuns.listAll?.();
-      return scan?.taskRuns ?? scan ?? [];
+      const runs = scan?.taskRuns ?? scan ?? [];
+      const byId = new Map();
+      /** parentTaskId -> 子任务数组，顺序与 runs 一致（等同原来 filter 的顺序） */
+      const kids = new Map();
+      for (const r of runs) {
+        byId.set(r.id, r);
+        if (r.parentTaskId) {
+          let arr = kids.get(r.parentTaskId);
+          if (!arr) kids.set(r.parentTaskId, (arr = []));
+          arr.push(r);
+        }
+      }
+      return { runs, byId, kids };
     };
     const findRun = (id) => {
       const loaded = store.taskRuns.read(id);
       return loaded?.status === 'found' ? loaded.taskRun : null;
     };
-    const rootOf = (run) => {
+    const rootOf = (run, idx = null) => {
       const rootId = run.rootTaskId ?? run.id;
-      return rootId === run.id ? run : findRun(rootId);
+      if (rootId === run.id) return run;
+      // 根不在扫描结果里（损坏/缺失）时回落到直读，结果与原来相同
+      return idx?.byId.get(rootId) ?? findRun(rootId);
     };
     const nameOf = (botId) => store.getBot?.(botId)?.name ?? '';
-    const snapshotOf = (run) => projectTaskRun(run, { root: rootOf(run), nameOf, children: (() => {
+    const snapshotOf = (run, idx = null) => {
+      let children = null;
       try {
-        const scan = store.taskRuns.listAll?.();
-        const all = scan?.taskRuns ?? scan ?? [];
-        return all.filter((r) => r.parentTaskId === run.id
-          && (r.parentRevision ?? r.revision) === run.revision);
-      } catch { return null; }
-    })() });
+        // 不传 idx 时（单条接口）仍是 1 次扫描，与原来相同
+        const i = idx ?? scanIndex();
+        children = (i.kids.get(run.id) ?? [])
+          .filter((r) => (r.parentRevision ?? r.revision) === run.revision);
+      } catch { children = null; }
+      return projectTaskRun(run, { root: rootOf(run, idx), nameOf, children });
+    };
 
     // ---- 列表：活跃/历史/全部；根预算统一由 rootOf -> projectTaskRun 解析
     if (pathname === '/api/task-runs' && req.method === 'GET') {
@@ -68,7 +93,11 @@ export function createTaskRunRoutes({ store, runner, commandDir = null }) {
         return null;
       };
       const cursor = decodeCursor(url.searchParams.get('cursor'));
-      const all = allRuns().map(snapshotOf).sort((a, b) => {
+      // ★ 只扫一次，整页共用。
+      //   注意不能写成 idx.runs.map(snapshotOf) —— Array.prototype.map
+      //   会把下标当第二个参数传进来，idx 就成了一个数字。
+      const idx = scanIndex();
+      const all = idx.runs.map((run) => snapshotOf(run, idx)).sort((a, b) => {
         const byTime = (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
         return byTime !== 0 ? byTime : (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
       });

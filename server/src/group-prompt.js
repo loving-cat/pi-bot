@@ -102,8 +102,66 @@ export function transcriptFor(roomId, botId, limit = 30, { maxChars = 12000 } = 
   const out = items.map((m) => (addressed(m) ? { ...m, keepFull: true } : m));
   // 调用方绝大多数只关心"有哪些消息"，所以返回值仍是数组；
   // 需要知道"前面还丢了几条"时读 droppedCount（普通属性，传递/拷贝都不会丢）。
-  out.droppedCount = dropped;
+  //
+  // ★ 窗口外被挤掉的**未读**条数要算进来，但只算未读的。
+  //
+  //   listMessages 返回的是**最后 200 条**（slice(-limit)）——
+  //   房间超过 200 条时，更旧的直接不在 list 里，而上面的 dropped
+  //   只统计 trimTranscript 内部为省预算丢掉的条数。
+  //   所以未读超过 200 条时，被窗口挤掉的部分原先是完全无声的。
+  //
+  //   但「房间总条数 - 窗口条数」是**错的**：那会把 bot 早就读过的旧消息
+  //   也算进去。300 条且已读完的房间会报 100+，500 条会报约 300，
+  //   提示词写成「更早的 N 条已省略」，模型以为自己漏看了一大段 —— 纯虚报。
+  //
+  //   正确口径：从「bot 读到的位置（cursor）之后」到「窗口起点之前」
+  //   这一段有多少条 —— 那才是"有内容、但被窗口挤掉看不到"的真实数量。
+  //   cursor 不存在（从没读过）时，窗口外全都是未读。
+  const omittedUnread = countUnreadOutsideWindow(roomId, botId, list.length);
+  out.droppedCount = dropped + omittedUnread;
   return out;
+}
+
+/**
+ * 「bot 读到的位置之后、又被窗口挤掉」的条数。
+ *
+ * 举例：房间 500 条，bot 的 cursor 停在第 400 条（前 400 条都读过），
+ * 窗口只留最后 200 条（第 300–500 条）。
+ *
+ *   未读起点 = cursor 在完整列表里的下标 + 1   （= 400）
+ *   窗口起点 = 完整列表长度 - windowSize       （= 300）
+ *   被挤掉的未读 = max(0, 窗口起点 - 未读起点)  →  300 - 400 < 0  →  0
+ *
+ * 房间 300 条、已全部读完 → cursor 是最后一条，未读起点 = 300，
+ * 窗口起点 = 100，100 - 300 < 0 → 0（**不虚报**）。
+ *
+ * 房间 550 条、cursor 停在第 300 条 → 未读起点 300、窗口起点 350，
+ * 被挤掉 50 条 —— 这才是"有新内容但看不到"的真实数量。
+ *
+ * cursor 找不到（消息已被裁掉/删除）时保守返回 0：宁可少报，
+ * 也不要让模型以为自己漏看了一大段并不存在的未读。
+ *
+ * @param {number} windowSize 窗口里保留了多少条（listMessages 的 limit）
+ */
+function countUnreadOutsideWindow(roomId, botId, windowSize) {
+  try {
+    const all = store.messages?.get?.(roomId);
+    if (!Array.isArray(all) || all.length <= windowSize) return 0;
+
+    const windowStart = all.length - windowSize;
+    const cursor = store.seenCursor(roomId, botId);
+
+    // 没有 cursor：从没读过任何一条，窗口外全都是未读
+    if (!cursor) return Math.max(0, windowStart);
+
+    const idx = all.findIndex((m) => m.id === cursor);
+    if (idx < 0) return 0; // cursor 已不在列表里，不猜
+
+    const unreadStart = idx + 1;
+    return Math.max(0, windowStart - unreadStart);
+  } catch {
+    return 0;
+  }
 }
 
 /**
@@ -116,25 +174,75 @@ export function lastDoneIndexAll(roomId) {
 }
 
 /**
- * 某个作者集合"最近一条已完成发言"的位置（用消息在房间里的序号表示）。
+ * 某个作者集合"最近一条已完成发言"的消息 id。
  *
- * 为什么要有这个而不是直接传消息数组：收尾判定只关心"谁什么时候说的"，
- * 拿数组就得猜要多大的窗口 —— 窗口小会漏（一轮超 50 条就判错），
- * 窗口大又会把上一轮的消息带进来。这里直接按作者集合查最后位置，O(n) 但无窗口。
+ * ★ 为什么用 id 而不是数组下标
  *
- * @returns {number} 位置（越大越新）；没有发言过返回 -1
+ *   房间满 `maxMessagesPerRoom`（500）条后，`store.appendMessage`
+ *   会从头部 `splice` 掉最旧的几条，**数组下标整体前移**；
+ *   另有一条插入路径把消息插到"正在写的那条"之前，下标也会错位。
+ *   而收尾判定用的"本轮起点"是 runRound 里的局部变量，
+ *   它拿到的是开轮那一刻的下标 —— 裁剪发生后这个数字就再也对不上了。
+ *
+ *   实际后果：满 500 条后起点会卡在 499，老大发言位置始终 ≤ 497，
+ *   于是 `lastLeadIndex <= roundStartIndex` 恒成立，
+ *   `planClosing` 永远返回"老大这一轮还没发过言" ——
+ *   收尾彻底不触发，用户再也拿不到最终结论。
+ *
+ *   id 不受裁剪影响，所以按 id 定位是稳的。
+ *
+ * @returns {string|null} 消息 id；没有发言过返回 null
  */
-export function lastDoneIndexOf(roomId, authorIds = []) {
+export function lastDoneIdOf(roomId, authorIds = []) {
   const set = new Set(authorIds);
-  if (!set.size) return -1;
+  if (!set.size) return null;
   const list = store.listMessages(roomId, { limit: 100000 });
   for (let i = list.length - 1; i >= 0; i--) {
     const m = list[i];
     if (m.status !== 'done') continue; // 失败的消息不算"说过话"
     if (m.authorType !== 'bot') continue;
-    if (set.has(m.authorId)) return i;
+    if (set.has(m.authorId)) return m.id;
   }
-  return -1;
+  return null;
+}
+
+/**
+ * 两条消息在房间当前数组里的先后：target 在 ref **之后**（strict）返回 true。
+ *
+ * ★ 必须用严格大于，不能用 >=。
+ *
+ *   「成员是否在老大之后发言」里，participants 是**含老大**的集合，
+ *   所以老大最后发言时 lastDoneIdOf([leadId]) 和 lastDoneIdOf(participants)
+ *   是同一条消息。用 >= 会判成"成员在老大之后说过话"，
+ *   于是已经收口的情况下还要再叫老大收尾一轮 —— 白烧一次调用。
+ *
+ *   语义对应原来的 `lastMemberIndex <= lastLeadIndex → 不用收尾`：
+ *   相等（同一条消息）不算"之后"。
+ */
+export function isStrictlyAfter(roomId, refId, targetId) {
+  if (!refId || !targetId) return false;
+  return compareMessageOrder(roomId, refId, targetId) > 0;
+}
+
+/**
+ * 按消息 id 在当前房间数组里的位置比较：**idB 相对 idA 的先后**。
+ *
+ *   返回 1  → idB 在 idA 之后（更新）
+ *   返回 0  → 同一条消息
+ *  返回 -1  → idB 在 idA 之前（更旧）
+ * 返回 null → 任一条找不到（已被删/被裁出 100000 条窗口），
+ *             调用方要当作"不确定"处理，不要当成某个确定的先后。
+ *
+ * ★ 注意方向：参数顺序是 (ref, target)，返回的是 target 相对 ref 的位置。
+ *   写反了会让"成员在老大之后发言"永远判成 false —— 收尾又不触发了，
+ *   而且测不出来（两边都是 false）。
+ */
+function compareMessageOrder(roomId, idA, idB) {
+  const list = store.listMessages(roomId, { limit: 100000 });
+  const ia = list.findIndex((m) => m.id === idA);
+  const ib = list.findIndex((m) => m.id === idB);
+  if (ia < 0 || ib < 0) return null;
+  return ia === ib ? 0 : (ib > ia ? 1 : -1);
 }
 
 /** 房间里最后一条消息的 id（推进游标用） */

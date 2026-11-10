@@ -67,6 +67,33 @@ class MdText extends StatefulWidget {
 class _MdTextState extends State<MdText> {
   final Map<String, TapGestureRecognizerHandle> _links = {};
 
+  // ★ 解析结果按文本缓存，供**历史气泡**整屏重建时复用。
+  //
+  //   每次 build 都跑一遍 _parse(widget.text) 是纯重复劳动：
+  //   历史消息的文本永远不变，而整屏重建（别的房间来消息、切换面板宽度
+  //   等等）会让所有可见气泡重新解析一遍 Markdown。
+  //
+  //   ★ 对正在流式输出那条几乎无收益：文本每帧都变，缓存永远不命中，
+  //     每帧仍是 O(L) 解析。那条的开销靠"只让它单独刷新"来控制
+  //     （见 chat_screen 里流式气泡的 ValueListenableBuilder），
+  //     这里只负责把历史气泡的重复解析消掉。
+  //
+  //   ★ 缓存失效只认「文本是否变化」这一个条件（在 _blocksFor 里比）。
+  //     不额外挂 didUpdateWidget 做主动清空 —— 那是同一判据的重复实现，
+  //     两处同时存在反而要求以后改判据时必须同步改两次。
+  //     不做更细的脏检查是因为：Markdown 的渲染还取决于 style/mono 等参数，
+  //     但那些变化会重建 State 或由父级重新布局，块结构本身只由文本决定。
+  String? _parsedFor;
+  List<_Block> _blocksCache = const [];
+
+  List<_Block> _blocksFor(String text) {
+    if (text != _parsedFor) {
+      _blocksCache = _parse(text);
+      _parsedFor = text;
+    }
+    return _blocksCache;
+  }
+
   @override
   void dispose() {
     for (final h in _links.values) {
@@ -138,7 +165,7 @@ class _MdTextState extends State<MdText> {
           color: PB.textPrimary,
         );
 
-    final blocks = _parse(widget.text);
+    final blocks = _blocksFor(widget.text);
     final children = <Widget>[];
     for (final block in blocks) {
       children.add(_renderBlock(context, block, base, code));
