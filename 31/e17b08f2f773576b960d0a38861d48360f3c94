@@ -1,0 +1,58 @@
+app/lib/app_state.dart
+  h_c2e638ff76b3b9 347-360,2395-2423,2467-2488,2615-2620,2633-2643
+app/lib/browser_pane_state.dart
+  h_c2e638ff76b3b9 81-97,112-121,257-338
+app/lib/l10n/strings/chat.dart
+  h_c2e638ff76b3b9 83,259
+app/lib/l10n/strings/panel2.dart
+  h_c2e638ff76b3b9 375-377,778-780
+app/lib/l10n/strings/settings2.dart
+  h_c2e638ff76b3b9 55,113
+app/lib/markdown_inline.dart
+  h_c2e638ff76b3b9 1-2,130-226
+app/lib/screens/chat_screen.dart
+  h_c2e638ff76b3b9 44,546-575,606-623,934-937,1227-1303,1923-1940,1944,1952,1954,1956
+app/lib/screens/home_shell.dart
+  h_c2e638ff76b3b9 43-157,235-246,269,318-327,343-351,452-456,473,483-496
+app/lib/screens/rooms_screen.dart
+  h_c2e638ff76b3b9 313-315,520
+app/lib/screens/settings_screen.dart
+  h_c2e638ff76b3b9 849-855
+app/lib/widgets/browser_pane.dart
+  h_c2e638ff76b3b9 46-58,65-71,77-135,144,172,175,188,198-200,224-264,277,284-286,330-335,370-371,396,402-435,448-461,463,470-613,615-647,649,652-655,658-681,683-712,714,716-717,722-763,807,814-820,827-829,833-839,849,855-863,905-906,910,941-978
+app/lib/widgets/msg_quote_strip.dart
+  h_c2e638ff76b3b9 3,36-45,79-80
+app/lib/widgets/room_panel.dart
+  h_c2e638ff76b3b9 71-78,81-93,177-184,186,771,1169,1188,1192-1210
+app/pubspec.lock
+  h_c2e638ff76b3b9 29
+app/pubspec.yaml
+  h_c2e638ff76b3b9 4,36-38
+app/test/attachment_routing_test.dart
+  h_c2e638ff76b3b9 81-90
+server/package.json
+  h_c2e638ff76b3b9 3
+server/src/http.js
+  h_c2e638ff76b3b9 1074-1077,1079
+server/src/pi-runner.js
+  h_c2e638ff76b3b9 2118-2126,2167-2180,2228-2230
+server/src/render-html.js
+  h_c2e638ff76b3b9 68-81,83,87-140,145,148,150-151,154,158-160,164,169-170,306,319,328-335,349,354,359
+server/src/store.js
+  h_c2e638ff76b3b9 1752-1757,1763,1766-1771,1855-1876
+server/src/update-checker.js
+  h_c2e638ff76b3b9 63-204,249-287
+server/tests/update-checker.mjs
+  h_c2e638ff76b3b9 30-40,42-43,46-65,69-70,120-122,131,136-137,139,170
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "31e17b08f2f773576b960d0a38861d48360f3c94",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
