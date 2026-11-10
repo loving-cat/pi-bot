@@ -1,0 +1,40 @@
+app/lib/screens/chat_screen.dart
+  h_c2e638ff76b3b9 2266-2271,2273-2286,2326-2343,2355-2376
+app/lib/widgets/md_text.dart
+  h_c2e638ff76b3b9 70-96,168
+server/src/context-budget.js
+  h_c2e638ff76b3b9 12-13,24-47,57-62,92-258,289-290
+server/src/extract.js
+  h_c2e638ff76b3b9 16-31,131-136
+server/src/group-prompt.js
+  h_c2e638ff76b3b9 105-121,125-166,177-179,181-185,187-194,196,198,204,206-245
+server/src/group-round.js
+  h_c2e638ff76b3b9 141-150,152-153,157-158,161,165
+server/src/pi-runner.js
+  h_c2e638ff76b3b9 76-77,121-122,877-978,1679-1687,1689,2272-2292,2685-2687,2712-2722,2767-2769,2772,2785-2788,2824-2837,2857-2866,2872-2887,3754-3757,3785-3791,3828-3834,3843-3871
+server/src/task-routes.js
+  h_c2e638ff76b3b9 35-44,46-58,64,66-68,71-72,74-80,96-100
+server/src/tasks/task-runtime.js
+  h_c2e638ff76b3b9 138-151
+server/src/tasks/task-supervisor.js
+  h_c2e638ff76b3b9 208-213,251-262,271,275-276
+server/src/tools.js
+  h_c2e638ff76b3b9 689
+server/src/ws.js
+  h_c2e638ff76b3b9 135-171,182-184
+server/tests/closing-turn.mjs
+  h_c2e638ff76b3b9 13-26,30,32,43,49,55,61,67,73,78,83,113-276
+server/tests/group-cursor.mjs
+  h_c2e638ff76b3b9 258-338
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "53b5ced54cc7ce153daff4a59c96e0bbaee2f396",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
