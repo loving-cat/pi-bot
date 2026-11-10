@@ -52,7 +52,8 @@ app/pubspec.yaml       version: 1.3.0+3
 ## 4. 资产命名：`pi-bot-<平台>-v<版本>.<扩展名>`
 
 ```
-pi-bot-windows-v1.3.0.zip     ← Windows（.exe / .msi 也认）
+pi-bot-windows-v1.3.0-setup.exe   ← Windows 一键安装（推荐给普通用户）
+pi-bot-windows-v1.3.0.zip         ← Windows 免安装（要解压自己运行）
 pi-bot-macos-v1.3.0.dmg
 pi-bot-android-v1.3.0.apk
 ```
@@ -63,6 +64,10 @@ pi-bot-android-v1.3.0.apk
 
 **不要把 `.zip` 当万能兜底**：zip 判不出平台，`pickAssetFor()` 返回 `null`，
 App 只能退化成「打开发布页」。
+
+**同时挂 setup.exe 和 zip 时**：`PLATFORM_RULES` 里 `.exe` 排在平台词之前，
+`pickAssetFor()` 按规则序号取最优，所以选中的一定是安装包，跟上传顺序无关。
+这条有回归测试（`server/tests/update-check.mjs` 里的「同时挂安装包和免安装 zip」）。
 
 ## 5. 多平台可以增量挂到同一个 release
 
@@ -110,13 +115,14 @@ git tag v1.3.0
 git push origin main v1.3.0
 
 # 4. 各平台构建（从 tag 对应的提交构建，不要从半路的分支）
-powershell -File scripts/pack-windows.ps1 -Zip   # dist/pi-bot-windows.zip
-./scripts/pack-macos.sh                          # dist/pi-bot-<ver>.dmg
-cd app && flutter build apk --release            # build/app/outputs/flutter-apk/app-release.apk
+powershell -File scripts/pack-windows.ps1 -WithNode -Zip   # dist/pi-bot-windows{,.zip}
+powershell -File scripts/pack-windows-setup.ps1            # dist/pi-bot-windows-v1.3.0-setup.exe
+./scripts/pack-macos.sh                                    # dist/pi-bot-<ver>.dmg
+cd app && flutter build apk --release                      # build/app/outputs/flutter-apk/app-release.apk
 
 # 5. 建 release（★普通 Release，不要勾 Pre-release），资产重命名后上传
 gh release create v1.3.0 --title "pi-bot v1.3.0" --notes-file <说明> \
-  dist/pi-bot-windows-v1.3.0.zip
+  dist/pi-bot-windows-v1.3.0-setup.exe dist/pi-bot-windows-v1.3.0.zip
 ```
 
 ## 平台差异不要写进版本号
