@@ -205,8 +205,13 @@ export function createTaskSupervisor({
           return true;
         };
 
+        // ★ 名额判断统一由调用方用本轮计数做（见下面 while 循环里的 slots）。
+        //
+        //   原来这里也查一次 concurrencyBudget()，而它会走
+        //   maxConcurrency -> concurrencyOf，每次都全量扫一遍 taskruns。
+        //   每个排队项因此被扫两次（这里一次、循环里一次），一轮共 2Q 次。
+        //   挪到调用方后每轮只算一次。
         const launch = (id, taskRun) => {
-          if (active.size >= concurrencyBudget()) return false;
           const botId = taskRun?.owner?.leadBotId ?? null;
           queue.delete(id);
           running.add(id);
@@ -243,6 +248,18 @@ export function createTaskSupervisor({
         while (queue.size) {
           let launched = false;
           deferred.length = 0;
+          // ★ 每轮只算一次并发预算。
+          //
+          //   concurrencyBudget() 会读 maxConcurrency()，而它是
+          //   task-runtime 的 concurrencyOf —— 每次全量扫一遍 taskruns
+          //   只为数「部门里有几个人」。原来每个排队项都要扫两次。
+          //   计算语义（含 degradeFactor）完全不变，只是采样频率降低。
+          const budget = concurrencyBudget();
+          // 本轮剩余名额用本地计数维护。
+          // active.size 本身也会随 launch 同步加一，但显式 slots 让
+          // 「本轮最多放行 budget - active.size 个」成为看得见的规则，
+          // 不再依赖 launch 保持同步登记这个隐含前提。
+          let slots = budget - active.size;
           // ★ 按负责人安排的优先级取下一批：数字小的先跑。
           //   负责人用 assign_member_task / @ 派活时的先后就是优先级 ——
           //   他说「先交首批，别等全量」，这个顺序必须真的影响调度。
@@ -251,11 +268,12 @@ export function createTaskSupervisor({
             .filter((it) => it.taskRun)
             .sort((a, b) => priorityOf(a.taskRun) - priorityOf(b.taskRun));
           for (const { id } of ordered) {
-            if (active.size >= concurrencyBudget()) break;
+            if (slots <= 0) break;
             const taskRun = read(id);
             if (!taskRun) { queue.delete(id); continue; }
             if (!canRun(id, taskRun)) { deferred.push(id); continue; }
-            if (launch(id, taskRun)) launched = true;
+            // 放行一个就占一个名额
+            if (launch(id, taskRun)) { launched = true; slots -= 1; }
           }
           // 读不到的（已被删/损坏）清出队列，别卡住循环
           for (const id of [...queue]) if (!read(id)) queue.delete(id);

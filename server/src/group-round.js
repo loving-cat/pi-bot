@@ -138,23 +138,31 @@ export function leftBehind(queue = [], nameOf = (id) => id) {
  *   · 老大说完之后没人再说话 → 它已经是收口，不用再叫
  *   · 老大说完之后还有成员说过话 → 需要收尾
  *
+ * ★ 参数语义已从「数组下标」改为「布尔比较结果」。
+ *
+ *   下标在房间满 500 条后不可靠：`store.appendMessage` 会从头部裁剪，
+ *   下标整体前移，而"本轮起点"是 runRound 的局部变量，不会跟着改。
+ *   满 500 后起点卡在 499，老大发言位置恒 ≤ 497，判定永远"没发过言"，
+ *   收尾再也不触发。
+ *
+ *   现在由调用方用消息 id 比较（见 group-prompt.js 的 isStrictlyAfter）
+ *   算好两个布尔值传进来，这个函数保持纯函数、不碰 store。
+ *
  * @param {object} p
- * @param {number} p.roundStartIndex 本轮开始时的房间消息位置（-1 表示空房间）
- * @param {number} p.lastLeadIndex   老大最近一次发言的位置（-1 表示从没说过）
- * @param {number} p.lastMemberIndex 参与本轮的成员（含老大）最近一次发言的位置
+ * @param {boolean} p.leadSpokeThisRound  老大本轮的发言是否在开轮之后
+ * @param {boolean} p.memberSpokeAfterLead 开轮后是否有成员在老大之后说过话
  * @returns {{needed: boolean, why: string}}
  */
 export function planClosing({
-  roundStartIndex = -1,
-  lastLeadIndex = -1,
-  lastMemberIndex = -1,
+  leadSpokeThisRound = false,
+  memberSpokeAfterLead = false,
 } = {}) {
   // 老大这一轮没发言（要么从没说过，要么最后一次在开轮之前）
-  if (lastLeadIndex < 0 || lastLeadIndex <= roundStartIndex) {
+  if (!leadSpokeThisRound) {
     return { needed: false, why: '老大这一轮还没发过言' };
   }
   // 老大说完之后没有人再说话
-  if (lastMemberIndex <= lastLeadIndex) {
+  if (!memberSpokeAfterLead) {
     return { needed: false, why: '老大已经收口了' };
   }
   return { needed: true, why: '老大说完之后还有人交作业，需要它汇总收口' };

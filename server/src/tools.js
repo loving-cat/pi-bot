@@ -686,7 +686,7 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
         '扫描件 PDF 和老的 .doc 提取不出来。用户发的附件在 _inbox/<本会话目录>/ 下，具体路径聊天里会给你。',
       parameters: Type.Object({
         path: Type.String({ description: '相对工作目录的路径，如 _inbox/r_8b4a2e4e1f0d0e48/abc123456789_报表.xlsx' }),
-        maxChars: Type.Optional(Type.Number({ description: '最多返回多少字，默认 12 万' })),
+        maxChars: Type.Optional(Type.Number({ description: '最多返回多少字，默认 8 万（上限也是 8 万）' })),
       }),
       execute: async (_toolCallId, { path: inputPath, maxChars }) => {
         const full = insideWorkspace(inputPath);

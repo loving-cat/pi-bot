@@ -255,6 +255,87 @@ await test('④ 别人被 @ 的活不算「派给我的」：照常可以截', (
   assert.ok(promptB.includes(longToB), '被 @ 的那个人必须看到原文');
 });
 
+
+// ─────────────── L12：窗口外被挤掉的未读条数（droppedCount）───────────────
+//
+// 口径：只统计「bot 读到的位置之后、又被 200 条窗口挤掉」的未读条数。
+// **已经读过的旧消息不算** —— 否则已读完的房间也会报"前面还有很多没读"，
+// 模型会以为自己漏看了一大段。
+
+await test('★ 已读完的房间：窗口外全是旧消息，droppedCount 必须为 0', async () => {
+  const room = store.createGroup({ name: 'L12-已读完', botIds: [] });
+  const reader = store.createBot({ name: 'L12读者A' });
+  const other = store.createBot({ name: 'L12别人A' });
+  const fill = (n) => {
+    for (let i = 0; i < n; i++) {
+      store.appendMessage({
+        roomId: room.id, authorType: 'bot', authorId: other.id,
+        authorName: other.name, text: '旧消息' + i, status: 'done',
+      }, { silent: true });
+    }
+  };
+  fill(500);
+  const all = store.messages.get(room.id);
+  // 游标停在最后一条 = 全部读完
+  store.setCursor(room.id, reader.id, all[all.length - 1].id);
+
+  const t = transcriptFor(room.id, reader.id);
+  assert.equal(t.droppedCount, 0, '已读完的房间不该报省略，实际 ' + t.droppedCount);
+});
+
+await test('★ 未读超过窗口：只算被挤掉的未读，不是窗口外全部旧消息', async () => {
+  const room = store.createGroup({ name: 'L12-部分未读', botIds: [] });
+  const reader = store.createBot({ name: 'L12读者B' });
+  const other = store.createBot({ name: 'L12别人B' });
+  const fill = (n, prefix) => {
+    for (let i = 0; i < n; i++) {
+      store.appendMessage({
+        roomId: room.id, authorType: 'bot', authorId: other.id,
+        authorName: other.name, text: prefix + i, status: 'done',
+      }, { silent: true });
+    }
+  };
+  // 100 条已读
+  fill(100, '已读');
+  const afterRead = store.messages.get(room.id);
+  store.setCursor(room.id, reader.id, afterRead[afterRead.length - 1].id);
+  // 再 250 条未读：窗口留最后 200，被挤掉 50
+  fill(250, '未读');
+
+  // 用超大 limit 和字数预算，让 trimTranscript 内部不丢，
+  // 单独看"窗口挤掉"这一分量
+  const t = transcriptFor(room.id, reader.id, 1000, { maxChars: 1000000 });
+  assert.equal(t.droppedCount, 50, '被挤掉的未读应是 50，实际 ' + t.droppedCount);
+});
+
+await test('★ 从没读过 + 房间超窗口：窗口外全是未读', async () => {
+  const room = store.createGroup({ name: 'L12-从未读', botIds: [] });
+  const reader = store.createBot({ name: 'L12读者C' });
+  const other = store.createBot({ name: 'L12别人C' });
+  for (let i = 0; i < 500; i++) {
+    store.appendMessage({
+      roomId: room.id, authorType: 'bot', authorId: other.id,
+      authorName: other.name, text: '消息' + i, status: 'done',
+    }, { silent: true });
+  }
+  const t = transcriptFor(room.id, reader.id, 1000, { maxChars: 1000000 });
+  assert.equal(t.droppedCount, 300, '500 条 / 窗口 200 → 窗口外 300 条全未读，实际 ' + t.droppedCount);
+});
+
+await test('房间没超过窗口时 droppedCount 只来自内部预算', async () => {
+  const room = store.createGroup({ name: 'L12-小房间', botIds: [] });
+  const reader = store.createBot({ name: 'L12读者D' });
+  const other = store.createBot({ name: 'L12别人D' });
+  for (let i = 0; i < 10; i++) {
+    store.appendMessage({
+      roomId: room.id, authorType: 'bot', authorId: other.id,
+      authorName: other.name, text: '消息' + i, status: 'done',
+    }, { silent: true });
+  }
+  const t = transcriptFor(room.id, reader.id, 1000, { maxChars: 1000000 });
+  assert.equal(t.droppedCount, 0, '小房间不该有窗口外省略，实际 ' + t.droppedCount);
+});
+
 let failed = 0;
 for (const r of results) {
   if (r.ok) console.log(`  ✓ ${r.name}`);

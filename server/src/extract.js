@@ -13,7 +13,22 @@ import * as cheerio from 'cheerio';
 import { PDFParse } from 'pdf-parse';
 import { log } from './util.js';
 
-export const MAX_CHARS = 120_000;
+/**
+ * 默认最多返回多少字。
+ *
+ * ★ 从 12 万降到 8 万：12 万中文字插进上下文就是 12 万 token 量级
+ *   （中文约 1 字 1 token，而依赖的 estimateTokens 按 4 字 1 token 估，
+ *   实际占用是它估的 4 倍左右）。一次读满 12 万足以把窗口顶掉大半。
+ */
+export const MAX_CHARS = 80_000;
+
+/**
+ * 硬上限：模型传再大的 maxChars 也不会超过这个值。
+ *
+ * 工具参数是模型给的，不能当成可信输入 —— 传个 1000000 就能把
+ * 整个上下文挤爆，而且是一次性的、不可逆的（压缩也救不回来已经烧掉的额度）。
+ */
+export const MAX_CHARS_HARD_LIMIT = 80_000;
 
 export const TEXT_EXT = new Set([
   '.txt', '.md', '.markdown', '.json', '.csv', '.tsv', '.log', '.yaml', '.yml',
@@ -113,6 +128,12 @@ function extractJson(file) {
  * @returns {Promise<{ok:boolean, text?:string, ext?:string, chars?:number, truncated?:boolean, error?:string}>}
  */
 export async function extractText(filePath, { maxChars = MAX_CHARS } = {}) {
+  // ★ 夹硬上限：模型传什么都不能超过 MAX_CHARS_HARD_LIMIT。
+  //   非法值（负数/NaN/字符串）一律回落到默认值。
+  const wanted = Number(maxChars);
+  maxChars = Number.isFinite(wanted) && wanted > 0
+    ? Math.min(Math.floor(wanted), MAX_CHARS_HARD_LIMIT)
+    : MAX_CHARS;
   const ext = path.extname(filePath).toLowerCase();
   if (!fs.existsSync(filePath)) return { ok: false, error: `文件不存在：${filePath}` };
   const stat = fs.statSync(filePath);
