@@ -160,26 +160,30 @@ PowerShell（`-STA`）读 `[Windows.Forms.Clipboard]::GetImage()`，存成临时
 
 ---
 
-## 验证状态（2026-11-05，Windows 11 x64，v1.3.7）
+## 验证状态（2026-11-10，Windows 11 x64，v1.3.11）
 
 包内自带 `node.exe`（v24.18.0），不依赖系统 Node。
 
 | 项目 | 结果 |
 |---|---|
-| `node server/tests/all.mjs` | 66/66 文件通过 |
+| `node server/tests/all.mjs` | 82/82 文件通过 |
 | `node scripts/tests/all.mjs` | 32/32 通过 |
 | `flutter analyze` | 无 issue |
-| `flutter test` | 590 passed / 3 skipped |
-| `pack-windows.ps1 -WithNode -Zip` | 成功；中立构建根构建，Flutter release 243.7s |
-| 发行包扫描 | `{"files":18386,"removedPdbs":0,"rewrittenDebugPaths":1,"rewrittenBuildRoots":2,"serverPeFiles":3,"nativeAssets":0,"dependencies":8}` |
-| 产物 | `dist/pi-bot-windows` 390MB / zip 123MB（18482 个文件） |
+| `flutter test` | 660 passed / 3 skipped |
+| `pack-windows.ps1 -WithNode -Zip` | 成功；中立构建根构建 |
+| 发行包扫描 | `{"files":18441,"removedPdbs":0,"rewrittenDebugPaths":1,"rewrittenBuildRoots":0,"serverPeFiles":3,"nativeAssets":0,"dependencies":8}` |
+| 产物 | `dist/pi-bot-windows` 391MB / zip 123MB（18537 个文件） |
 | 真机启动 | 包内 node 拉起 `server/src/index.js`，监听 8787，本机连接正常 |
-| `GET /health` | `ok=true version=1.3.7` |
-| 浅色模式 | 渲染正确：冷蓝背景、白色气泡 + 深色半透明边框、切换按钮呈橙色太阳 |
-| 发布 | `pi-bot-windows-v1.3.7.zip` 已挂 v1.3.7，SHA256 校验通过 |
+| `GET /health` | `ok=true version=1.3.11` |
+| 发布 | `pi-bot-windows-v1.3.11.zip` 已挂 v1.3.11，SHA256 校验通过 |
 
-本条记录首次覆盖「临时目录构建 + 发行包扫描」在真实 Flutter Windows 构建上的结果。
-上一版记录（2026-10-19，v1.1.0，37/37 测试、296MB）早于该机制，仅作历史对照。
+本次是纯代码同步（main `a5c56d7` → `b115894`，183 文件 / +29452 / −1173）：
+新增的 44 个客户端文件里没有一处 `Platform.*` / `defaultTargetPlatform` 分支，
+`app/windows`、`scripts/`、Windows CI 全程未被改动，服务端也没引入 POSIX 专属路径。
+所以 Windows 端不需要适配代码，只需按上表重新构建验证一遍。
+
+上一版记录（2026-11-05，v1.3.7，66/66 测试、590 passed、390MB）早于本次同步，
+再上一版（2026-10-19，v1.1.0，37/37 测试、296MB）仅作历史对照。
 
 ---
 
