@@ -204,6 +204,8 @@ const areaPanel2 = StringArea(
     'update.macInstructions':
         '关闭 pi-bot，打开 DMG 并将 App 拖入 Applications；\n重新打开后，在设置中重启本机服务端。',
     'update.installInstructions': '关闭 pi-bot 后运行这个安装包完成更新。',
+    'update.winSetupInstructions':
+        '关闭 pi-bot 后双击安装包，按下一步装完即可；\n数据目录和已配对的设备不会被改动。',
     'update.gotIt': '知道了',
     'update.openFolder': '打开所在目录',
 
@@ -599,6 +601,8 @@ const areaPanel2 = StringArea(
     'update.macInstructions': 'Quit pi-bot, open the DMG and drag the app into Applications.\nThen reopen it and restart the local server in Settings.',
     'update.installInstructions':
         'Quit pi-bot, then run this installer to finish updating.',
+    'update.winSetupInstructions':
+        'Quit pi-bot, then run the installer and click through the wizard.\nYour data directory and paired devices are left untouched.',
     'update.gotIt': 'Got it',
     'update.openFolder': 'Show in folder',
 

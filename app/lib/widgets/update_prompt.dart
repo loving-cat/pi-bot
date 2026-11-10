@@ -395,6 +395,8 @@ Future<void> showDownloadDoneDialog(
             Text(
               Platform.isMacOS && path.toLowerCase().endsWith('.dmg')
                   ? strings.t('update.macInstructions')
+                  : Platform.isWindows && path.toLowerCase().endsWith('.exe')
+                  ? strings.t('update.winSetupInstructions')
                   : strings.t('update.installInstructions'),
               style: TextStyle(
                 fontSize: PB.fsXs,

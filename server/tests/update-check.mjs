@@ -147,6 +147,19 @@ test('挑不到对应平台 → 返回 null（不瞎猜）', () => {
   assert.equal(pickAssetFor([], 'win32'), null);
 });
 
+test('同时挂安装包和免安装 zip → 选安装包，不看上传顺序', () => {
+  const zip = { name: 'pi-bot-windows-v1.3.11.zip', url: 'https://x/a.zip', size: 2 };
+  const setup = { name: 'pi-bot-windows-v1.3.11-setup.exe', url: 'https://x/b.exe', size: 3 };
+  // 上传顺序决定资产数组顺序：两种顺序都必须选 setup.exe
+  assert.equal(pickAssetFor([zip, setup], 'win32').name, setup.name);
+  assert.equal(pickAssetFor([setup, zip], 'win32').name, setup.name);
+});
+
+test('只有免安装 zip 时仍然能挑到（不回退成 null）', () => {
+  const assets = [{ name: 'pi-bot-windows-v1.3.11.zip', url: 'https://x/a.zip', size: 2 }];
+  assert.equal(pickAssetFor(assets, 'win32').name, 'pi-bot-windows-v1.3.11.zip');
+});
+
 test('没有 assets 字段也不炸', () => {
   const info = buildUpdateInfo({ current: '1.0.0', latest: '1.1.0' });
   assert.deepEqual(info.assets, []);
