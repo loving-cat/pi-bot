@@ -22,6 +22,7 @@ import '../desktop_shortcuts.dart';
 import '../theme.dart';
 import '../window_chrome.dart';
 import '../widgets/message_anchor_rail.dart';
+import '../widgets/no_scrollbar.dart';
 import '../widgets/toast.dart';
 import '../widgets/anchored_menu.dart';
 import '../widgets/activity_monitor.dart';
@@ -100,6 +101,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final _moreAnchor = GlobalKey();
 
   final _scroll = ScrollController();
+
+  /// 右侧滚动滑块。滚动通知只能从包着 ListView 的那层转给它 ——
+  /// 它在 Stack 里是 ListView 的兄弟节点，自己收不到 Scroll 通知。
+  final GlobalKey<MessageAnchorRailState> _railKey =
+      GlobalKey<MessageAnchorRailState>();
 
   /// 上一次触发追底时的"内容指纹"（条数 + 末条 id + 末条长度）。
   /// 内容没变就不重复追底，避免流式输出期间每帧都排一轮。
@@ -640,7 +646,19 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             child: AvatarHoverScope(
               child: _HoverLift(
                 onTap: () {
-                  if (MediaQuery.sizeOf(context).width >= kTwoPaneMinWidth) {
+                  // ★ 只有「嵌在 HomeShell 里」时才能切双栏面板。
+                  //
+                  //   togglePanel() 只是改 AppState.panelOpen，
+                  //   真正的右侧栏由 HomeShell 根据那个标志渲染。
+                  //   而 Navigator.push 出来的独立 ChatScreen（比如
+                  //   「让助手建团队」跳过去的私聊）盖在 HomeShell 上面，
+                  //   改标志位没有可见效果 —— 用户点了觉得「点不动」。
+                  //
+                  //   这种独立页改用弹出的面板。
+                  final twoPane =
+                      widget.embedded &&
+                      MediaQuery.sizeOf(context).width >= kTwoPaneMinWidth;
+                  if (twoPane) {
                     AppScope.read(context).togglePanel();
                   } else {
                     showRoomPanel(context, room);
@@ -814,8 +832,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             //   键盘快捷键一起挡掉（⌘C 复制整段就靠它）。
                             RepaintBoundary(
                               child: NotificationListener<Notification>(
-                                onNotification:
-                                    _scrollFollow.handleNotification,
+                                onNotification: (n) {
+                                  // 先给追底逻辑，再转给右侧滑块。
+                                  // 滑块在 Stack 里是兄弟节点，自己收不到滚动通知，
+                                  // 必须在这里转发，否则它的「滚动结束校准」永不执行。
+                                  _scrollFollow.handleNotification(n);
+                                  _railKey.currentState?.handleNotification(n);
+                                  return false;
+                                },
                                 // ★ 用 **聊天栏自己的宽度** 算留白和气泡上限。
                                 //   窗口 2000px 但这一栏只有 500px 时，
                                 //   必须按 500 算 —— 否则气泡被撑出栏外、留白也大得离谱。
@@ -847,10 +871,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                     //
                                     //   关掉它最实在：滚轮/触控板照样能滚，
                                     //   而用户视觉上少一个一直抽搐的东西。
-                                    return NotificationListener<
-                                      ScrollNotification
-                                    >(
-                                      onNotification: (_) => false,
+                                    // ★ 只在这里关掉滚动条。
+                                    //
+                                    //   原来挂在 MaterialApp 上，等于把设置页、
+                                    //   日志、文件列表、回执二级页的滚动条一起关了 ——
+                                    //   长列表再也判断不了「下面还有多少」。
+                                    //   抽搐只发生在聊天列表（流式输出让高度高频变化），
+                                    //   所以只治这一处。
+                                    return ScrollConfiguration(
+                                      behavior: const NoScrollbarBehavior(),
                                       child: ListView.builder(
                                         controller: _scroll,
                                         padding: EdgeInsets.fromLTRB(
@@ -1034,7 +1063,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                               right: 0,
                               top: 0,
                               bottom: 0,
-                              child: MessageAnchorRail(controller: _scroll),
+                              child: MessageAnchorRail(
+                                key: _railKey,
+                                controller: _scroll,
+                              ),
                             ),
                             // 顶部渐变：消息滚上去时柔和淡出，而不是被标题栏硬切
                             Positioned(

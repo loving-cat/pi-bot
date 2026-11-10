@@ -11,6 +11,7 @@ import '../window_chrome.dart';
 import '../widgets/toast.dart';
 import '../widgets/avatar_life.dart';
 import '../widgets/anchored_menu.dart';
+import '../widgets/create_group_dialog.dart';
 import '../widgets/theme_toggle_button.dart';
 import '../widgets/blob_avatar.dart';
 import '../widgets/floating_menu.dart';
@@ -348,14 +349,12 @@ class _RoomsScreenState extends State<RoomsScreen> {
     final mainBot = state.mainBot;
 
     final items = <AnchoredMenuItem>[
-      // 浮层已经有「新建」标题了，这里不再重复一个同样的分组标签
-      AnchoredMenuItem(
-        icon: LucideIcons.users,
-        title: s.t('rooms.askMainTitle'),
-        subtitle: s.t('rooms.askMainSubtitle'),
-        highlight: true,
-        onTap: () => _talkToMain(context, s.t('rooms.askMainPrefill')),
-      ),
+      // ★ 这里原来有一条「让助手建一个团队」。
+      //
+      //   它做的只是跳到 mainbot 私聊并预填一句话 ——
+      //   用户本来就随时能直接跟 mainbot 说要建什么，
+      //   多一个入口只是让人以为还有其他含义（点进去发现就是聊天）。
+      //   真要说清楚该建什么都得自己打字，这个快捷方式是空的。
       AnchoredMenuItem(
         icon: LucideIcons.messagesSquare,
         title: s.t('rooms.newGroup'),
@@ -417,109 +416,26 @@ class _RoomsScreenState extends State<RoomsScreen> {
     );
   }
 
-  Future<void> _talkToMain(BuildContext context, String prefill) async {
-    final state = AppScope.read(context);
-    final mainBot = state.mainBot;
-    if (mainBot == null) return;
-    final room = await state.ensureDm(mainBot.id);
-    if (room == null || !context.mounted) return;
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => ChatScreen(room: room, initialText: prefill),
-      ),
-    );
-  }
-
   Future<void> _createGroup(BuildContext context) async {
-    final s = L10n.s(context);
-    final nameController = TextEditingController();
-    final topicController = TextEditingController();
     final state = AppScope.read(context);
-    final selected = <String>{};
+    // mainbot 不列进候选（它是对用户的负责人，本来就在群里）
+    final bots = [for (final b in state.bots) if (!b.isMain) b].toList();
 
+    // 用 GlobalKey 拿回用户填的内容 —— 对话框自己管理生命周期，
+    // 调用方只关心结果，不需要替它保存几个 controller。
+    final key = GlobalKey<CreateGroupDialogState>();
     final created = await showDialog<bool>(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setLocal) => AlertDialog(
-          title: Text(s.t('rooms.createGroupTitle')),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                TextField(
-                  controller: nameController,
-                  autofocus: true,
-                  decoration: InputDecoration(
-                    labelText: s.t('rooms.groupName'),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: topicController,
-                  decoration: InputDecoration(
-                    labelText: s.t('rooms.groupTopic'),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  s.t('rooms.addWho'),
-                  style: TextStyle(
-                    fontSize: PB.fsXs,
-                    color: PB.textTertiary,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                for (final bot in state.bots)
-                  CheckboxListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    value: bot.isMain || selected.contains(bot.id),
-                    onChanged: bot.isMain
-                        ? null
-                        : (v) => setLocal(
-                            () => v == true
-                                ? selected.add(bot.id)
-                                : selected.remove(bot.id),
-                          ),
-                    secondary: BlobAvatar(
-                      seed: bot.id,
-                      color: PB.colorFor(bot.id),
-                      emoji: bot.emoji,
-                      size: 28,
-                      animate: false,
-                    ),
-                    title: Text(
-                      bot.name,
-                      style: const TextStyle(fontSize: PB.fsSm),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: Text(s.t('common.cancel')),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: Text(s.t('rooms.create')),
-            ),
-          ],
-        ),
-      ),
+      builder: (_) => CreateGroupDialog(key: key, bots: bots),
     );
-
-    if (created != true ||
-        nameController.text.trim().isEmpty ||
-        !context.mounted)
+    final form = key.currentState;
+    if (created != true || form == null || form.name.isEmpty || !context.mounted) {
       return;
+    }
     final room = await state.createGroup(
-      nameController.text.trim(),
-      topic: topicController.text.trim(),
-      botIds: selected.toList(),
+      form.name,
+      topic: form.topic,
+      botIds: form.botIds,
     );
     if (room != null && context.mounted) {
       Navigator.push(

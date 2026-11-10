@@ -1,10 +1,27 @@
 /** 应用连接目录、短期验证结果和 Bot 分配；凭据由 MCP 库解析。 */
 import { testMcpServer } from './mcp.js';
 
+// 应用连接目录。
+//
+// ★ 文案原则：说「Bot 能拿它干什么」，不要只说部署形态。
+//   原来的「远程服务 / 本地工具」是**实现方式**的划分，
+//   用户看完不知道这玩意儿对他有什么用。
+//   MCP 这个词保留 —— 用户明确要求不改名。
 export const CONNECTION_CATALOG = [
-  { id: 'remote_mcp', name: '远程服务', description: '通过服务地址和授权凭据连接应用工具。', category: 'remote', type: 'http', action: 'create' },
-  { id: 'local_mcp', name: '本地工具', description: '连接已安装在电脑上的工具，按需启动。', category: 'local', type: 'stdio', action: 'create' },
-  { id: 'import_local', name: '本机已配置', description: '导入这台电脑已有的工具配置，导入后单独管理。', category: 'local', action: 'import' },
+  // ★ 只在目录里留「导入」——它是**另一件事**（读现成配置），
+  //   不是另一种连接方式。
+  //
+  //   原来还有 remote_mcp / local_mcp 两张卡，点进去都是同一个编辑器，
+  //   唯一差别是「连接方式」下拉框的默认值 —— 而那个下拉框就在表单第一屏。
+  //   让用户先在门外为一个还没看到的选项做决定，纯属多此一举。
+  //   现在添加 MCP 由前端直接给一个入口。
+  {
+    id: 'import_local',
+    name: '从其他软件导入',
+    description: '已经在本机别的软件里配过 MCP？读过来，不用重新填一遍。',
+    category: 'local',
+    action: 'import',
+  },
 ];
 export const VERIFICATION_TTL = 10 * 60 * 1000;
 

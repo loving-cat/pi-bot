@@ -26,7 +26,10 @@ class ConnectionsSection extends StatefulWidget {
 
 class _ConnectionsSectionState extends State<ConnectionsSection> {
   final _search = TextEditingController();
-  ConnectionFilter _filter = ConnectionFilter.all;
+  // 筛选栏已去掉（见 build 里的说明）：只剩「全部」这一种状态。
+  // 保留这个字段是为了复用 connectionMatches / catalogMatches 的过滤逻辑，
+  // 它们的 filter 参数还能表达"已配置"等语义，将来若要恢复筛选不必重写。
+  final ConnectionFilter _filter = ConnectionFilter.all;
   ConnectionsController? _controller;
   AppState? _state;
   int _revision = -1;
@@ -244,28 +247,14 @@ class _ConnectionsSectionState extends State<ConnectionsSection> {
                 isDense: true,
               ),
             ),
+            // ★ 筛选栏去掉了。
+            //
+            //   它本来是「远程服务 / 本地工具 / 已配置」——前两个是同一个
+            //   「连接方式」下拉框的两个取值，第三个又是另一个维度
+            //   （配置状态混进类型筛选里）。三个 chip 各说各的，
+            //   而连接总数通常个位数，上面已经有搜索框。
+            //   留着只是让人多做一次选择。
             const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 6,
-              children: [
-                for (final filter in ConnectionFilter.values)
-                  ChoiceChip(
-                    label: Text(strings.t('conn.filter.${filter.name}')),
-                    selected: _filter == filter,
-                    showCheckmark: false,
-                    backgroundColor: PB.bgElevated,
-                    selectedColor: PB.bgActive,
-                    labelStyle: TextStyle(
-                      color: _filter == filter
-                          ? PB.textPrimary
-                          : PB.textSecondary,
-                    ),
-                    side: BorderSide(color: PB.borderTertiary),
-                    onSelected: (_) => setState(() => _filter = filter),
-                  ),
-              ],
-            ),
             if (controller.loading)
               const Padding(
                 padding: EdgeInsets.only(top: 14),
@@ -304,21 +293,32 @@ class _ConnectionsSectionState extends State<ConnectionsSection> {
               ),
               const SizedBox(height: 12),
               _cards(context, [
-                for (final item in catalog)
-                  ConnectionsCatalogCard(
-                    item: item,
-                    onTap: () {
-                      if (item.id == 'import_local') {
-                        _import();
-                      } else {
-                        _edit(
-                          type: item.type == 'stdio' || item.id == 'local_mcp'
-                              ? 'stdio'
-                              : 'http',
-                        );
-                      }
-                    },
+                // ★ 一个「添加 MCP」就够，不再分远程/本地两张卡。
+                //
+                //   两张卡点进去都是同一个编辑器，**唯一的区别**是
+                //   表单里的「连接方式」下拉框默认选哪个 ——
+                //   而那个下拉框本来就在编辑器第一屏。
+                //   在外面先让用户选一次，等于让他为一个他还没看到的
+                //   选项做决定：不知道区别的人只能瞎点。
+                //
+                //   现在进来就是表单，想改方式随时改。
+                ConnectionsCatalogCard(
+                  item: ConnectionCatalogItem(
+                    id: 'add_mcp',
+                    name: strings.t('conn.addMcp'),
+                    description: strings.t('conn.addMcpHint'),
+                    category: 'remote',
+                    type: 'http',
+                    action: 'create',
                   ),
+                  onTap: () => _edit(),
+                ),
+                for (final item in catalog)
+                  if (item.id == 'import_local')
+                    ConnectionsCatalogCard(
+                      item: item,
+                      onTap: _import,
+                    ),
               ]),
             ],
             if (connections.isNotEmpty) ...[

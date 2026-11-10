@@ -70,10 +70,20 @@ Map<int, List<Msg>> groupProgressMessages(
     final gap = previous == null
         ? null
         : message.createdAt - previous.createdAt;
-    if (previous == null ||
-        previous.roomId != message.roomId ||
-        gap! < 0 ||
-        gap > maxGapMs) {
+    // ★ 来源不同必须断组。
+    //
+    //   窗口放到 6 小时后，一个 bot 同时挂「研发」「市场」时：
+    //   09:00 在研发交付、13:00 在市场交付（间隔 4h < 6h）会被并成一条，
+    //   标题只取首条的部门 → 显示「在「研发」那边 2 件事」，
+    //   但点开明细第二条写的是「市场」—— 标题和内容自相矛盾。
+    //
+    //   同一次派活用 dispatchId 串，跨派活也断组。
+    final sameSource =
+        previous != null &&
+        previous.roomId == message.roomId &&
+        previous.meta?['fromRoomId'] == message.meta?['fromRoomId'] &&
+        previous.meta?['dispatchId'] == message.meta?['dispatchId'];
+    if (previous == null || !sameSource || gap! < 0 || gap > maxGapMs) {
       current = <Msg>[];
       groups[i] = current;
     }

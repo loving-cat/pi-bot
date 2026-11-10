@@ -35,14 +35,19 @@ class MsgQuoteStrip extends StatelessWidget {
         : (quoted!.authorName.isNotEmpty ? quoted!.authorName : fallbackName);
     final preview = text.isEmpty
         ? '（原消息）'
-        : (text.length > 60 ? '${text.substring(0, 60)}…' : text);
+        // ★ 按「字符」截断，不是按 UTF-16 code unit。
+        //   substring 数的是 code unit，第 60 个正好落在代理对中间时，
+        //   预览尾部会渲染成「�」。characters 会按字素簇切。
+        : (text.characters.length > 60
+              ? '${text.characters.take(60)}…'
+              : text);
 
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: Container(
+    // ★ onTap 为空时不要套 GestureDetector。
+    //
+    //   behavior: opaque 会把点击全部吃掉，但回调是 null ——
+    //   用户点引用条什么都不会发生，也冒泡不到列表和长按菜单。
+    //   目前没有调用方传 onTap（跳转还没实现），所以默认不拦。
+    final body = Container(
           constraints: const BoxConstraints(maxWidth: 460),
           padding: const EdgeInsets.fromLTRB(8, 5, 10, 5),
           decoration: BoxDecoration(
@@ -77,8 +82,18 @@ class MsgQuoteStrip extends StatelessWidget {
               ),
             ],
           ),
-        ),
-      ),
+        );
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      // 有回调才让它可点；没有就原样交给下层处理命中
+      child: onTap == null
+          ? body
+          : GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: onTap,
+              child: body,
+            ),
     );
   }
 }

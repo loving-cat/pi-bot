@@ -387,154 +387,311 @@ class _EditorState extends State<_Editor> {
   Widget build(BuildContext context) {
     final strings = L10n.s(context);
     final isNew = widget.group == null;
-    return AlertDialog(
-      backgroundColor: PB.bgElevated,
-      title: Text(
-        isNew ? strings.t('model.addGroup') : strings.t('model.editGroup'),
-        style: const TextStyle(fontSize: PB.fsLg),
-      ),
-      content: SizedBox(
-        width: 460,
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _field(
-                strings.t('model.fieldName'),
-                _name,
-                strings.t('model.fieldNameHint'),
-              ),
-              _field('baseUrl', _baseUrl, 'https://api.example.com/v1'),
-              _field(
-                isNew
-                    ? strings.t('model.apiKey')
-                    : strings.t('model.apiKeyUnchanged'),
-                _key,
-                isNew
-                    ? 'sk-…'
-                    : (widget.group!.hasKey ? widget.group!.keyMasked : 'sk-…'),
-                obscure: true,
-              ),
-              const SizedBox(height: 6),
-              Text(
-                strings.t('model.apiType'),
-                style: TextStyle(
-                  fontSize: PB.fsXs,
-                  color: PB.textTertiary,
-                ),
-              ),
-              const SizedBox(height: 4),
-              DropdownButtonFormField<String>(
-                initialValue: _api,
-                dropdownColor: PB.bgElevated,
-                style: TextStyle(
-                  fontSize: PB.fsSm,
-                  color: PB.textPrimary,
-                ),
-                items: [
-                  DropdownMenuItem(
-                    value: 'openai-completions',
-                    child: Text(strings.t('model.openaiCompatible')),
-                  ),
-                  const DropdownMenuItem(
-                    value: 'openai-responses',
-                    child: Text('OpenAI Responses'),
-                  ),
-                  const DropdownMenuItem(
-                    value: 'anthropic-messages',
-                    child: Text('Anthropic Messages'),
-                  ),
-                ],
-                onChanged: (v) => setState(() => _api = v ?? _api),
-              ),
-              const SizedBox(height: 10),
-              ModelCardsEditor(
-                rows: _modelRows,
-                focusedRowId: _focusedRowId,
-                enabled: !_saving,
-                thinkingFormats: _thinkingFormats,
-                thinkingLevels: _thinkingLevels,
-                thinkingUpstreamValues: _thinkingUpstreamValues,
-                onChanged: (id, update) => setState(() {
-                  _modelRows = [
-                    for (final old in _modelRows)
-                      old.rowId == id ? update(old) : old,
-                  ];
-                }),
-                onAdd: () => setState(() {
-                  final row = ModelCardDraft(rowId: _nextRowId++);
-                  _modelRows = [..._modelRows, row];
-                  _focusedRowId = row.rowId;
-                }),
-                onRemove: (id) => setState(() {
-                  _modelRows = _modelRows
-                      .where((row) => row.rowId != id)
-                      .toList();
-                }),
-              ),
-              const SizedBox(height: 6),
-              Row(
+    final accent = PB.colors(context).accentBright;
+
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      child: Container(
+        width: 560,
+        constraints: const BoxConstraints(maxHeight: 760),
+        decoration: BoxDecoration(
+          color: PB.bgPane,
+          borderRadius: BorderRadius.circular(PB.rXl),
+          border: Border.all(color: PB.borderSecondary),
+          boxShadow: PB.shadow(y: 18, blur: 48, alpha: 0.55),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // ── 标题 ──
+            Padding(
+              padding: const EdgeInsets.fromLTRB(22, 18, 16, 14),
+              child: Row(
                 children: [
-                  OutlinedButton.icon(
-                    onPressed: _testing ? null : _runTest,
-                    icon: _testing
-                        ? const SizedBox(
-                            width: 13,
-                            height: 13,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(LucideIcons.plugZap, size: 15),
-                    label: Text(
-                      _testing
-                          ? strings.t('model.testing')
-                          : strings.t('model.testConnection'),
+                  Container(
+                    width: 30,
+                    height: 30,
+                    decoration: BoxDecoration(
+                      color: PB.colors(context).accent.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(PB.rBase),
+                    ),
+                    child: Icon(
+                      LucideIcons.server,
+                      size: 15,
+                      color: accent,
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      strings.t('model.testHint'),
-                      style: TextStyle(
-                        fontSize: PB.fsXxs,
-                        color: PB.textQuaternary,
+                  const SizedBox(width: 11),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        isNew
+                            ? strings.t('model.addGroup')
+                            : strings.t('model.editGroup'),
+                        style: TextStyle(
+                          fontSize: PB.fsLg,
+                          fontWeight: FontWeight.w600,
+                          color: PB.textPrimary,
+                        ),
+                      ),
+                      Text(
+                        '填好地址和 key，模型可以自动探测',
+                        style: TextStyle(
+                          fontSize: PB.fsXxs,
+                          color: PB.textQuaternary,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const Spacer(),
+                  _DialogCloseBtn(
+                    onTap: _saving ? null : () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+            ),
+            Divider(height: 1, color: PB.borderTertiary),
+
+            // ── 内容 ──
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(22, 16, 22, 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // 服务端信息（一组）
+                    _GroupCard(
+                      icon: LucideIcons.link,
+                      title: '服务端',
+                      children: [
+                        _field(
+                          strings.t('model.fieldName'),
+                          _name,
+                          strings.t('model.fieldNameHint'),
+                        ),
+                        _field('baseUrl', _baseUrl, 'https://api.example.com/v1'),
+                        _field(
+                          isNew
+                              ? strings.t('model.apiKey')
+                              : strings.t('model.apiKeyUnchanged'),
+                          _key,
+                          isNew
+                              ? 'sk-…'
+                              : (widget.group!.hasKey
+                                    ? widget.group!.keyMasked
+                                    : 'sk-…'),
+                          obscure: true,
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: DropdownButtonFormField<String>(
+                            initialValue: _api,
+                            dropdownColor: PB.bgElevated,
+                            style: TextStyle(
+                              fontSize: PB.fsSm,
+                              color: PB.textPrimary,
+                            ),
+                            decoration: InputDecoration(
+                              labelText: strings.t('model.apiType'),
+                              labelStyle: TextStyle(
+                                fontSize: PB.fsXs,
+                                color: PB.textTertiary,
+                              ),
+                              isDense: true,
+                              filled: true,
+                              fillColor: PB.bgInput,
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 12,
+                              ),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(PB.rLg),
+                                borderSide: BorderSide(
+                                  color: PB.borderTertiary,
+                                ),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(PB.rLg),
+                                borderSide: BorderSide(
+                                  color: PB.borderTertiary,
+                                ),
+                              ),
+                            ),
+                            items: [
+                              DropdownMenuItem(
+                                value: 'openai-completions',
+                                child: Text(
+                                  strings.t('model.openaiCompatible'),
+                                ),
+                              ),
+                              const DropdownMenuItem(
+                                value: 'openai-responses',
+                                child: Text('OpenAI Responses'),
+                              ),
+                              const DropdownMenuItem(
+                                value: 'anthropic-messages',
+                                child: Text('Anthropic Messages'),
+                              ),
+                            ],
+                            onChanged: (v) => setState(() => _api = v ?? _api),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        // 连通性测试放在服务端这组里 —— 测的就是这几项配得对不对
+                        Row(
+                          children: [
+                            OutlinedButton.icon(
+                              onPressed: _testing ? null : _runTest,
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 10,
+                                ),
+                                side: BorderSide(color: PB.borderTertiary),
+                              ),
+                              icon: _testing
+                                  ? const SizedBox(
+                                      width: 13,
+                                      height: 13,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(LucideIcons.plugZap, size: 14),
+                              label: Text(
+                                _testing
+                                    ? strings.t('model.testing')
+                                    : strings.t('model.testConnection'),
+                                style: const TextStyle(fontSize: PB.fsXs),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                strings.t('model.testHint'),
+                                style: TextStyle(
+                                  fontSize: PB.fsXxs,
+                                  color: PB.textQuaternary,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (_test != null) ...[
+                          const SizedBox(height: 8),
+                          _testResult(_test!),
+                        ],
+                        if (_discoveredModels.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          _autoFillRow(),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+
+                    // 模型（一组）
+                    _GroupCard(
+                      icon: LucideIcons.layers,
+                      title: '模型',
+                      trailing: Text(
+                        '每个可单独设容量，留空用默认',
+                        style: TextStyle(
+                          fontSize: PB.fsXxs,
+                          color: PB.textQuaternary,
+                        ),
+                      ),
+                      children: [
+                        ModelCardsEditor(
+                          rows: _modelRows,
+                          focusedRowId: _focusedRowId,
+                          enabled: !_saving,
+                          thinkingFormats: _thinkingFormats,
+                          thinkingLevels: _thinkingLevels,
+                          thinkingUpstreamValues: _thinkingUpstreamValues,
+                          onChanged: (id, update) => setState(() {
+                            _modelRows = [
+                              for (final old in _modelRows)
+                                old.rowId == id ? update(old) : old,
+                            ];
+                          }),
+                          onAdd: () => setState(() {
+                            final row = ModelCardDraft(rowId: _nextRowId++);
+                            _modelRows = [..._modelRows, row];
+                            _focusedRowId = row.rowId;
+                          }),
+                          onRemove: (id) => setState(() {
+                            _modelRows = _modelRows
+                                .where((row) => row.rowId != id)
+                                .toList();
+                          }),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            // ── 底部 ──
+            Divider(height: 1, color: PB.borderTertiary),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(22, 12, 22, 14),
+              child: Row(
+                children: [
+                  if (_error != null)
+                    Expanded(
+                      child: Row(
+                        children: [
+                          Icon(
+                            LucideIcons.circleAlert,
+                            size: 13,
+                            color: PB.danger,
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              _error!,
+                              style: TextStyle(
+                                fontSize: PB.fsXs,
+                                color: PB.danger,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  else
+                    const Spacer(),
+                  TextButton(
+                    onPressed: _saving ? null : () => Navigator.pop(context),
+                    child: Text(strings.t('common.cancel')),
+                  ),
+                  const SizedBox(width: 6),
+                  FilledButton(
+                    onPressed: _saving ? null : _save,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: accent,
+                      foregroundColor: Colors.black,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 12,
                       ),
                     ),
+                    child: Text(
+                      _saving
+                          ? strings.t('common.saving')
+                          : strings.t('common.save'),
+                    ),
                   ),
                 ],
               ),
-              if (_test != null) ...[
-                const SizedBox(height: 8),
-                _testResult(_test!),
-              ],
-              // 探测到模型列表后给一键填入：省掉用户一个个手打模型 ID
-              if (_discoveredModels.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                _autoFillRow(),
-              ],
-              if (_error != null) ...[
-                const SizedBox(height: 10),
-                Text(
-                  _error!,
-                  style: const TextStyle(fontSize: PB.fsXs, color: PB.danger),
-                ),
-              ],
-            ],
-          ),
+            ),
+          ],
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: _saving ? null : () => Navigator.pop(context),
-          child: Text(strings.t('common.cancel')),
-        ),
-        FilledButton(
-          onPressed: _saving ? null : _save,
-          child: Text(
-            _saving ? strings.t('common.saving') : strings.t('common.save'),
-          ),
-        ),
-      ],
     );
   }
 
@@ -636,39 +793,130 @@ class _EditorState extends State<_Editor> {
     int lines = 1,
     bool obscure = false,
   }) {
+    final accent = PB.colors(context).accent;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
+      child: TextField(
+        controller: c,
+        maxLines: lines,
+        obscureText: obscure,
+        style: TextStyle(fontSize: PB.fsSm, color: PB.textPrimary),
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+          floatingLabelStyle: TextStyle(fontSize: PB.fsXs, color: accent),
+          hintText: hint,
+          hintStyle: TextStyle(fontSize: PB.fsSm, color: PB.textQuaternary),
+          isDense: true,
+          filled: true,
+          fillColor: PB.bgInput,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 13,
+          ),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(PB.rLg),
+            borderSide: BorderSide(color: PB.borderTertiary),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(PB.rLg),
+            borderSide: BorderSide(color: PB.borderTertiary),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(PB.rLg),
+            borderSide: BorderSide(color: accent),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+
+/// 一组字段装在一个带图标标题的卡片里。
+///
+/// 分组的意义：模型组里「服务端信息」（地址/key/接口类型）和「模型列表」
+/// 是两类完全不同的配置，平铺在一列里读者要自己找边界。
+class _GroupCard extends StatelessWidget {
+  const _GroupCard({
+    required this.icon,
+    required this.title,
+    required this.children,
+    this.trailing,
+  });
+
+  final IconData icon;
+  final String title;
+  final List<Widget> children;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 4),
+      decoration: BoxDecoration(
+        color: PB.bgElevated.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(PB.rXl),
+        border: Border.all(color: PB.borderTertiary),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            label,
-            style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+          Row(
+            children: [
+              Icon(icon, size: 13, color: PB.textTertiary),
+              const SizedBox(width: 6),
+              Text(
+                title,
+                style: TextStyle(
+                  fontSize: PB.fsXs,
+                  fontWeight: FontWeight.w600,
+                  color: PB.textSecondary,
+                ),
+              ),
+              if (trailing != null) ...[
+                const SizedBox(width: 10),
+                Expanded(child: trailing!),
+              ],
+            ],
           ),
-          const SizedBox(height: 4),
-          TextField(
-            controller: c,
-            maxLines: lines,
-            obscureText: obscure,
-            style: const TextStyle(fontSize: PB.fsSm),
-            decoration: InputDecoration(
-              hintText: hint,
-              hintStyle: TextStyle(
-                fontSize: PB.fsSm,
-                color: PB.textQuaternary,
-              ),
-              isDense: true,
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 10,
-                vertical: 10,
-              ),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(PB.rLg),
-                borderSide: BorderSide(color: PB.borderSecondary),
-              ),
-            ),
-          ),
+          const SizedBox(height: 10),
+          ...children,
         ],
+      ),
+    );
+  }
+}
+
+/// 对话框右上角的关闭按钮。
+class _DialogCloseBtn extends StatefulWidget {
+  const _DialogCloseBtn({required this.onTap});
+  final VoidCallback? onTap;
+
+  @override
+  State<_DialogCloseBtn> createState() => _DialogCloseBtnState();
+}
+
+class _DialogCloseBtnState extends State<_DialogCloseBtn> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: Container(
+          width: 26,
+          height: 26,
+          decoration: BoxDecoration(
+            color: _hover ? PB.bgHover : Colors.transparent,
+            borderRadius: BorderRadius.circular(PB.rBase),
+          ),
+          child: Icon(LucideIcons.x, size: 14, color: PB.textTertiary),
+        ),
       ),
     );
   }

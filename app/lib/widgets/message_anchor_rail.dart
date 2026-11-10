@@ -30,10 +30,13 @@ class MessageAnchorRail extends StatefulWidget {
   final double gutter;
 
   @override
-  State<MessageAnchorRail> createState() => _MessageAnchorRailState();
+  State<MessageAnchorRail> createState() => MessageAnchorRailState();
 }
 
-class _MessageAnchorRailState extends State<MessageAnchorRail> {
+/// 公开是为了让外层（包着 ListView 的 NotificationListener）
+/// 能把滚动通知转发进来 —— 这条轨在 Stack 里是 ListView 的兄弟节点，
+/// 自己收不到 Scroll 通知（它只沿祖先链冒泡）。
+class MessageAnchorRailState extends State<MessageAnchorRail> {
   bool _hovering = false;
 
   /// 滑块位置：0 = 轨道顶部，1 = 轨道底部。
@@ -59,10 +62,10 @@ class _MessageAnchorRailState extends State<MessageAnchorRail> {
   }
 
   @override
-  void didUpdateWidget(MessageAnchorRail old) {
-    super.didUpdateWidget(old);
-    if (old.controller != widget.controller) {
-      old.controller.removeListener(_onScroll);
+  void didUpdateWidget(MessageAnchorRail oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_onScroll);
       widget.controller.addListener(_onScroll);
     }
   }
@@ -86,35 +89,46 @@ class _MessageAnchorRailState extends State<MessageAnchorRail> {
     if (!prev.isFinite) return;
 
     final delta = pixels - prev;
-    // 滚动中：按增量走，不读总高度 → 不跳
+    // 滚动中：按增量走
     if (delta.abs() >= 0.5) {
-      final viewport = p.viewportDimension;
-      if (viewport.isFinite && viewport > 0) {
-        final step = (delta / viewport) * 0.18;
+      // ★ 换算基准必须是**实际可滚动范围**，不是一屏高度。
+      //
+      //   原来用 (delta / viewport) * 0.18：内容是 10 屏时真实比例是
+      //   delta / (10*viewport)，却按 0.18 走 —— 滑块以 1.8 倍速跑，
+      //   往上滚五六屏就撞到顶并一直贴边，误差一路累积。
+      //
+      //   只有内容≈1 屏时那个系数才碰巧对。
+      final max = p.maxScrollExtent;
+      final span = max.isFinite && max > 0 ? max : p.viewportDimension;
+      if (span.isFinite && span > 0) {
+        final step = delta / span;
         var next = (_thumbOffset + step).clamp(0.0, 1.0);
         // 端点精确对齐
         if (pixels <= 0.5) next = 0;
-        if ((p.maxScrollExtent - pixels).abs() < 8) next = 1;
-        if ((next - _thumbOffset).abs() >= 0.0006) {
+        if ((max - pixels).abs() < 8) next = 1;
+        if ((next - _thumbOffset).abs() >= 0.0004) {
           setState(() => _thumbOffset = next);
         }
       }
     }
   }
 
-  /// 滚动结束（含惯性）时校准一次。
+  /// 由外层（真正包着 ListView 的那个 NotificationListener）转发滚动通知。
   ///
-  /// 用 ScrollEndNotification 而不是定时器：定时器在惯性还没停时
-  /// 就会触发，那时位置还在变，校准会表现为轻微跳一下。
-  /// ScrollEndNotification 是框架判定"真的停了"的时机，更准。
-  bool handleNotification(Notification n) {
+  /// ★ 不能靠组件内部自己套 NotificationListener —— 这条轨在 Stack 里
+  ///   和 ListView 是**兄弟节点**，而 Scroll 通知只沿祖先链向上冒泡，
+  ///   兄弟永远收不到。自己套的结果就是滚动结束检测从不触发，
+  ///   校准一次都不执行，误差一路累积到下次手动拖拽。
+  ///
+  /// 用 ScrollEndNotification 而不是定时器：定时器在惯性还没停时就会
+  /// 触发，那时位置还在变，校准会表现为轻微跳一下。
+  void handleNotification(Notification n) {
     if (n is ScrollStartNotification && n.depth == 0) {
-      _scrolling = true;
+      if (!_scrolling) setState(() => _scrolling = true);
     } else if (n is ScrollEndNotification && n.depth == 0) {
-      _scrolling = false;
+      if (_scrolling) setState(() => _scrolling = false);
       _recalibrate();
     }
-    return false;
   }
 
   /// 用真实比例校准滑块位置（只在静止时调用）。
@@ -124,6 +138,7 @@ class _MessageAnchorRailState extends State<MessageAnchorRail> {
     if (!c.hasClients) return;
     final p = c.position;
     if (!p.hasContentDimensions) return;
+
     final max = p.maxScrollExtent;
     double next;
     if (max <= 0) {
@@ -135,6 +150,7 @@ class _MessageAnchorRailState extends State<MessageAnchorRail> {
     } else {
       next = (p.pixels / max).clamp(0.0, 1.0);
     }
+
     if ((next - _thumbOffset).abs() < 0.002) return;
     setState(() => _thumbOffset = next);
   }
@@ -154,9 +170,7 @@ class _MessageAnchorRailState extends State<MessageAnchorRail> {
   @override
   Widget build(BuildContext context) {
     final positionText = '${(_thumbOffset * 100).round()}%';
-    return NotificationListener<Notification>(
-      onNotification: handleNotification,
-      child: MouseRegion(
+    return MouseRegion(
         opaque: false,
         cursor: SystemMouseCursors.basic,
         onEnter: (_) => setState(() => _hovering = true),
@@ -236,7 +250,6 @@ class _MessageAnchorRailState extends State<MessageAnchorRail> {
                   );
                 },
               ),
-            ),
           ),
         ),
       ),

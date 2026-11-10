@@ -317,8 +317,10 @@ class _ProgressPeekLayerState extends State<_ProgressPeekLayer>
     final who = m.authorName.trim().isNotEmpty ? m.authorName.trim() : dept;
     final author = m.authorId ?? m.authorName;
     // 副标题：部门；如果这条是别人派的活，再标一句「派给」。
+    // ★ 方向别写反：who 是干活的（作者），fromName 是派活的。
+    //   写「派给 fromName」等于说 fromName 是接收方，正好搞反了。
     final subline = fromName.isNotEmpty && fromName != who
-        ? '$dept · 派给 $fromName'
+        ? '$dept · 由 $fromName 派'
         : dept;
 
     final body = Padding(
@@ -419,24 +421,25 @@ class _ProgressPeekLayerState extends State<_ProgressPeekLayer>
     //   这是「A 说 → B 接」的唯一视觉依据；不缩进的话，
     //   读者只能看到两张并列的卡片，读不出因果关系。
     if (depth == 0) return body;
-    // IntrinsicHeight 让左侧竖线能长到和内容同高。
-    // 这里每条回执最多出现两次（父/子），开销可接受。
+    // ★ 用边框画竖线，不要用 IntrinsicHeight + Row(stretch)。
+    //
+    //   MdText 渲染表格时内部是 LayoutBuilder，而 LayoutBuilder 的
+    //   computeMaxIntrinsicHeight 直接抛 "does not support returning
+    //   intrinsic dimensions"：debug 下红屏，release 下返回 0 把整块
+    //   高度压扁、内容溢出。而且 intrinsic 是 O(N²) 级布局代价。
+    //
+    //   Border 跟着容器高度走，零额外代价，也不怕表格。
     return Padding(
       padding: EdgeInsets.only(left: 18.0 * depth),
-      child: IntrinsicHeight(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Container(
-              width: 2,
-              margin: const EdgeInsets.only(top: 2, bottom: 16, right: 10),
-              decoration: BoxDecoration(
-                color: PB.borderSecondary,
-                borderRadius: BorderRadius.circular(1),
-              ),
-            ),
-            Expanded(child: body),
-          ],
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border(
+            left: BorderSide(color: PB.borderSecondary, width: 2),
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.only(left: 10),
+          child: body,
         ),
       ),
     );
