@@ -157,6 +157,9 @@ const PLATFORM_RULES = {
  * 约定：文件名里带平台关键字（win/mac/dmg/exe/apk）就认。
  * 挑不到就返回 null —— 上层退回"打开发布页让用户自己下"，不猜。
  *
+ * 规则表内的顺序即优先级：`.exe/.msi` 排在平台词前面，所以同时挂着
+ * `-setup.exe` 和 `.zip` 时选安装包，而不是看谁先上传。同名次保持原始顺序。
+ *
  * @param {Array<{name?:string,url?:string,size?:number}>} assets
  * @param {NodeJS.Platform|string} platform
  * @returns {{name:string,url:string,size:number}|null}
@@ -176,7 +179,17 @@ export function pickAssetFor(assets = [], platform = process.platform) {
       !NOT_INSTALLER.test(a.name),
   );
   // 只按文件名判平台：URL 里可能带 "darwin" 之类的字样，按 URL 匹配会串平台
-  const hit = candidates.find((a) => rules.some((re) => re.test(a.name)));
-  return hit ? { name: hit.name, url: hit.url, size: Number(hit.size) || 0 } : null;
+  let best = null;
+  let bestRank = Number.POSITIVE_INFINITY;
+  for (const a of candidates) {
+    // 取最低命中的规则序号：同一文件可能既像安装包又带平台词
+    const rank = rules.findIndex((re) => re.test(a.name));
+    if (rank === -1) continue;
+    if (rank < bestRank) {
+      best = a;
+      bestRank = rank;
+    }
+  }
+  return best ? { name: best.name, url: best.url, size: Number(best.size) || 0 } : null;
 }
 

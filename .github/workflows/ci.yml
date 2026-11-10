@@ -64,6 +64,7 @@ jobs:
           node scripts/tests/stage-app-build-test.mjs
           node scripts/tests/prepare-windows-bundle-test.mjs
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts/tests/pack-windows-test.ps1
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/tests/pack-windows-setup-test.ps1
 
   app:
     name: app analyze + test (${{ matrix.os }})

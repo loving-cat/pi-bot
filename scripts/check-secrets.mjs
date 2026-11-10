@@ -38,6 +38,8 @@ const ALLOW = [
   /<[^>]*(用户|your|token|key)[^>]*>/i,
   // 自动化工具的署名行（地址是工具本身的，不含个人信息）
   /^Co-authored-by: Cursor Agent <cursoragent@cursor\.com>$/,
+  // 第三方翻译文件的维护者联系方式：译者自带、上游 MIT 发布，与仓库作者无关
+  /847320916@qq\.com/i,
 ];
 
 /** 只报"确定是凭据"的形状；宁可少报也不要把每个 password 字样都算上 */

@@ -21,7 +21,25 @@ flutter config --enable-windows-desktop
 .\scripts\pack-windows.ps1 -SkipDeps       # 不预装依赖（首启动时 npm install）
 .\scripts\pack-windows.ps1 -BuildRoot E:\builds  # 指定中立构建根目录
 .\scripts\pack-windows.ps1 -Help
+
+.\scripts\pack-windows-setup.ps1           # + dist/pi-bot-windows-v<ver>-setup.exe
+.\scripts\pack-windows-setup.ps1 -Help     # 安装包打包的选项
 ```
+
+**一键安装包（setup.exe）**：`pack-windows-setup.ps1` 不重新构建，它把
+`dist/pi-bot-windows` 现成的目录整个封进 Inno Setup，所以要先跑上面那个带 `-WithNode -Zip`
+的目录打包（封的就是那边已经扫过的字节：无本机路径、无 `.pdb`、无本地状态）。
+它需要 Inno Setup 6：`winget install JRSoftware.InnoSetup`（按用户安装即可，脚本从 PATH
+和常见安装位置找 `ISCC.exe`，也可以用 `-Iscc` 指定）。
+
+安装包是**按用户安装**（无需管理员，不弹 UAC），装到
+`%LOCALAPPDATA%\Programs\pi-bot`，自带桌面/开始菜单快捷方式，在「应用和功能」里卸载。
+装前它读 `%LOCALAPPDATA%\pi-bot\server.pid`，先用 `tasklist` 确认为 `node.exe` 再
+`taskkill /T /F` —— 既不留下锁住 `node.exe` 的孤儿进程导致覆盖失败，也不会因 pid 被回收而
+误杀无关进程。`%LOCALAPPDATA%\pi-bot` 里的数据、配对、历史一律不动，所以升级就重跑安装包。
+
+中文界面由 `scripts/installer/ChineseSimplified.isl` 提供（Inno 官方仓库不收中文，
+这份取自上游客服端维护的 MIT 译本，已转为带 BOM 的 UTF-8，否则 ISCC 按 ANSI 解会碎码）。
 
 默认构建不会在原源码目录里跑 Flutter。脚本把 `app/` 复制到中立构建根目录下本次运行专用的子目录，排除
 `.dart_tool`、`build`、`.git`、`ephemeral`、`.vs`、`*.user`、`*.suo` 等生成缓存和用户工程状态，
@@ -93,14 +111,23 @@ pi-bot-windows/
 
 和 macOS 一样，命令桩 / Node 单测只覆盖脚本分支，不能代替一次真实的 Flutter Windows 构建。
 Linux 上可以跑 `node scripts/tests/all.mjs`。Windows CI 会跑
-`node scripts/tests/prepare-windows-bundle-test.mjs`（假包目录：每种问题报错，干净包通过）和
-`powershell -NoProfile -ExecutionPolicy Bypass -File scripts/tests/pack-windows-test.ps1`。
+`node scripts/tests/prepare-windows-bundle-test.mjs`（假包目录：每种问题报错，干净包通过）、
+`powershell -NoProfile -ExecutionPolicy Bypass -File scripts/tests/pack-windows-test.ps1` 和
+`pack-windows-setup-test.ps1`（缺目录 / 缺 server / 坏 -Iscc 各自报错；装了 Inno Setup 时
+再用假 bundle 真编译一次，验证产物名、sha256、临时目录清理）。
 
 ## 本机更新
 
-升级已经装好的程序时，用同一次构建的完整客户端换掉整个程序目录：`pi_bot.exe`、Flutter 运行库、`data/` 和清单里的原生 DLL 必须来自同一次构建，不要只替换单个 exe 或 DLL。
+两种装法各走各的路：
 
-用户数据目录（`%LOCALAPPDATA%\pi-bot`）保持不动。要沿用已经配对、装好依赖的服务端时，原来的 `server` 目录也原样留下，只替换其余客户端文件。换完后确认 `NativeAssetsManifest.json` 列出的每个 DLL 都在，再从正式入口启动。源码和需要分发的 zip 另外保留。
+- **setup.exe 装的**：直接跑新版安装包覆盖，不需要先卸载。安装程序自己停服务端，
+  `%LOCALAPPDATA%\pi-bot` 原封不动。应用内的「检查更新」会优先拿到 setup.exe。
+- **zip 免安装的**：用同一次构建的完整客户端换掉整个程序目录：`pi_bot.exe`、Flutter 运行库、
+  `data/` 和清单里的原生 DLL 必须来自同一次构建，不要只替换单个 exe 或 DLL。
+
+两种情况下用户数据目录（`%LOCALAPPDATA%\pi-bot`）都保持不动。要沿用已经配对、装好依赖的服务端时，
+原来的 `server` 目录也原样留下，只替换其余客户端文件。换完后确认 `NativeAssetsManifest.json`
+列出的每个 DLL 都在，再从正式入口启动。源码和需要分发的 zip 另外保留。
 
 ---
 
@@ -160,26 +187,37 @@ PowerShell（`-STA`）读 `[Windows.Forms.Clipboard]::GetImage()`，存成临时
 
 ---
 
-## 验证状态（2026-11-05，Windows 11 x64，v1.3.7）
+## 验证状态（2026-11-10，Windows 11 x64，v1.3.11）
 
 包内自带 `node.exe`（v24.18.0），不依赖系统 Node。
 
 | 项目 | 结果 |
 |---|---|
-| `node server/tests/all.mjs` | 66/66 文件通过 |
+| `node server/tests/all.mjs` | 82/82 文件通过 |
 | `node scripts/tests/all.mjs` | 32/32 通过 |
 | `flutter analyze` | 无 issue |
-| `flutter test` | 590 passed / 3 skipped |
-| `pack-windows.ps1 -WithNode -Zip` | 成功；中立构建根构建，Flutter release 243.7s |
-| 发行包扫描 | `{"files":18386,"removedPdbs":0,"rewrittenDebugPaths":1,"rewrittenBuildRoots":2,"serverPeFiles":3,"nativeAssets":0,"dependencies":8}` |
-| 产物 | `dist/pi-bot-windows` 390MB / zip 123MB（18482 个文件） |
+| `flutter test` | 660 passed / 3 skipped |
+| `pack-windows.ps1 -WithNode -Zip` | 成功；中立构建根构建 |
+| 发行包扫描 | `{"files":18441,"removedPdbs":0,"rewrittenDebugPaths":1,"rewrittenBuildRoots":0,"serverPeFiles":3,"nativeAssets":0,"dependencies":8}` |
+| 产物 | `dist/pi-bot-windows` 391MB / zip 123MB（18537 个文件） |
 | 真机启动 | 包内 node 拉起 `server/src/index.js`，监听 8787，本机连接正常 |
-| `GET /health` | `ok=true version=1.3.7` |
-| 浅色模式 | 渲染正确：冷蓝背景、白色气泡 + 深色半透明边框、切换按钮呈橙色太阳 |
-| 发布 | `pi-bot-windows-v1.3.7.zip` 已挂 v1.3.7，SHA256 校验通过 |
+| `GET /health` | `ok=true version=1.3.11` |
+| `pack-windows-setup.ps1` | 成功；setup.exe 71.8MB，编译 58s |
+| setup.exe 真机安装 | 静默装成功；桌面 + 开始菜单快捷方式、「应用和功能」卸载项齐全 |
+| setup.exe 升级安装 | 先按 `server.pid` 停 node（`taskkill` 已停 35604），再覆盖装成功，数据目录不动 |
+| 安装后启动 | 从 `%LOCALAPPDATA%\Programs\pi-bot` 启动，`/health` 正常 |
+| `pickAssetFor` 优先级 | 同时挂 setup.exe + zip 时选 setup.exe，两种上传顺序都验证过 |
+| 发布 | `pi-bot-windows-v1.3.11-setup.exe` + `.zip` 已挂 v1.3.11 |
 
-本条记录首次覆盖「临时目录构建 + 发行包扫描」在真实 Flutter Windows 构建上的结果。
-上一版记录（2026-10-19，v1.1.0，37/37 测试、296MB）早于该机制，仅作历史对照。
+本次是纯代码同步（main `a5c56d7` → `b115894`，183 文件 / +29452 / −1173）：
+新增的 44 个客户端文件里没有一处 `Platform.*` / `defaultTargetPlatform` 分支，
+`app/windows`、`scripts/`、Windows CI 全程未被改动，服务端也没引入 POSIX 专属路径。
+所以 Windows 端不需要适配代码，只需按上表重新构建验证一遍。
+
+一键安装包是这一轮新增的能力，与 macOS 的 DMG 对等。
+
+上一版记录（2026-11-05，v1.3.7，66/66 测试、590 passed、390MB）早于本次同步，
+再上一版（2026-10-19，v1.1.0，37/37 测试、296MB）仅作历史对照。
 
 ---
 
@@ -193,7 +231,7 @@ PowerShell（`-STA`）读 `[Windows.Forms.Clipboard]::GetImage()`，存成临时
    - 只有用户主动停止服务端时才用 `taskkill /T /F`（一次操作，可接受）。
 2. **.cmd 参数转义**：`spawn-command.js` 的规则与 cross-spawn 一致，但只覆盖
    `.cmd/.bat`；其它脚本类型（`.ps1`、`.py`）仍按普通可执行文件处理。
-3. **没有签名**：SmartScreen 会警告；企业环境可能需要 IT 放行。
+3. **没有签名**：SmartScreen 会警告（setup.exe 和 zip 都一样）；企业环境可能需要 IT 放行。
 4. **Node 不在 PATH 且未 `-WithNode`**：启动失败页可直接改端口/路径，
    也能打开日志目录看服务端为什么没起来。
 5. **Windows 上的 nvm 支持是"读目录"**，不执行 `nvm use`，也不改用户环境变量。
