@@ -1,0 +1,40 @@
+app/lib/l10n/strings/panel.dart
+  h_c2e638ff76b3b9 96,100-101,107-108,133-135,157-158,303-305,313-314,344-345,367-368
+app/lib/main.dart
+  h_c2e638ff76b3b9 414,425-433
+app/lib/progress_messages.dart
+  h_c2e638ff76b3b9 73-86
+app/lib/screens/chat_screen.dart
+  h_c2e638ff76b3b9 25,105-109,649-661,835-842,874-882,1066-1069
+app/lib/screens/rooms_screen.dart
+  h_c2e638ff76b3b9 14,352-357,421-422,424-426,429,431-432,434,436-438
+app/lib/widgets/connections_section.dart
+  h_c2e638ff76b3b9 29-32,250-256,296-312,314-321
+app/lib/widgets/create_group_dialog.dart
+  h_c2e638ff76b3b9 1-560
+app/lib/widgets/message_anchor_rail.dart
+  h_c2e638ff76b3b9 33,36-39,65-68,92,94-104,108-109,116,118-125,127,129,141,153,173
+app/lib/widgets/model_group_editor.dart
+  h_c2e638ff76b3b9 390-423,425-447,449-451,455-634,636-642,644-670,672-680,683-687,691-692,796,799-861,865-875,877-881,883-884,890-923
+app/lib/widgets/msg_quote_strip.dart
+  h_c2e638ff76b3b9 38-43,45-50,85-96
+app/lib/widgets/no_scrollbar.dart
+  h_c2e638ff76b3b9 1-25
+app/lib/widgets/progress_notice.dart
+  h_c2e638ff76b3b9 320-321,323,424-431,434-442
+app/test/progress_group_source_test.dart
+  h_c2e638ff76b3b9 1-66
+server/src/connections.js
+  h_c2e638ff76b3b9 4-9,11-24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c3921ccbd55e2e626cedb27d3c8a2a9884ce94c0",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
