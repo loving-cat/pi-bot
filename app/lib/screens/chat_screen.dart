@@ -945,6 +945,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                         itemBuilder: (ctx, i) {
                                           final msg = display[i];
 
+                                          // ★ 思考期整条不渲染。
+                                          //
+                                          //   服务端在模型调用**之前**就建了一条
+                                          //   text='' 的 streaming 消息，所以整个思考期
+                                          //   它都在。原来渲染成三个点 —— 和左侧胶囊
+                                          //   「X 正在处理」说的是同一件事，纯重复；
+                                          //   而且空壳占着 padding，首字到达时会有
+                                          //   一次布局跳动。
+                                          //
+                                          //   现在直接跳过整条（连 _Appear 外壳都不建），
+                                          //   首字一到自然出现。
+                                          if (msg.isLive && msg.text.trim().isEmpty) {
+                                            return const SizedBox.shrink();
+                                          }
+
                                           if (msg.isProgress) {
                                             final run = progressGroups[i];
                                             if (run == null) {
@@ -1091,18 +1106,26 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             //   「胶囊后面总有一整个长条背景」就是那条高度）。
                             //   现在用 Positioned 叠在消息区内部，
                             //   不占任何布局高度，胶囊本身才是唯一可见元素。
+                            //   ★ 不能整块 IgnorePointer：那会让胶囊里的 Tooltip
+                            //     收不到悬停事件（任务描述就永远看不到）。
+                            //     改成"让胶囊自己接收鼠标、四周透明区透传"
+                            //     —— 见 ActivityMonitor 里的实现：
+                            //     外层 IgnorePointer 只包住**除胶囊之外**的部分，
+                            //     胶囊本身是真实可命中的。
                             Positioned(
                               left: 0,
                               right: 0,
                               bottom: 0,
-                              child: IgnorePointer(
-                                child: ActivityMonitor(
-                                  roomId: room.id,
-                                  tasks: state.taskRuns
-                                      .forRoom(room.id)
-                                      .map((t) => t.title)
-                                      .where((t) => t.isNotEmpty)
-                                      .toList(),
+                              child: ActivityMonitor(
+                                roomId: room.id,
+                                // 只用确定信号：有任务在等确认 / 回复已经开吐
+                                needsUser: state.taskRuns
+                                    .forRoom(room.id)
+                                    .any((t) => t.phase == 'needs_user'),
+                                streaming: msgs.any(
+                                  (m) =>
+                                      m.isStreaming &&
+                                      m.text.trim().isNotEmpty,
                                 ),
                               ),
                             ),
@@ -1121,6 +1144,37 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                 controller: _scroll,
                               ),
                             ),
+                            // ★ 「回到底部」：叠在**消息区**右下角。
+                            //
+                            //   为什么不放 composer：之前放在 composer 里单独一行，
+                            //   那一行带着 composer 的不透明底色，在消息区和输入框之间
+                            //   切出一条横带，把消息截掉一截 —— 和 ActivityMonitor
+                            //   当初犯的是同一个错。
+                            //
+                            //   为什么放这里就不会被吃掉点击：它在消息区 Stack **内部**，
+                            //   命中范围由 Stack 保证；之前那次被吃是因为放在了
+                            //   composer 自己的 Stack 外面、超出了父级的 hit-test 范围。
+                            //
+                            //   right 取 28 是为了避开右侧 18px 的导航轨；
+                            //   bottom 12 贴着消息区底部，不压最后一条正文。
+                            //   用 Positioned 意味着出现/消失**不改变任何高度**。
+                            if (!_stick)
+                              Positioned(
+                                right: 28,
+                                bottom: 12,
+                                child: _RoundButton(
+                                  icon: LucideIcons.arrowDown,
+                                  color: PB.bgActive,
+                                  iconColor: PB.textSecondary,
+                                  tooltip: _unreadWhileUp > 0
+                                      ? L10n.s(context).tf('chat.jumpUnread', {
+                                          'n': _unreadWhileUp,
+                                        })
+                                      : L10n.s(context).t('chat.jumpLatest'),
+                                  onTap: () =>
+                                      _scrollFollow.resume(animate: true),
+                                ),
+                              ),
                             // 顶部渐变：消息滚上去时柔和淡出，而不是被标题栏硬切
                             Positioned(
                               left: 0,
@@ -1166,9 +1220,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         _uploadAll([(name, () async => bytes)]),
                     onSend: _send,
                     onStop: () => state.abort(room.id),
-                    showJump: !_stick,
-                    unread: _unreadWhileUp,
-                    onJump: () => _scrollFollow.resume(animate: true),
                   ),
                 ),
               ],
@@ -1408,9 +1459,6 @@ class _EmptyHint extends StatelessWidget {
 class _Composer extends StatefulWidget {
   const _Composer({
     required this.controller,
-    this.showJump = false,
-    this.unread = 0,
-    this.onJump,
     required this.focus,
     required this.busy,
     required this.queuedCount,
@@ -1426,13 +1474,6 @@ class _Composer extends StatefulWidget {
   });
 
   final TextEditingController controller;
-
-  /// 要不要显示「回到底部」（往上翻着聊天记录时才显示）
-  final bool showJump;
-
-  /// 往上翻的时候又来了几条新的 —— 标在按钮上
-  final int unread;
-  final VoidCallback? onJump;
   final FocusNode focus;
   final bool busy;
   final int queuedCount;
@@ -1455,7 +1496,16 @@ class _Composer extends StatefulWidget {
 }
 
 class _ComposerState extends State<_Composer> {
+  /// 一体式胶囊里那两颗按钮（停止 / 发送）的直径。
+  ///
+  /// 32 是和单行文字（13px × 1.4 ≈ 18px）配出来的：再大就把胶囊撑高，
+  /// 再小点不中。「回到底部」是独立浮动的，仍用 40。
+  static const double _composerButtonSize = 32;
+
   bool _hasText = false;
+
+  /// 输入框里是否有换行（决定胶囊内按钮是居中还是贴底）。
+  bool _multiLine = false;
 
   /// 悬浮菜单锚在 "+" 按钮上
   final GlobalKey _plusKey = GlobalKey();
@@ -1493,6 +1543,7 @@ class _ComposerState extends State<_Composer> {
     super.initState();
     widget.controller.addListener(_onTextChanged);
     _hasText = widget.controller.text.trim().isNotEmpty;
+    _multiLine = widget.controller.text.contains('\n');
   }
 
   /// Ctrl+V：剪贴板有图就发图，没有就按文本插进输入框。
@@ -1522,7 +1573,15 @@ class _ComposerState extends State<_Composer> {
 
   void _onTextChanged() {
     final hasText = widget.controller.text.trim().isNotEmpty;
-    if (hasText != _hasText) setState(() => _hasText = hasText);
+    // 换行数变了也要重建：胶囊里 ➕/按钮的对齐方式按行数切换
+    // （单行居中、多行贴底），不重建的话对齐不会跟着变。
+    final multiLine = widget.controller.text.contains('\n');
+    if (hasText != _hasText || multiLine != _multiLine) {
+      setState(() {
+        _hasText = hasText;
+        _multiLine = multiLine;
+      });
+    }
   }
 
   /// 输入法是不是**正在组词**（候选框还挂着没确认）。
@@ -1694,42 +1753,68 @@ class _ComposerState extends State<_Composer> {
                 ),
               ),
             ),
+          // 输入行：整个 composer 里**唯一有状态**的东西（TextField 的
+          // EditableText）。给它一个稳定的 key，任何兄弟的增删都不会碰到它。
+          //
+          // ★ 一体式胶囊：➕、输入框、停止/发送都在**同一个圆角框里**。
+          //   原来它们是四个并列的独立圆按钮，➕ 和发送都在框外 ——
+          //   视觉上像工具栏，不像一个输入框。
+          //
+          //   按钮 32px、贴底对齐（crossAxisAlignment.end）：多行输入时
+          //   按钮跟着最后一行往下走，不会吊在中间。
           Padding(
-            // 输入行：整个 composer 里**唯一有状态**的东西（TextField 的
-            // EditableText）。给它一个稳定的 key，任何兄弟的增删都不会碰到它。
             key: const ValueKey('composer-input-row'),
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                PlusTriggerButton(
-                  anchorKey: _plusKey,
-                  size: 40,
-                  tooltip: s.t('chat.attachOrTeach'),
-                  onTap: _openMenu,
+            child: AnimatedContainer(
+              key: const ValueKey('composer-capsule'),
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOut,
+              decoration: BoxDecoration(
+                color: PB.bgInput,
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(
+                  color: widget.focus.hasFocus
+                      ? PB.colors(context).accent.withValues(alpha: 0.45)
+                      : PB.borderSecondary,
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 180),
-                    curve: Curves.easeOut,
-                    decoration: BoxDecoration(
-                      color: PB.bgInput,
-                      borderRadius: BorderRadius.circular(22),
-                      border: Border.all(
-                        color: widget.focus.hasFocus
-                            ? PB.colors(context).accent.withValues(alpha: 0.45)
-                            : PB.borderSecondary,
-                      ),
-                      boxShadow: widget.focus.hasFocus
-                          ? PB.glow(
-                              PB.colors(context).accent,
-                              blur: 14,
-                              alpha: 0.12,
-                            )
-                          : null,
+                boxShadow: widget.focus.hasFocus
+                    ? PB.glow(PB.colors(context).accent, blur: 14, alpha: 0.12)
+                    : null,
+              ),
+              // 四边统一：左右 6 / 上下 4。
+              // 上下给 4 之后单行总高 = 32(按钮) + 8 = 40，
+              // 输入框单行内高也调成 32，于是三者天然垂直居中。
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+              // ★ 对齐方式按行数切换：单行居中、多行贴底。
+              //
+              //   单行：三者都是 32 高，center 让它们在同一水平线上（实测 0.0 偏差）。
+              //   多行：输入框变高，按钮必须贴底（end），否则会吊在中间。
+              //
+              //   判断依据用换行符数量 —— 比读渲染后的行高便宜，且足够准：
+              //   有换行就一定是多行；没有换行时单行长文本会横向滚动而不是换行。
+              child: Row(
+                crossAxisAlignment: _multiLine
+                    ? CrossAxisAlignment.end
+                    : CrossAxisAlignment.center,
+                children: [
+                  // ➕ 在框内左侧。
+                  // 外面套一个固定 32 的盒子并给 key：测试要量「按钮占位」
+                  // 而不是它里面那个 19px 图标 —— 按图标量出的边距会偏小。
+                  Container(
+                    key: const ValueKey('composer-plus'),
+                    width: 32,
+                    height: 32,
+                    alignment: Alignment.center,
+                    child: PlusTriggerButton(
+                      anchorKey: _plusKey,
+                      size: 32,
+                      tooltip: s.t('chat.attachOrTeach'),
+                      onTap: _openMenu,
                     ),
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                  ),
+                  const SizedBox(width: 4),
+                  // 中间：输入框本身（回车/换行/粘图那套原样保留）
+                  Expanded(
                     child: Focus(
                       // Enter 发送 / Shift+Enter 换行 / Ctrl(⌘)+Enter 也发送
                       onKeyEvent: (node, event) {
@@ -1751,9 +1836,6 @@ class _ComposerState extends State<_Composer> {
                         //   中文用户输入英文时，候选框还没确认，按回车是「选这个候选」；
                         //   若在这里当成发送，就变成「消息发出去 + 输入框被清空」，
                         //   用户以为输入法吃字了。日文/韩文同理。
-                        //
-                        //   composing 非空就说明还在组词；交给 TextField 处理后，
-                        //   它会自己把候选词提交进输入框。
                         if (_isComposing()) return KeyEventResult.ignored;
                         onSend();
                         return KeyEventResult.handled;
@@ -1761,16 +1843,13 @@ class _ComposerState extends State<_Composer> {
                       // ★ 桌面快捷键：按系统习惯绑定（Mac ⌘ / Windows Ctrl）。
                       //   显式声明而不是全靠 Flutter 默认，是因为这里在
                       //   PasteTextIntent 上加了"剪贴板有图就发图"的逻辑 ——
-                      //   接管了默认行为，就得把配套的编辑快捷键补全，
-                      //   否则那些键在某一端会变成死的。
+                      //   接管了默认行为，就得把配套的编辑快捷键补全。
                       child: Shortcuts(
                         shortcuts: desktopEditingShortcuts(),
                         child: Actions(
                           actions: <Type, Action<Intent>>{
                             ...desktopEditingActions(controller),
-                            // ★ ⌘V / Ctrl+V：先看剪贴板里有没有**图**（截图），有就当附件；
-                            //   没有就走原来的文本粘贴。Flutter 自带的粘贴只认文本，
-                            //   截图粘进来会静默什么都不发生。
+                            // ⌘V / Ctrl+V：先看剪贴板里有没有图（截图），有就当附件
                             PasteTextIntent: CallbackAction<PasteTextIntent>(
                               onInvoke: (_) {
                                 unawaited(_paste());
@@ -1782,16 +1861,13 @@ class _ComposerState extends State<_Composer> {
                             controller: controller,
                             focusNode: widget.focus,
                             // ★ 进会话就聚焦输入框 —— 用户不用先点一下才能打字。
-                            //   ChatScreen 按房间 id 加了 key，切到任意 bot 都会重建一次，
-                            //   autofocus 跟着再触发一次，行为一致。
                             autofocus: true,
                             minLines: 1,
                             maxLines: 6,
                             keyboardType: TextInputType.multiline,
-                            // 桌面保留原生换行和输入法处理，移动端软键盘显示发送。
                             textInputAction: chatInputAction,
                             // ★ onSubmitted 也必须挡同一件事。
-                            //   桌面端 Enter 走的是上面的 onKeyEvent，但手机/某些 IME
+                            //   桌面端 Enter 走 onKeyEvent，但手机/某些 IME
                             //   会直接触发 onSubmitted —— 两条路都要看组词状态。
                             onSubmitted: (_) {
                               if (_isComposing()) return;
@@ -1812,8 +1888,13 @@ class _ComposerState extends State<_Composer> {
                               focusedBorder: InputBorder.none,
                               filled: false,
                               isDense: true,
+                              // 单行高度必须等于按钮直径 32：
+                              //   文字行高 = 13 × 1.4 ≈ 18.2
+                              //   (32 - 18.2) / 2 ≈ 6.9 → 取 7
+                              // 原来是 13（单行约 44），所以单行时按钮
+                              // 总比文字矮一截、看起来不居中。
                               contentPadding: const EdgeInsets.symmetric(
-                                vertical: 13,
+                                vertical: 7,
                               ),
                             ),
                           ),
@@ -1821,41 +1902,49 @@ class _ComposerState extends State<_Composer> {
                       ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                // 「回到底部」：和发送键同一行（左侧）——
-                // 这里有自己的位置，**永远不会压住消息气泡**。
-                // 只有往上翻着看历史时才出现，所以平时不占视线。
-                if (widget.showJump) ...[
-                  _RoundButton(
-                    icon: LucideIcons.arrowDown,
-                    color: PB.bgActive,
-                    iconColor: PB.textSecondary,
-                    tooltip: widget.unread > 0
-                        ? s.tf('chat.jumpUnread', {'n': widget.unread})
-                        : s.t('chat.jumpLatest'),
-                    onTap: widget.onJump ?? () {},
+                  const SizedBox(width: 4),
+                  // 右侧：忙时先停，再发；不忙只有发。
+                  //
+                  // ★ 不再加 bottom 偏移。原来这里额外给了 bottom: 6，
+                  //   而左边的 ➕ 没加 —— 单行时右侧按钮偏上、➕ 贴底，
+                  //   两边不对称。现在靠胶囊的上下内边距 + 输入框内高
+                  //   统一对齐，两侧都不需要额外偏移。
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (busy) ...[
+                        _RoundButton(
+                          key: const ValueKey('composer-stop'),
+                          icon: LucideIcons.square,
+                          color: PB.bgActive,
+                          iconColor: PB.textSecondary,
+                          tooltip: s.t('chat.stopTurn'),
+                          onTap: onStop,
+                          size: _composerButtonSize,
+                        ),
+                        const SizedBox(width: 6),
+                      ],
+                      // ★ 发送键永远是向上箭头（原来是忙时变闪电，用户看不懂）。
+                      //   忙且没字 → 不显示发送键（只有停止键有意义）
+                      //   忙且有字 → 显示箭头，tooltip 说明会排队/插话
+                      if (!busy || hasText)
+                        _RoundButton(
+                          key: const ValueKey('composer-send'),
+                          icon: LucideIcons.arrowUp,
+                          color: hasText
+                              ? PB.colors(context).accent
+                              : PB.bgActive,
+                          iconColor: hasText ? Colors.white : PB.textQuaternary,
+                          tooltip: busy
+                              ? s.t('chat.sendBusy')
+                              : s.t('chat.send'),
+                          onTap: onSend,
+                          size: _composerButtonSize,
+                        ),
+                    ],
                   ),
-                  const SizedBox(width: 6),
                 ],
-                if (busy) ...[
-                  _RoundButton(
-                    icon: LucideIcons.square,
-                    color: PB.bgActive,
-                    iconColor: PB.textSecondary,
-                    tooltip: s.t('chat.stopTurn'),
-                    onTap: onStop,
-                  ),
-                  const SizedBox(width: 6),
-                ],
-                _RoundButton(
-                  icon: busy ? LucideIcons.zap : LucideIcons.arrowUp,
-                  color: hasText ? PB.colors(context).accent : PB.bgActive,
-                  iconColor: hasText ? Colors.white : PB.textQuaternary,
-                  tooltip: busy ? s.t('chat.sendBusy') : s.t('chat.send'),
-                  onTap: onSend,
-                ),
-              ],
+              ),
             ),
           ),
           // ★ 不放「Enter 发送 · Shift+Enter 换行」的操作说明：
@@ -1871,11 +1960,13 @@ class _ComposerState extends State<_Composer> {
 
 class _RoundButton extends StatelessWidget {
   const _RoundButton({
+    super.key,
     required this.icon,
     required this.color,
     required this.iconColor,
     required this.onTap,
     this.tooltip,
+    this.size = 40,
   });
 
   final IconData icon;
@@ -1883,6 +1974,10 @@ class _RoundButton extends StatelessWidget {
   final Color iconColor;
   final VoidCallback onTap;
   final String? tooltip;
+
+  /// 直径。输入框内那两颗用 32（和单行文字同高），
+  /// 「回到底部」这类独立浮动的保持 40。
+  final double size;
 
   @override
   Widget build(BuildContext context) {
@@ -1895,9 +1990,9 @@ class _RoundButton extends StatelessWidget {
         child: InkWell(
           onTap: onTap,
           child: SizedBox(
-            width: 40,
-            height: 40,
-            child: Icon(icon, size: 19, color: iconColor),
+            width: size,
+            height: size,
+            child: Icon(icon, size: size * 0.475, color: iconColor),
           ),
         ),
       ),
@@ -2451,8 +2546,7 @@ class _MessageRow extends StatelessWidget {
                   if (msg.steps.isNotEmpty)
                     streaming
                         ? ValueListenableBuilder<int>(
-                            valueListenable:
-                                AppScope.read(context).streamTick,
+                            valueListenable: AppScope.read(context).streamTick,
                             builder: (_, __, ___) => ToolSteps(
                               steps: msg.steps,
                               quietWhenDone: true,
@@ -2475,8 +2569,18 @@ class _MessageRow extends StatelessWidget {
                         maxWidth: maxBubble,
                       ),
                     ),
-                  if (msg.text.trim().isNotEmpty ||
-                      (streaming && msg.text.isEmpty))
+                  // ★ 「思考中」不再画空气泡。
+                  //
+                  //   服务端在模型调用**之前**就建了一条 text='' 的 streaming
+                  //   消息，所以整个思考期（可能几秒到几十秒）这条空消息都在。
+                  //   原来的做法是渲染三个点 —— 但那和左侧胶囊
+                  //   「X 正在处理」说的是同一件事，纯粹重复；
+                  //   而且空消息占着位置，首字到达时会有一次布局跳动。
+                  //
+                  //   现在：思考期什么都不画，只靠胶囊；首字一到气泡自然出现。
+                  //   顺带修掉一个既有问题：断线导致结束事件丢失时，
+                  //   那条空 streaming 消息会永远停在「输入中」—— 现在没有可停的东西了。
+                  if (msg.text.trim().isNotEmpty)
                     // ★ 桌面端不挂 onLongPress。
                     //
                     //   长按是移动端交互；桌面上它注册的指针手势会和
@@ -2533,18 +2637,16 @@ class _MessageRow extends StatelessWidget {
                                 ),
                               )
                             : ValueListenableBuilder<int>(
-                                valueListenable:
-                                    AppScope.read(context).streamTick,
-                                builder: (_, __, ___) => msg.text.isEmpty
-                                    ? const _TypingDots()
-                                    : MdText(
+                                valueListenable: AppScope.read(context)
+                                    .streamTick,
+                                builder: (_, __, ___) => MdText(
                                         '${msg.text}▍',
                                         selectable: false,
                                         onMentionTap: (name) =>
                                             openBotDm(context, name),
-                                        onLinkTap: (url) => AppScope.read(
-                                          context,
-                                        ).openInBrowser(url),
+                                        onLinkTap: (url) =>
+                                            AppScope.read(context)
+                                                .openInBrowser(url),
                                         mentionOf: mentionOf,
                                         mentions: mentions,
                                         style: TextStyle(
@@ -2561,10 +2663,7 @@ class _MessageRow extends StatelessWidget {
                       padding: const EdgeInsets.only(top: 5, left: 2),
                       child: Text(
                         msg.error!,
-                        style: const TextStyle(
-                          fontSize: PB.fsXs,
-                          color: PB.danger,
-                        ),
+                        style: TextStyle(fontSize: PB.fsXs, color: PB.danger),
                       ),
                     ),
                   // ★ 每条消息都带时间戳（同用户侧：重排后时间是唯一可信的顺序）
@@ -2577,61 +2676,6 @@ class _MessageRow extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _TypingDots extends StatefulWidget {
-  const _TypingDots();
-
-  @override
-  State<_TypingDots> createState() => _TypingDotsState();
-}
-
-class _TypingDotsState extends State<_TypingDots>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 1100),
-  )..repeat();
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (context, _) => Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          for (var i = 0; i < 3; i++)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 2.5, vertical: 5),
-              child: Opacity(
-                opacity:
-                    0.25 +
-                    0.75 *
-                        (1 -
-                            (((_controller.value * 3 - i) % 3).clamp(0.0, 1.0) *
-                                        2 -
-                                    1)
-                                .abs()),
-                child: Container(
-                  width: 6,
-                  height: 6,
-                  decoration: BoxDecoration(
-                    color: PB.textSecondary,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-              ),
-            ),
-        ],
       ),
     );
   }

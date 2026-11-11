@@ -8,6 +8,7 @@ import '../scope.dart';
 import '../text_utils.dart';
 import '../theme.dart';
 import '../window_chrome.dart';
+import '../widgets/bot_delete_confirm.dart';
 import '../widgets/toast.dart';
 import '../widgets/avatar_life.dart';
 import '../widgets/anchored_menu.dart';
@@ -906,46 +907,12 @@ class _RoomRowState extends State<_RoomRow> {
     }
   }
 
-  /// 删除前必须问一次 —— 这个动作没有撤销。
-  /// 删除 bot 要**二级确认**，而且话说死：它忘掉的东西找不回来。
+  /// 删除助手前必须问一次 —— 这个动作没有撤销。
+  ///
+  /// 具体弹窗在 widgets/bot_delete_confirm.dart：助手编辑页也要用同一套，
+  /// 两处行为必须一致（原来是各写各的，编辑页那个干脆不问）。
   Future<void> _confirmDeleteBot(BuildContext context, Bot bot) async {
-    final s = L10n.s(context);
-    final state = widget.state;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: PB.bgElevated,
-        title: Text(
-          s.tf('rooms.deleteBotTitle', {
-            'name': '${bot.emoji ?? ''}${bot.name}',
-          }),
-          style: const TextStyle(fontSize: PB.fsLg),
-        ),
-        content: Text(
-          s.t('rooms.deleteBotBody'),
-          style: TextStyle(
-            fontSize: PB.fsSm,
-            color: PB.textSecondary,
-            height: 1.6,
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(s.t('common.cancel')),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: PB.danger),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(s.t('rooms.confirmDelete')),
-          ),
-        ],
-      ),
-    );
-    if (ok != true || !context.mounted) return;
-    await state.deleteBot(bot.id);
-    if (!context.mounted) return;
-    toast(context, s.tf('rooms.botDeleted', {'name': bot.name}));
+    await confirmDeleteBot(context, bot, delete: widget.state.deleteBot);
   }
 
   Future<bool> _confirmDelete(BuildContext context, Room room) async {

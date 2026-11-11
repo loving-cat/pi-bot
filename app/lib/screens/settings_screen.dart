@@ -452,7 +452,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             onPressed: () => state.revokeDevice('${d['id']}'),
                             child: Text(
                               s.t('common.remove'),
-                              style: const TextStyle(
+                              style: TextStyle(
                                 color: PB.danger,
                                 fontSize: PB.fsXs,
                               ),
@@ -603,7 +603,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 isHostPlatform
                     ? s.t('settings.actions.switchServer')
                     : s.t('settings.actions.repair'),
-                style: const TextStyle(fontSize: PB.fsSm, color: PB.danger),
+                style: TextStyle(fontSize: PB.fsSm, color: PB.danger),
               ),
               onTap: () async {
                 await state.signOut();

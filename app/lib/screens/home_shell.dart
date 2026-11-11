@@ -8,6 +8,7 @@ import '../browser_pane_state.dart';
 import '../app_state.dart';
 import '../desktop_pane_layout.dart';
 import '../models.dart';
+import '../overlay_focus_keeper.dart';
 import '../scope.dart';
 import '../theme.dart';
 import '../l10n/l10n.dart';
@@ -39,6 +40,13 @@ class _HomeShellState extends State<HomeShell> {
   bool _widthsSynced = false;
   bool _fileInlineAvailable = false;
   int? _pendingFileHandoff;
+
+  /// 浮层开合时搬运焦点（逻辑在 overlay_focus_keeper.dart，
+  /// 和测试共用同一份实现）。
+  ///
+  /// 为什么要做：ModalBarrier 只是盖住聊天区，不会让下面的输入框失焦 ——
+  /// 用户的键盘输入照样打进那个看不见的输入框里。
+  final _overlayFocus = OverlayFocusKeeper();
 
   // ★ 让 pane 的 Element/State 跟着**迁移**而不是销毁重建。
   //
@@ -251,6 +259,15 @@ class _HomeShellState extends State<HomeShell> {
         state.closePanel();
       }
     }
+
+    // ★ 浮层开合时处理焦点。
+    //
+    //   ModalBarrier 只是视觉上盖住聊天区，不会让下面的输入框失焦 ——
+    //   用户以为在别处打字，实际全打进了那个看不见的输入框。
+    //
+    //   打开：撤掉当前焦点（并记下原来是谁，关闭时还回去）。
+    //   关闭：原来焦点在输入框就还给输入框，省得用户再点一下。
+    _overlayFocus.sync(layout.hasOverlay, isMounted: () => mounted);
 
     return AttachmentPreviewScope(
       inlineAvailable: _fileInlineAvailable,

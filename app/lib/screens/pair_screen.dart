@@ -230,7 +230,7 @@ class _PairScreenState extends State<PairScreen> {
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Icon(
+                          Icon(
                             LucideIcons.circleAlert,
                             size: 16,
                             color: PB.danger,
@@ -239,7 +239,7 @@ class _PairScreenState extends State<PairScreen> {
                           Expanded(
                             child: Text(
                               _error!,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: PB.fsXs,
                                 color: PB.danger,
                                 height: 1.4,

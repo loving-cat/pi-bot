@@ -5,6 +5,7 @@ import '../models.dart';
 import '../scope.dart';
 import '../theme.dart';
 import '../window_chrome.dart';
+import '../widgets/bot_delete_confirm.dart';
 import '../widgets/model_picker_field.dart';
 import '../widgets/thinking_slider.dart';
 import '../widgets/blob_avatar.dart';
@@ -549,7 +550,7 @@ class _BotRow extends StatelessWidget {
                         padding: const EdgeInsets.only(bottom: 10),
                         child: Text(
                           saveError!,
-                          style: const TextStyle(color: PB.danger),
+                          style: TextStyle(color: PB.danger),
                         ),
                       ),
                     Row(
@@ -557,15 +558,25 @@ class _BotRow extends StatelessWidget {
                         if (!bot.isMain)
                           Expanded(
                             child: TextButton(
+                              style: TextButton.styleFrom(
+                                foregroundColor: PB.danger,
+                              ),
                               onPressed: saving
                                   ? null
                                   : () async {
+                                      // ★ 必须二次确认 —— 删除没有撤销。
+                                      //   这里原来直接 deleteBot，点错就没了，
+                                      //   和会话列表右键删除的行为也不一致。
+                                      final deleted = await confirmDeleteBot(
+                                        ctx,
+                                        bot,
+                                        delete: state.deleteBot,
+                                      );
+                                      if (!deleted || !ctx.mounted) return;
                                       Navigator.pop(ctx, false);
-                                      await state.deleteBot(bot.id);
                                     },
                               child: Text(
                                 L10n.s(ctx).t('common.delete'),
-                                style: const TextStyle(color: PB.danger),
                               ),
                             ),
                           ),
