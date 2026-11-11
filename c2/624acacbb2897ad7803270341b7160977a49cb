@@ -1,0 +1,52 @@
+app/pubspec.yaml
+  h_c2e638ff76b3b9 4
+docs/COMPACTION-AND-BUDGET.md
+  h_c2e638ff76b3b9 43-59,63-84
+docs/DECISION-ROUTER.md
+  h_c2e638ff76b3b9 200-250
+docs/MODULE-MAP.md
+  h_c2e638ff76b3b9 35-36
+docs/spec-peer-dialog.md
+  h_c2e638ff76b3b9 36-37,102,133-141,193,217
+server/package.json
+  h_c2e638ff76b3b9 3
+server/src/config.js
+  h_c2e638ff76b3b9 239-246
+server/src/context-budget.js
+  h_c2e638ff76b3b9 239
+server/src/decision-router.js
+  h_c2e638ff76b3b9 287-328
+server/src/memory-digest.js
+  h_c2e638ff76b3b9 38-80
+server/src/memory-sanitize.js
+  h_c2e638ff76b3b9 1-56
+server/src/pi-runner.js
+  h_c2e638ff76b3b9 39-40,73-78,85,902-997,1042-1051,1769-1771,2062-2086,2788,2792-2806,2808,2826-2828,2831-2843
+server/src/store.js
+  h_c2e638ff76b3b9 20,2027-2037,2040-2047
+server/src/tools.js
+  h_c2e638ff76b3b9 37,52,56-67,69,71,78-89
+server/tests/all.mjs
+  h_c2e638ff76b3b9 79-80,95
+server/tests/context-overhead.mjs
+  h_c2e638ff76b3b9 1-132
+server/tests/decision-router.mjs
+  h_c2e638ff76b3b9 10-11,316-383
+server/tests/memory-prompt.mjs
+  h_c2e638ff76b3b9 1-106
+server/tests/memory-sanitize.mjs
+  h_c2e638ff76b3b9 1-129
+server/tests/reply-bot-guard.mjs
+  h_c2e638ff76b3b9 72-83,85-151
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c2624acacbb2897ad7803270341b7160977a49cb",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
