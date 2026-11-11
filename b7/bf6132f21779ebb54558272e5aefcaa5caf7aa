@@ -1,0 +1,32 @@
+app/lib/app_state.dart
+  h_c2e638ff76b3b9 499-513,611-623,684-688
+app/lib/l10n/strings/panel.dart
+  h_c2e638ff76b3b9 195,405
+app/lib/server/launcher.dart
+  h_c2e638ff76b3b9 7,83-85,113-116,124-128,186-197,201-241,243-277,289-291
+app/lib/server/options.dart
+  h_c2e638ff76b3b9 30-38,60-61,71-85
+app/lib/server/port_picker.dart
+  h_c2e638ff76b3b9 1-175
+app/lib/widgets/server_config_section.dart
+  h_c2e638ff76b3b9 77-85
+app/pubspec.yaml
+  h_c2e638ff76b3b9 4
+app/test/port_launch_test.dart
+  h_c2e638ff76b3b9 1-154
+app/test/port_picker_test.dart
+  h_c2e638ff76b3b9 1-151
+server/package.json
+  h_c2e638ff76b3b9 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b7bf6132f21779ebb54558272e5aefcaa5caf7aa",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
