@@ -169,7 +169,7 @@ class _ToolStepsState extends State<ToolSteps> {
                   strings.tf('tools.failedMore', {
                     'n': failed.length - shownFailed.length,
                   }),
-                  style: const TextStyle(fontSize: PB.fsXxs, color: PB.danger),
+                  style: TextStyle(fontSize: PB.fsXxs, color: PB.danger),
                 ),
               ),
 

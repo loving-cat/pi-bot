@@ -309,7 +309,7 @@ class _LessonCard extends StatelessWidget {
                   padding: const EdgeInsets.only(top: 2),
                   child: Text(
                     L10n.s(context).t('lesson.enabled'),
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: PB.fsXxs,
                       color: PB.success,
                     ),

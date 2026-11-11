@@ -102,7 +102,7 @@ class _TeachDialogState extends State<_TeachDialog> {
             children: [
               Row(
                 children: [
-                  const Icon(LucideIcons.target, size: 17, color: PB.danger),
+                  Icon(LucideIcons.target, size: 17, color: PB.danger),
                   const SizedBox(width: 9),
                   Expanded(
                     child: Text(

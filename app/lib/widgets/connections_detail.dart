@@ -154,7 +154,7 @@ class _ConnectionsDetailState extends State<ConnectionsDetail> {
                   padding: const EdgeInsets.only(top: 8),
                   child: Text(
                     evidence.error,
-                    style: const TextStyle(color: PB.danger, fontSize: PB.fsSm),
+                    style: TextStyle(color: PB.danger, fontSize: PB.fsSm),
                   ),
                 ),
               const SizedBox(height: 12),
@@ -302,7 +302,7 @@ class _ConnectionsDetailState extends State<ConnectionsDetail> {
                   padding: const EdgeInsets.only(top: 12),
                   child: Text(
                     _error ?? widget.error!,
-                    style: const TextStyle(color: PB.danger, fontSize: PB.fsSm),
+                    style: TextStyle(color: PB.danger, fontSize: PB.fsSm),
                   ),
                 ),
             ],
@@ -314,7 +314,7 @@ class _ConnectionsDetailState extends State<ConnectionsDetail> {
           onPressed: widget.busy ? null : widget.onDelete,
           child: Text(
             strings.t('conn.delete'),
-            style: const TextStyle(color: PB.danger),
+            style: TextStyle(color: PB.danger),
           ),
         ),
         TextButton(

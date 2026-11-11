@@ -282,7 +282,7 @@ class _BotRunSectionState extends State<BotRunSection> {
               Expanded(
                 child: Text(
                   strings.t('think.switchUnconfirmed'),
-                  style: const TextStyle(fontSize: PB.fsXs, color: PB.danger),
+                  style: TextStyle(fontSize: PB.fsXs, color: PB.danger),
                 ),
               ),
               TextButton(

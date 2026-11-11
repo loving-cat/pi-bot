@@ -54,7 +54,7 @@ class _ConnectionsImportState extends State<ConnectionsImport> {
                   if (state.importError != null) ...[
                     Text(
                       state.importError!,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: PB.danger,
                         fontSize: PB.fsSm,
                       ),
@@ -109,7 +109,7 @@ class _ConnectionsImportState extends State<ConnectionsImport> {
                   if (_error != null)
                     Text(
                       _error!,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: PB.danger,
                         fontSize: PB.fsSm,
                       ),

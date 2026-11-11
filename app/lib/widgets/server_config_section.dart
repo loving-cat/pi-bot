@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../ime_guard.dart';
 import '../l10n/l10n.dart';
 import '../platform.dart';
 import '../scope.dart';
@@ -255,7 +256,17 @@ class _ServerConfigDialogState extends State<_ServerConfigDialog> {
                 ),
               ),
               const SizedBox(height: 14),
-              _field(_port, strings.t('servercfg.port'), '8787'),
+              // ★ 端口框回车 = 点保存。
+              //
+              //   走 submitUnlessComposing：中文输入法组词时按回车是
+              //   "选候选词"，不是提交 —— 直接接 onSubmitted 会吃掉半截
+              //   端口号然后弹"端口无效"。
+              _field(
+                _port,
+                strings.t('servercfg.port'),
+                '8787',
+                onSubmitted: submitUnlessComposing(_port, _submit),
+              ),
               _field(
                 _entry,
                 strings.t('servercfg.entryLabel'),
@@ -275,7 +286,7 @@ class _ServerConfigDialogState extends State<_ServerConfigDialog> {
                 const SizedBox(height: 8),
                 Text(
                   _error!,
-                  style: const TextStyle(fontSize: PB.fsXs, color: PB.danger),
+                  style: TextStyle(fontSize: PB.fsXs, color: PB.danger),
                 ),
               ],
             ],
@@ -295,7 +306,12 @@ class _ServerConfigDialogState extends State<_ServerConfigDialog> {
     );
   }
 
-  Widget _field(TextEditingController c, String label, String hint) {
+  Widget _field(
+    TextEditingController c,
+    String label,
+    String hint, {
+    ValueChanged<String>? onSubmitted,
+  }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Column(
@@ -305,6 +321,9 @@ class _ServerConfigDialogState extends State<_ServerConfigDialog> {
           const SizedBox(height: 6),
           TextField(
             controller: c,
+            onSubmitted: onSubmitted,
+            textInputAction:
+                onSubmitted == null ? null : TextInputAction.done,
             style: const TextStyle(
               fontFamily: PB.monoFamily,
               fontFamilyFallback: PB.monoFallback,

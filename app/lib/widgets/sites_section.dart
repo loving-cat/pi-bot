@@ -613,7 +613,7 @@ class _SiteCardState extends State<_SiteCard> {
                       s.lastError,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: PB.fsXxs,
                         color: PB.danger,
                       ),

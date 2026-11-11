@@ -269,7 +269,7 @@ class _ConnectionsSectionState extends State<ConnectionsSection> {
                     Expanded(
                       child: Text(
                         controller.error!,
-                        style: const TextStyle(
+                        style: TextStyle(
                           color: PB.danger,
                           fontSize: PB.fsSm,
                         ),

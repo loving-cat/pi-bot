@@ -397,7 +397,7 @@ class _ConnectionsEditorState extends State<ConnectionsEditor> {
                   padding: const EdgeInsets.only(top: 12),
                   child: Text(
                     _error!,
-                    style: const TextStyle(color: PB.danger, fontSize: PB.fsSm),
+                    style: TextStyle(color: PB.danger, fontSize: PB.fsSm),
                   ),
                 ),
             ],

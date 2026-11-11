@@ -685,7 +685,7 @@ class _MemberRow extends StatelessWidget {
                     onPressed: onRemove,
                     child: Text(
                       s.t('common.remove'),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: PB.fsXs,
                         color: PB.danger,
                       ),
@@ -1547,7 +1547,7 @@ class _MemoryTabState extends State<_MemoryTab> {
             const SizedBox(height: 8),
             Text(
               m.error!,
-              style: const TextStyle(fontSize: PB.fsXxs, color: PB.danger),
+              style: TextStyle(fontSize: PB.fsXxs, color: PB.danger),
             ),
           ],
         ],

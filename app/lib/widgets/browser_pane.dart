@@ -456,7 +456,7 @@ class _BrowserPaneState extends State<BrowserPane> {
                   value: value,
                   minHeight: 2,
                   backgroundColor: Colors.transparent,
-                  valueColor: const AlwaysStoppedAnimation(PB.success),
+                  valueColor: AlwaysStoppedAnimation(PB.success),
                 );
               },
             ),

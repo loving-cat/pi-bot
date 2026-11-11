@@ -240,7 +240,7 @@ class _SkillsLibrarySectionState extends State<SkillsLibrarySection> {
                     const SizedBox(height: 10),
                     Text(
                       error!,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: PB.fsXs,
                         color: PB.danger,
                       ),

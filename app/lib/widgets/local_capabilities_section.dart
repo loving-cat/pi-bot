@@ -270,7 +270,7 @@ class _LocalCapabilitiesSectionState extends State<LocalCapabilitiesSection> {
                   const SizedBox(height: 2),
                   Text(
                     note,
-                    style: const TextStyle(fontSize: 9, color: PB.warn),
+                    style: TextStyle(fontSize: 9, color: PB.warn),
                   ),
                 ],
               ],

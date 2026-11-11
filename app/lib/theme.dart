@@ -93,9 +93,23 @@ class PB {
   static const userBubbleBottom = Color(0xFF1667C8);
 
   // ---- 状态色
-  static const danger = Color(0xFFFB4B58);
-  static const success = Color(0xFF22C878);
-  static const warn = Color(0xFFF5A524);
+  //
+  // 必须随深浅色切换，不能一套值两用。
+  //
+  //   深色那三个亮色值是为深底（#161618）挑的，放到浅色 pane
+  //   （#F5F5F5 / #EDEDED）上对比度只有 3.08 / 2.01 / 1.87 —— 远低于
+  //   WCAG AA 要求的 4.5：浅色模式下红字、绿字、黄字基本看不清。
+  //
+  //   浅色改用同色系的深值（对比度 4.63~5.24）。深色保持原值不动。
+  //
+  //   注意：这三个从 const 变成了 getter，所以
+  //   const TextStyle(color: PB.warn) 这类写法要去掉外层 const。
+  static Color get danger =>
+      isLightMode ? const Color(0xFFC0362C) : const Color(0xFFFB4B58);
+  static Color get success =>
+      isLightMode ? const Color(0xFF1A7546) : const Color(0xFF22C878);
+  static Color get warn =>
+      isLightMode ? const Color(0xFF9A5B00) : const Color(0xFFF5A524);
 
   // ---- 圆角
   static const rSm = 4.0;

@@ -46,7 +46,7 @@ class _ContextChipState extends State<ContextChip> {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const SizedBox(
+            SizedBox(
               width: 11,
               height: 11,
               child: CircularProgressIndicator(
@@ -57,7 +57,7 @@ class _ContextChipState extends State<ContextChip> {
             const SizedBox(width: 6),
             Text(
               L10n.s(context).t('ctx.compacting'),
-              style: const TextStyle(fontSize: PB.fsXxs, color: PB.warn),
+              style: TextStyle(fontSize: PB.fsXxs, color: PB.warn),
             ),
           ],
         ),

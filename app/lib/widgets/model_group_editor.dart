@@ -122,7 +122,7 @@ class ModelGroupsSection extends StatelessWidget {
                       ),
                       child: Text(
                         strings.t('model.inUse'),
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: PB.fsXxs,
                           color: PB.success,
                         ),
@@ -208,7 +208,7 @@ class ModelGroupsSection extends StatelessWidget {
             },
             child: Text(
               strings.t('common.delete'),
-              style: const TextStyle(fontSize: PB.fsXs, color: PB.danger),
+              style: TextStyle(fontSize: PB.fsXs, color: PB.danger),
             ),
           ),
       ],
