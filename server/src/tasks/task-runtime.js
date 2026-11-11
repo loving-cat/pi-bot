@@ -88,7 +88,21 @@ export function createTaskRuntime({
   const terminalReported = new Set();
   const reportTerminal = (run) => {
     if (!run) return;
-    const terminalStates = new Set(['completed', 'cancelled', 'blocked', 'paused_budget']);
+    // ★ 取消不回报。
+    //
+    //   cancelTask 会**级联**取消所有子孙任务（task-controls.js 里
+    //   对 descendants 逐个 settle），每个子任务都算到达终态 ——
+    //   于是一次取消会在群里刷出 N 条「任务「…」已取消。」，
+    //   把真正的对话内容全顶上去。
+    //
+    //   而且取消是用户自己点的，他当然知道它停了；
+    //   级联出来的子任务更不该逐个报。
+    //
+    //   保留回报的是三种"用户需要知道但未必看得见"的终态：
+    //   completed（结果要交付）、blocked（卡住了要处理）、
+    //   paused_budget（额度用尽，要用户决定）。
+    if (run.state === 'cancelled') return;
+    const terminalStates = new Set(['completed', 'blocked', 'paused_budget']);
     if (!terminalStates.has(run.state)) return;
     // 验收通过后还要走一次交付：等 delivery 落盘再报，否则用户收到的是没有结论的那条。
     if (run.state === 'completed' && !run.delivery) return;
@@ -102,7 +116,6 @@ export function createTaskRuntime({
       if (!store || typeof store.getRoom !== 'function' || !store.getRoom(roomId)) return;
       const label = {
         completed: '已完成',
-        cancelled: '已取消',
         blocked: '受阻',
         paused_budget: '额度用尽已暂停',
       }[run.state] ?? run.state;
