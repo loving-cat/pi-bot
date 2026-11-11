@@ -236,7 +236,7 @@ function estimateToolTokens(session) {
  * 用 estimateTokens 的同一套口径（chars / 4）估，
  * 这样它和 capRecentTokens 里的其它数字在同一量纲上。
  */
-function fixedOverheadOf(session) {
+export function fixedOverheadOf(session) {
   try {
     if (typeof estimateTokens !== 'function') return 0;
     let sum = 0;

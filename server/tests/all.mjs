@@ -76,6 +76,8 @@ const TESTS = [
   'mcp-credential-target',
   'render-html',
   'memory-policy',
+  'memory-prompt',
+  'memory-sanitize',
   'policy-version',
   'run-slots',
   'compact-retry',
@@ -90,6 +92,7 @@ const TESTS = [
   'skills-once',
   'skills-compaction-reset',
   'compact-threshold',
+  'context-overhead',
 ];
 
 let failed = 0;

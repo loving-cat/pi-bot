@@ -284,4 +284,46 @@ export async function decide(point, payload, settings = {}, { fetchImpl, timeout
   };
 }
 
+
+/**
+ * 群聊里要不要问 should-reply。纯函数，方便测。
+ *
+ * ★ 便宜规则先行：已经被 @、或明确派给它 → 直接开跑，不问模型。
+ *   一条消息 × N 个成员 = N 次模型调用，全问一遍太贵；
+ *   而且被点名的人本来就该说话，问了也是白问。
+ *
+ * @param {object} opts
+ * @param {boolean} [opts.addressed]  是否被 @ 或被明确派活
+ * @param {boolean} [opts.enabled]    Jev 是否开启（shouldUseJev 的结果）
+ * @param {boolean} [opts.alreadyAsked] 同一条消息对这个 bot 是否已经判断过
+ * @returns {{ask: boolean, why: string}}
+ */
+export function shouldAskShouldReply({ addressed = false, enabled = true, alreadyAsked = false } = {}) {
+  if (addressed) return { ask: false, why: '已被 @ 或明确派活，直接开跑' };
+  if (!enabled) return { ask: false, why: 'Jev 没开，不判断' };
+  if (alreadyAsked) return { ask: false, why: '这条消息已经判断过，不重复问' };
+  return { ask: true, why: '要不要接还不清楚，问一下' };
+}
+
+/**
+ * 解读 should-reply 的结论。
+ *
+ * ★ 失败降级一律「宁可少说」：decide 超时、抛错、校验不过、置信度不足
+ *   （统一表现为 ok:false）都不发言。
+ *   只有明确拿到 shouldReply === true 才开跑。
+ *
+ * @param {{ok: boolean, values?: {shouldReply?: boolean}}} decision
+ * @returns {{run: boolean, why: string}}
+ */
+export function interpretShouldReply(decision) {
+  if (!decision || decision.ok !== true) {
+    return { run: false, why: `判断失败（${decision?.why || decision?.failure || '未知'}），先不说` };
+  }
+  const v = decision.values?.shouldReply;
+  if (v === true) return { run: true, why: '判断为需要回应' };
+  if (v === false) return { run: false, why: '判断为不需要回应' };
+  // 理论上 validate 会挡住，这里再兜一层：不是 boolean 就当没结论
+  return { run: false, why: '答案不是布尔值，按不发言处理' };
+}
+
 export { JEV_FAILURE };

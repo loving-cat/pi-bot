@@ -36,7 +36,8 @@ import { invalidateSessions, retireStaleSession, reserveSession } from './sessio
 import { deliverDirectInput } from './direct-message-delivery.js';
 import { requestIdentityKey } from './tasks/task-request-result.js';
 import { MergeQueue, MERGE_QUIET_MS } from './merge-messages.js';
-import { buildMemoryDigest, memoryProgress } from './memory-digest.js';
+import { buildMemoryDigest, buildSummarizePrompt, memoryProgress } from './memory-digest.js';
+import { sanitizeMemoryText } from './memory-sanitize.js';
 import { shouldAutoSummarize } from './memory-policy.js';
 import { PRIORITY, RunSlots } from './run-slots.js';
 import { classifyStop, resolveManagedContext, planAttemptEvent, adaptRunOutcome, MANAGED } from './tasks/task-progress.js';
@@ -69,12 +70,19 @@ import { attachmentBlock } from './extract.js';
 import { inboxPath, metaFor, readForModel, saveFromPath } from './attachments.js';
 import { RunStats, RunUsage } from './run-stats.js';
 import { parseMentions } from './mentions.js';
+import {
+  decide as decidePoint,
+  interpretShouldReply,
+  shouldAskShouldReply,
+  shouldUseJev,
+} from './decision-router.js';
 import { log, newId, pickEscalationHost, isSuperiorCall } from './util.js';
 import { planItem, shouldStopRound, leftBehind, planClosing, isUserInitiatedRound } from './group-round.js';
 import {
   applyCompactionBudget,
   capRecentTokens,
   estimateTokenRatio,
+  fixedOverheadOf,
   readContext,
   withCapacity,
 } from './context-budget.js';
@@ -891,6 +899,102 @@ export class PiRunner {
    *   r 算不出来（新会话还没真实 usage、或 r 超出合理区间）→ 完全不覆盖，
    *   沿用 applyCompactionBudget 已经设好的值。不猜、不硬改。
    */
+  /**
+   * should-reply 的最小节流：同一个 (room, bot, 消息) 只判断一次。
+   *
+   * 为什么需要：一轮里同一条消息可能被多次路过（重试、队列重排），
+   * 每次都问模型既慢又贵。这里记「已经问过」的键，短时间内的重复直接复用结论。
+   *
+   * 不做成复杂调度服务：就是一个带上限的 Map，超过上限清掉最旧的。
+   */
+  #shouldReplyAsked = new Map();
+
+  /**
+   * 便宜规则：**同步**判断能不能直接开跑。
+   *
+   * 返回：
+   *   · true  → 直接开跑（被点名/派活/终止/Jev 没开）；
+   *   · false → 本轮不发言（终止中，或节流命中"上次判断为不发言"）；
+   *   · null  → 需要问模型，交给 {@link #askShouldReply}。
+   *
+   * ★ 必须是同步的。这里是 pending 闭包的第一跳，多一个 await 就等于
+   *   让用户按下的"终止"晚一拍才生效 —— room-lock 那条测试正是守这个。
+   */
+  #shouldBotReplySync({ room, roomId, item, bot, isOpening = false }) {
+    // 终止优先：用户按了停止就不要再往下派
+    if (this.aborting.has(roomId)) return false;
+
+    // 明确被点名 / 被派活 → 直接开跑，不问模型。
+    //   · item.fromId 有值 → 某个 bot 在 @ 它（parseMentions 的产物）；
+    //   · isOpening 且它就是首发 → 用户 @ 了它，或没 @ 人时默认的老大。
+    if (Boolean(item?.fromId) || isOpening) return true;
+
+    const settings = (() => {
+      try { return store.decisionRoute(); } catch { return {}; }
+    })();
+    const gate = shouldUseJev('should-reply', settings);
+    const throttleKey = `${roomId}:${bot.id}:${item?.sourceMessageId ?? ''}`;
+
+    const { ask, why } = shouldAskShouldReply({
+      addressed: false,
+      enabled: gate.use,
+      alreadyAsked: this.#shouldReplyAsked.has(throttleKey),
+    });
+    if (!ask) {
+      // Jev 没开 → 保持原行为（开跑）；已问过 → 复用上次结论
+      const cached = this.#shouldReplyAsked.get(throttleKey);
+      if (cached === false) {
+        log(`【${room.name}】${bot.name} 不发言：${why}`);
+        return false;
+      }
+      return true;
+    }
+    return null;   // 需要问模型
+  }
+
+  /**
+   * 问模型「这个 bot 要不要接这条消息」。
+   *
+   * ★ 失败降级：超时/抛错/校验不过/置信度不足 → **不发言**。
+   *   宁可少说一句，也不要全员同时开口刷屏。
+   */
+  async #askShouldReply({ room, roomId, item, bot }) {
+    const throttleKey = `${roomId}:${bot.id}:${item?.sourceMessageId ?? ''}`;
+    const settings = (() => {
+      try { return store.decisionRoute(); } catch { return {}; }
+    })();
+
+    let decision;
+    try {
+      decision = await decidePoint('should-reply', {
+        message: String(item?.fromText || item?.reason || '').slice(0, 2000),
+        recent: store.listMessages(roomId, { limit: 8 })
+          .filter((m) => m.authorType !== 'system')
+          .map((m) => `${m.authorName || '用户'}：${String(m.text ?? '').slice(0, 300)}`),
+        botName: bot.name,
+      }, settings, { timeoutMs: 4000 });
+    } catch (err) {
+      // 抛错也要留住结论：不发言，并记进节流避免反复重试
+      log(`【${room.name}】${bot.name} 的 should-reply 判断抛错：`, err?.message || err);
+      this.#rememberShouldReply(throttleKey, false);
+      return false;
+    }
+
+    const { run, why: verdict } = interpretShouldReply(decision);
+    this.#rememberShouldReply(throttleKey, run);
+    log(`【${room.name}】${bot.name} should-reply=${run}：${verdict}`);
+    return run;
+  }
+
+  /** 记住一次 should-reply 结论；带上限，防止长会话里无限增长。 */
+  #rememberShouldReply(key, value) {
+    if (this.#shouldReplyAsked.size > 500) {
+      // 简单淘汰：清掉最早插入的一批
+      const keys = [...this.#shouldReplyAsked.keys()].slice(0, 250);
+      for (const k of keys) this.#shouldReplyAsked.delete(k);
+    }
+    this.#shouldReplyAsked.set(key, value);
+  }
   #calibrateKeepRecent(session, bot) {
     try {
       const sm = session?.settingsManager;
@@ -935,6 +1039,16 @@ export class PiRunner {
           keepRecentTokens: Number.MAX_SAFE_INTEGER,
           reserveTokens: existing.reserveTokens ?? config.reserveTokens ?? 16384,
           threshold: config.compactAtPercent ?? 0.6,
+          // ★ 必须和 applyCompactionBudget 一样扣掉固定开销。
+          //
+          //   不扣的话这里算出的「窗口最多能留多少原文」偏大 ——
+          //   system prompt + 工具定义每轮都在、压缩也动不了，
+          //   把它们算成可用余量，校准出来的保留量就会贴到触发线上，
+          //   压完立刻又触线，反复压缩。
+          //
+          //   口径必须是同一个函数（拿不到就当 0，不猜），
+          //   否则两条路径的触发时机对不上。
+          fixedOverheadTokens: fixedOverheadOf(session),
         });
         // ★ 真实上限还要再受窗口本身约束。
         //
@@ -1652,6 +1766,9 @@ export class PiRunner {
     const stale = () => this.#roundEpoch(roomId) !== epoch;
 
     const opening = openingSpeakers(room, { text: openerText, openerBotId, kickoff });
+    // 首发名单做成集合：should-reply 用它判断"这个 bot 是不是被点名开跑的"。
+    // 是的话直接开跑，不浪费一次模型判断。
+    const openingSet = new Set(opening);
     if (!opening.length) return;
 
     // 轮次预算从 store 读（用户可在设置里改），config 只是默认值
@@ -1940,6 +2057,31 @@ export class PiRunner {
             if (isManagedRound && managedContext.botId !== bot.id) {
               log(`【${room.name}】${bot.name} 跳过：本轮是受管执行，只跑 ${managedContext.botId}`);
               return;
+            }
+
+            // ★ 群聊里"要不要接这条"的判断（should-reply）。
+            //
+            //   便宜规则先行 —— 被 @ 或被明确派活的直接开跑，不问模型：
+            //   一条消息 × N 个成员就是 N 次调用，而且被点名的人本来就该说话。
+            //   只有"要不要接还不清楚"时才问一次。
+            //
+            //   ★ 两段式：同步部分（终止判定 + 便宜规则）先跑完，
+            //     只有确实需要问模型时才进 await。
+            //     整段包成 async 会让"终止"晚一拍生效（room-lock 守着这个）。
+            const syncVerdict = this.#shouldBotReplySync({
+              room,
+              roomId,
+              item,
+              bot,
+              // 队列里前 opening.length 项就是首发名单（用户 @ 的，或没 @ 时的老大）
+              isOpening: openingSet.has(bot.id) && item.sourceMessageId === openerMessageId,
+            });
+            if (syncVerdict === false) return;
+            if (syncVerdict === null) {
+              // 失败降级统一「宁可少说」：超时/抛错/校验不过都不发言
+              if (!(await this.#askShouldReply({ room, roomId, item, bot }))) return;
+              // await 期间用户可能已经按了终止
+              if (this.aborting.has(roomId)) return;
             }
 
             // 部门里"别人派给它"的活 → 任务板上登记一条（跑完再收尾）
@@ -2643,22 +2785,27 @@ export class PiRunner {
 
     const all = store.listMessages(roomId, { limit: PiRunner.MEMORY_WINDOW });
     const cached = store.memorySummaryFor(roomId, botId);
-    const { conversation, lastId, totalTurns } = memoryProgress(all, cached);
+    const { conversation, newMessages, lastId, totalTurns } = memoryProgress(all, cached);
     if (!conversation.length) return { text: '', at: null, count: 0, stale: false, lastId };
     if (!force && cached && cached.lastId === lastId) return cached;
 
-    const digest = buildMemoryDigest(all);
+    // ★ 递归更新：已有摘要时只把**新增**对话交给模型，让它并入旧摘要。
+    //
+    //   旧行为是每次都对整个窗口重新 digest、从零重写一份摘要 ——
+    //   窗口一滑走，早先的结论就没材料了，重写时自然丢掉。
+    //
+    //   首次（没有 cached.text）仍然对整窗口 digest。
+    const cachedText = String(cached?.text ?? '').trim();
+    const recursive = config.memoryRecursive !== false && Boolean(cachedText);
+    // newMessages 为空（只有 force 才会走到这里）时退回整窗口，别把空材料发出去
+    const digestMessages = recursive && newMessages.length ? newMessages : all;
+    const digest = buildMemoryDigest(digestMessages);
 
-    const prompt = [
-      `下面是「${bot.name}」与用户最近的对话记录。请把它整理成一份"记忆摘要"：`,
-      '1) 用户长期关注什么、有什么偏好与要求；',
-      '2) 已经确定的结论/数据/口径（保留关键数字）；',
-      '3) 还没做完的事与下一步；',
-      '4) 重要的文件路径或系统状态。',
-      '要求：要点式中文，每行一条，总长不超过 500 字；不要复述原话，不要寒暄。',
-      '',
+    const prompt = buildSummarizePrompt({
+      botName: bot.name,
+      previousText: recursive ? cachedText : '',
       digest,
-    ].join('\n');
+    });
 
     const model = (bot.model ? this.resolveModel(bot.model) : null) ?? this.model;
     lease?.restrictTo(providerLeaseScope(model));
@@ -2676,9 +2823,23 @@ export class PiRunner {
         },
         { maxTokens: 1200, signal: controller.signal },
       );
-      const text = textOf(reply).trim();
-      if (!text) {
+      const raw = textOf(reply).trim();
+      if (!raw) {
+        // 空结果不覆盖旧摘要
         return { ...(cached ?? {}), error: '模型没有返回内容', stale: true };
+      }
+      // 写盘前先脱敏（setMemorySummary 里还会再过一次，双重把关）。
+      // 这里先过是为了让返回值/内存里的副本也是干净的；
+      // 脱敏抛错就当作本次失败，不覆盖旧摘要。
+      let text;
+      try {
+        text = sanitizeMemoryText(raw);
+      } catch (err) {
+        return {
+          ...(cached ?? {}),
+          error: `脱敏失败：${err?.message || err}`,
+          stale: true,
+        };
       }
       return store.setMemorySummary(roomId, botId, {
         text,

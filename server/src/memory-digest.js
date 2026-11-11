@@ -35,6 +35,49 @@ export function memoryProgress(messages = [], summary = null) {
   };
 }
 
+
+/**
+ * 拼「让模型更新记忆」的提示词。纯函数，方便单测。
+ *
+ * 两种形态：
+ *   · 有 previousText（已有摘要）：在旧摘要上**增量更新** ——
+ *     模型只需要并入新信息、修正过时结论，不必从零重写。
+ *     整份重写的代价是：上一版里仍然成立的结论容易在重写中丢失。
+ *   · 没有 previousText（首次）：只用对话材料。
+ *
+ * 注意：要点 1–3 的措辞改过，第 4 条「重要的文件路径或系统状态」
+ * 和「总长不超过 500 字」保持原文 —— 那两条还没拍板。
+ */
+export function buildSummarizePrompt({ botName = '', previousText = '', digest = '' } = {}) {
+  const hasPrevious = Boolean(String(previousText ?? '').trim());
+  const head = hasPrevious
+    ? `下面是「${botName}」已有的记忆和最近新增的对话记录。请在已有记忆上更新，不要整份重写：`
+    : `下面是「${botName}」与用户最近的对话记录。请把它整理成一份"记忆摘要"：`;
+
+  const rules = [
+    '1) 用户长期关注什么、有什么偏好与要求；',
+    '2) 已经确定的结论/数据/口径（保留关键数字）；',
+    '3) 还没做完的事与下一步；',
+    '4) 重要的文件路径或系统状态。',
+  ];
+
+  const constraints = [
+    '要求：要点式中文，每行一条，总长不超过 500 字；不要复述原话，不要寒暄。',
+  ];
+  if (hasPrevious) {
+    constraints.push(
+      '相互矛盾时以用户更正为准，只保留现行结论，不要并列两份相反事实；已有记忆中仍成立的结论和数字必须保留。',
+    );
+  }
+
+  const parts = [head, ...rules, ...constraints];
+  if (hasPrevious) {
+    parts.push('', '【已有记忆】', String(previousText).trim());
+  }
+  parts.push('', hasPrevious ? '【新增对话】' : '', digest);
+  return parts.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd();
+}
+
 /** 拼成给模型的摘要材料；按条数/单条/总字数三重截断。 */
 export function buildMemoryDigest(
   messages = [],

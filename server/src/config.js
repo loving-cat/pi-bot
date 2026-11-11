@@ -236,6 +236,14 @@ export const config = {
   compactAtPercent: Number(process.env.PI_BOT_COMPACT_AT_PERCENT || 0.6),
   /** 关掉自动压缩（PI_BOT_AUTO_COMPACT=0）。关掉之后长会话会直接撞上下文上限 */
   autoCompact: process.env.PI_BOT_AUTO_COMPACT !== '0',
+  /**
+   * 记忆摘要在已有摘要上递归更新（PI_BOT_MEMORY_RECURSIVE=0 关闭）。
+   *
+   * 开（默认）：把旧摘要一起给模型，让它增量并入新信息 —— 上一版里
+   *             仍然成立的结论不会被重写丢掉。
+   * 关：回到旧行为，只把当前窗口的对话交给模型重新总结一遍。
+   */
+  memoryRecursive: process.env.PI_BOT_MEMORY_RECURSIVE !== '0',
   /** 单轮 agent 运行的硬超时（毫秒），0 = 不限 */
   runTimeoutMs: Number(process.env.PI_BOT_RUN_TIMEOUT_MS || 10 * 60 * 1000),
   hostname: os.hostname(),

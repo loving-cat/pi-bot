@@ -7,6 +7,8 @@ import {
   isJevCandidate,
   shouldUseJev,
   decide,
+  shouldAskShouldReply,
+  interpretShouldReply,
 } from '../src/decision-router.js';
 import {
   classifyFailure,
@@ -310,4 +312,72 @@ test('网络失败时 fallback 并带失败原因', async () => {
   assert.equal(r.ok, false);
   assert.equal(r.source, 'fallback');
   assert.equal(r.failure, JEV_FAILURE.transport);
+});
+
+
+// ---------------------------------------------------------------------------
+// should-reply：群聊里「这个 bot 要不要接这条消息」
+//
+//   测的是两个纯函数：
+//     · shouldAskShouldReply —— 便宜规则（要不要问模型）
+//     · interpretShouldReply —— 结论解读（答完开不开跑）
+//   主流程的接入点由 pi-runner 负责，这里不碰网络。
+// ---------------------------------------------------------------------------
+
+test('被 @ / 明确派活 → 不问 should-reply，直接开跑', () => {
+  const r = shouldAskShouldReply({ addressed: true, enabled: true });
+  assert.equal(r.ask, false, '被点名时不该再问模型');
+  assert.match(r.why, /直接开跑/);
+});
+
+test('未点名但 Jev 开着 → 需要问一次', () => {
+  const r = shouldAskShouldReply({ addressed: false, enabled: true });
+  assert.equal(r.ask, true);
+});
+
+test('Jev 没开时保持原行为：不判断也不拦截', () => {
+  const r = shouldAskShouldReply({ addressed: false, enabled: false });
+  assert.equal(r.ask, false);
+  assert.match(r.why, /Jev 没开/);
+});
+
+test('同一条消息对同一个 bot 只判断一次（节流）', () => {
+  const r = shouldAskShouldReply({ addressed: false, enabled: true, alreadyAsked: true });
+  assert.equal(r.ask, false);
+  assert.match(r.why, /已经判断过/);
+});
+
+test('★ 只有 shouldReply === true 才开跑', () => {
+  assert.equal(interpretShouldReply({ ok: true, values: { shouldReply: true } }).run, true);
+  assert.equal(interpretShouldReply({ ok: true, values: { shouldReply: false } }).run, false);
+});
+
+test('★ 判断失败一律不开跑：ok:false / 超时 / 抛错 / 校验不过', () => {
+  for (const failure of ['timeout', 'transport', 'invalidAnswer', 'lowConfidence', 'badResponse']) {
+    const r = interpretShouldReply({ ok: false, failure, why: 'x' });
+    assert.equal(r.run, false, failure + ' 时应不开跑');
+  }
+  // 抛错在 decide 内部已被转成 ok:false；完全没有回包也不能当成可以说话
+  assert.equal(interpretShouldReply(undefined).run, false);
+  assert.equal(interpretShouldReply(null).run, false);
+  assert.equal(interpretShouldReply({}).run, false);
+});
+
+test('★ shouldReply 不是 boolean 或 values 缺失 → 不开跑', () => {
+  // values 整个缺失
+  assert.equal(interpretShouldReply({ ok: true }).run, false);
+  assert.equal(interpretShouldReply({ ok: true, values: {} }).run, false);
+  assert.equal(interpretShouldReply({ ok: true, values: null }).run, false);
+  // values 有但shouldReply 不是布尔
+  for (const v of ['yes', 'true', 1, 0, {}, [], null]) {
+    const r = interpretShouldReply({ ok: true, values: { shouldReply: v } });
+    assert.equal(r.run, false, 'shouldReply=' + JSON.stringify(v) + ' 不该开跑');
+  }
+});
+
+test('validate 也挡住非布尔：双层防护', () => {
+  assert.equal(POINTS['should-reply'].validate({ shouldReply: true }), true);
+  assert.equal(POINTS['should-reply'].validate({ shouldReply: false }), true);
+  assert.equal(POINTS['should-reply'].validate({ shouldReply: 'yes' }), false);
+  assert.equal(POINTS['should-reply'].validate({}), false);
 });

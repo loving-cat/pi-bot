@@ -40,10 +40,48 @@
   压缩期间打 `compactingOnly` 标记，`isRoomBusy` 与 `#interruptRoundForUser`
   都跳过它；压缩结束、回合真正开始时清掉，插话语义恢复原样
 
-**阶段 2（1–2 周，滚动摘要）**
+**记忆摘要：递归更新与写入脱敏** —— 已落地（不涉及 prompt 注入）
+
+- 递归更新：`memory-digest.js` 新增 `buildSummarizePrompt({ botName, previousText, digest })`。
+  有旧摘要时开头改成「在已有记忆上更新，不要整份重写」，正文分「【已有记忆】」和「【新增对话】」两段；
+  并补一条矛盾处理规则：**以用户更正为准，只保留现行结论，不并列两份相反事实**，
+  旧摘要里仍成立的结论和数字必须保留。
+  `#summarizeMemoryNow` 有缓存文本时只对 `memoryProgress` 返回的 **newMessages** 做 digest，
+  首次仍取整窗口。开关 `PI_BOT_MEMORY_RECURSIVE=0` 可退回旧行为（整窗口 digest + 旧提示词）。
+  空结果、超时、脱敏失败都不覆盖旧摘要。
+- 写入脱敏：新增 `memory-sanitize.js`，`setMemorySummary` 落盘前调用，
+  `#summarizeMemoryNow` 写入前也过一次（双重把关）。抹掉邮箱、PEM 私钥块、Bearer 令牌、
+  赋值式 api_key / access_token / secret / password。**本阶段不处理文件路径** —— 路径脱敏还没拍板。
+  规则锚定在「像赋值 / 像令牌」的形状上，不用裸 token 字样匹配，避免误删「token 预算」这类表述。
+- 未改：提示词第 4 条「重要的文件路径或系统状态」、`memory-policy.js` 的 `IMPORTANT_SIGNALS` 路径正则、
+  `memorySummaries` 存储键形状（仍是 `roomId:botId`）、`GET/POST /memory` 回包形状。
+
+**阶段 2（1–2 周，滚动摘要）** —— 仍是**待拍板**，尚未落地
 - 先只在群聊开；复用 `memory-policy.js` + `memory-digest.js`
 - 摘要必须**每轮拼进 prompt**，而不是 `appendSystemPrompt`（后者会累积）
 - 上之前先算清 prompt cache 命中率的账：摘要每轮变化会击穿缓存
+- ⚠️ 上面「递归更新与写入脱敏」只解决了**摘要怎么生成、怎么写干净**，
+  **没有**把摘要或结构化事实拼进模型 prompt。注入方案（建议上限「最多 8 条、合计 800 字」）
+  连同持仓类状态的唯一写入者规则、结构化共享事实层（facts.js / ADD-UPDATE-DELETE-NOOP）
+  都还没定，不要当成已落地。
+
+**上下文压缩：校准路径补上固定开销** —— 已落地
+- 背景：`applyCompactionBudget` 调 `capRecentTokens` 时传了
+  `fixedOverheadTokens: fixedOverheadOf(session)`（system prompt + 工具定义，
+  「每轮都在、压缩动不了」的那部分）；但 `pi-runner.js` 的 `#calibrateKeepRecent`
+  里那次「只取窗口上限」的调用**没传**，注释却写着要扣 ——
+  于是它以为窗口里全是可用余量，算出的保留量贴到触发线，小窗口压完立刻又触线。
+- 改动：
+  - `context-budget.js` 把 `fixedOverheadOf` 导出，口径与 `applyCompactionBudget` 完全一致
+    （拿不到就返回 0，不猜数字）。
+  - `#calibrateKeepRecent` 的那次 `capRecentTokens` 调用补上
+    `fixedOverheadTokens: fixedOverheadOf(session)` —— **同一个函数**，两条路径的触发时机才对得上。
+  - 用户/主控显式设了 `bot.keepRecentTokens` 仍直接 return，不覆盖；
+    算不出 r 或 r 越界时仍不改 keep；`COMPACT_PROMPT` 仍为 `null`。
+- 未改：`compactAtPercent`（仍 0.6 触发）、`TARGET_RECENT_TOKENS`（仍 200000 真实 token）、
+  `keepRecentTokens` 默认值、精简档（仍不接入自动分类）。
+- 测试：`server/tests/context-overhead.mjs` —— 有开销时保留量更小、开销越大越小、
+  吃掉余量仍留 1 token、小窗口场景数值、两条路径用同一函数、用户显式设置不被覆盖。
 
 **不建议做**：检索式记忆（要额外向量库与 embedding 推理）、LLMLingua（本地常驻服务再加一路推理，与省延迟目标相悖）。
 

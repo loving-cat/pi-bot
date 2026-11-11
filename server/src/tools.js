@@ -34,7 +34,7 @@ import { handleIntake, ACTION } from './coordination/intake.js';
 
 // 单次 bot 间对话的最长时间。轮次不设上限（任务没完成前的往返是必要的），
 // 这条只是防止两个 bot 互相 reply 到天荒地老。
-const PEER_DIALOG_TTL_MS = 600_000;
+export const PEER_DIALOG_TTL_MS = 600_000;
 
 /**
  * bot 间对话的记账表：key = "调用方→被叫方"，value = 这段对话开始的时间。
@@ -49,20 +49,42 @@ const PEER_DIALOG_TTL_MS = 600_000;
  */
 const peerDialogStarts = new Map();
 
-function peerDialogKey(fromId, toId) {
+export function peerDialogKey(fromId, toId) {
   return `${fromId}>${toId}`;
 }
 
-/** 取这对 bot 当前对话的开始时间；没有就现在开始，并返回 now。 */
-function peerDialogStart(pair, nowMs) {
+/**
+ * 取这对 bot 当前对话的开始时间。
+ *
+ * ★ 返回的是「这段对话最初开始的时间」，超时了也**不重置** ——
+ *   调用方用 `nowMs - startedAt > PEER_DIALOG_TTL_MS` 判定要不要拦，
+ *   若这里在超时时把起点改成 now，差值恒为 0，判定永远不成立，
+ *   护栏就成了空壳（两个 bot 可以无限互相 reply）。
+ *
+ *   重置只能发生在"对话确实结束了"的时候（见 {@link peerDialogReset}），
+ *   不能靠时间自己滑过去。
+ */
+export function peerDialogStart(pair, nowMs) {
   const existing = peerDialogStarts.get(pair);
-  if (existing && nowMs - existing <= PEER_DIALOG_TTL_MS) return existing;
+  if (existing != null) return existing;
   peerDialogStarts.set(pair, nowMs);
-  // 顺手清过期项，别让表无限长
+  // 顺手清掉确实已经过期的项，别让表无限长
   for (const [k, t] of peerDialogStarts) {
     if (nowMs - t > PEER_DIALOG_TTL_MS) peerDialogStarts.delete(k);
   }
   return nowMs;
+}
+
+/**
+ * 结束一对 bot 的对话记录，下次调用重新计时。
+ *
+ * 什么时候调：这一轮 reply_bot 顺利答完、且对方没有继续追问时。
+ * 现在没有调用点 —— 也就是"一对 bot 一旦开始对话，10 分钟内都算同一段"，
+ * 超过就拦截。这是保守但安全的一侧：宁可多拦一次让人去买单，
+ * 也不要放开无限互相调用。
+ */
+export function peerDialogReset(fromId, toId) {
+  peerDialogStarts.delete(peerDialogKey(fromId, toId));
 }
 
 /** 同一个 bot 连着私信多个人时，多久以内的引用气泡合并成一个（ms） */

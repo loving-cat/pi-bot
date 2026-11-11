@@ -17,6 +17,7 @@ import { config } from './config.js';
 import { bus } from './bus.js';
 import { newId, now, readJson, writeJsonAtomic, insertionPoint, log } from './util.js';
 import { normalizeRules } from './shell-policy.js';
+import { sanitizeMemoryText } from './memory-sanitize.js';
 import { TaskRunStore } from './tasks/task-run-store.js';
 
 const STATE_FILE = path.join(config.dataDir, 'state.json');
@@ -2023,9 +2024,27 @@ export class Store {
     this.scheduleSave();
   }
 
+  /**
+   * 写入记忆摘要。
+   *
+   * ★ 落盘前过一遍脱敏：摘要是长期留存、跨会话复用的，
+   *   模型总结时可能把对话里的邮箱、令牌原文带进来。
+   *   这里和 #summarizeMemoryNow 各过一次（双重把关），
+   *   包形状不变（仍是 { text, lastId, count, turns, at }）。
+   *
+   * ★ 脱敏器抛异常时**不写入**，保留旧值 ——
+   *   宁可摘要不更新，也不要把可能含凭据的文本落盘。
+   */
   setMemorySummary(roomId, botId, record) {
     if (!this.state.memorySummaries) this.state.memorySummaries = {};
-    const next = { ...record, at: record.at ?? now() };
+    let text;
+    try {
+      text = sanitizeMemoryText(String(record?.text ?? ''));
+    } catch (err) {
+      log('记忆摘要脱敏失败，保留旧值：', err?.message || err);
+      return this.memorySummaryFor(roomId, botId);
+    }
+    const next = { ...record, text, at: record.at ?? now() };
     this.state.memorySummaries[`${roomId}:${botId}`] = next;
     this.scheduleSave();
     return next;

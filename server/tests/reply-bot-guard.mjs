@@ -69,27 +69,86 @@ await test('★ 超长文本被拒（输入限 800 字）', async () => {
   assert.match(r.content[0].text, /800/);
 });
 
-await test('TTL 记账按「调用方→被叫方」这一对，与房间无关', async () => {
-  // 原来的写法把 dialogId 写进被叫方 DM 的消息 meta，
-  // 却在呼叫方房间读 —— 两个房间不同，永远读不到，TTL 从不触发。
-  // 现在按 id 对在内存里记，跟消息落在哪无关。
-  //
-  // 这里只能验证「同一个模块多次调用共享同一张表」这个前提，
-  // 真正的超时行为需要 10 分钟，不适合放进单测。
-  const m = new Map();
-  const TTL = 600_000;
-  function start(pair, now) {
-    const e = m.get(pair);
-    if (e && now - e <= TTL) return e;
-    m.set(pair, now);
-    for (const [k, t] of m) if (now - t > TTL) m.delete(k);
-    return now;
-  }
+await test('★ TTL 记账按「调用方→被叫方」这一对，与房间无关', async () => {
+  // 真正的记账在 tools.js 的 peerDialogStarts 里，按 id 对为键。
+  // 这里测**真实实现**，不再复制一份本地算法 ——
+  // 之前那份副本断言的还是「超过 10 分钟重置」，正是已经修掉的空壳 bug。
+  const { peerDialogStart, peerDialogKey, peerDialogReset, PEER_DIALOG_TTL_MS } =
+    await import('../src/tools.js');
+
+  // 数字必须与代码一致（文档里写的也是 10 分钟）
+  assert.equal(PEER_DIALOG_TTL_MS, 600_000, 'TTL 应为 10 分钟');
+
+  const pair = peerDialogKey('ttl_a', 'ttl_b');
+  peerDialogReset('ttl_a', 'ttl_b'); // 从干净状态开始
   const t0 = 1_000_000;
-  assert.equal(start('A>B', t0), t0, '第一次开始');
-  assert.equal(start('A>B', t0 + 300_000), t0, '5 分钟后沿用同一起点');
-  assert.equal(start('B>A', t0 + 400_000), t0 + 400_000, '反方向是另一段对话');
-  assert.equal(start('A>B', t0 + 700_000), t0 + 700_000, '超过 10 分钟重置');
+
+  // 1) 第一次：起点就是 now
+  assert.equal(peerDialogStart(pair, t0), t0, '第一次调用应返回 now');
+
+  // 2) TTL 内：沿用最初起点（不是刷新成 now）
+  assert.equal(
+    peerDialogStart(pair, t0 + 300_000),
+    t0,
+    '5 分钟后必须沿用最初起点',
+  );
+  assert.equal(
+    peerDialogStart(pair, t0 + 599_999),
+    t0,
+    'TTL 边界内仍沿用最初起点',
+  );
+
+  // 3) 超过 TTL：起点**不得**重置为 now —— 这是那个空壳 bug 的核心
+  const overTtl = t0 + 600_001;
+  const stillStart = peerDialogStart(pair, overTtl);
+  assert.equal(
+    stillStart,
+    t0,
+    '超过 TTL 后起点不得被重置为 now（否则 now-startedAt 恒为 0，护栏永不触发）',
+  );
+  assert.ok(
+    overTtl - stillStart > PEER_DIALOG_TTL_MS,
+    `超过 TTL 后必须判定为拦截：${overTtl - stillStart} 应 > ${PEER_DIALOG_TTL_MS}`,
+  );
+
+  // 4) 反方向是另一段对话，各记各的
+  const reverse = peerDialogKey('ttl_b', 'ttl_a');
+  assert.equal(
+    peerDialogStart(reverse, t0 + 400_000),
+    t0 + 400_000,
+    '反方向是另一段对话，起点独立',
+  );
+
+  // 5) 只有 peerDialogReset 才重置起点
+  peerDialogReset('ttl_a', 'ttl_b');
+  assert.equal(
+    peerDialogStart(pair, overTtl + 1),
+    overTtl + 1,
+    'reset 之后重新计时',
+  );
+
+  peerDialogReset('ttl_a', 'ttl_b');
+  peerDialogReset('ttl_b', 'ttl_a');
+});
+
+await test('★ TTL 边界：正好等于 TTL 时不拦截，超过才拦截', async () => {
+  const { peerDialogStart, peerDialogKey, peerDialogReset, PEER_DIALOG_TTL_MS } =
+    await import('../src/tools.js');
+  const pair = peerDialogKey('edge_a', 'edge_b');
+  peerDialogReset('edge_a', 'edge_b');
+  const t0 = 2_000_000;
+  peerDialogStart(pair, t0);
+
+  // 判定式是 now - startedAt > TTL，所以正好等于时**不**拦截
+  const atTtl = t0 + PEER_DIALOG_TTL_MS;
+  assert.equal(atTtl - peerDialogStart(pair, atTtl), PEER_DIALOG_TTL_MS);
+  assert.ok(atTtl - t0 > PEER_DIALOG_TTL_MS === false, '正好等于 TTL 不应判为拦截');
+
+  // 超过 1ms 才拦截
+  const past = t0 + PEER_DIALOG_TTL_MS + 1;
+  assert.ok(past - peerDialogStart(pair, past) > PEER_DIALOG_TTL_MS, '超过 1ms 应判为拦截');
+
+  peerDialogReset('edge_a', 'edge_b');
 });
 
 console.log(`\nreply_bot 护栏：${passed}/${passed + failed} 通过`);
