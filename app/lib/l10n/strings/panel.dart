@@ -192,6 +192,7 @@ const areaPanel = StringArea(
     'servercfg.autoNode': '（自动）查找 node 22+',
     'servercfg.intro': '服务端会自动启动，默认无需填写。下面几项只在需要自定义时修改。',
     'servercfg.port': '端口',
+    'servercfg.actualPort': '实际端口',
     'servercfg.dataDir': '数据目录',
     'servercfg.entry': '服务端',
     'servercfg.dataDirNote':
@@ -401,6 +402,7 @@ const areaPanel = StringArea(
     'servercfg.autoNode': '(auto) find node 22+',
     'servercfg.intro': 'The server starts automatically. Only change these if you need a custom setup.',
     'servercfg.port': 'Port',
+    'servercfg.actualPort': 'Actual port',
     'servercfg.dataDir': 'Data folder',
     'servercfg.entry': 'Server',
     'servercfg.dataDirNote': 'Switching this uses a whole different data set (the old folder is kept).',

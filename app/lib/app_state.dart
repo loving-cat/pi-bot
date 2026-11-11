@@ -496,8 +496,21 @@ class AppState extends ChangeNotifier {
   String serverEntryPath = '';
   String serverNodePath = '';
 
-  /// 本机服务端地址（端口可在设置里改）
-  String get localUrl => 'http://127.0.0.1:$serverPort';
+  /// 本次**实际**在监听的端口。
+  ///
+  /// 偏好端口（[serverPort]，来自设置 / prefs）被别的程序占用时，
+  /// 桌面端会自动换一个空闲端口启动，实际值记在这里。
+  /// 连接地址必须用它，否则会连到占用偏好端口的那个程序上。
+  int? activePort;
+
+  /// 换端口时给用户看的一句话（如「8787 被占用，已改用 8788」）。
+  String? serverNotice;
+
+  /// 真正在用的端口：优先实际端口，还没启动过就退回偏好值。
+  int get effectivePort => activePort ?? serverPort;
+
+  /// 本机服务端地址（偏好端口可在设置里改；实际端口见 [effectivePort]）
+  String get localUrl => 'http://127.0.0.1:$effectivePort';
 
   bool get paired =>
       serverUrl != null && (localMode || (token ?? '').isNotEmpty);
@@ -595,6 +608,19 @@ class AppState extends ChangeNotifier {
       );
       ok = result.ok;
       serverProblem = result.ok ? null : result.error;
+      // ★ 偏好端口被占用时桌面端换了个端口启动 —— 记下实际端口，
+      //   界面和连接地址都用它。prefs 里的 server_port 仍是偏好值，
+      //   下次启动还会先试那个端口（用户的设置不该被一次占用改掉）。
+      if (result.ok) {
+        activePort = result.portOr(serverPort);
+        serverNotice = result.notice;
+      } else {
+        // ★ 失败时把上一次成功留下的"实际端口"清掉。
+        //   不清的话界面会继续显示上一轮的 8788，而这次可能根本没起来 ——
+        //   用户按那个端口去排查，查的是个已经不存在的服务。
+        activePort = null;
+        serverNotice = null;
+      }
     } finally {
       serverStarting = false;
       _notify();
@@ -655,6 +681,11 @@ class AppState extends ChangeNotifier {
       return;
     }
     serverStarting = true;
+    // ★ 用户改了偏好端口 → 上一次记录的实际端口立刻作废。
+    //   不清的话，设置页会显示「实际端口 8788」这种和刚填的值对不上的信息，
+    //   直到下一次启动成功前都是错的。
+    activePort = null;
+    serverNotice = null;
     try {
       serverDataDir = dataDir.trim();
       serverPort = port;

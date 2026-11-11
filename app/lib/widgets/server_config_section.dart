@@ -74,6 +74,15 @@ class ServerConfigSection extends StatelessWidget {
               ),
               const SizedBox(height: 10),
               _Row(strings.t('servercfg.port'), '${state.serverPort}'),
+              // ★ 偏好端口被占用时桌面端会自动换端口。这里如实显示实际端口，
+              //   否则用户看到"端口 8787"却连的是 8788，排查时会绕远路。
+              //   只在实际值和偏好值不同时显示，正常情况下不干扰。
+              if (state.activePort != null &&
+                  state.activePort != state.serverPort)
+                _Row(
+                  strings.t('servercfg.actualPort'),
+                  '${state.activePort}',
+                ),
               _Row(strings.t('servercfg.dataDir'), dataDir),
               _Row(strings.t('servercfg.entry'), entry),
               _Row('node', node),

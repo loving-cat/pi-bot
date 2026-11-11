@@ -4,6 +4,7 @@ import 'dart:io';
 import 'health.dart';
 import 'locate.dart';
 import 'options.dart';
+import 'port_picker.dart';
 import 'server_log.dart';
 import 'supervisor.dart';
 
@@ -79,6 +80,9 @@ class LocalServerLauncher {
   bool _diedDuringStart = false;
   Future<String?>? _depsFuture;
 
+  /// 本机地址（统一用回环地址，换端口只影响端口部分）。
+  String _urlFor(int port) => 'http://127.0.0.1:$port';
+
   /// 服务端目录（`.../server`）。界面展示手动启动命令时使用真实路径。
   String? get serverDir {
     final entry = _entryPath;
@@ -106,6 +110,10 @@ class LocalServerLauncher {
   }
 
   /// 确保本机服务端在运行；失败返回原因，不抛异常。
+  ///
+  /// [baseUrl] 是**偏好端口**上的地址（由用户的设置决定）。真正的监听端口
+  /// 由这里决定：偏好端口被别的程序占着时会自动往后找一个空闲的，
+  /// 实际端口通过 [ServerLaunchResult.port] 回传，调用方据此连。
   Future<ServerLaunchResult> ensureRunning({
     required String baseUrl,
     Duration waitFor = const Duration(seconds: 30),
@@ -113,7 +121,11 @@ class LocalServerLauncher {
   }) async {
     _lastBaseUrl = baseUrl;
     if (await serverAlive(baseUrl)) {
-      return const ServerLaunchResult(ok: true, alreadyRunning: true);
+      return ServerLaunchResult(
+        ok: true,
+        alreadyRunning: true,
+        port: Uri.parse(baseUrl).port,
+      );
     }
 
     if (_spawning) {
@@ -171,45 +183,98 @@ class LocalServerLauncher {
       log.note('日志文件：${log.path}（上一轮的留在 ${log.path}.prev）');
       if (options.data.isNotEmpty) log.note('数据目录（用户指定）：${options.data}');
 
-      final proc = await supervisor.spawn(
-        nodePath: _nodePath!,
-        entryPath: _entryPath!,
-        serverDir: serverDirectory,
-        logPath: log.path,
-        extraEnv: options.env,
-      );
-      _serverProcess = proc;
-      // 启动器自己的输出很短（就一行 pid），读干净就好
-      proc.stdout.listen(
-        (b) => log.note(String.fromCharCodes(b).trim()),
-        onError: (_) {},
-      );
-      proc.stderr.listen(
-        (b) => log.note(String.fromCharCodes(b).trim()),
-        onError: (_) {},
-      );
-      unawaited(
-        proc.exitCode.then((code) {
-          if (code != 0) log.note('启动器退出，code=$code（日志：${log.path}）');
-          if (identical(_serverProcess, proc)) _serverProcess = null;
-        }),
-      );
-      onProgress?.call();
-
-      if (await _waitHealthy(baseUrl, waitFor, onProgress, watchLog: true)) {
-        return const ServerLaunchResult(ok: true, alreadyRunning: false);
-      }
-
-      // 端口上有人在听但 /health 不是 pi-bot 的 → 被别的程序占着了
-      final uri = Uri.parse(baseUrl);
-      if (await portOpen(uri.host, uri.port)) {
+      // ★ 由桌面端先挑端口，再让服务端监听那一个。
+      //
+      //   服务端本身保持「端口被占就 exit 1」，不自己顺延 —— 它顺延的话
+      //   我们还按偏好端口去连，必然连错。所以决定权在这里。
+      //
+      //   偏好端口上已经是健康 pi-bot 时 choosePort 会返回 reused，
+      //   直接复用，不新起进程。
+      // 最多试两次：第一次用选出来的端口，若启动瞬间被抢走再换下一个重试一次。
+      // 两次合起来覆盖的端口仍落在「偏好端口 + 20」范围内（choosePort 自己保证）。
+      late PortChoice choice;
+      choice = await choosePort(options.port);
+      if (choice.problem != null) {
         return ServerLaunchResult(
           ok: false,
           alreadyRunning: false,
-          error:
-              '端口 ${uri.port} 被别的程序占着（连得上，但它不是 pi-bot）。'
-              '关掉那个程序，或者在「设置 → 本机服务端」里换个端口。',
+          error: choice.problem,
         );
+      }
+      if (choice.reused) {
+        // 选端口期间那台服务端起来了（竞态）→ 直接复用
+        _lastBaseUrl = _urlFor(choice.port);
+        return ServerLaunchResult(
+          ok: true,
+          alreadyRunning: true,
+          port: choice.port,
+          notice: choice.notice,
+        );
+      }
+      if (choice.notice != null) log.note(choice.notice!);
+
+      var lastTriedPort = choice.port;
+      for (var attempt = 1; attempt <= 2; attempt++) {
+        final port = choice.port;
+        lastTriedPort = port;
+        final proc = await supervisor.spawn(
+          nodePath: _nodePath!,
+          entryPath: _entryPath!,
+          serverDir: serverDirectory,
+          logPath: log.path,
+          extraEnv: options.envForPort(port),
+        );
+        _serverProcess = proc;
+        // 启动器自己的输出很短（就一行 pid），读干净就好
+        proc.stdout.listen(
+          (b) => log.note(String.fromCharCodes(b).trim()),
+          onError: (_) {},
+        );
+        proc.stderr.listen(
+          (b) => log.note(String.fromCharCodes(b).trim()),
+          onError: (_) {},
+        );
+        unawaited(
+          proc.exitCode.then((code) {
+            if (code != 0) log.note('启动器退出，code=$code（日志：${log.path}）');
+            if (identical(_serverProcess, proc)) _serverProcess = null;
+          }),
+        );
+        onProgress?.call();
+
+        final actualUrl = _urlFor(port);
+        if (await _waitHealthy(actualUrl, waitFor, onProgress, watchLog: true)) {
+          // ★ 记下**实际**端口的地址：stop() 用它判断「服务端是不是我们起的」。
+          //   不更新的话，换端口启动的服务端会被当成「别人起的、无法自动停止」。
+          _lastBaseUrl = actualUrl;
+          return ServerLaunchResult(
+            ok: true,
+            alreadyRunning: false,
+            port: port,
+            notice: choice.notice,
+          );
+        }
+
+        // 端口上有人在听但 /health 不是 pi-bot 的 → 我们在选完之后被抢了端口。
+        // （选端口到 listen 之间有空隙，别的程序可能正好挤进来。）
+        final stolen = await portOpen('127.0.0.1', port);
+        if (!stolen) break;   // 不是被抢，是别的原因失败 → 不重试
+
+        log.note('端口 $port 在启动瞬间被抢走了，换下一个再试一次');
+        if (attempt == 2) break;   // 只重试一次
+
+        final next = await choosePort(port);
+        if (next.problem != null || next.reused) {
+          // 重试也选不出可用端口：把原因带上
+          return ServerLaunchResult(
+            ok: false,
+            alreadyRunning: false,
+            port: port,
+            error: next.problem ?? '端口 $port 被抢走后没找到可用端口',
+          );
+        }
+        choice = next;
+        if (next.notice != null) log.note(next.notice!);
       }
 
       final tail = log.lines.isEmpty
@@ -221,6 +286,9 @@ class LocalServerLauncher {
       return ServerLaunchResult(
         ok: false,
         alreadyRunning: false,
+        // 如实报告**最后试过**的端口（重试过的话是新的那个），
+        // 而不是第一次选出来的 —— 否则用户按提示去查会查错端口。
+        port: lastTriedPort,
         error: '$why$tail',
       );
     } catch (err) {
