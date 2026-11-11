@@ -187,37 +187,63 @@ PowerShell（`-STA`）读 `[Windows.Forms.Clipboard]::GetImage()`，存成临时
 
 ---
 
-## 验证状态（2026-11-10，Windows 11 x64，v1.3.11）
+## 验证状态（2026-11-11，Windows 11 x64，v1.3.14）
 
 包内自带 `node.exe`（v24.18.0），不依赖系统 Node。
 
 | 项目 | 结果 |
 |---|---|
-| `node server/tests/all.mjs` | 82/82 文件通过 |
+| `node server/tests/all.mjs` | 85/85 文件通过 |
 | `node scripts/tests/all.mjs` | 32/32 通过 |
+| `pack-windows-test.ps1` | 27 项命令桩检查通过 |
+| `pack-windows-setup-test.ps1` | 错误分支 + 假包真编译 通过 |
 | `flutter analyze` | 无 issue |
-| `flutter test` | 660 passed / 3 skipped |
-| `pack-windows.ps1 -WithNode -Zip` | 成功；中立构建根构建 |
-| 发行包扫描 | `{"files":18441,"removedPdbs":0,"rewrittenDebugPaths":1,"rewrittenBuildRoots":0,"serverPeFiles":3,"nativeAssets":0,"dependencies":8}` |
-| 产物 | `dist/pi-bot-windows` 391MB / zip 123MB（18537 个文件） |
+| `flutter test` | 689 passed / 3 skipped |
+| `pack-windows.ps1 -WithNode -Zip` | 成功；中立构建根构建，Flutter 构建 307s |
+| 发行包扫描 | `{"files":18442,"removedPdbs":0,"rewrittenDebugPaths":1,"rewrittenBuildRoots":2,"serverPeFiles":3,"nativeAssets":0,"dependencies":8}` |
+| 产物 | `dist/pi-bot-windows` 391MB / zip 123.7MB（18538 个文件） |
 | 真机启动 | 包内 node 拉起 `server/src/index.js`，监听 8787，本机连接正常 |
-| `GET /health` | `ok=true version=1.3.11` |
-| `pack-windows-setup.ps1` | 成功；setup.exe 71.8MB，编译 58s |
-| setup.exe 真机安装 | 静默装成功；桌面 + 开始菜单快捷方式、「应用和功能」卸载项齐全 |
-| setup.exe 升级安装 | 先按 `server.pid` 停 node（`taskkill` 已停 35604），再覆盖装成功，数据目录不动 |
-| 安装后启动 | 从 `%LOCALAPPDATA%\Programs\pi-bot` 启动，`/health` 正常 |
-| `pickAssetFor` 优先级 | 同时挂 setup.exe + zip 时选 setup.exe，两种上传顺序都验证过 |
-| 发布 | `pi-bot-windows-v1.3.11-setup.exe` + `.zip` 已挂 v1.3.11 |
+| `GET /health` | `ok=true version=1.3.14` |
+| `pack-windows-setup.ps1` | 成功；setup.exe 71.8MB，编译 57s |
+| setup.exe 升级安装 | 1.3.12 → 1.3.14 覆盖装成功，卸载项版本随之更新，数据目录 57 房间 / 424 消息未动 |
+| 安装后启动 | 从 `%LOCALAPPDATA%\Programs\pi-bot` 启动，`/health` 返回 `version=1.3.14` |
+| **端口自动顺延（1.3.14 新功能）** | 先让一个非 pi-bot 的 HTTP 服务占住 8787，再启动客户端：服务端自动改听 **8788**，`/health` 正常，界面没有失败页 |
+| 端口空着时 | 仍用偏好端口 8787，不顺延（顺延只在被占 / 没权限时发生） |
+| `pickAssetFor`（v1.3.14 真实资产） | 同时挂 dmg + setup.exe + zip → win32 选 `pi-bot-windows-v1.3.14-setup.exe`，darwin 选 `pi-bot-1.3.14.dmg` |
+| 发布 | `pi-bot-windows-v1.3.14-setup.exe` + `.zip` 已补挂到 v1.3.14 |
 
-本次是纯代码同步（main `a5c56d7` → `b115894`，183 文件 / +29452 / −1173）：
-新增的 44 个客户端文件里没有一处 `Platform.*` / `defaultTargetPlatform` 分支，
-`app/windows`、`scripts/`、Windows CI 全程未被改动，服务端也没引入 POSIX 专属路径。
-所以 Windows 端不需要适配代码，只需按上表重新构建验证一遍。
+本次是纯代码同步（main `7889222` → `b7bf613`，28 文件 / +1662 / −92）：
+`app/windows`、`scripts/`、`.github/` 全程零改动，新增的客户端代码里没有一处
+`Platform.*` / `defaultTargetPlatform` / `kIsWeb` 分支，服务端改动（记忆脱敏、
+上下文预算、decision-router）也没引入 POSIX 专属路径。
 
-一键安装包是这一轮新增的能力，与 macOS 的 DMG 对等。
+**唯一与 Windows 有关的新增是客户端的端口探测**（`app/lib/server/port_picker.dart`，
+纯 `dart:io`，两端同一份代码）：用 `ServerSocket.bind(0.0.0.0, port)` 真实试绑来区分
+「空着」和「没权限」（按 `err.osError.errorCode` 判 13/1）。这条在 Windows 上更值得留意 ——
+Windows 下低端口失败往往是「端口保留」（`netsh int ipv4 show excludedportrange protocol=tcp`）
+而不是 EACCES，所以探测落到 `occupied` 分支也照样会顺延，行为是对的。实机验证见上表两行。
 
-上一版记录（2026-11-05，v1.3.7，66/66 测试、590 passed、390MB）早于本次同步，
-再上一版（2026-10-19，v1.1.0，37/37 测试、296MB）仅作历史对照。
+### 1.3.13 / 1.3.14 的 Windows 资产曾经缺挂
+
+v1.3.13、v1.3.14 两个 tag 当时只挂了 `.dmg`。`pickAssetFor(assets, 'win32')` 在没有
+exe/zip 时返回 `null` → Windows 客户端的「检查更新」只能退到「打开发布页」，拿不到直链。
+已按 `RELEASE.md` 第 5 条增量补挂，并用真实资产重跑 `pickAssetFor` 确认优先级。
+以后 bump 版本时记住：**同一个版本号，三个平台各有自己的资产名**。
+
+上一版记录（2026-11-10，v1.3.11，82/82 测试、660 passed、390MB）早于本次同步，
+再上一版（2026-11-05，v1.3.7，66/66 测试、590 passed、390MB）仅作历史对照。
+
+### 本机环境的一个坑（不是产品问题）
+
+这台开发机设了 `PUB_HOSTED_URL=https://pub.flutter-io.cn`，而 `pubspec.lock` 里记的是
+`https://pub.dev`，直接 `flutter pub get --enforce-lockfile` 会报
+「Unable to satisfy `pubspec.yaml` using `pubspec.lock`」（117 个包全要"变"）。
+`pack-windows.ps1` 内部已经把 `PUB_HOSTED_URL` 强制设成 `pub.dev`（见脚本第 293 行），
+所以打包不受影响；手动跑 analyze / test 时要自己带一句：
+
+```powershell
+$env:PUB_HOSTED_URL = 'https://pub.dev'; flutter analyze --no-pub
+```
 
 ---
 
