@@ -1,0 +1,44 @@
+app/lib/overlay_focus_keeper.dart
+  h_c2e638ff76b3b9 1-62
+app/lib/screens/bots_screen.dart
+  h_c2e638ff76b3b9 8,553,561-563,567-575
+app/lib/screens/chat_screen.dart
+  h_c2e638ff76b3b9 948-962,1109-1114,1119-1128,1147-1177,1499-1504,1507-1509,1546,1576-1584,1756-1764,1768-1778,1780-1812,1814-1817,1846,1852,1870,1891-1895,1897,1905-1944,1947,1963,1969,1978-1981,1993-1995,2549,2572-2583,2640-2642,2647-2649,2666
+app/lib/screens/home_shell.dart
+  h_c2e638ff76b3b9 11,44-50,263-271
+app/lib/screens/pair_screen.dart
+  h_c2e638ff76b3b9 233,242
+app/lib/screens/rooms_screen.dart
+  h_c2e638ff76b3b9 11,910-913,915
+app/lib/screens/settings_screen.dart
+  h_c2e638ff76b3b9 455,606
+app/lib/widgets/activity_monitor.dart
+  h_c2e638ff76b3b9 7,15-20,24-28,34-79,82,126-147,160-189,192-267,270-271,274
+app/lib/widgets/bot_delete_confirm.dart
+  h_c2e638ff76b3b9 1-59
+app/test/activity_monitor_state_test.dart
+  h_c2e638ff76b3b9 1-207
+app/test/bot_delete_confirm_test.dart
+  h_c2e638ff76b3b9 1-89
+app/test/composer_align_test.dart
+  h_c2e638ff76b3b9 1-133
+app/test/composer_layout_test.dart
+  h_c2e638ff76b3b9 1-125
+app/test/composer_overlay_test.dart
+  h_c2e638ff76b3b9 1-171
+app/test/overlay_focus_test.dart
+  h_c2e638ff76b3b9 1-122
+app/test/server_port_submit_test.dart
+  h_c2e638ff76b3b9 1-62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "65ad92a65bffb969541bc32a04720c194a1cefac",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
