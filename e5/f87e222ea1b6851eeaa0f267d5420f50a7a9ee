@@ -1,0 +1,48 @@
+app/lib/theme.dart
+  h_c2e638ff76b3b9 96-112
+app/lib/widgets/bot_run_section.dart
+  h_c2e638ff76b3b9 285
+app/lib/widgets/browser_pane.dart
+  h_c2e638ff76b3b9 459
+app/lib/widgets/connections_detail.dart
+  h_c2e638ff76b3b9 157,305,317
+app/lib/widgets/connections_editor.dart
+  h_c2e638ff76b3b9 400
+app/lib/widgets/connections_import.dart
+  h_c2e638ff76b3b9 57,112
+app/lib/widgets/connections_section.dart
+  h_c2e638ff76b3b9 272
+app/lib/widgets/context_chip.dart
+  h_c2e638ff76b3b9 49,60
+app/lib/widgets/lessons_section.dart
+  h_c2e638ff76b3b9 312
+app/lib/widgets/local_capabilities_section.dart
+  h_c2e638ff76b3b9 273
+app/lib/widgets/model_group_editor.dart
+  h_c2e638ff76b3b9 125,211
+app/lib/widgets/room_panel.dart
+  h_c2e638ff76b3b9 688,1550
+app/lib/widgets/server_config_section.dart
+  h_c2e638ff76b3b9 4,259-269,289,309-314,324-326
+app/lib/widgets/sites_section.dart
+  h_c2e638ff76b3b9 616
+app/lib/widgets/skills_library.dart
+  h_c2e638ff76b3b9 243
+app/lib/widgets/teach_dialog.dart
+  h_c2e638ff76b3b9 105
+app/lib/widgets/tool_steps.dart
+  h_c2e638ff76b3b9 172
+app/test/theme_status_colors_test.dart
+  h_c2e638ff76b3b9 1-95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e5f87e222ea1b6851eeaa0f267d5420f50a7a9ee",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
