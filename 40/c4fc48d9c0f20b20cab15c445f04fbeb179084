@@ -1,0 +1,38 @@
+server/src/mcp-approval-summary.js
+  h_c2e638ff76b3b9 1-95
+server/src/mcp-capability.js
+  h_c2e638ff76b3b9 22-32,132-140,143-147,181-185,191-200,202,213
+server/src/mcp-credentials.js
+  h_c2e638ff76b3b9 186-187
+server/src/mcp-hook.js
+  h_c2e638ff76b3b9 123-126
+server/src/mcp-preset-shapes.js
+  h_c2e638ff76b3b9 1-177
+server/src/mcp-risk.js
+  h_c2e638ff76b3b9 1-240
+server/src/mcp.js
+  h_c2e638ff76b3b9 124-131
+server/src/policy-hook.js
+  h_c2e638ff76b3b9 16,18-20,29-37,76-131,195-231,233-237,242-252,277-282,292-296
+server/src/role-tools.js
+  h_c2e638ff76b3b9 26-71
+server/src/store.js
+  h_c2e638ff76b3b9 1037-1065
+server/src/tools.js
+  h_c2e638ff76b3b9 1019-1026,1036-1037,1041-1043,1378-1379,1381-1391
+server/tests/mcp-attach-keeps-memory.mjs
+  h_c2e638ff76b3b9 1-191
+server/tests/security-p0.mjs
+  h_c2e638ff76b3b9 1-487
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "40c4fc48d9c0f20b20cab15c445f04fbeb179084",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
