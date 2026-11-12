@@ -19,17 +19,11 @@ export const CAPABILITY_KINDS = [
   {
     key: 'reverse',
     label: '逆向 / 二进制分析',
-    hints: ['rea', 'ghidra', 'ida', 'radare', 'rizin', 'binary', 'disasm', 'decompile', 'r2mcp', 'pyghidra'],
-    /**
-     * 优先推荐的内置预设（服务端白名单里只读工具最多的那两个）。
-     *
-     * 为什么不用 rea：rea 会带起 Ghidra + JVM，几百 MB，而且能力面很宽
-     * （不只读，还能改）。内置的两个预设默认以只读模式启动，
-     * 挂上去风险小得多。rea 仍可选，但要在提示里标注它需要沙箱。
-     */
-    preferred: ['r2mcp', 'pyghidra-mcp'],
-    /** 提示词里额外说明"这些是可选但有代价的" */
-    needsSandbox: ['rea'],
+    // ★ hints 只用于识别"这个 MCP 属于哪类能力"。
+    //
+    //   它不产生任何推荐加权，也不会让某个服务少一次审批 ——
+    //   内置预设已全部下线，所有外部 MCP 工具一律逐次审批。
+    hints: ['rea', 'ghidra', 'ida', 'radare', 'rizin', 'binary', 'disasm', 'decompile'],
     triggers: [
       '逆向', '反编译', '反汇编', '静态分析', '二进制', '固件',
       '崩溃', 'crash', '符号表', 'dylib', 'apk', '脱壳',
@@ -129,22 +123,11 @@ export function recommendMcpForTask(task, servers = []) {
         if (text.includes(lower(trigger))) score += 1;
       }
     }
-    if (score > 0) {
-      // 逆向类的内置预设加权：同等相关度下排在前面。
-      // 不是因为它们"更好"，而是它们的默认参数是只读的，
-      // 让模型先看到风险低的选项。
-      const preferred = CAPABILITY_KINDS.some(
-        (kind) => kind.preferred?.includes(server.name) && kinds.includes(kind.key),
-      );
-      scored.push({ name: server.name, score, preferred });
-    }
+    if (score > 0) scored.push({ name: server.name, score });
   }
 
-  scored.sort((a, b) =>
-    (Number(b.preferred) - Number(a.preferred)) ||
-    b.score - a.score ||
-    a.name.localeCompare(b.name),
-  );
+  // 纯按相关度排序，没有任何"预设优先"的加权。
+  scored.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
   return scored.map((s) => s.name);
 }
 
@@ -188,18 +171,8 @@ export function capabilityGuideForPrompt(servers = []) {
   for (const kind of CAPABILITY_KINDS) {
     const names = grouped.get(kind.key);
     if (!names || !names.length) continue;
-    // 逆向类：内置预设排前面，需要沙箱的那类单独标注
-    const preferred = names.filter((n) => kind.preferred?.includes(n));
-    const sandbox = names.filter((n) => kind.needsSandbox?.includes(n));
-    const rest = names.filter((n) => !preferred.includes(n) && !sandbox.includes(n));
-    const ordered = [...preferred, ...rest, ...sandbox];
-    const annotated = ordered.map((n) => {
-      if (preferred.includes(n)) return n + '（内置预设，默认只读）';
-      if (sandbox.includes(n)) return n + '（可选，需沙箱）';
-      return n;
-    });
     lines.push(
-      '- **' + kind.label + '** → ' + annotated.join(' / ') +
+      '- **' + kind.label + '** → ' + names.join(' / ') +
         '　触发词：' + kind.triggers.slice(0, 6).join('、'),
     );
   }

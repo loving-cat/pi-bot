@@ -1,6 +1,5 @@
 /** 应用连接目录、短期验证结果和 Bot 分配；凭据由 MCP 库解析。 */
 import { testMcpServer } from './mcp.js';
-import { detectPresetAvailability, whichExecutable } from './mcp-presets.js';
 
 // 应用连接目录。
 //
@@ -78,9 +77,6 @@ export function createConnections({ store, runner, probe = testMcpServer, now = 
       return {
         catalog: CONNECTION_CATALOG,
         connections: [...ids].map(connection),
-        // ★ 内置预设的本机依赖状态：只查有没有，不下载、不安装。
-        //   界面据此给「已检测到 / 未安装」和安装说明。
-        presets: detectPresetAvailability(whichExecutable),
         limits: { maxTotal: 50, verificationTtlMs: VERIFICATION_TTL },
       };
     },

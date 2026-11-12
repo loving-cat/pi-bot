@@ -20,7 +20,7 @@ process.env.PI_BOT_HOME = root;
 
 const { store } = await import('../src/store.js');
 const { createPolicyExtension, summarizeToolCall } = await import('../src/policy-hook.js');
-const { mcpRiskLevel, executableNameOf, suggestRiskLevel } = await import('../src/mcp-risk.js');
+const { mcpRequiresApproval, suggestRiskLevel } = await import('../src/mcp-risk.js');
 const { mcpApprovalSummary } = await import('../src/mcp-approval-summary.js');
 const { installLocalToken } = await import('./_local-token.mjs');
 
@@ -75,183 +75,55 @@ const cleared = () => { store.state.approvals = []; store.state.approvalGrants =
 
 // ───────────────────────── ① 风险分级 ─────────────────────────
 
-await test('★ ① 白名单 server 的只读工具 → static', () => {
-  const r2 = PRESET_R2;
-  for (const tool of [
-    'mcp__r2__decompile_function',
-    'mcp__r2__disassemble',
-    'mcp__r2__list_functions',
-    'mcp__r2__xrefs_to',
-    'mcp__r2__hexdump',
-  ]) {
-    assert.equal(mcpRiskLevel(tool, r2, null, projectPathOf), 'static', tool);
-  }
-  const gh = PRESET_GH;
-  for (const tool of [
-    'mcp__gh__decompile_function',
-    'mcp__gh__list_exports',
-    'mcp__gh__search_symbols_by_name',
-  ]) {
-    assert.equal(mcpRiskLevel(tool, gh, null, projectPathOf), 'static', tool);
-  }
-});
+// ───────────────────────── ① 外部 MCP 工具一律审批 ─────────────────────────
 
-await test('★ ① 白名单 server 的会动手工具 → dynamic', () => {
-  const r2 = PRESET_R2;
+await test('★ ① 所有外部 MCP 工具都要审批（没有 static 档）', () => {
   for (const tool of [
-    'mcp__r2__run_command',
-    'mcp__r2__run_script',
-    'mcp__r2__sql',
-    'mcp__r2__analyze',
-    'mcp__r2__rename_function',
-    'mcp__r2__open_file',
-  ]) {
-    assert.equal(mcpRiskLevel(tool, r2, null, projectPathOf), 'dynamic', tool);
-  }
-  const gh = PRESET_GH;
-  for (const tool of ['mcp__gh__save', 'mcp__gh__rename_function', 'mcp__gh__import_binary']) {
-    assert.equal(mcpRiskLevel(tool, gh, null, projectPathOf), 'dynamic', tool);
-  }
-});
-
-await test('★ ① 未知 server 的 get_*/read_* 也是 dynamic（不信工具名）', () => {
-  // 这一条是第一版按动词分类时最大的漏洞：恶意 MCP 把危险工具
-  // 命名成 get_info / read_data 就能在 allow 档下免审批。
-  const evil = { command: 'evil-mcp' };
-  for (const tool of [
+    'mcp__r2mcp__decompile_function',
+    'mcp__r2mcp__list_functions',
     'mcp__evil__get_info',
     'mcp__evil__read_data',
-    'mcp__evil__list_functions',
-    'mcp__evil__inspect',
-    'mcp__evil__decompile_function',
+    'mcp__x__not_listed',
   ]) {
-    assert.equal(mcpRiskLevel(tool, evil, null, projectPathOf), 'dynamic', tool);
+    assert.equal(mcpRequiresApproval(tool), true, tool + ' 必须审批');
   }
 });
 
-await test('★ ① 白名单 server 换了 command → 失去 static（防冒充）', () => {
-  // server 名字还叫 r2，但启动命令不是 r2mcp —— 不认。
-  for (const command of ['evil', 'r2mcp-fake', '', null]) {
-    const server = command === null ? null : { command };
-    assert.equal(
-      mcpRiskLevel('mcp__r2__decompile_function', server, null, projectPathOf),
-      'dynamic',
-      'command=' + JSON.stringify(command),
-    );
+await test('★ ① 资源类工具也要审批（原来无条件 static，是个洞）', () => {
+  for (const tool of ['read_mcp_resource', 'list_mcp_resources', 'list_mcp_resource_templates']) {
+    assert.equal(mcpRequiresApproval(tool), true, tool);
   }
 });
 
-await test('★ ① 未知工具名即使 server 在白名单里也要审批', () => {
-  const r2 = PRESET_R2;
-  assert.equal(mcpRiskLevel('mcp__r2__something_new', r2, null, projectPathOf), 'dynamic');
-  assert.equal(mcpRiskLevel('mcp__r2__brand_new_tool', r2, null, projectPathOf), 'dynamic');
+await test('① 非 MCP 工具不受外部工具判定影响', () => {
+  for (const tool of ['bash', 'write', 'list_bots']) {
+    assert.equal(mcpRequiresApproval(tool), false, tool);
+  }
 });
 
-await test('★ ① list_files 不进白名单（读宿主机文件系统，不在"分析二进制"范围）', () => {
-  assert.equal(mcpRiskLevel('mcp__r2__list_files', { command: 'r2mcp' }, null, projectPathOf), 'dynamic');
-});
-
-await test('★ ① 手动降级表能把白名单里的 server 降成 dynamic（只能降不能升）', () => {
-  const r2 = PRESET_R2;
-  // 不降级：static
-  assert.equal(mcpRiskLevel('mcp__r2__decompile_function', r2, null, projectPathOf), 'static');
-  // 降级后：dynamic
-  assert.equal(
-    mcpRiskLevel('mcp__r2__decompile_function', r2, { r2: 'dynamic' }, projectPathOf),
-    'dynamic',
-  );
-  // 降级表是 server 名维度的，不影响别的 server
-  assert.equal(
-    mcpRiskLevel('mcp__gh__decompile_function', PRESET_GH, { r2: 'dynamic' }, projectPathOf),
-    'static',
-  );
-  // 反向不成立：表里写 'static' 不能让未知 server 的工具变 static
-  assert.equal(
-    mcpRiskLevel('mcp__evil__get_info', { command: 'evil' }, { evil: 'static' }, projectPathOf),
-    'dynamic',
-    '降级表不能升格',
-  );
-});
-
-await test('① 可执行名归一：r2pm -r / python -m / uvx / 绝对路径', () => {
-  assert.equal(executableNameOf({ command: 'r2mcp' }), 'r2mcp');
-  assert.equal(executableNameOf({ command: 'r2pm', args: ['-r', 'r2mcp'] }), 'r2mcp');
-  assert.equal(executableNameOf({ command: '/usr/local/bin/r2mcp' }), 'r2mcp');
-  assert.equal(executableNameOf({ command: 'python3', args: ['-m', 'pyghidra_mcp'] }), 'pyghidra_mcp');
-  assert.equal(executableNameOf({ command: 'uvx', args: ['pyghidra-mcp'] }), 'pyghidra-mcp');
-  // 安装命令不是运行命令
-  assert.equal(executableNameOf({ command: 'r2pm', args: ['-ci', 'r2mcp'] }), null);
-});
-
-await test('① suggestRiskLevel 只做 UI 建议，不参与放行', async () => {
-  // 动词分类还留着，但只用于展示；确认它和放行判定是两回事
-  assert.equal(suggestRiskLevel('get_info'), 'static', '建议值可以是 static');
-  assert.equal(
-    mcpRiskLevel('mcp__evil__get_info', { command: 'evil-mcp' }, null, projectPathOf),
-    'dynamic',
-    '但放行判定仍是 dynamic',
-  );
-});
-
-await test('① allow 档：dynamic MCP 仍必须审批（原来直接放行）', () => {
+await test('① allow 档：外部 MCP 工具仍然弹卡', () => {
   cleared();
   store.updatePolicy({ dangerous: 'allow' });
   const h = install();
-  const out = callTool(h, 'mcp__dbg__run', { target: 'bin' });
-  assert.ok(out && out.block === true, 'allow 档下 dynamic MCP 也应当被拦下等批准');
-  assert.equal(store.listApprovals({ status: 'pending' }).length, 1, '应该产生一张审批卡');
-});
-
-await test('① allow 档：白名单内的 static MCP 照常放行', () => {
-  cleared();
-  store.updatePolicy({ dangerous: 'allow' });
-  mountMcp({ name: 'r2', command: 'r2mcp', args: ['-R'] });
-  const h = install();
-  const out = callTool(h, 'mcp__r2__decompile_function', { path: '/bin/ls' });
-  assert.equal(out, undefined, '白名单内的只读工具在 allow 档不该弹卡');
-});
-
-await test('★ ① 任务授权窗口覆盖不了 dynamic MCP', () => {
-  cleared();
-  store.updatePolicy({ dangerous: 'allow' });
-  // 用户点过"本次任务都批准" → 开一个 grant 窗口
-  store.grantApproval({ roomId: room.id, botId: bot.id, minutes: 10 });
-  const h = install();
-  const out = callTool(h, 'mcp__dbg__attach', { pid: 8743 });
-  assert.ok(out && out.block === true, 'dynamic MCP 不该吃"本任务授权"窗口');
+  const out = callTool(h, 'mcp__evil__get_info', { x: 1 });
+  assert.ok(out && out.block === true, 'allow 档下外部 MCP 工具也要被拦下');
   assert.equal(store.listApprovals({ status: 'pending' }).length, 1);
 });
 
-await test('★ ① 任务授权窗口对 static MCP 仍然有效（不误伤）', () => {
+await test('★ ① 任务授权窗口覆盖不了外部 MCP 工具', () => {
   cleared();
   store.updatePolicy({ dangerous: 'allow' });
-  store.grantApproval({ roomId: room.id, botId: bot.id, minutes: 10 });
-  mountMcp({ name: 'r2b', command: 'r2mcp', args: ['-R'] });
+  store.grantApproval({ roomId: room.id, botId: bot.id, minutes: 120 });
   const h = install();
-  // static 在 allow 档本来就不弹卡；这里确认窗口没把它弄成弹卡
-  const out = callTool(h, 'mcp__r2b__list_functions', { path: '/bin/ls' });
-  assert.equal(out, undefined);
+  const out = callTool(h, 'mcp__r2mcp__decompile_function', { path: '/bin/ls' });
+  assert.ok(out && out.block === true, '外部 MCP 工具不该吃 120 分钟授权窗口');
+  assert.equal(store.listApprovals({ status: 'pending' }).length, 1);
 });
 
-await test('① dynamic 审批批准后只放行一次', () => {
-  cleared();
-  store.updatePolicy({ dangerous: 'allow' });
-  const h = install();
-  const input = { target: 'bin' };
-  const first = callTool(h, 'mcp__dbg__run', input);
-  assert.ok(first?.block === true);
-  const pending = store.listApprovals({ status: 'pending' });
-  assert.equal(pending.length, 1);
-  store.decideApproval(pending[0].id, { approved: true });
-  // 同一次调用可以放行（takeApproved 消费）
-  const second = callTool(h, 'mcp__dbg__run', input);
-  assert.equal(second, undefined, '批准过的那一次应当放行');
-  // 但 next 次同参数又会被拦（一次性）
-  const third = callTool(h, 'mcp__dbg__run', input);
-  assert.ok(third?.block === true, '批准只用一次，再调要重新审批');
+await test('① suggestRiskLevel 只做展示，不影响审批', () => {
+  assert.equal(suggestRiskLevel('get_info'), 'static', '建议值可以是 static');
+  assert.equal(mcpRequiresApproval('mcp__evil__get_info'), true, '但审批判定仍是需要');
 });
-
-// ───────────────────────── ② 脱敏摘要 ─────────────────────────
 
 await test('② 审批卡带参数摘要，不再是 null', () => {
   const s = summarizeToolCall('mcp__x__run', { path: '/tmp/a', offset: 8 });

@@ -1,56 +1,33 @@
 /**
- * MCP 工具的风险分级 —— **服务端白名单**，不信任何自报信息。
+ * 外部 MCP 工具一律需要逐次审批 —— 没有"只读免审批"这一档。
  *
- * ## 为什么不能用动词猜测
+ * ## 为什么彻底删掉 static
  *
- * 第一版是按工具名里的动词分类的：名字含 decompile/read/get 就当只读。
- * 但**工具名本身就是 MCP server 自己报的** —— 一个恶意（或写坏了）的
- * server 只要把"执行任意命令"的工具命名成 `get_info`、`read_x`，
- * 就能在 allow 档下免审批跑掉。这等于又信了一次被调用方。
+ * 前几版试图给"只读工具"一条免审批通道，判据换了三次：
  *
- * 同理，MCP 协议自带的 `annotations.readOnlyHint` 也不能信：那是
- * 被调用方给自己发的好人卡。
+ *   1. 按工具名里的动词猜 —— 工具名是 MCP 自己报的，恶意 server 把
+ *      run_command 叫成 get_info 就绕过了。
+ *   2. 按可执行名 + 工具白名单 —— basename 太容易冒充：/tmp/evil/r2mcp、
+ *      npm 上的同名包、uvx --from 本地目录、--with 塞包全能过。
+ *   3. 按"配置逐项等于预设形状"+ env 为空 —— 已经是能想到最严的形态匹配了，
+ *      但仍然要求"我们相信某个具体 MCP 是安全的"。
  *
- * ## 现在的规则
+ * 而且第 3 版默认放行 RESOURCE_TOOLS（read_mcp_resource 等三个），
+ * 在解析 server 之前就返回 static —— 对任意 server 成立，那是个洞。
  *
- *   static  —— **只有本文件白名单里逐条列明的 (server 可执行文件名, 工具名)
- *              组合**才算只读。白名单是服务端维护的常量表，外部改不了。
- *   dynamic —— 其余一切：未知 server 的所有工具、白名单 server 的新工具、
- *              以及白名单里没写的工具。
+ * 结论：**不存在可以免审批的外部工具调用**。判据再严也只是"我们以为它安全"，
+ * 而 MCP 是被调用方，它随时可以在下一次更新里改变行为。所以整条静态路径删掉，
+ * 所有外部 MCP 工具（包括资源工具）走同一条审批路径。
  *
- * 换句话说：**默认 dynamic，白名单是例外**。新增只读例外要人工核对源码后
- * 才能加进来 —— 这才是"服务端自己判断"。
+ * ## 保留的东西
  *
- * ## 白名单键为什么要带 command
- *
- * 只按 server 名字匹配的话，另一个 MCP 只要也叫 `r2mcp` 就能冒充。
- * 所以键是 `<可执行文件名>:<工具名>`，server 的启动命令对不上就不认。
- *
- * ## 动词分类还留着干什么
- *
- * 只用于 UI 给个默认建议（比如"这个看起来是只读的，要不要加白名单？"），
- * **不参与任何放行判定**。见 `suggestRiskLevel`。
+ * executableNameOf / suggestRiskLevel 只给 UI 做展示和默认建议用，
+ * **不参与任何安全判定**。它们的存在不会让任何调用少一次审批。
  */
 
 import path from 'node:path';
-import { matchPresetShape, PRESET_SHAPES } from './mcp-preset-shapes.js';
 
-export const RISK_STATIC = 'static';
-export const RISK_DYNAMIC = 'dynamic';
-
-/**
- * 只读工具白名单。
- *
- * 结构：{ '<可执行文件名>': Set<工具名> }
- *
- * ★ 加之前必须核对那个 MCP 的源码，确认该工具不发网络请求、
- *   不写文件、不改目标进程、不执行命令、不写数据库。
- * ★ 名字必须和源码里注册的**完全一致**（大小写敏感 —— 我们按原样比对）。
- */
-// 白名单已迁到 mcp-preset-shapes.js 的 PRESET_SHAPES（配置精确形状匹配）。
-
-
-/** 与 mcp-access.js 的 RESOURCE_TOOLS 对齐：只读资源访问，不需要白名单。 */
+/** 与 mcp-access.js 的 RESOURCE_TOOLS 保持一致：这些也是外部工具，也要审批。 */
 const RESOURCE_TOOLS = new Set([
   'list_mcp_resources',
   'list_mcp_resource_templates',
@@ -68,53 +45,38 @@ export function splitMcpToolName(name) {
 }
 
 /**
+ * 是不是需要逐次审批的外部工具调用。
+ *
+ * 现在**所有**外部 MCP 工具都要审批，包括资源类工具 ——
+ * 它们同样能读用户机器上的东西。
+ *
+ * @param {string} toolName
+ * @returns {boolean}
+ */
+export function mcpRequiresApproval(toolName) {
+  if (typeof toolName !== 'string' || !toolName) return false;
+  if (RESOURCE_TOOLS.has(toolName)) return true;
+  return splitMcpToolName(toolName) !== null;
+}
+
+// ─────────────────────── 以下仅供 UI 展示，不参与放行 ───────────────────────
+
+/**
  * 从 server 的启动命令里取"可执行文件名"。
  *
- * `npx -y r2mcp`、`/usr/local/bin/r2mcp`、`python -m pyghidra_mcp` 这些写法
- * 都要归一到 "r2mcp" / "pyghidra_mcp" 这种粒度上。取不到就返回 null（→ dynamic）。
- *
- * 注意：这里只做**白名单匹配**用，不追求完美解析命令 ——
- * 解析不出来的结果就是"不在白名单里"，安全侧是可接受的。
+ * ★ 只用于 UI 显示"这个 MCP 大概是干嘛的"。**不参与任何安全判定** ——
+ *   上一版拿它匹配白名单，basename 冒充太容易（/tmp/evil/r2mcp 之类）。
  */
-/**
- * 去掉包规格里的版本后缀：`pkg==1.2.3` / `pkg@1.2.3` → `pkg`。
- *
- * ★ 不能无脑按 `@` 切：npm 的 scoped 包叫 `@scope/pkg`，
- *   开头的 @ 是名字的一部分，不是版本分隔符。
- */
-function stripVersionSpec(spec) {
-  const text = String(spec);
-  // 先处理 ==（Python/PEP 440 风格）
-  const eq = text.indexOf('==');
-  if (eq > 0) return text.slice(0, eq);
-  // @ 版本分隔符只能出现在「包名之后」。scoped 包 `@scope/pkg` 的第一个 @
-  // 是名字开头，不能切。
-  const at = text.lastIndexOf('@');
-  if (at > 0) return text.slice(0, at);
-  return text;
-}
-
-/** 可执行名里的 scoped 包要保留 scope：`@scope/pkg` 的 basename 不是 `pkg`。 */
-function packageNameOf(spec) {
-  const text = String(spec);
-  return text.startsWith('@') ? text : path.basename(text);
-}
-
 export function executableNameOf(server) {
   const command = String(server?.command ?? '').trim();
   if (!command) return null;
-  // 显式 command + args：可执行文件就是 command 的 basename
   const base = path.basename(command);
-  // `python -m mod` 这种把模块名当主体
   const args = Array.isArray(server?.args) ? server.args.map(String) : [];
   if (/-m$/i.test(base) || /^python[0-9.]*$/i.test(base)) {
     const idx = args.indexOf('-m');
     if (idx >= 0 && args[idx + 1]) return path.basename(args[idx + 1]);
   }
-  // npx / uvx / bunx 这类启动器：真正的目标是它后面的第一个非选项参数
   if (/^(npx|uvx|bunx|pnpm|yarn)$/i.test(base)) {
-    // 先处理 `--from pkg==1.2.3` / `-p pkg@1.2.3` 这种"先给包再跑命令"的写法：
-    // 真正被执行的是 pkg，不是带版本号的那串。
     for (let i = 0; i < args.length; i += 1) {
       const arg = args[i];
       if (arg === '--from' || arg === '-p' || arg === '--package') {
@@ -128,67 +90,33 @@ export function executableNameOf(server) {
       return packageNameOf(stripVersionSpec(String(arg)));
     }
   }
-  // r2pm 是 radare2 的包管理器，`r2pm -r <tool>` 才是真正要跑的东西
   if (/^r2pm$/i.test(base)) {
     const idx = args.indexOf('-r');
     if (idx >= 0 && args[idx + 1]) return path.basename(args[idx + 1]);
-    // `r2pm -ci r2mcp` 之类是安装命令，不是运行 —— 这里返回 null，
-    // 让调用方按 dynamic 处理（配错了就不该拿到只读待遇）
     return null;
   }
   return base || null;
 }
 
 /**
- * 综合判定一次调用的风险等级。
+ * 去掉包规格里的版本后缀：`pkg==1.2.3` / `pkg@1.2.3` → `pkg`。
  *
- * @param {string} toolName
- * @param {object|null} [server] 该工具所属 MCP 的运行配置（含 command / args）
- * @returns {'static'|'dynamic'|null} 不是外部 MCP 工具时返回 null
+ * 不能无脑按 `@` 切：npm 的 scoped 包叫 `@scope/pkg`，
+ * 开头的 @ 是名字的一部分，不是版本分隔符。
  */
-/**
- * @param {string} toolName
- * @param {object|null} server 该工具所属 MCP 的**运行时配置**（command/args/env）
- * @param {object|null} downgradeTable 用户手动降级表
- * @param {(presetId: string) => string} [projectPathOf] 算 project_path 的函数
- */
-export function mcpRiskLevel(toolName, server = null, downgradeTable = null, projectPathOf = null) {
-  if (RESOURCE_TOOLS.has(toolName)) return RISK_STATIC;
-
-  const parts = splitMcpToolName(toolName);
-  if (!parts) return null;
-
-  // 用户手动降级：把一个本来在白名单里的 server 整体按 dynamic 处理。
-  // 只能降不能升 —— 白名单是唯一的升格途径（要改代码、要人工核对源码）。
-  if (downgradeTable && downgradeTable[String(parts.server).toLowerCase()] === RISK_DYNAMIC) {
-    return RISK_DYNAMIC;
-  }
-
-  // ★ 唯一放行条件：配置**逐项等于**某个预设形状，且工具在该形状的只读集里。
-  //
-  //   不再按可执行名猜。看 basename 的话 /tmp/evil/r2mcp、npm 上的 r2mcp、
-  //   uvx --from 本地目录、--with 塞包、PYTHONPATH 改加载路径全都能冒充。
-  const pathOf = typeof projectPathOf === 'function' ? projectPathOf : () => '';
-  const shape = matchPresetShape(server, pathOf);
-  if (!shape) return RISK_DYNAMIC;
-  if (!shape.tools.includes(parts.tool)) return RISK_DYNAMIC;
-  return RISK_STATIC;
+function stripVersionSpec(spec) {
+  const text = String(spec);
+  const eq = text.indexOf('==');
+  if (eq > 0) return text.slice(0, eq);
+  const at = text.lastIndexOf('@');
+  if (at > 0) return text.slice(0, at);
+  return text;
 }
 
-/** 是否必须逐次审批（除白名单外一律要）。 */
-export function mcpRequiresApproval(toolName, server = null, downgradeTable = null, projectPathOf = null) {
-  return mcpRiskLevel(toolName, server, downgradeTable, projectPathOf) === RISK_DYNAMIC;
-}
-
-/** 白名单里有没有这个可执行文件（UI / 诊断用）。 */
-export function hasStaticWhitelist(exe) {
-  return PRESET_SHAPES.some((sh) => sh.exe === exe);
-}
-
-/** 白名单里某个可执行文件名下的工具（只读副本，测试与 UI 用）。 */
-export function staticWhitelistFor(exe) {
-  const shape = PRESET_SHAPES.find((sh) => sh.exe === exe);
-  return shape ? [...shape.tools] : [];
+/** 可执行名里的 scoped 包要保留 scope：`@scope/pkg` 的 basename 不是 `pkg`。 */
+function packageNameOf(spec) {
+  const text = String(spec);
+  return text.startsWith('@') ? text : path.basename(text);
 }
 
 // ─────────────────────── 以下仅供 UI 建议，不参与放行 ───────────────────────
@@ -221,20 +149,19 @@ function words(name) {
 }
 
 /**
- * 按工具名猜一个风险等级 —— **只用来给 UI 一个默认建议**。
+ * 按工具名猜"看起来像只读还是会动手" —— **仅供 UI 展示**。
  *
- * ★ 绝不能用它放行。工具名是 MCP 自己报的，恶意 server 随便起名叫 get_info。
- * 这个函数存在的唯一意义是：在"设置 → MCP"里展示"看起来像只读/会动手"，
- * 帮用户决定要不要把它加进白名单。
+ * ★ 返回 'static' 不代表这个调用能免审批。它只是让界面能标注
+ *   "看起来是只读的"，帮用户判断要不要点批准。**任何外部工具都要审批**。
  */
 export function suggestRiskLevel(toolName) {
   const list = words(toolName);
-  if (!list.length) return RISK_DYNAMIC;
+  if (!list.length) return 'dynamic';
   for (const w of list) {
-    if (DYNAMIC_VERBS.includes(w)) return RISK_DYNAMIC;
+    if (DYNAMIC_VERBS.includes(w)) return 'dynamic';
   }
   for (const w of list) {
-    if (STATIC_VERBS.includes(w)) return RISK_STATIC;
+    if (STATIC_VERBS.includes(w)) return 'static';
   }
-  return RISK_DYNAMIC;
+  return 'dynamic';
 }

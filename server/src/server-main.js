@@ -7,7 +7,7 @@ import { createHttpServer } from './http.js';
 import { createSiteRuntime } from './site-runtime.js';
 import { loadOrCreateKey } from './secrets.js';
 import { issueLocalToken, clearLocalToken } from './local-token.js';
-import { ensureBuiltinPresets } from './mcp-presets.js';
+import { markRetiredPresets } from './mcp-presets.js';
 import { attachWs } from './ws.js';
 import { log } from './util.js';
 import { shells } from './shells.js';
@@ -113,18 +113,18 @@ async function main() {
     log(`⚠️ 无法初始化口令加密（${err?.message ?? err}）—— 站点口令将无法安全保存`);
   }
 
-  // ★ 内置 MCP 预设：登记进库，但不启用、不挂任何 bot。
+  // ★ 内置 MCP 预设已全部下线（首批不内置任何逆向 MCP）。
   //
-  //   幂等：重复启动不会产生第二条；用户早就自己配过同名服务的，一个字都不改
-  //   （见 mcp-presets.js 的判定规则）。
-  //   只是出厂就有这一项，真正的进程要等用户打开开关或审批挂载才起。
+  //   这里只做**清理**：把早期版本登记进用户库、带 presetId 的旧条目
+  //   标成"已下线"并强制不启用。不自动删（用户可能填过自己的 env/凭据），
+  //   也不报错（升级不该因为一个不存在的预设起不来）。
   try {
-    const { added, skipped } = ensureBuiltinPresets(store);
-    if (added.length) log(`📦 已登记内置 MCP 预设：${added.join('、')}`);
-    if (skipped.length) log(`📦 内置 MCP 预设已存在，跳过：${skipped.join('、')}`);
+    const { retired } = markRetiredPresets(store);
+    if (retired.length) {
+      log(`📦 已下线内置 MCP 预设（保持未启用）：${retired.join('、')}`);
+    }
   } catch (err) {
-    // 预设登记失败不该挡住启动 —— 用户手加的服务照样能用
-    log('⚠️ 内置 MCP 预设登记失败（继续启动）：', err?.message || err);
+    log('⚠️ 下线预设清理失败（继续启动）：', err?.message || err);
   }
 
   // 外部 Web 系统的传输层：管 token、转发查询。给工具和 HTTP 接口共用一份。

@@ -652,13 +652,14 @@ class McpServer {
   final List<String> credentialKeys;
   final bool hasCredentials;
 
-  /// 内置预设的身份标记（用户手加的服务为空串）。
+  /// 早期预设的遗留标记（用户手加的服务为空串）。
   ///
-  /// 只用来在列表里显示「内置预设」标记和安装状态，
-  /// 不参与任何权限判定。
+  /// 内置预设已全部下线（许可证原因）。而已登记进用户库的旧条目不会被删，
+  /// 只会带上这个标记让界面显示「已下线的预设」。
+  /// 不参与任何权限判定 —— 所有外部 MCP 工具都要审批。
   final String presetId;
 
-  /// 是不是内置预设。
+  /// 是不是早期预设留下来的旧条目。
   bool get isPreset => presetId.isNotEmpty;
 
   bool get isHttp => type == 'http';

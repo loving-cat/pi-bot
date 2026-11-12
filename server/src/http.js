@@ -33,7 +33,6 @@ import {
 import { lanAddresses } from './pairing.js';
 import { timingSafeEqual, log } from './util.js';
 import { readLocalToken } from './local-token.js';
-import { detectPresetAvailability, whichExecutable } from './mcp-presets.js';
 import { shells } from './shells.js';
 import { computeNextRun, validateSchedule } from './automations.js';
 import { VERSION } from './version.js';
@@ -927,9 +926,6 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
       if (pathname === '/api/mcp' && req.method === 'GET') {
         return send(res, 200, {
           servers: store.mcpLibrary(),
-          // ★ 本机依赖检测：只查有没有，不下载、不执行安装命令。
-          //   界面据此给「已检测到 / 未安装」和安装说明。
-          presets: detectPresetAvailability(whichExecutable),
           limits: {
             types: MCP_TYPES,
             exposures: MCP_EXPOSURES,

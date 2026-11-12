@@ -1035,28 +1035,36 @@ export class Store {
    * 所以这里只存配置，真正连不连、连哪几个由建会话时决定。
    */
   /**
-   * MCP 服务的风险**降级**表：{ 服务名(小写): 'dynamic' }。
+   * MCP 服务的风险覆盖表：{ 服务名(小写): 'dynamic' }。
    *
-   * 放行方向已经由 mcp-risk.js 的服务端白名单决定 ——
-   * 白名单是唯一能让工具变 static 的途径，且必须人工核对源码后改代码。
+   * ★ 现在只有'需要审批'这一档，没有'免审批'。
    *
-   * 这张表只做**反向**的事：把一个本来在白名单里的 server 整体降级成
-   * dynamic（比如用户不信任本机那个 r2mcp，或者怀疑它被换过）。
-   * 它**不能**把任何 server 升成 static。
-   *
-   * 目前默认空表，桌面端「设置 → MCP」后续可以给每个服务一个"更严格"开关。
+   *   历史包袱：这张表早期支持写 'static'（把某个 server 标成只读免审批）。
+   *   静态档整体下线之后，'static' 不再有任何含义 —— 所有外部 MCP 工具
+   *   一律逐次审批。所以这里**只接受 'dynamic'**（把某个 server 标成更严格，
+   *   未来可能用于"强制要求二次确认"这类场景），写 'static' 会被当成
+   *   清除覆盖（回到默认的"需要审批"），不会放宽任何东西。
    */
   mcpServerRiskOverrides() {
     const table = this.state.mcpRiskOverrides;
     return table && typeof table === 'object' && !Array.isArray(table) ? table : {};
   }
 
-  /** 设置某个 MCP 服务的风险等级覆盖（null 表示清除覆盖，回到按工具名判定）。 */
+  /**
+   * 设置某个 MCP 服务的风险覆盖。
+   *
+   * ★ **只能往更严格的方向改**：只接受 'dynamic'（更严格）。
+   *   传 'static' 或任何其它值都等于**清除覆盖**，回到默认的"需要审批"——
+   *   绝不能让这个接口把某个服务变成免审批。
+   *
+   * （现在 'dynamic' 和默认值在行为上一样，都要求审批；保留这个接口是为了
+   *   将来"强制二次确认""禁止调用"这类更严格的档位有地方落。）
+   */
   setMcpServerRisk(name, level) {
     const key = String(name ?? '').trim().toLowerCase();
     if (!key) return false;
     const table = { ...this.mcpServerRiskOverrides() };
-    if (level === 'dynamic' || level === 'static') table[key] = level;
+    if (level === 'dynamic') table[key] = 'dynamic';
     else delete table[key];
     this.state.mcpRiskOverrides = table;
     this.scheduleSave();

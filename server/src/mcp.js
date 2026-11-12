@@ -123,11 +123,15 @@ export function normalizeMcpServer(raw = {}, now = Date.now()) {
 
   // ★ 内置预设的身份标记（普通用户手加的服务没有这个字段）。
   //
-  //   作用只有一个：让"这个条目是哪个预设"在改名之后仍然成立，
-  //   从而保证重复登记不会产生第二条 —— 判定见 mcp-presets.js。
+  //   早期版本用它判"是不是同一个预设"。现在预设已全部下线，
+  //   这个字段只用于把旧条目标成「已下线的预设」并强制不启用。
   //   它不是权限字段，也不影响任何安全判定。
   const presetId = str(raw?.presetId, 40);
   if (presetId) server.presetId = presetId;
+
+  // 已下线标记：早期登记过、现在不再背书的条目。
+  // 只影响展示与"不自动启用"，不影响审批判定（所有外部工具都要审批）。
+  if (raw?.retired === true) server.retired = true;
 
   if (type === 'stdio') {
     server.command = str(raw?.command, MCP_LIMITS.command);

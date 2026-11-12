@@ -338,10 +338,6 @@ class _ConnectionsSectionState extends State<ConnectionsSection> {
                     busy: controller.isBusy(item.id),
                     onTap: () => _detail(item.id),
                     onVerify: () => controller.verify(item.id),
-                    // 内置预设才有依赖检测状态
-                    preset: item.server.presetId.isEmpty
-                        ? null
-                        : controller.snapshot.presets[item.server.presetId],
                   ),
               ]),
             ] else if (controller.loaded && !controller.loading)
