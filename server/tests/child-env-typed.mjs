@@ -102,11 +102,18 @@ await test('★ 能改变加载行为的变量一律不传', () => {
   }
 });
 
-await test('★ PATH 不继承宿主（含宿主里那个 /tmp/evil-bin）', () => {
+await test('★ PATH 不继承宿主（含宿主里那个 evil 目录）', () => {
   const env = realChildEnv('bash');
-  assert.equal(env.PATH, safePath(), 'PATH 应是固定安全值');
-  assert.ok(!env.PATH.includes('/tmp/evil-bin'), '不该含宿主 PATH 里的目录');
-  assert.ok(env.PATH.includes('/usr/bin'), '要含系统目录');
+  // Windows 上环境变量名大小写不敏感，子进程可能拿到 Path / PATH
+  const gotPath = env.PATH ?? env.Path ?? '';
+  assert.equal(gotPath, safePath(), 'PATH 应是固定安全值');
+  assert.ok(!gotPath.includes('evil-bin'), '不该含宿主 PATH 里的目录');
+  // 平台相关的系统目录断言
+  if (process.platform === 'win32') {
+    assert.match(gotPath, /System32/i, '要含 Windows 系统目录');
+  } else {
+    assert.ok(gotPath.includes('/usr/bin'), '要含系统目录');
+  }
 });
 
 await test('★ HOME 指向实例目录，不是用户真实 HOME', () => {

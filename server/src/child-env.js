@@ -138,6 +138,11 @@ function isAllowed(name) {
   if (isSensitive(upper)) return false;
   if (EXACT.has(upper)) return true;
   if (upper.startsWith('LC_')) return true;
+  // ★ XDG_* 里只有缓存/配置目录是无害的，但 XDG_RUNTIME_DIR 是**用户会话的
+  //   运行时目录** —— 里面有其它进程的 socket（dbus、ssh-agent、pulseaudio 等），
+  //   拿到它就等于能跟用户其它进程通信。Linux 上这个变量几乎是必设的，
+  //   所以不能整体放行 XDG_。
+  if (upper === 'XDG_RUNTIME_DIR') return false;
   if (upper.startsWith('XDG_')) return true;
   if (upper.startsWith('GIT_SSH')) return true;
   if (upper.startsWith('SSL_CERT_')) return true;

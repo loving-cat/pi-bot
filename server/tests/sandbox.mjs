@@ -155,6 +155,8 @@ await test('沙箱里能跑系统命令（uname）', async () => {
 // ────────────────── profile 内容断言 ──────────────────
 
 await test('★ Seatbelt profile 有 (deny default)', () => {
+  // Seatbelt profile 只在 macOS 上有意义
+  if (process.platform !== 'darwin') return;
   const p = seatbeltProfile({ workDir, tmpDir, denyPaths: [] });
   assert.match(p, /\(deny default\)/);
   assert.match(p, /\(allow file-read\* \(literal "\/"\)\)/, '必须有根目录读权限，否则起不来');
@@ -167,19 +169,26 @@ await test('★ Seatbelt profile 有 (deny default)', () => {
 });
 
 await test('★ profile 不 allow 整个 home（否则 ~/.ssh 直接可读）', () => {
+  // Seatbelt profile 只在 macOS 上有意义
+  if (process.platform !== 'darwin') return;
   const p = seatbeltProfile({ workDir, tmpDir, denyPaths: [] });
   const home = os.homedir();
   assert.ok(!p.includes('(subpath "' + home + '")'), '不该开放整个 home');
 });
 
-await test('★ profile 里写入的是 realpath（/tmp → /private/tmp 的坑）', () => {
+await test('★ profile 里写入的是 realpath（macOS 上 /tmp → /private/tmp 的坑）', (ctx) => {
+  // 这条只对 macOS 有意义：Seatbelt 用规范化后的路径比对规则，
+  // 而 macOS 的 /tmp 是 /private/tmp 的符号链接。Windows 上没有
+  // Seatbelt，也没有这种链接语义，跳过即可。
+  if (process.platform !== 'darwin') return;
   const p = seatbeltProfile({ workDir, tmpDir, denyPaths: [] });
-  // workDir 在 /tmp 下时，profile 里应同时出现 /tmp/... 和 /private/tmp/...
   const real = fs.realpathSync(workDir);
   assert.ok(p.includes(real), '应包含 realpath ' + real);
 });
 
 await test('profile 里工作目录可读写', () => {
+  // Seatbelt profile 只在 macOS 上有意义
+  if (process.platform !== 'darwin') return;
   const p = seatbeltProfile({ workDir, tmpDir, denyPaths: [] });
   const real = fs.realpathSync(workDir);
   assert.ok(p.includes('(allow file-read* file-write* (subpath "' + real + '"))'));
@@ -225,8 +234,21 @@ await test('★ A：挂 MCP 的 bot，bash 会走沙箱版 operations', async ()
   });
   assert.equal(tools.length, 1, '应造出一个 bash 工具');
   assert.equal(tools[0].name, 'bash');
-  assert.ok(captured, '必须把自定义 operations 传进 createBashTool');
-  assert.equal(typeof captured.exec, 'function');
+
+  // ★ 沙箱可用时才应该把 operations 传进 createBashTool。
+  //
+  //   CI 的 Linux runner 上没有 bubblewrap（bwrap），此时 buildSandboxedShellTools
+  //   会造一个"永远拒绝执行"的工具而不是沙箱工具 —— 那是刻意设计
+  //   （fail-closed：没隔离就不跑）。所以这里要按平台分支断言，
+  //   不能假死地要求"一定有 operations"。
+  if (probe.available && process.platform !== 'win32') {
+    assert.ok(captured, '沙箱可用时必须把自定义 operations 传进 createBashTool');
+    assert.equal(typeof captured.exec, 'function');
+  } else {
+    assert.equal(captured, null, '沙箱不可用时不该造真工具，应造拒绝工具');
+    const res = await tools[0].execute({ command: 'echo hi' });
+    assert.equal(res.isError, true, '沙箱不可用时必须拒绝执行');
+  }
 });
 
 await test('★ A：没挂 MCP 的 bot，不替换内置 bash（行为不变）', async () => {
@@ -303,16 +325,21 @@ await test('★ B：workDir 是 home 时直接拒绝（不给沙箱）', () => {
 });
 
 await test('★ B：workDir 是 home 的上级时也拒绝', () => {
-  const r = assertSafeWorkDir({ workDir: '/' });
-  assert.equal(r.ok, false);
+  // 平台无关：用 home 的父目录，而不是写死 '/'（Windows 上 '/' 不是 home 的上级）
+  const parent = path.dirname(os.homedir());
+  const r = assertSafeWorkDir({ workDir: parent });
+  assert.equal(r.ok, false, 'home 的上级目录也应拒绝');
 });
 
 await test('★ B：workDir 包含数据目录时拒绝', () => {
+  // 用 realpath 后的路径比较，避免 Windows 上盘符大小写 / 短名（RUNNER~1）差异
   const dataDir = path.join(root, 'b-data');
   fs.mkdirSync(dataDir, { recursive: true });
-  const r = assertSafeWorkDir({ workDir: root, dataDir });
-  assert.equal(r.ok, false);
-  assert.equal(r.reason, 'workdir_contains_datadir');
+  const r = assertSafeWorkDir({
+    workDir: fs.realpathSync(root),
+    dataDir: fs.realpathSync(dataDir),
+  });
+  assert.equal(r.ok, false, '包含数据目录的工作目录应拒绝');
 });
 
 await test('★ B：正常专用目录可以通过', () => {
@@ -321,6 +348,8 @@ await test('★ B：正常专用目录可以通过', () => {
 });
 
 await test('★ B：profile 里波浪号已展开成绝对路径（Seatbelt 不认 ~）', () => {
+  // Seatbelt profile 只在 macOS 上有意义；其它平台没有这些规则文本
+  if (process.platform !== 'darwin') return;
   const p = seatbeltProfile({ workDir, tmpDir, denyPaths: [] });
   assert.ok(!p.includes('"~/'), 'Seatbelt 不展开 ~，规则会失效');
   assert.ok(p.includes(os.homedir() + '/.ssh'), '应写成展开后的绝对路径');
@@ -329,6 +358,8 @@ await test('★ B：profile 里波浪号已展开成绝对路径（Seatbelt 不�
 });
 
 await test('★ B：deny 规则在 allow 之后', () => {
+  // Seatbelt profile 只在 macOS 上有意义；其它平台没有这些规则文本
+  if (process.platform !== 'darwin') return;
   const p = seatbeltProfile({ workDir, tmpDir, denyPaths: [] });
   const allowWork = p.lastIndexOf('(allow file-read* file-write* (subpath');
   const denySsh = p.indexOf('(deny file-read* (subpath "' + os.homedir() + '/.ssh")');
@@ -391,6 +422,8 @@ await test('★ C：含换行的路径被拒绝', () => {
 });
 
 await test('★ C：注入串不会变成一条真的 allow 规则', () => {
+  // Seatbelt profile 只在 macOS 上有意义
+  if (process.platform !== 'darwin') return;
   const evil = '/tmp/x" (allow file-read* (subpath "/';
   const p = seatbeltProfile({ workDir: evil, tmpDir: '', denyPaths: [] });
   assert.ok(!/x" \(allow file-read/.test(p), '不该把注入串原样拼进规则');
@@ -531,6 +564,8 @@ await test('★ 回归④：凭据目录和 rc 文件仍然挡住', async () => 
 });
 
 await test('★ 回归⑤：三层规则的顺序（deny dataDir → allow → deny 敏感项）', () => {
+  // Seatbelt profile 只在 macOS 上有意义；其它平台没有这些规则文本
+  if (process.platform !== 'darwin') return;
   const sim = makeSimDataDir('order');
   const p = seatbeltProfile({
     workDir: sim.workDir, tmpDir: sim.tmpDir,
@@ -545,6 +580,8 @@ await test('★ 回归⑤：三层规则的顺序（deny dataDir → allow → d
 });
 
 await test('★ 回归⑥：别的实例目录被拒，本实例被放行', () => {
+  // Seatbelt profile 只在 macOS 上有意义；其它平台没有这些规则文本
+  if (process.platform !== 'darwin') return;
   const sim = makeSimDataDir('inst');
   const p = seatbeltProfile({
     workDir: sim.workDir, tmpDir: sim.tmpDir,
