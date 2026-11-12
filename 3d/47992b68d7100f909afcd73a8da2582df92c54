@@ -1,0 +1,26 @@
+server/src/mcp-access.js
+  h_c2e638ff76b3b9 16-39
+server/src/policy-hook.js
+  h_c2e638ff76b3b9 23-34,93,95-96,98,100-102,104,187,191-193,195-201,203-210,223-224,237-244
+server/tests/security-shell.mjs
+  h_c2e638ff76b3b9 1-153
+server/tests/mcp-tool-registry.mjs
+  h_c2e638ff76b3b9 1-104
+server/src/mcp-tool-registry.js
+  h_c2e638ff76b3b9 1-93
+server/tests/all.mjs
+  h_c2e638ff76b3b9 43-44
+server/src/mcp-hook.js
+  h_c2e638ff76b3b9 25,28-29,54-78,81-126,143-163,165
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3d47992b68d7100f909afcd73a8da2582df92c54",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
