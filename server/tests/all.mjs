@@ -38,6 +38,7 @@ const TESTS = [
   'unit',
   'tasks',
   'task-projection',
+  'task-supervisor',
   'reply-bot-guard',
   'dm-greeting',
   'session-signature',
