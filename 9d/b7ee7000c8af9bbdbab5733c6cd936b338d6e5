@@ -1,0 +1,22 @@
+server/src/sandbox.js
+  h_c2e638ff76b3b9 1-519
+server/src/sandboxed-shell.js
+  h_c2e638ff76b3b9 1-294
+server/src/session-factory.js
+  h_c2e638ff76b3b9 18-19,28-29,77-84,86-100,174,246-260,274-276
+server/tests/all.mjs
+  h_c2e638ff76b3b9 62
+server/tests/sandbox.mjs
+  h_c2e638ff76b3b9 1-567
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9db7ee7000c8af9bbdbab5733c6cd936b338d6e5",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
