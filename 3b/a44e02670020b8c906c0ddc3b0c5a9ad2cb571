@@ -1,0 +1,26 @@
+server/tests/all.mjs
+  h_c2e638ff76b3b9 60
+server/src/child-env-typed.js
+  h_c2e638ff76b3b9 1-302
+server/src/child-env.js
+  h_c2e638ff76b3b9 84-85,200-209
+server/src/data-migration.js
+  h_c2e638ff76b3b9 37-43
+server/src/mcp-probe-stdio.js
+  h_c2e638ff76b3b9 3-6,14-20,25-41,118-123
+server/src/shells.js
+  h_c2e638ff76b3b9 15-41,121-149,154-156,158-174,176-177
+server/tests/child-env-typed.mjs
+  h_c2e638ff76b3b9 1-188
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3ba44e02670020b8c906c0ddc3b0c5a9ad2cb571",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
