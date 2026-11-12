@@ -1,0 +1,18 @@
+server/src/child-env.js
+  h_c2e638ff76b3b9 141-145
+server/tests/child-env-typed.mjs
+  h_c2e638ff76b3b9 105,107-116
+server/tests/sandbox.mjs
+  h_c2e638ff76b3b9 158-159,172-173,179-183,190-191,237-251,328-331,335,338-342,351-352,361-362,425-426,567-568,583-584
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d80903f63687182f6c5626a8f5c2daffb828e6b5",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
