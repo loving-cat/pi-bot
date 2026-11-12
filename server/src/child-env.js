@@ -345,30 +345,48 @@ function scrubPairs(pairs, args) {
       args,
     );
   }
+  // ★ Windows 上环境变量名**不区分大小写**。
+  //
+  //   这里必须按不区分大小写比对，否则会出这种事故：
+  //   宿主环境块里是 `Path`，我们显式传的是 `PATH`，
+  //   用 Set 精确比字符串就判为"两个不同的键"——于是我们精心构造的安全
+  //   PATH 被**追加**成第二条，而 Windows 取第一条（宿主的），
+  //   结果安全 PATH 完全没生效（CI 上亲眼看到 /tmp/evil-bin 赢了）。
+  const caseInsensitive = process.platform === 'win32';
+  const keyOf = (name) => (caseInsensitive ? String(name).toUpperCase() : String(name));
+
   /** @type {string[]} */
   const out = [];
   const seen = new Set();
   for (const [name, value] of Object.entries(pickWhitelist(process.env))) {
-    seen.add(name);
+    // 本进程这一侧同样按平台规则去重，避免自己先放进去两个同义键
+    if (caseInsensitive && seen.has(keyOf(name))) {
+      const idx = out.findIndex((item) => keyOf(item.slice(0, item.indexOf('='))) === keyOf(name));
+      if (idx >= 0) {
+        out[idx] = `${name}=${value}`;
+        continue;
+      }
+    }
+    seen.add(keyOf(name));
     out.push(`${name}=${value}`);
   }
   withEntryProviderKeys(out, args);
   seen.clear();
   for (const item of out) {
     const cut = item.indexOf('=');
-    seen.add(cut === -1 ? item : item.slice(0, cut));
+    seen.add(keyOf(cut === -1 ? item : item.slice(0, cut)));
   }
   for (const name of names) {
-    const found = entries.find((entry) => entry.name === name);
+    const found = entries.find((entry) => keyOf(entry.name) === keyOf(name));
     if (!found) continue;
     const line = `${found.name}=${found.value}`;
-    if (seen.has(found.name)) {
-      const idx = out.findIndex((item) => item.startsWith(`${found.name}=`));
+    if (seen.has(keyOf(found.name))) {
+      const idx = out.findIndex((item) => keyOf(item.slice(0, item.indexOf('='))) === keyOf(found.name));
       if (idx >= 0) out[idx] = line;
-    } else {
-      seen.add(found.name);
-      out.push(line);
+      continue;
     }
+    seen.add(keyOf(found.name));
+    out.push(line);
   }
   return out;
 }
