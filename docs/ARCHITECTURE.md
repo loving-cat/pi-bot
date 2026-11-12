@@ -123,7 +123,11 @@
 
 ## 七、协议
 
-**REST**（除 `/health` `/api/pair` `/pair` `/api/qr.*` `/api/pairing` 外都要 token；**回环地址免 token**）
+**REST**（除 `/health` `/api/pair` `/pair` `/api/qr.*` `/api/pairing` 外都要 token；**回环地址也要 token**）
+
+> 本机 token：服务端启动时写 `<数据目录>/local-token`（0600），桌面端读出来带在 `Authorization: Bearer`。
+> 没 token 的请求即使来自 127.0.0.1 也拿不到主人身份；`/api/pairing` 免 token 时只回地址、不回配对码。
+> WebSocket 同一份凭据，无 token 一律 4401。
 
 ```
 GET    /api/state                    全部会话 + bot 花名册 + 服务器信息
@@ -139,7 +143,7 @@ GET    /pair                         网页版配对页
 GET    /api/devices                  已配对设备
 ```
 
-**WebSocket** `/ws?token=`（回环可省）
+**WebSocket** `/ws?token=`（**token 不可省**，回环地址也要；无 token 一律 4401）
 
 ```
 上行  {t:"send", roomId, text, mode, attachments, clientId}

@@ -622,6 +622,7 @@ class McpServer {
     Map<String, String>? headers,
     this.credentialKeys = const [],
     this.hasCredentials = false,
+    this.presetId = '',
   }) : args = args ?? [],
        env = env ?? const {},
        headers = headers ?? const {};
@@ -650,6 +651,15 @@ class McpServer {
 
   final List<String> credentialKeys;
   final bool hasCredentials;
+
+  /// 内置预设的身份标记（用户手加的服务为空串）。
+  ///
+  /// 只用来在列表里显示「内置预设」标记和安装状态，
+  /// 不参与任何权限判定。
+  final String presetId;
+
+  /// 是不是内置预设。
+  bool get isPreset => presetId.isNotEmpty;
 
   bool get isHttp => type == 'http';
 
@@ -681,6 +691,7 @@ class McpServer {
         .whereType<String>()
         .toList(),
     hasCredentials: json['hasCredentials'] == true,
+    presetId: json['presetId'] as String? ?? '',
   );
 }
 

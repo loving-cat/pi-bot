@@ -251,7 +251,7 @@ flutter analyze
 真实浏览器集成用例默认跳过。需要验证浏览器时，先准备专用测试环境，再运行
 `PI_BOT_EGO_INTEGRATION=1 node tests/ego-browser.mjs`；该命令会操作本机浏览器。
 
-本机诊断可读取 `GET /api/run-stats`，仅允许通过身份检查的本机回环请求。
+本机诊断可读取 `GET /api/run-stats`，需要带本机 token（见下面的「安全」一节）。
 统计保存在数据目录的 `run-stats.json`，最多保留 2,000 条运行记录和 90 天汇总。
 `runs` 表示运行尝试数，`retries` 记录实际恢复次数；同一轮内的多次模型响应与
 补答用量会累加。缺失用量以完整性标记说明，未知缓存命中率返回空值；独立的压缩、
@@ -294,7 +294,7 @@ flutter analyze
 | `PI_BOT_PORT` | 8787 | 端口 |
 | `PI_BOT_MODEL` | 自动 | 默认模型（来自你的模型组） |
 | `PI_BOT_TOKEN` | — | 固定 token（设了就跳过配对码）。**设了就是服务器模式**：本机请求也要带 token |
-| `PI_BOT_TRUST_LOCAL` | 没设 token 时 `1`，设了时 `0` | 本机（127.0.0.1）请求免不免 token。一般不用改 |
+| `PI_BOT_TRUST_LOCAL` | 没设 token 时 `1`，设了时 `0` | 要不要接受**本机 token**（服务端每次启动写在数据目录的 `local-token`）。**不再表示免 token**。一般不用改 |
 | `PI_BOT_ALLOWED_HOSTS` | — | 额外允许的域名（逗号分隔）。反向代理保留原始 Host 时填你的域名 |
 | `PI_BOT_HOME` / `PI_BOT_WORKSPACE` | 用户数据目录（见上表） | 数据目录 / agent 的工作目录 |
 | `PI_BOT_GROUP_BUSY_WAIT_MS` | 120000 | 要派的活碰上成员正忙，最多等它多久 |
@@ -307,7 +307,14 @@ flutter analyze
 
 ## 安全
 
-- 远程设备必须配对拿 token；**本机部署时回环地址（127.0.0.1）免 token**——电脑端就是宿主
+- **本机请求也要带 token**。服务端每次启动生成一个随机 token，写进数据目录下的
+  `local-token`（权限 0600，只有当前用户能读）；桌面端读它并带在每个请求上。
+  "来自 127.0.0.1 就是主人"这个旧假设已经去掉——本机任何进程都能往回环地址发请求，
+  那等于同机的一个恶意脚本就能改策略、挂 MCP。攻击者现在要拿到 token，就得能读你的私有文件。
+- 没带 token 的请求只能访问公开路径（`/health`、`/pair`、配对首页），
+  **配对码本身也需要 token 才能看到**——避免本机进程拿码换设备 token 绕过整套机制。
+- WebSocket 用同一份凭据：没 token 一律 4401。
+- 远程设备仍走配对流程拿 token
 - bot 有 `bash`/`write`，**不要裸奔到公网**。公网部署请套 nginx + HTTPS，并设 `PI_BOT_TOKEN`：
   - 设了 `PI_BOT_TOKEN` 就是**服务器模式**，本机请求也要带 token。反向代理和服务端在同一台机器上时，
     公网请求经代理转发后在服务端看来就是 127.0.0.1，免 token 等于谁都能进

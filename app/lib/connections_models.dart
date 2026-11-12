@@ -119,13 +119,52 @@ class AppConnection {
   );
 }
 
+/// 一个内置预设的本机依赖状态（服务端只检测，不下载不安装）。
+class PresetAvailability {
+  const PresetAvailability({
+    this.found = false,
+    this.detail = '',
+    this.install = '',
+    this.versionNote = '',
+    this.firstRunDownload,
+  });
+
+  /// 本机是否已具备运行条件
+  final bool found;
+
+  /// 一句话说明（已检测到什么 / 缺什么）
+  final String detail;
+
+  /// 没装时给用户的安装说明（只展示，不执行）
+  final String install;
+
+  /// 版本要求
+  final String versionNote;
+
+  /// 首次启动需要下载的体积（如 "约 80MB"）；不需要下载时为 null。
+  final String? firstRunDownload;
+
+  factory PresetAvailability.fromJson(Map<String, dynamic> json) =>
+      PresetAvailability(
+        found: json['found'] == true,
+        detail: json['detail'] as String? ?? '',
+        install: json['install'] as String? ?? '',
+        versionNote: json['versionNote'] as String? ?? '',
+        firstRunDownload: json['firstRunDownload'] as String?,
+      );
+}
+
 class ConnectionsSnapshot {
   const ConnectionsSnapshot({
     this.catalog = const [],
     this.connections = const [],
+    this.presets = const {},
   });
   final List<ConnectionCatalogItem> catalog;
   final List<AppConnection> connections;
+
+  /// 预设 id → 本机依赖状态
+  final Map<String, PresetAvailability> presets;
 
   factory ConnectionsSnapshot.fromJson(Map<String, dynamic> json) =>
       ConnectionsSnapshot(
@@ -140,5 +179,12 @@ class ConnectionsSnapshot {
             .whereType<Map>()
             .map((raw) => AppConnection.fromJson(raw.cast<String, dynamic>()))
             .toList(),
+        presets: {
+          for (final e in ((json['presets'] as Map?) ?? const {}).entries)
+            if (e.value is Map)
+              '${e.key}': PresetAvailability.fromJson(
+                (e.value as Map).cast<String, dynamic>(),
+              ),
+        },
       );
 }

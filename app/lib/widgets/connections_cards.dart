@@ -88,11 +88,15 @@ class ConnectionsCard extends StatelessWidget {
     required this.busy,
     required this.onTap,
     required this.onVerify,
+    this.preset,
   });
   final AppConnection item;
   final bool busy;
   final VoidCallback onTap;
   final VoidCallback onVerify;
+
+  /// 内置预设的本机依赖状态（不是预设时为 null）
+  final PresetAvailability? preset;
 
   @override
   Widget build(BuildContext context) {
@@ -117,14 +121,25 @@ class ConnectionsCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      item.server.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: PB.fsBase,
-                      ),
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            item.server.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: PB.fsBase,
+                            ),
+                          ),
+                        ),
+                        // 「内置预设」标记：出厂就有这一项，默认不启用
+                        if (item.server.isPreset) ...[
+                          const SizedBox(width: 6),
+                          _PresetBadge(),
+                        ],
+                      ],
                     ),
                     const SizedBox(height: 4),
                     Text(
@@ -155,6 +170,11 @@ class ConnectionsCard extends StatelessWidget {
               color: state == 'ready' ? PB.success : PB.textSecondary,
             ),
           ),
+          // 内置预设：本机依赖检测结果（只提示，不自动安装）
+          if (preset != null) ...[
+            const SizedBox(height: 6),
+            _PresetInstallState(preset: preset!, enabled: item.server.enabled),
+          ],
           const SizedBox(height: 4),
           Text(
             _checkedAtLabel(strings, item.verification.checkedAt),
@@ -241,3 +261,137 @@ class _ServiceIcon extends StatelessWidget {
     ),
   );
 }
+
+
+/// 「内置预设」小标记：跟随主题色，深浅模式下都清晰。
+class _PresetBadge extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: PB.colors(context).accent.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        L10n.s(context).t('conn.presetBadge'),
+        style: TextStyle(
+          fontSize: PB.fsXxs,
+          color: PB.colors(context).accentBright,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}
+
+/// 预设的安装状态：已检测到 → 一行绿字；未安装 → 一行黄字 + 可展开的安装说明。
+///
+/// 说明只**展示**，不执行 —— 自动装 Ghidra 那种几百 MB 还要配 JVM 的东西，
+/// 不该由界面替用户决定。
+class _PresetInstallState extends StatelessWidget {
+  const _PresetInstallState({required this.preset, required this.enabled});
+  final PresetAvailability preset;
+
+  /// 这个预设是否已启用（未启用时多给一条"首次会下载"的提示）
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = L10n.s(context);
+    if (preset.found) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(LucideIcons.check, size: 12, color: PB.success),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  strings.tf('conn.presetInstalled', {'detail': preset.detail}),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: PB.fsXs, color: PB.success),
+                ),
+              ),
+            ],
+          ),
+          // ★ 未启用时提示首次启动的下载代价。
+          //   pyghidra 通过 uvx 拉起，第一次会把整个 Python 依赖树拉下来
+          //   （实测约 80MB）。用户打开开关前该知道这件事。
+          if (!enabled && preset.firstRunDownload != null) ...[
+            const SizedBox(height: 2),
+            Row(
+              children: [
+                Icon(LucideIcons.download, size: 12, color: PB.textTertiary),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    strings.tf('conn.presetFirstRunDownload', {
+                      'size': preset.firstRunDownload!,
+                    }),
+                    maxLines: 2,
+                    style: TextStyle(
+                      fontSize: PB.fsXs,
+                      color: PB.textTertiary,
+                      height: 1.4,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(LucideIcons.alertCircle, size: 12, color: PB.warn),
+            const SizedBox(width: 4),
+            Expanded(
+              child: Text(
+                strings.t('conn.presetNotInstalled'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: PB.fsXs, color: PB.warn),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 2),
+        // 安装说明折叠起来，避免列表被大段文字撑高
+        Theme(
+          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+          child: ExpansionTile(
+            tilePadding: EdgeInsets.zero,
+            childrenPadding: const EdgeInsets.only(bottom: 6),
+            dense: true,
+            leading: const SizedBox.shrink(),
+            title: Text(
+              strings.t('conn.presetInstallHelp'),
+              style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+            ),
+            children: [
+              Align(
+                alignment: Alignment.centerLeft,
+                child: SelectableText(
+                  '`${preset.versionNote}\n\n${preset.install}`',
+                  style: TextStyle(
+                    fontSize: PB.fsXs,
+                    color: PB.textSecondary,
+                    height: 1.5,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
