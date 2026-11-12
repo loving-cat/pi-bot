@@ -40,6 +40,8 @@ const TESTS = [
   'task-projection',
   'task-supervisor',
   'security-p0',
+  'security-shell',
+  'mcp-tool-registry',
   'mcp-attach-keeps-memory',
   'mcp-presets',
   'reply-bot-guard',

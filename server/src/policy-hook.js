@@ -15,12 +15,22 @@ import { loadHooks, applyHooks } from './hooks.js';
 import { config } from './config.js';
 import { isDelegatingLead, leadToolAllowed, readonlyBlockReason, opaqueScriptBlockReason, MUTATING_TOOLS, isSecurityConfigCall } from './role-tools.js';
 import { isExternalMcpTool, externalApprovalSummary, mcpAccessSignature } from './mcp-access.js';
-import { mcpRequiresApproval } from './mcp-risk.js';
 import { mcpApprovalSummary } from './mcp-approval-summary.js';
-import { presetOutputDir } from './mcp-preset-shapes.js';
 
 /** 执行命令的工具名 */
 const SHELL_TOOLS = new Set(['bash', 'powershell']);
+
+/**
+ * 能"往 shell 里塞命令"的全部工具。
+ *
+ * ★ 必须包含 write_stdin，否则有个绕过：
+ *   run_background 批准一次之后，模型可以反复用 write_stdin 往那个后台 shell
+ *   里灌任意命令 —— 不弹卡、还吃 120 分钟授权窗口。等于批准的是一条无害命令，
+ *   实际执行的是后面灌进去的一切。
+ *
+ * kill_shell 不在里面：它只能杀进程，不能执行东西。
+ */
+const SHELL_LIKE = new Set(['bash', 'powershell', 'run_background', 'write_stdin']);
 
 /** ask 档要批准的工具，与 role-tools 的名单是同一份 */
 const MUTATING = new Set(MUTATING_TOOLS);
@@ -80,36 +90,18 @@ ${JSON.stringify(input ?? {})}${scope ? `\n${JSON.stringify(scope)}` : ''}`)
  * 只看键名 \`FOO\` 判断不出是凭据，但它确实是同一个值 —— 必须遮掉。
  */
 /**
- * 这个 MCP 工具所属 server 的**运行配置**（要 command / args）。
+ * 这个 bot 是不是挂了任何外部 MCP 工具。
  *
- * 用途：白名单按 (可执行文件名, 工具名) 匹配 —— 光看 server 名字会让
- * 另一个同名 MCP 冒充，所以必须拿到它真实的启动命令。
+ * 用途：挂了 MCP 的 bot，shell 类工具要逐次审批 —— 否则模型可以用 bash
+ * 去起同一个 MCP（或任何别的程序），绕过 MCP 那一层的管控。
  */
-function mcpServerConfigFor(tool) {
+function botHasMcp(bot) {
   try {
-    const parts = /^mcp__([A-Za-z0-9_-]{1,80})__/.exec(String(tool ?? ''));
-    if (!parts) return null;
-    const name = parts[1].toLowerCase();
-    const record = store.mcpLibrary().find(
-      (s) => String(s?.name ?? '').toLowerCase() === name,
-    );
-    return record ?? null;
+    if (!bot?.id) return false;
+    // 解析出真正会连上的服务（enabled 且被这个 bot 选中）
+    return store.mcpServersFor(bot.id).length > 0;
   } catch {
-    return null;
-  }
-}
-
-/**
- * 预设的输出目录（pyghidra 的 project_path 要落在这里）。
- *
- * 白名单形状匹配时会拿它和配置里的实际值比对 ——
- * 用户如果手动把 project_path 指到别处，形状就对不上，退回 dynamic。
- */
-function presetProjectPath(presetId) {
-  try {
-    return presetOutputDir(config.dataDir, presetId);
-  } catch {
-    return '';
+    return false;
   }
 }
 
@@ -192,31 +184,30 @@ export function createPolicyExtension({ roomId, bot, onBlocked = () => {}, manag
           return { block: true, reason: commandVerdict.message };
         }
 
-        // ---- MCP 风险分级：dynamic 一律逐次审批 ----
+        // ---- 外部 MCP 工具：一律逐次审批 ----
         //
         // ★ 这段必须放在 `dangerous === 'ask'` 判断**外面**。
         //
-        //   原来的写法把外部 MCP 工具整块包进了 ask 档：
-        //     if (policy.dangerous === 'ask' && (... || isExternalMcpTool(tool)))
-        //   于是默认的 allow 档下，任何外部 MCP 工具都直接放行 ——
-        //   模型只要能调用 mcp__dbg__run，就等于拿到一个免审批的任意执行入口。
+        //   早先的写法把外部 MCP 工具整块包进了 ask 档，于是默认的 allow 档下
+        //   任何外部 MCP 工具都直接放行 —— 模型只要能调用 mcp__dbg__run，
+        //   就等于拿到一个免审批的任意执行入口。
         //
-        //   现在：dynamic（run/attach/spawn/emulate/inject/script/eval 一类，
-        //   以及所有认不出动词的）**不论策略档位都强制审批**。
-        //   static（反编译、读符号等）保持原样：allow 档放行、ask 档仍会走下面的通用审批。
+        //   后来试过给"只读工具"留免审批通道（按动词猜 / 按可执行名 /
+        //   按配置精确形状），但每一版都只是"我们以为它安全"：
+        //   MCP 是被调用方，它随时能在下一次更新里改变行为。
+        //   所以现在**不存在 static 档**：所有外部 MCP 工具都要审批。
+        const externalMcp = isExternalMcpTool(tool);
+
+        // ★ 挂了 MCP 的 bot，shell 类工具也要逐次审批。
         //
-        //   判定完全由服务端自己的分级表决定（mcp-risk.js），
-        //   不读 MCP server 自报的 annotations —— 那是被调用方给自己发的好人卡。
-        // ★ 判定完全由服务端白名单决定（mcp-risk.js），不读任何自报信息：
-        //   不看 MCP 的 annotations，也不看工具名里的动词。
-        //   未知 server 的一切工具、白名单 server 的新工具，全部 dynamic。
-        const mcpDynamic = isExternalMcpTool(tool) &&
-          mcpRequiresApproval(
-            tool,
-            mcpServerConfigFor(tool),
-            store.mcpServerRiskOverrides?.() ?? null,
-            (presetId) => presetProjectPath(presetId),
-          );
+        //   为什么：MCP 一旦挂上，它自己的工具是管控的，但模型完全可以用
+        //   bash 去起同一个 MCP（或任何别的程序）绕过检查 —— 等于开了后门。
+        //   所以"这个 bot 有外部能力"本身就是提高 shell 风险的因素。
+        //
+        //   没挂 MCP 的 bot 行为保持不变（allow 档不弹卡）。
+        //   挂 MCP 时，**所有能执行/注入命令的工具**都逐次审批 ——
+        //   包括 write_stdin（往已批准的后台 shell 里灌命令）。
+        const shellWithMcp = !externalMcp && SHELL_LIKE.has(tool) && botHasMcp(currentBot);
 
         // ★ 改安全配置本身：有些工具**不论档位**都必须逐次审批。
         //
@@ -224,15 +215,13 @@ export function createPolicyExtension({ roomId, bot, onBlocked = () => {}, manag
         //   再 update_bot 挂到任意 bot —— 挂上之后那些 MCP 工具就成了它的
         //   新执行入口。这条链上每一步都不该让模型自己走完：
         //   它不是"做活"，是**改防线**。
-        //
-        //   所以这类调用不受 dangerous 档位影响（allow 档也弹卡），
-        //   也不吃"本任务授权"窗口（见下面的 windowOk）。
         const securityConfig = isSecurityConfigCall(tool, event?.input);
 
         // ---- 第三档：每一次"会动手"的调用都要用户点批准 ----
         if (
           securityConfig ||
-          mcpDynamic ||
+          externalMcp ||
+          shellWithMcp ||
           (policy.dangerous === 'ask' && (MUTATING.has(tool) || isExternalMcpTool(tool)))
         ) {
           const capabilityRevision = isExternalMcpTool(tool)
@@ -245,10 +234,14 @@ export function createPolicyExtension({ roomId, bot, onBlocked = () => {}, manag
           //   但一个会驱动外部进程的工具，每一次调用的实际参数都可能完全不同
           //   （这次 attach 8743 端口、下次 attach 别的），窗口覆盖等于盲开。
           //   static / 内置工具仍按原逻辑享受窗口。
-          // 能享受"本次任务授权"窗口的只有：内置动手工具 + static MCP 工具。
-          // securityConfig（改策略/挂 MCP）和 mcpDynamic（会驱动外部进程）
-          // 一律不吃窗口 —— 它们的每次调用实际效果都可能完全不同。
-          if (!securityConfig && !mcpDynamic && !managed &&
+          // 能享受"本次任务授权"窗口（120 分钟）的只有**纯内置动手工具**，
+          // 前提是这个 bot 没挂任何 MCP。
+          //
+          //   不吃窗口的三类：
+          //     · securityConfig  改策略/挂 MCP —— 改的是防线本身
+          //     · externalMcp     外部工具 —— 每次调用的实际效果都可能完全不同
+          //     · shellWithMcp    bot 挂了 MCP 时的 shell —— 可以用它绕过 MCP 管控
+          if (!securityConfig && !externalMcp && !shellWithMcp && !managed &&
               store.hasApprovalGrant({ roomId, botId: bot?.id ?? null, capabilityRevision })) return undefined;
           const scope = capabilityRevision ? { roomId, botId: bot?.id ?? null, capabilityRevision } : null;
           const hash = approvalHash(tool, event?.input, scope);

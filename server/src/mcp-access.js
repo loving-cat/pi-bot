@@ -13,6 +13,30 @@ export function mcpAccessSignature(bot, library = []) {
   return createHash('sha256').update(JSON.stringify([bot?.enabled !== false, [...names].sort(), selected])).digest('hex');
 }
 
+/**
+ * 把 `mcp__<server>__<tool>` 拆成 { server, tool }；资源类工具返回 null
+ * （它们不属于任何具体 server 的 tools/list）。
+ */
+/** 沙箱不可用时给用户的话。 */
+export function sandboxUnavailableMessage(reason) {
+  if (reason === 'unsupported_platform') {
+    return '当前平台的沙箱未就绪（Windows 本轮不提供隔离），这个 bot 挂了 MCP，'
+      + '为安全起见拒绝执行 shell 命令。去掉 MCP 或换到 macOS / Linux 再试。';
+  }
+  if (reason === 'no_binary') {
+    return '沙箱程序不存在（macOS 需要 sandbox-exec，Linux 需要 bwrap），'
+      + '为安全起见拒绝执行。装上 bubblewrap 后重试。';
+  }
+  return '沙箱启动失败（' + reason + '），为安全起见拒绝执行，不降级成无沙箱运行。';
+}
+
+export function splitExternalToolName(name) {
+  if (typeof name !== 'string') return null;
+  const m = /^mcp__([A-Za-z0-9_-]{1,80})__(.+)$/.exec(name);
+  if (!m) return null;
+  return { server: m[1], tool: m[2] };
+}
+
 export function externalApprovalSummary(tool) {
   return `调用外部工具 ${String(tool ?? '').slice(0, 100)}`;
 }
