@@ -1,0 +1,14 @@
+server/src/child-env.js
+  h_c2e638ff76b3b9 348-357,362-370,377,380,383-384,386,388-389
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ad13c5f997d30419a7720c6ba382250577d27e2e",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
