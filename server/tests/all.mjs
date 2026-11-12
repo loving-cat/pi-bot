@@ -59,6 +59,7 @@ const TESTS = [
   'shells',
   'child-env-typed',
   'local-nonce',
+  'sandbox',
   'change-watch',
   'artifacts',
   'dm',

@@ -15,6 +15,8 @@ import {
   DefaultResourceLoader,
   SessionManager,
   createAgentSession,
+  createBashTool,
+  createPowerShellTool,
   getAgentDir,
 } from '@earendil-works/pi-coding-agent';
 
@@ -23,6 +25,8 @@ import { store } from './store.js';
 import { isDelegatingLead, isRoomLead, isReadonlyPolicy, toolsForRole, customToolsForRole, roleConfigurationKey } from './role-tools.js';
 import { applyCompactionBudget, withCapacity } from './context-budget.js';
 import { buildAppendSystemPrompt } from './system-prompt.js';
+import { buildSandboxedShellTools, setMcpCounter, setSandboxProbe } from './sandboxed-shell.js';
+import { probeSandbox } from './sandbox.js';
 import { buildChiefTools, buildCommonTools } from './tools.js';
 import { buildIntakeTools, intakeEnabled } from './coordination/intake-tool.js';
 import { buildReportTool } from './tasks/task-report-tool.js';
@@ -70,9 +74,30 @@ export function pickModelAndThinking({
  */
 export function createSessionBuilder({
   runner, health, resolveModel, modelLabel,
-  sessionApi = { DefaultResourceLoader, SessionManager, createAgentSession, getAgentDir },
+  sessionApi = {
+    DefaultResourceLoader,
+    SessionManager,
+    createAgentSession,
+    createBashTool,
+    createPowerShellTool,
+    getAgentDir,
+  },
 }) {
-  const { DefaultResourceLoader, SessionManager, createAgentSession, getAgentDir } = sessionApi;
+  const {
+    DefaultResourceLoader,
+    SessionManager,
+    createAgentSession,
+    createBashTool,
+    createPowerShellTool,
+    getAgentDir,
+  } = sessionApi;
+
+  // 注入依赖（不用模块顶层 import，避免 store ↔ session-factory 循环依赖）
+  setSandboxProbe(probeSandbox);
+  setMcpCounter((botId) => {
+    try { return store.mcpServersFor(botId).length; } catch { return 0; }
+  });
+
   /**
    * 建一个会话。
    *
@@ -146,6 +171,7 @@ export function createSessionBuilder({
       ...(isChief ? buildChiefTools({ runner, health, roomId, botId }) : []),
     ], { room, bot, leadTools: config.leadTools, policy });
 
+
     const resourceLoader = new DefaultResourceLoader({
       cwd: config.workspace,
       agentDir: getAgentDir(),
@@ -217,6 +243,21 @@ export function createSessionBuilder({
       policy,
     });
 
+    // ★ 挂了 MCP 的 bot：把 bash / powershell 换成沙箱版（同名覆盖内置）。
+    //
+    //   审批能决定"要不要人点同意"，管不住命令能碰到什么 ——
+    //   一条被批准的 `cat ~/.ssh/id_ed25519` 照样读到私钥。
+    //   所以对有外部执行能力的 bot，命令本身也要受限。
+    //
+    //   没挂 MCP 的 bot 原样不动（保持既有行为）。
+    const shellTools = buildSandboxedShellTools({
+      bot,
+      workDir: config.workspace,
+      dataDir: config.dataDir,
+      tools: baseTools,
+      pi: { createBashTool, createPowerShellTool },
+    });
+
     const botModel = bot.model ? resolveModel(bot.model) : null;
     const picked = pickModelAndThinking({
       bot,
@@ -230,8 +271,9 @@ export function createSessionBuilder({
       cwd: config.workspace,
       sessionManager,
       resourceLoader,
-      tools: [...baseTools, ...customTools.map((t) => t.name)],
-      customTools,
+      // 沙箱版 shell 工具与内置同名，放在后面即可覆盖
+      tools: [...baseTools, ...customTools.map((t) => t.name), ...shellTools.map((t) => t.name)],
+      customTools: [...customTools, ...shellTools],
       // ★★★ 把 runner 的 model runtime 传进去。
       //
       //   不传的话，pi 会**另造一个** runtime（默认只认 ~/.pi/agent/auth.json
