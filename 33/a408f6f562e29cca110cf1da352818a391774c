@@ -1,0 +1,22 @@
+server/src/connections.js
+  h_c2e638ff76b3b9 3,78-85
+server/src/http.js
+  h_c2e638ff76b3b9 36,930-932
+server/src/mcp-presets.js
+  h_c2e638ff76b3b9 1-247
+server/src/server-main.js
+  h_c2e638ff76b3b9 10,116-129
+server/tests/mcp-presets.mjs
+  h_c2e638ff76b3b9 1-370
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "33a408f6f562e29cca110cf1da352818a391774c",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
