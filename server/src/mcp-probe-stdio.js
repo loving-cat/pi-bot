@@ -1,6 +1,9 @@
 /** 使用跨平台命令启动器执行有界 MCP stdio 探测，并回收探测进程。 */
 import { StringDecoder } from 'node:string_decoder';
-import { childEnv } from './child-env.js';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { buildChildEnv, hostLocale, instanceHomeDir, instanceTmpDir } from './child-env-typed.js';
 import { spawnCommand } from './spawn-command.js';
 import { stopMcpProbeProcess } from './mcp-probe-cleanup.js';
 import { assertActive, parseMessage, probeError, PROBE_LIMITS, rpcResult } from './mcp-probe-protocol.js';
@@ -8,11 +11,34 @@ import { assertActive, parseMessage, probeError, PROBE_LIMITS, rpcResult } from 
 export function createStdioProbe(server, signal) {
   assertActive(signal);
   if (typeof server.command !== 'string' || !server.command.trim()) throw probeError('invalid_config');
+
+  // 探测进程的私有目录：HOME 和 TMPDIR 都落在这里，不碰宿主的。
+  // 用完即删（见 cleanup 里的实例清理）。
+  const probeInstanceDir = mkdtempSync(path.join(os.tmpdir(), 'pi-probe-'));
+  mkdirSync(path.join(probeInstanceDir, 'home'), { recursive: true });
+  mkdirSync(path.join(probeInstanceDir, 'tmp'), { recursive: true });
+
   let child;
   try {
     child = spawnCommand(server.command, server.args ?? [], {
       cwd: server.cwd || undefined,
-      env: childEnv(process.env, server.env ?? {}),
+      // ★ 探测进程用**和运行时同一套类型化白名单**，不是 childEnv(process.env)。
+      //
+      //   原来这里是 childEnv(process.env, ...) —— 等于把服务端整份环境
+      //   （含 PI_BOT_TOKEN、SSH_AUTH_SOCK、宿主 PATH）交给了 probe 起的子进程。
+      //   MCP server 是被调用方，探一个来路不明的 server 时不该给它这些东西。
+      //
+      //   inheritEnv: false 明确告诉启动器不要并上 process.env；
+      //   buildChildEnv 从空白开始只注入白名单键。
+      env: buildChildEnv({
+        kind: 'probe',
+        homeDir: instanceHomeDir(probeInstanceDir),
+        tmpDir: instanceTmpDir(probeInstanceDir),
+        locale: hostLocale(),
+        // probe 不需要用户配置里的 env（那可能含凭据），一律不给
+        extra: null,
+      }),
+      inheritEnv: false,
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
     });
@@ -89,6 +115,12 @@ export function createStdioProbe(server, signal) {
       child.stdout.destroy();
       child.stderr.destroy();
       child.stdin.destroy();
+      // 探测用的私有 HOME/TMP 用完即删 —— 里面可能有 server 落地的东西
+      try {
+        rmSync(probeInstanceDir, { recursive: true, force: true });
+      } catch {
+        // 删不掉不影响结果；下次启动会被系统清理
+      }
     },
   };
 }

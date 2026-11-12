@@ -57,6 +57,7 @@ const TESTS = [
   'readonly-regress',
   'role-tools',
   'shells',
+  'child-env-typed',
   'change-watch',
   'artifacts',
   'dm',

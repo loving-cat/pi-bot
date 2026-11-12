@@ -276,6 +276,9 @@ function assertClean(envObj, explicit = {}) {
   assert.ok(envObj.PATH || envObj.Path, 'PATH 应该还在');
   assert.equal(envObj.LC_ALL, 'C');
   assert.equal(envObj.HTTP_PROXY, 'http://proxy.example:8080');
+  // ★ 经由 `spawn(cmd, {shell:true})` 启动时，shell 自己会补几个变量
+  //   （SHELL / TERM / USER / LOGNAME / PWD / _ / SHLVL / __CF_USER_TEXT_ENCODING）。
+  //   这些不是我们传的、也不是凭据 —— 断言只管"凭据不泄漏"，不对这些做限制。
   for (const [name, value] of Object.entries(explicit)) {
     assert.equal(envObj[name], value, name);
   }
@@ -418,7 +421,6 @@ await test('新放行的变量会进子进程，云凭证和敏感 PI_BOT_ 不�
   const added = {
     PI_CODING_AGENT_DIR: 'agent-dir',
     XDG_CACHE_HOME: 'xdg-cache',
-    SSH_AUTH_SOCK: 'ssh.sock',
     GIT_SSH_COMMAND: 'ssh-cmd',
     NODE_EXTRA_CA_CERTS: 'ca.pem',
     SSL_CERT_FILE: 'cert.pem',
@@ -472,6 +474,17 @@ await test('新放行的变量会进子进程，云凭证和敏感 PI_BOT_ 不�
     assert.equal(env.PI_BOT_HOST, undefined, 'PI_BOT_HOST 不该传给子进程');
     assert.equal(env.PI_BOT_TOKEN, undefined);
     assert.equal(env.PI_BOT_SECRET_KEY, undefined);
+    // ★ 新增：通往用户凭据代理的 socket 一律不传。
+    //   SSH_AUTH_SOCK 是 ssh-agent 的入口，拿到就能用用户的密钥签名；
+    //   GPG / DBus / XDG_RUNTIME_DIR 同属"能碰到用户其它进程"的通道。
+    for (const name of [
+      'SSH_AUTH_SOCK',
+      'GPG_AGENT_INFO',
+      'DBUS_SESSION_BUS_ADDRESS',
+      'XDG_RUNTIME_DIR',
+    ]) {
+      assert.equal(env[name], undefined, name + ' 不该传给子进程');
+    }
   } finally {
     for (const [name, value] of Object.entries(previous)) {
       if (value === undefined) delete process.env[name];

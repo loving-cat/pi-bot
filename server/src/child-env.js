@@ -81,7 +81,8 @@ const EXACT = new Set([
   'HOMEDRIVE',
   'HOMEPATH',
   'PI_CODING_AGENT_DIR',
-  'SSH_AUTH_SOCK',
+  // ★ SSH_AUTH_SOCK 已移出白名单：它是通往用户 ssh-agent 的 socket，
+  //   子进程拿到就能用用户的密钥签名。任何子进程都不该有它。
   'NODE_EXTRA_CA_CERTS',
   'DISPLAY',
   'PROGRAMFILES',
@@ -194,6 +195,16 @@ function applyExtra(env, names, extra) {
  */
 function markerValue(names) {
   return `${markerPrefix}${names.join(',')}`;
+}
+
+/**
+ * 给类型化白名单模块用：造一个"这些键都保留"的标记。
+ *
+ * @param {string[]} names
+ * @returns {string}
+ */
+export function childEnvMarker(names) {
+  return markerValue(Array.isArray(names) ? names : []);
 }
 
 /**

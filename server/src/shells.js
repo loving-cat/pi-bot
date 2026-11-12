@@ -12,7 +12,18 @@
  */
 import './child-env.js';
 import { spawn } from 'node:child_process';
-import { childEnv } from './child-env.js';
+import {
+  buildChildEnv,
+  defaultInstanceDir,
+  ensureInstanceDirs,
+  hostLocale,
+  instanceHomeDir,
+  instanceTmpDir,
+} from './child-env-typed.js';
+import { config } from './config.js';
+import { store } from './store.js';
+
+
 import { newId, now, log } from './util.js';
 
 /**
@@ -92,13 +103,36 @@ export class ShellRegistry {
     if (!text) return { id: null, pid: null, error: '命令为空' };
 
     const id = newId('sh_');
+    // 这个 bot 实例的私有目录：HOME / TMPDIR 都指向这里
+    const instanceDir = defaultInstanceDir(
+      config.dataDir,
+      `${roomId ?? 'room'}-${botId ?? 'bot'}`,
+    );
+    ensureInstanceDirs(instanceDir);
+
     let child;
     try {
       // shell: true —— 交给系统 shell 解析管道/重定向/引号；
       // 自己拼 argv 会在 Windows 上把引号转义成字面量（cmd 不认反斜杠转义）。
       child = spawn(text, {
         cwd,
-        env: childEnv(process.env, env || undefined),
+        // ★ shell 子进程用类型化白名单：默认什么都不继承。
+        //
+        //   原来是 childEnv(process.env, ...) —— 继承宿主环境再屏蔽若干危险项，
+        //   但屏蔽清单补不完（宿主 PATH 能被改，HOME 决定加载哪个 rc）。
+        //   现在从空白开始，只给 PATH（固定值）/ HOME / TMPDIR / LANG。
+        //
+        //   HOME 和 TMPDIR 指向这个 bot 实例自己的目录，不碰用户真实的
+        //   ~ 和宿主 /tmp —— 写进 rc 文件、共享临时目录这两条路都断了。
+        env: buildChildEnv({
+          kind: 'bash',
+          homeDir: instanceHomeDir(instanceDir),
+          tmpDir: instanceTmpDir(instanceDir),
+          locale: hostLocale(),
+          // 调用方显式给的 env（后台命令的 extra）仍然生效，
+          // 但敏感键由 buildChildEnv 再挡一次。
+          extra: env || null,
+        }),
         windowsHide: true,
         shell: true,
         stdio: ['pipe', 'pipe', 'pipe'],
