@@ -1,0 +1,46 @@
+app/lib/app_state.dart
+  h_c2e638ff76b3b9 3,22,737-757,784-801
+app/lib/server/local_token.dart
+  h_c2e638ff76b3b9 1-54
+app/test/local_server_token_test.dart
+  h_c2e638ff76b3b9 25,39-41,74-82,172,183-190
+server/src/child-env.js
+  h_c2e638ff76b3b9 104-114
+server/src/http.js
+  h_c2e638ff76b3b9 35-36,133-169,177-186,259-263,268-278,282-315,447-453,480-491,930-932
+server/src/local-token.js
+  h_c2e638ff76b3b9 1-80
+server/src/server-main.js
+  h_c2e638ff76b3b9 9-10,116-129,134-140
+server/src/ws.js
+  h_c2e638ff76b3b9 18,113-116,121-125
+server/tests/_local-token.mjs
+  h_c2e638ff76b3b9 1-47
+server/tests/all.mjs
+  h_c2e638ff76b3b9 42-44
+server/tests/auth.mjs
+  h_c2e638ff76b3b9 22,46,49-52
+server/tests/device-revoke.mjs
+  h_c2e638ff76b3b9 20,36-37,59-63
+server/tests/local-csrf.mjs
+  h_c2e638ff76b3b9 22,32-33,39-47,49,85-87,89,93-100,142-147
+server/tests/model-config.mjs
+  h_c2e638ff76b3b9 37,484-486,488,490
+server/tests/secrets-regress.mjs
+  h_c2e638ff76b3b9 465-472
+server/tests/security-regress.mjs
+  h_c2e638ff76b3b9 15,26-27,47-48,50,61-68,104-107
+server/tests/server-mode.mjs
+  h_c2e638ff76b3b9 40-43,72-79,128,131-149,211,214-217
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6379a97d1f3b22d9457199d97101f3674ad9a4ac",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
