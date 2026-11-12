@@ -183,6 +183,8 @@ export function publicMcpCredentials(record) {
   delete out.credentialSecret;
   out.credentialKeys = names;
   out.hasCredentials = Boolean(record?.credentialSecret || names.length);
+  // presetId 不进 configurationRevision：它只标识"来自哪个预设"，
+  // 不影响工具集，改变它不该让已批准的能力签名失效。
   const revisionFields = ['id', 'name', 'type', 'description', 'exposure', 'enabled', 'timeout', 'command', 'args', 'cwd', 'url'];
   const revision = Object.fromEntries(revisionFields.map((name) => [name, out[name] ?? null]));
   revision.credentialSecret = record?.credentialSecret ?? null;

@@ -13,8 +13,11 @@ import { log } from './util.js';
 import { bus } from './bus.js';
 import { loadHooks, applyHooks } from './hooks.js';
 import { config } from './config.js';
-import { isDelegatingLead, leadToolAllowed, readonlyBlockReason, opaqueScriptBlockReason, MUTATING_TOOLS } from './role-tools.js';
+import { isDelegatingLead, leadToolAllowed, readonlyBlockReason, opaqueScriptBlockReason, MUTATING_TOOLS, isSecurityConfigCall } from './role-tools.js';
 import { isExternalMcpTool, externalApprovalSummary, mcpAccessSignature } from './mcp-access.js';
+import { mcpRequiresApproval } from './mcp-risk.js';
+import { mcpApprovalSummary } from './mcp-approval-summary.js';
+import { presetOutputDir } from './mcp-preset-shapes.js';
 
 /** 执行命令的工具名 */
 const SHELL_TOOLS = new Set(['bash', 'powershell']);
@@ -23,8 +26,15 @@ const SHELL_TOOLS = new Set(['bash', 'powershell']);
 const MUTATING = new Set(MUTATING_TOOLS);
 
 /** 把一次调用压成一句人话，给审批卡片看 */
-export function summarizeToolCall(tool, input = {}) {
-  if (isExternalMcpTool(tool)) return externalApprovalSummary(tool);
+export function summarizeToolCall(tool, input = {}, mcpOpts = null) {
+  if (isExternalMcpTool(tool)) {
+    // ★ 审批卡要能看到"它要干什么"，但不能泄漏凭据。
+    //   原来这里只回一句"调用外部工具 mcp__x__y"，用户等于盲批；
+    //   直接把 input 贴上去又会让模型传进来的 key/token 落进审批记录。
+    //   见 mcp-approval-summary.js：结构保留、值按凭据特征打码。
+    const detail = mcpApprovalSummary(input, mcpOpts ?? {});
+    return `${externalApprovalSummary(tool)}｜${detail}`;
+  }
   const pick = (k) => (typeof input?.[k] === 'string' ? input[k] : '');
   if (SHELL_TOOLS.has(tool) || tool === 'run_background') {
     return pick('command') || pick('cmd') || '(命令)';
@@ -63,6 +73,62 @@ ${JSON.stringify(input ?? {})}${scope ? `\n${JSON.stringify(scope)}` : ''}`)
  *   复用已有 pending 与新建 pending 两条路径都会触发。
  *   仅供观察（例如受管执行记录「我在等哪个真实审批」），不参与放行判定。
  */
+/**
+ * 这个 MCP 工具所属 server 已存的凭据键名（env + header 的 key）。
+ *
+ * 用途：审批卡脱敏。模型可能把 \`api_key\` 传成 \`FOO\`（用户 env 里的名字），
+ * 只看键名 \`FOO\` 判断不出是凭据，但它确实是同一个值 —— 必须遮掉。
+ */
+/**
+ * 这个 MCP 工具所属 server 的**运行配置**（要 command / args）。
+ *
+ * 用途：白名单按 (可执行文件名, 工具名) 匹配 —— 光看 server 名字会让
+ * 另一个同名 MCP 冒充，所以必须拿到它真实的启动命令。
+ */
+function mcpServerConfigFor(tool) {
+  try {
+    const parts = /^mcp__([A-Za-z0-9_-]{1,80})__/.exec(String(tool ?? ''));
+    if (!parts) return null;
+    const name = parts[1].toLowerCase();
+    const record = store.mcpLibrary().find(
+      (s) => String(s?.name ?? '').toLowerCase() === name,
+    );
+    return record ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 预设的输出目录（pyghidra 的 project_path 要落在这里）。
+ *
+ * 白名单形状匹配时会拿它和配置里的实际值比对 ——
+ * 用户如果手动把 project_path 指到别处，形状就对不上，退回 dynamic。
+ */
+function presetProjectPath(presetId) {
+  try {
+    return presetOutputDir(config.dataDir, presetId);
+  } catch {
+    return '';
+  }
+}
+
+function mcpServerSecretKeys(tool) {
+  try {
+    const parts = /^mcp__([A-Za-z0-9_-]{1,80})__/.exec(String(tool ?? ''));
+    if (!parts) return [];
+    const name = parts[1].toLowerCase();
+    const record = store.state.mcpServers?.find(
+      (s) => String(s?.name ?? '').toLowerCase() === name,
+    );
+    return Array.isArray(record?.credentialKeys)
+      ? record.credentialKeys.filter((k) => typeof k === 'string')
+      : [];
+  } catch {
+    return [];
+  }
+}
+
 export function createPolicyExtension({ roomId, bot, onBlocked = () => {}, managedContextOf = null }) {
   /** 通知观察者：这次调用被某条 pending 审批挡住了。 */
   function notifyBlocked(approval, created) {
@@ -126,14 +192,64 @@ export function createPolicyExtension({ roomId, bot, onBlocked = () => {}, manag
           return { block: true, reason: commandVerdict.message };
         }
 
+        // ---- MCP 风险分级：dynamic 一律逐次审批 ----
+        //
+        // ★ 这段必须放在 `dangerous === 'ask'` 判断**外面**。
+        //
+        //   原来的写法把外部 MCP 工具整块包进了 ask 档：
+        //     if (policy.dangerous === 'ask' && (... || isExternalMcpTool(tool)))
+        //   于是默认的 allow 档下，任何外部 MCP 工具都直接放行 ——
+        //   模型只要能调用 mcp__dbg__run，就等于拿到一个免审批的任意执行入口。
+        //
+        //   现在：dynamic（run/attach/spawn/emulate/inject/script/eval 一类，
+        //   以及所有认不出动词的）**不论策略档位都强制审批**。
+        //   static（反编译、读符号等）保持原样：allow 档放行、ask 档仍会走下面的通用审批。
+        //
+        //   判定完全由服务端自己的分级表决定（mcp-risk.js），
+        //   不读 MCP server 自报的 annotations —— 那是被调用方给自己发的好人卡。
+        // ★ 判定完全由服务端白名单决定（mcp-risk.js），不读任何自报信息：
+        //   不看 MCP 的 annotations，也不看工具名里的动词。
+        //   未知 server 的一切工具、白名单 server 的新工具，全部 dynamic。
+        const mcpDynamic = isExternalMcpTool(tool) &&
+          mcpRequiresApproval(
+            tool,
+            mcpServerConfigFor(tool),
+            store.mcpServerRiskOverrides?.() ?? null,
+            (presetId) => presetProjectPath(presetId),
+          );
+
+        // ★ 改安全配置本身：有些工具**不论档位**都必须逐次审批。
+        //
+        //   模型能 add_mcp_server 一个带任意 command 的本地服务、
+        //   再 update_bot 挂到任意 bot —— 挂上之后那些 MCP 工具就成了它的
+        //   新执行入口。这条链上每一步都不该让模型自己走完：
+        //   它不是"做活"，是**改防线**。
+        //
+        //   所以这类调用不受 dangerous 档位影响（allow 档也弹卡），
+        //   也不吃"本任务授权"窗口（见下面的 windowOk）。
+        const securityConfig = isSecurityConfigCall(tool, event?.input);
+
         // ---- 第三档：每一次"会动手"的调用都要用户点批准 ----
-        if (policy.dangerous === 'ask' && (MUTATING.has(tool) || isExternalMcpTool(tool))) {
+        if (
+          securityConfig ||
+          mcpDynamic ||
+          (policy.dangerous === 'ask' && (MUTATING.has(tool) || isExternalMcpTool(tool)))
+        ) {
           const capabilityRevision = isExternalMcpTool(tool)
             ? mcpAccessSignature(currentBot, store.mcpLibrary()) : null;
           const managed = typeof managedContextOf === 'function' ? managedContextOf() : null;
           // 用户批准过"本次任务" → 这个 bot 在这个会话里有一段时间不用逐条点。
-          // 受管执行必须由任务级审批放行，不能借用旧的 room 时间窗口。
-          if (!managed && store.hasApprovalGrant({ roomId, botId: bot?.id ?? null, capabilityRevision })) return undefined;
+          //
+          // ★ dynamic MCP 工具**不吃这个窗口**。
+          //   任务级授权本来是给"这个活我已经批准过做法了"用的，
+          //   但一个会驱动外部进程的工具，每一次调用的实际参数都可能完全不同
+          //   （这次 attach 8743 端口、下次 attach 别的），窗口覆盖等于盲开。
+          //   static / 内置工具仍按原逻辑享受窗口。
+          // 能享受"本次任务授权"窗口的只有：内置动手工具 + static MCP 工具。
+          // securityConfig（改策略/挂 MCP）和 mcpDynamic（会驱动外部进程）
+          // 一律不吃窗口 —— 它们的每次调用实际效果都可能完全不同。
+          if (!securityConfig && !mcpDynamic && !managed &&
+              store.hasApprovalGrant({ roomId, botId: bot?.id ?? null, capabilityRevision })) return undefined;
           const scope = capabilityRevision ? { roomId, botId: bot?.id ?? null, capabilityRevision } : null;
           const hash = approvalHash(tool, event?.input, scope);
           // 批准过的那一次直接放行（而且只用一次）；受管只消费本任务本版本的批准
@@ -158,7 +274,12 @@ export function createPolicyExtension({ roomId, bot, onBlocked = () => {}, manag
             };
           }
 
-          const summary = summarizeToolCall(tool, event?.input);
+          // MCP：把那个 server 已存的 env/header 键名交给摘要器，
+          // 这样"模型把凭据当普通参数传"的情况也能遮住（光看键名判断不出来）。
+          const mcpOpts = isExternalMcpTool(tool)
+            ? { secretKeys: mcpServerSecretKeys(tool) }
+            : null;
+          const summary = summarizeToolCall(tool, event?.input, mcpOpts);
           const approval = store.createApproval({
             roomId,
             botId: bot?.id ?? null,
@@ -168,7 +289,11 @@ export function createPolicyExtension({ roomId, bot, onBlocked = () => {}, manag
             taskRunId: managed?.taskRunId ?? null,
             taskRevision: managed?.revision ?? null,
             attemptId: managed?.attemptId ?? null,
-            input: isExternalMcpTool(tool) ? null : event?.input ?? null,
+            // MCP 也记一份**脱敏后**的入参：原来这里是 null，
+            // 事后想查"当时到底批了什么"什么都看不到。
+            input: isExternalMcpTool(tool)
+              ? { __masked: summary }
+              : event?.input ?? null,
             hash,
             capabilityRevision,
           });

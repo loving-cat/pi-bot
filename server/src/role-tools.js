@@ -23,6 +23,52 @@ export const MUTATING_TOOLS = [
   'ego_browser',
 ];
 
+/**
+ * 改「安全配置本身」的工具：加 MCP 服务、把 MCP 挂到 bot、改策略、
+ * 改 hook / 白名单 / 凭据。
+ *
+ * ★ 和 MUTATING_TOOLS 的区别 —— 这份名单是**无条件**审批：
+ *
+ *   MUTATING_TOOLS（写文件、跑命令）只在 dangerous=ask 档弹审批，
+ *   allow 档放行；而且"本任务授权"（scope=task 的 grant 窗口）能覆盖它。
+ *   这没问题：用户已经明确选了这个档位。
+ *
+ *   但改安全配置不是"做活"，是**改防线本身**：
+ *     · 模型能自行 add_mcp_server 一个带任意 command 的本地服务；
+ *     · 再 update_bot 把它挂到任意 bot；
+ *     · 那之后这个 MCP 的工具就成了它的新执行入口。
+ *   这条链上每一步都不该让模型自己走完 —— 不论 allow 还是 ask，
+ *   也不论用户之前批准过多少次任务。必须逐次由用户点批准。
+ */
+export const SECURITY_CONFIG_TOOLS = [
+  // MCP 库 / 挂载
+  'add_mcp_server', 'update_mcp_server', 'delete_mcp_server',
+  'import_local_capabilities', 'import_local_mcp',
+  // 策略与规矩
+  'set_policy', 'set_department_policy', 'set_room_policy',
+  // hook / 命令规则
+  'add_hook', 'update_hook', 'delete_hook',
+  'set_command_rules', 'set_deny_commands', 'set_allow_commands',
+  // 凭据 / 授权
+  'set_secret', 'delete_secret', 'set_mcp_credential',
+];
+const SECURITY_CONFIG_SET = new Set(SECURITY_CONFIG_TOOLS);
+
+/**
+ * 这次调用的工具是否改安全配置。
+ *
+ * update_bot 是特例：它平时只是改名字/模型，属于普通操作；
+ * 但一旦带 mcpServers 字段，就是在改"这个 bot 能用哪些外部能力"，
+ * 必须按安全配置处理。所以要看入参，不能只看工具名。
+ */
+export function isSecurityConfigCall(tool, input = null) {
+  if (SECURITY_CONFIG_SET.has(tool)) return true;
+  if (tool === 'update_bot') {
+    return Boolean(input && typeof input === 'object' && input.mcpServers !== undefined);
+  }
+  return false;
+}
+
 /** 不透明脚本无法静态核验内部命令，存在命令限制时不开放此执行入口。 */
 export function opaqueScriptBlockReason(policy, tool) {
   if (tool !== 'ego_browser') return null;

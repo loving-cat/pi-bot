@@ -1016,9 +1016,14 @@ export function buildChiefTools({ runner, health, roomId, botId }) {
         command: Type.Optional(Type.String({ description: 'stdio 的启动命令，如 npx' })),
         args: Type.Optional(Type.Array(Type.String(), { description: 'stdio 的命令参数' })),
         url: Type.Optional(Type.String({ description: 'http 的服务地址' })),
-        enabled: Type.Optional(
-          Type.Boolean({ description: '是否立即启用（默认 false —— 会起进程，通常等用户确认）' }),
-        ),
+        // ★ 没有 enabled 参数。
+        //
+        //   原来这里允许模型传 enabled:true 直接启用一个自带 command/args 的
+        //   本地 MCP —— 等于让模型自行安装并以自己的权限拉起任意进程，
+        //   而且 add_mcp_server 不在 MUTATING_TOOLS 里，ask 档也不弹审批。
+        //
+        //   启用是**用户的决定**：只能由用户在「设置 → MCP」里打开开关。
+        //   模型侧只负责"登记"，登记完告诉用户去点开关。
       }),
       execute: async (_toolCallId, params) => {
         const r = store.addMcpServer({
@@ -1028,14 +1033,14 @@ export function buildChiefTools({ runner, health, roomId, botId }) {
           command: params.command,
           args: params.args ?? [],
           url: params.url,
-          // 默认不启用：主控加进来只是"登记"，真连不连让用户定
-          enabled: params.enabled === true,
+          // 模型侧恒定不启用：不管它传什么，都只登记不激活
+          enabled: false,
         });
         if (r.error) return fail(r.error);
-        const state = r.server.enabled ? '已启用' : '已登记但未启用';
         return ok(
-          `已加进 MCP 库：${r.server.name}（${state}）。` +
-            (r.server.enabled ? '' : '要真连上，需要在设置里打开它的开关，或者在 bot 上挂载时由用户确认。'),
+          `已加进 MCP 库：${r.server.name}（已登记，未启用）。` +
+            '启用必须由用户在「设置 → MCP」里打开它的开关 —— 那会起一个本地进程，' +
+            '不该由模型自己决定。',
         );
       },
     }),
@@ -1370,8 +1375,20 @@ export function buildChiefTools({ runner, health, roomId, botId }) {
         }
         const bot = store.updateBot(target, patch);
         if (!bot) return fail(`找不到 bot ${target}`);
-        if (patch.model !== undefined || patch.thinking !== undefined || patch.mcpServers !== undefined) {
+        if (patch.model !== undefined || patch.thinking !== undefined) {
+          // 换模型 / 改思考档：这两个确实该让会话作废重来（reset 会清会话文件）。
           runner.resetSessionForBot(bot.id);
+        } else if (patch.mcpServers !== undefined) {
+          // ★ 挂/换 MCP 只 reload，不 reset。
+          //
+          //   工具集是在**建会话时**定下来的，所以必须让会话重建才能拿到新工具；
+          //   但挂个 MCP 不该让这个 bot 把刚才聊的全忘了 ——
+          //   用户的意思是"给它加个能力"，不是"重新开始"。
+          //
+          //   resetSessionForBot 会 clearSessionFile + clearMemorySummariesForBot，
+          //   那是给"换模型/开新会话"用的；reloadSessionForBot 只丢内存里的会话，
+          //   会话文件和记忆摘要都留着，下次开跑按新配置重建。
+          runner.reloadSessionForBot(bot.id);
         }
         const mcpNote = Array.isArray(bot.mcpServers) && bot.mcpServers.length
           ? `，MCP：${bot.mcpServers.join(', ')}`

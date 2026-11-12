@@ -1034,6 +1034,35 @@ export class Store {
    * 和 skill 的区别：skill 是往提示词里塞字，MCP 是**真去起进程/连服务**。
    * 所以这里只存配置，真正连不连、连哪几个由建会话时决定。
    */
+  /**
+   * MCP 服务的风险**降级**表：{ 服务名(小写): 'dynamic' }。
+   *
+   * 放行方向已经由 mcp-risk.js 的服务端白名单决定 ——
+   * 白名单是唯一能让工具变 static 的途径，且必须人工核对源码后改代码。
+   *
+   * 这张表只做**反向**的事：把一个本来在白名单里的 server 整体降级成
+   * dynamic（比如用户不信任本机那个 r2mcp，或者怀疑它被换过）。
+   * 它**不能**把任何 server 升成 static。
+   *
+   * 目前默认空表，桌面端「设置 → MCP」后续可以给每个服务一个"更严格"开关。
+   */
+  mcpServerRiskOverrides() {
+    const table = this.state.mcpRiskOverrides;
+    return table && typeof table === 'object' && !Array.isArray(table) ? table : {};
+  }
+
+  /** 设置某个 MCP 服务的风险等级覆盖（null 表示清除覆盖，回到按工具名判定）。 */
+  setMcpServerRisk(name, level) {
+    const key = String(name ?? '').trim().toLowerCase();
+    if (!key) return false;
+    const table = { ...this.mcpServerRiskOverrides() };
+    if (level === 'dynamic' || level === 'static') table[key] = level;
+    else delete table[key];
+    this.state.mcpRiskOverrides = table;
+    this.scheduleSave();
+    return true;
+  }
+
   mcpLibrary() {
     return mcpLibraryDomain.mcpLibrary(this);
   }

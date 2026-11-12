@@ -121,6 +121,14 @@ export function normalizeMcpServer(raw = {}, now = Date.now()) {
     updatedAt: Number(raw?.updatedAt) || now,
   };
 
+  // ★ 内置预设的身份标记（普通用户手加的服务没有这个字段）。
+  //
+  //   作用只有一个：让"这个条目是哪个预设"在改名之后仍然成立，
+  //   从而保证重复登记不会产生第二条 —— 判定见 mcp-presets.js。
+  //   它不是权限字段，也不影响任何安全判定。
+  const presetId = str(raw?.presetId, 40);
+  if (presetId) server.presetId = presetId;
+
   if (type === 'stdio') {
     server.command = str(raw?.command, MCP_LIMITS.command);
     server.args = Array.isArray(raw?.args)

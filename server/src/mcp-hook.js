@@ -120,8 +120,10 @@ export function mcpSectionForPrompt() {
   }
   lines.push('');
   lines.push(
-    '要启用：用 update_bot 把 mcpServers 设成这些名字的数组（比如 `["filesystem"]`）。' +
-      '改完那个 bot 的会话会自动重开，下一轮就能用上新工具。',
+    '要挂给哪个 bot：用 update_bot 把 mcpServers 设成这些名字的数组（比如 `["filesystem"]`）。',
+    '★ 挂载会弹一张审批卡给用户，批准后才生效 —— 这是改"这个 bot 能用哪些外部能力"，' +
+      '不是普通操作，不要反复重试。批准后那个 bot 的会话会自动重开，下一轮就能用上新工具。',
+    '★ 服务本身必须先由用户在「设置 → MCP」里启用；没启用的挂了也没用。',
   );
   return lines.join('\n');
 }

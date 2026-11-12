@@ -19,7 +19,17 @@ export const CAPABILITY_KINDS = [
   {
     key: 'reverse',
     label: '逆向 / 二进制分析',
-    hints: ['rea', 'ghidra', 'ida', 'radare', 'rizin', 'binary', 'disasm', 'decompile'],
+    hints: ['rea', 'ghidra', 'ida', 'radare', 'rizin', 'binary', 'disasm', 'decompile', 'r2mcp', 'pyghidra'],
+    /**
+     * 优先推荐的内置预设（服务端白名单里只读工具最多的那两个）。
+     *
+     * 为什么不用 rea：rea 会带起 Ghidra + JVM，几百 MB，而且能力面很宽
+     * （不只读，还能改）。内置的两个预设默认以只读模式启动，
+     * 挂上去风险小得多。rea 仍可选，但要在提示里标注它需要沙箱。
+     */
+    preferred: ['r2mcp', 'pyghidra-mcp'],
+    /** 提示词里额外说明"这些是可选但有代价的" */
+    needsSandbox: ['rea'],
     triggers: [
       '逆向', '反编译', '反汇编', '静态分析', '二进制', '固件',
       '崩溃', 'crash', '符号表', 'dylib', 'apk', '脱壳',
@@ -119,10 +129,22 @@ export function recommendMcpForTask(task, servers = []) {
         if (text.includes(lower(trigger))) score += 1;
       }
     }
-    if (score > 0) scored.push({ name: server.name, score });
+    if (score > 0) {
+      // 逆向类的内置预设加权：同等相关度下排在前面。
+      // 不是因为它们"更好"，而是它们的默认参数是只读的，
+      // 让模型先看到风险低的选项。
+      const preferred = CAPABILITY_KINDS.some(
+        (kind) => kind.preferred?.includes(server.name) && kinds.includes(kind.key),
+      );
+      scored.push({ name: server.name, score, preferred });
+    }
   }
 
-  scored.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+  scored.sort((a, b) =>
+    (Number(b.preferred) - Number(a.preferred)) ||
+    b.score - a.score ||
+    a.name.localeCompare(b.name),
+  );
   return scored.map((s) => s.name);
 }
 
@@ -156,13 +178,28 @@ export function capabilityGuideForPrompt(servers = []) {
   lines.push(
     '下面的活需要外部工具时，先给接手的 bot 配上对应 MCP 再派' +
       '（用 update_bot 的 mcpServers）。不配就派，它只能用内置的读写文件与搜索，做不了这类事。',
+    '',
+    '★ 两点必须记住：',
+    '· 挂载会**弹审批卡**给用户，批准后才生效。所以别一次挂一堆，也别在用户不在时反复试。',
+    '· 服务本身要**先由用户在「设置 → MCP」里启用**。没启用的服务挂了也连不上，' +
+      '而且 update_bot 会直接报错说它还没启用。',
   );
   lines.push('');
   for (const kind of CAPABILITY_KINDS) {
     const names = grouped.get(kind.key);
     if (!names || !names.length) continue;
+    // 逆向类：内置预设排前面，需要沙箱的那类单独标注
+    const preferred = names.filter((n) => kind.preferred?.includes(n));
+    const sandbox = names.filter((n) => kind.needsSandbox?.includes(n));
+    const rest = names.filter((n) => !preferred.includes(n) && !sandbox.includes(n));
+    const ordered = [...preferred, ...rest, ...sandbox];
+    const annotated = ordered.map((n) => {
+      if (preferred.includes(n)) return n + '（内置预设，默认只读）';
+      if (sandbox.includes(n)) return n + '（可选，需沙箱）';
+      return n;
+    });
     lines.push(
-      '- **' + kind.label + '** → ' + names.join(' / ') +
+      '- **' + kind.label + '** → ' + annotated.join(' / ') +
         '　触发词：' + kind.triggers.slice(0, 6).join('、'),
     );
   }
@@ -173,6 +210,7 @@ export function capabilityGuideForPrompt(servers = []) {
   lines.push(
     '挂完那个 bot 的会话会自动重开。别一次挂一堆 —— 每个 MCP 都起进程吃内存，' +
       '只挂这次活真正用得上的。',
+    '挂载动作本身要用户点批准，所以挂之前先把理由说清楚（要干什么活、为什么非得用它）。',
   );
   return lines.join('\n');
 }
