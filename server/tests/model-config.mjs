@@ -34,6 +34,7 @@ const { invalidateSessions, retireStaleSession } = await import('../src/session-
 const { PiRunner } = await import('../src/pi-runner.js');
 const { store } = await import('../src/store.js');
 const { createHttpServer } = await import('../src/http.js');
+import { installLocalToken } from './_local-token.mjs';
 const { bus } = await import('../src/bus.js');
 const { saveBuffer } = await import('../src/attachments.js');
 let passed = 0;
@@ -480,10 +481,13 @@ await test('假 HTTP 校验 bot 容量并只刷新历史会话', async () => {
   const server = createHttpServer({ runner, pairing: {} });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const endpoint = `http://127.0.0.1:${server.address().port}/api/bots/${bot.id}`;
+  // 本机请求现在必须带本次启动的 token（见 src/local-token.js）
+  const LOCAL_TOKEN = installLocalToken();
+  const auth = { authorization: `Bearer ${LOCAL_TOKEN}` };
   try {
-    const invalid = await fetch(endpoint, { method: 'PATCH', headers: { 'content-type': 'application/json', 'x-pi-bot-client': 'test' }, body: JSON.stringify({ contextWindow: 100 }) });
+    const invalid = await fetch(endpoint, { method: 'PATCH', headers: { 'content-type': 'application/json', 'x-pi-bot-client': 'test', ...auth }, body: JSON.stringify({ contextWindow: 100 }) });
     assert.equal(invalid.status, 400);
-    const valid = await fetch(endpoint, { method: 'PATCH', headers: { 'content-type': 'application/json', 'x-pi-bot-client': 'test' }, body: JSON.stringify({ contextWindow: 300_000, maxTokens: 32_000, reserveTokens: 16000 }) });
+    const valid = await fetch(endpoint, { method: 'PATCH', headers: { 'content-type': 'application/json', 'x-pi-bot-client': 'test', ...auth }, body: JSON.stringify({ contextWindow: 300_000, maxTokens: 32_000, reserveTokens: 16000 }) });
     assert.equal(valid.status, 200);
     assert.equal(reloads, 1);
   } finally { await new Promise((resolve) => server.close(resolve)); }

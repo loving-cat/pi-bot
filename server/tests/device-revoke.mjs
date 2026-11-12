@@ -17,6 +17,7 @@ const fs = await import('node:fs');
 fs.rmSync(process.env.PI_BOT_HOME, { recursive: true, force: true });
 
 const { createHttpServer } = await import('../src/http.js');
+import { installLocalToken } from './_local-token.mjs';
 const { attachWs } = await import('../src/ws.js');
 const { Pairing } = await import('../src/pairing.js');
 const { store } = await import('../src/store.js');
@@ -32,6 +33,8 @@ async function test(name, fn) {
 }
 
 const runner = { availableModels: [], modelLabel: () => null, initNote: null, send: async () => ({}) };
+// 本机免 token 已收紧：现在必须带本次启动的 token（见 src/local-token.js）
+const LOCAL_TOKEN = installLocalToken();
 const server = createHttpServer({ runner, pairing: new Pairing() });
 attachWs(server, { runner });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -53,7 +56,11 @@ function openWs(token) {
 }
 
 async function call(pathname, { method = 'GET' } = {}) {
-  const headers = method !== 'GET' ? { 'x-pi-bot-client': 'test' } : {};
+  const headers = {
+    // 本机请求现在必须带本次启动的 token（见 src/local-token.js）
+    authorization: `Bearer ${LOCAL_TOKEN}`,
+    ...(method !== 'GET' ? { 'x-pi-bot-client': 'test' } : {}),
+  };
   const res = await fetch(`http://127.0.0.1:${port}${pathname}`, { method, headers });
   return { status: res.status, body: await res.json().catch(() => null) };
 }

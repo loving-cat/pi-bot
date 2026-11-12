@@ -37,6 +37,10 @@ const CHILD = `
   const { createHttpServer } = await import('./src/http.js');
   const { attachWs } = await import('./src/ws.js');
   const { Pairing } = await import('./src/pairing.js');
+  // 真实的 server-main.js 会在这里签发本机 token；本测试直接起 HTTP，
+  // 所以手动补上同样的动作（数据目录来自 PI_BOT_HOME）。
+  const { issueLocalToken } = await import('./src/local-token.js');
+  issueLocalToken(process.env.PI_BOT_HOME);
   const runner = { availableModels: [], modelLabel: () => null, initNote: null, contextUsage: () => ({}) };
   const pairing = new Pairing();
   const server = createHttpServer({ runner, pairing });
@@ -65,7 +69,14 @@ async function startServer(env, tag) {
     child.stderr.on('data', (b) => { out += b; });
     child.on('exit', (code) => reject(new Error(`服务端提前退出 code=${code}：${out}`)));
   });
-  return { port, stop: () => new Promise((r) => { child.once('exit', r); child.kill(); }) };
+  // 服务端启动时会往数据目录写 local-token（0600），测试读出来当桌面端用。
+  const { readLocalToken } = await import('../src/local-token.js');
+  const localToken = readLocalToken(home);
+  return {
+    port,
+    localToken,
+    stop: () => new Promise((r) => { child.once('exit', r); child.kill(); }),
+  };
 }
 
 function call(port, pathname, { method = 'GET', token = '', host = null, body = null } = {}) {
@@ -114,12 +125,28 @@ function wsProbe(port, { token = '' } = {}) {
   });
 }
 
-await test('① 本机部署（没设 PI_BOT_TOKEN）：本机不带 token 照常放行', async () => {
+await test('① 本机部署：不带 token 访问改状态接口 → 401', async () => {
   const s = await startServer({}, 'local');
   try {
-    assert.equal(await call(s.port, '/api/state'), 200);
-    assert.equal(await call(s.port, '/api/policy', { method: 'PATCH', body: { dangerous: 'allow' } }), 200);
-    assert.equal(await wsProbe(s.port), 'open', '本机 WS 不带 token 应能连上');
+    // ★ 这是 P0-2 的核心：本机任意进程不能再免 token 调接口。
+    assert.equal(await call(s.port, '/api/state'), 401, '不带 token 不该放行');
+    assert.equal(await call(s.port, '/api/policy', { method: 'PATCH', body: { dangerous: 'allow' } }), 401);
+    assert.equal(await call(s.port, '/api/mcp'), 401);
+    assert.equal(await call(s.port, '/api/approvals'), 401);
+  } finally {
+    await s.stop();
+  }
+});
+
+await test('① 本机部署：带本次启动的 token 正常放行', async () => {
+  const s = await startServer({}, 'local-token');
+  try {
+    assert.ok(s.localToken, '服务端应已写出 local-token 文件');
+    assert.equal(await call(s.port, '/api/state', { token: s.localToken }), 200);
+    assert.equal(
+      await call(s.port, '/api/policy', { method: 'PATCH', body: { dangerous: 'allow' }, token: s.localToken }),
+      200,
+    );
   } finally {
     await s.stop();
   }
@@ -181,10 +208,13 @@ await test('① 本机部署：/health 报 auth=local，照旧带 stats（桌面
   }
 });
 
-await test('③ PI_BOT_TRUST_LOCAL=1：设了 token 也保留本机免 token（显式选择）', async () => {
+await test('③ PI_BOT_TRUST_LOCAL=1：本机也要带 token（不再免 token）', async () => {
   const s = await startServer({ PI_BOT_TOKEN: TOKEN, PI_BOT_TRUST_LOCAL: '1' }, 'trust-on');
   try {
-    assert.equal(await call(s.port, '/api/state'), 200);
+    // trustLocal=1 现在只表示"接受本机 token"，不再表示"免 token"。
+    // 不带 token 一律 401 —— 这正是 P0-2 要堵的洞。
+    assert.equal(await call(s.port, '/api/state'), 401, '不带 token 不该放行');
+    assert.equal(await call(s.port, '/api/state', { token: s.localToken }), 200, '带本机 token 应放行');
   } finally {
     await s.stop();
   }

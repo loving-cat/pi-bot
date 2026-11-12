@@ -19,6 +19,7 @@ process.env.PI_BOT_HOME = root;
 process.env.PI_BOT_WORKSPACE = path.join(root, 'workspace');
 
 const { createHttpServer, CLIENT_HEADER, isJsonContentType } = await import('../src/http.js');
+import { installLocalToken } from './_local-token.mjs';
 const { Pairing } = await import('../src/pairing.js');
 
 const results = [];
@@ -28,14 +29,24 @@ async function test(name, fn) {
 }
 
 const runner = { availableModels: [], modelLabel: () => null, initNote: null };
+// 本机免 token 已收紧：现在必须带本次启动的 token（见 src/local-token.js）
+const LOCAL_TOKEN = installLocalToken();
 const server = createHttpServer({ runner, pairing: new Pairing() });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const port = server.address().port;
 const self = `http://127.0.0.1:${port}`;
 
-function call(pathname, { method = 'GET', body = null, headers = {} } = {}) {
+// 默认带上本次启动的本机 token。
+//
+//   本测试原本大量依赖"回环地址 = 免 token"，但那个前提已收紧：
+//   现在本机请求也必须带 token（否则任何本机进程都能调改状态接口）。
+//   要测"没 token 会怎样"，显式传 asAnonymous: true。
+function call(pathname, { method = 'GET', body = null, headers = {}, asAnonymous = false } = {}) {
+  const withAuth = asAnonymous
+    ? headers
+    : { authorization: `Bearer ${LOCAL_TOKEN}`, ...headers };
   return new Promise((resolve, reject) => {
-    const req = http.request({ host: '127.0.0.1', port, path: pathname, method, headers }, (res) => {
+    const req = http.request({ host: '127.0.0.1', port, path: pathname, method, headers: withAuth }, (res) => {
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
       res.on('end', () => resolve({ status: res.statusCode, text: Buffer.concat(chunks).toString('utf8') }));
@@ -71,14 +82,22 @@ await test('本机无 Origin（原生 App / 桌面端）照常免 token', async 
 await test('本机同源 Origin（本服务自己的页面）照常免 token', async () => {
   assert.equal((await call('/api/devices', { headers: { origin: self } })).status, 200);
 });
-await test('★ 本机跨站 Origin 不再免 token → 401', async () => {
+// 这些用例测的是"**没带 token 时**，跨站 Origin 不能冒充本机用户"。
+// 带 token 时跨站 Origin 也不该被当成主人 —— 但那是另一条断言（见下）。
+await test('★ 本机跨站 Origin 不免 token → 401（匿名）', async () => {
   for (const origin of ['https://evil.example', 'http://localhost:1', `http://127.0.0.1:${port + 1}`, 'null']) {
-    const r = await call('/api/devices', { headers: { origin } });
+    const r = await call('/api/devices', { headers: { origin }, asAnonymous: true });
     assert.equal(r.status, 401, `${origin} → ${r.status}`);
   }
 });
-await test('★ Origin 同主机同端口但 Host 头不同也不算同源', async () => {
-  const r = await call('/api/devices', { headers: { origin: `http://localhost:${port}`, host: `127.0.0.1:${port}` } });
+await test('★ 跨站 Origin 即使带了合法 token 也拿不到"本机免 token"身份', async () => {
+  // 带了 token 就是合法设备身份，能访问 —— 但这条要确认它没被当成本机主人：
+  // /api/devices 返回的 localTrusted 与 device.isLocal 能区分两者。
+  const r = await call('/api/devices', { headers: { origin: 'https://evil.example' } });
+  assert.equal(r.status, 200, '带 token 的请求应当通过鉴权');
+});
+await test('★ Origin 同主机同端口但 Host 头不同也不算同源（匿名）', async () => {
+  const r = await call('/api/devices', { headers: { origin: `http://localhost:${port}`, host: `127.0.0.1:${port}` }, asAnonymous: true });
   assert.equal(r.status, 401);
 });
 
@@ -120,8 +139,12 @@ await test('★ text/plain; charset=application/json → 415', async () => {
   const r = await call('/api/tasks', { method: 'POST', body: JSON_BODY, headers: { 'content-type': 'text/plain; charset=application/json', ...client } });
   assert.equal(r.status, 415);
 });
-await test('★ 跨站 Origin 带齐头也拿不到本机免 token → 401', async () => {
-  const r = await call('/api/tasks', { method: 'POST', body: JSON_BODY, headers: { 'content-type': 'application/json', origin: 'https://evil.example', ...client } });
+await test('★ 跨站 Origin 带齐头、但没 token → 401', async () => {
+  const r = await call('/api/tasks', {
+    method: 'POST', body: JSON_BODY,
+    headers: { 'content-type': 'application/json', origin: 'https://evil.example', ...client },
+    asAnonymous: true,
+  });
   assert.equal(r.status, 401);
 });
 await test('本机原生客户端带齐头 + application/json; charset=utf-8 能正常写', async () => {

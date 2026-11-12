@@ -12,6 +12,7 @@ process.env.PI_BOT_HOME = path.join(process.cwd(), 'data', '_unit_test_security'
 fs.rmSync(process.env.PI_BOT_HOME, { recursive: true, force: true });
 
 const { createHttpServer } = await import('../src/http.js');
+import { installLocalToken } from './_local-token.mjs';
 const { attachWs } = await import('../src/ws.js');
 const { Pairing } = await import('../src/pairing.js');
 
@@ -22,6 +23,8 @@ async function test(name, fn) {
 }
 
 const runner = { availableModels: [], modelLabel: () => null, initNote: null };
+// 本机免 token 已收紧：现在必须带本次启动的 token（见 src/local-token.js）
+const LOCAL_TOKEN = installLocalToken();
 const server = createHttpServer({ runner, pairing: new Pairing() });
 attachWs(server, { runner });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -41,8 +44,10 @@ function wsFirst(headers) {
 }
 
 function call(pathname, { method = 'GET', body = null, headers = {} } = {}) {
+  // 本机请求现在必须带本次启动的 token（见 src/local-token.js）
+  const withAuth = { authorization: `Bearer ${LOCAL_TOKEN}`, ...headers };
   return new Promise((resolve, reject) => {
-    const req = http.request({ host: '127.0.0.1', port, path: pathname, method, headers }, (res) => {
+    const req = http.request({ host: '127.0.0.1', port, path: pathname, method, headers: withAuth }, (res) => {
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
       res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, text: Buffer.concat(chunks).toString() }));
@@ -53,8 +58,14 @@ function call(pathname, { method = 'GET', body = null, headers = {} } = {}) {
   });
 }
 
-await test('WS：本机无 Origin 仍可连（原生 App）', async () => {
-  assert.equal(await wsFirst({}), 'hello');
+await test('WS：本机无 token 不再放行（必须带本机 token）', async () => {
+  // ★ P0-2：原来这里断言 'hello' —— 本机任意进程都能连 WS 指挥 bot。
+  //   现在和 HTTP 同一份凭据：没 token 一律 4401。
+  assert.equal(await wsFirst({}), 'rejected', '不带 token 不该连上');
+});
+
+await test('WS：带本机 token 可以连（原生 App 的正常路径）', async () => {
+  assert.equal(await wsFirst({ authorization: `Bearer ${LOCAL_TOKEN}` }), 'hello');
 });
 await test('WS：恶意 Origin 被拒', async () => {
   assert.equal(await wsFirst({ origin: 'https://evil.example' }), 'rejected');
@@ -90,7 +101,10 @@ await test('/api/files：image/png 允许内联预览，但带 nosniff 与 CSP s
 });
 
 await test('relay：带 x-pi-relay 不带 token 的 HTTP 请求返回 401', async () => {
-  const r = await call('/api/rooms', { headers: { 'x-pi-relay': '1' } });
+  // 显式匿名：要验证的正是"中转进来的请求不能被当作本机主人"
+  const r = await call('/api/rooms', {
+    headers: { 'x-pi-relay': '1', authorization: '' },
+  });
   assert.equal(r.status, 401, `实际 ${r.status}`);
 });
 await test('relay：带 x-pi-relay 不带 token 的 WS 被拒', async () => {

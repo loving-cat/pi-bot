@@ -101,6 +101,17 @@ const EXACT = new Set([
 const PI_BOT_BLOCKED = new Set([
   'PI_BOT_TOKEN',
   'PI_BOT_SECRET_KEY',
+  // ★ 这三项本身不是密钥，但会告诉子进程"服务端在哪个端口、数据目录在哪"。
+  //   bash 工具跑的命令、MCP 子进程、后台任务都能看到进程环境 ——
+  //   拿到它们就能直接往服务端发请求、甚至去读数据目录。
+  //   配合本机 token 机制（local-token.js），攻破成本会从
+  //   "需要读用户的私有文件" 降成 "读一个环境变量"，所以必须挡住。
+  'PI_BOT_PORT',
+  'PI_BOT_HOST',
+  'PI_BOT_HOME',
+  // PI_BOT_WORKSPACE 同属"服务端部署信息"：它暴露 bot 的工作目录在哪，
+  // 子进程拿到就能直接去读写那些文件，不必再猜路径。
+  'PI_BOT_WORKSPACE',
 ]);
 
 /**

@@ -462,7 +462,14 @@ await test('新放行的变量会进子进程，云凭证和敏感 PI_BOT_ 不�
         assert.equal(pick(env, name), expected, name);
       }
     }
-    assert.equal(env.PI_BOT_HOME, root);
+    // ★ PI_BOT_HOME 现在**必须**挡掉。
+    //
+    //   它会告诉子进程数据目录在哪 —— 配合本机 token 文件（0600），
+    //   泄漏它就等于把"读私有文件"这一步降到"读一个环境变量"。
+    //   同理 PI_BOT_PORT / PI_BOT_HOST 会暴露服务端在哪。
+    assert.equal(env.PI_BOT_HOME, undefined, 'PI_BOT_HOME 不该传给子进程');
+    assert.equal(env.PI_BOT_PORT, undefined, 'PI_BOT_PORT 不该传给子进程');
+    assert.equal(env.PI_BOT_HOST, undefined, 'PI_BOT_HOST 不该传给子进程');
     assert.equal(env.PI_BOT_TOKEN, undefined);
     assert.equal(env.PI_BOT_SECRET_KEY, undefined);
   } finally {

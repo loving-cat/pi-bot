@@ -19,6 +19,7 @@ process.env.PI_BOT_HOME = path.join(process.cwd(), 'data', '_unit_test_auth');
 fs.rmSync(process.env.PI_BOT_HOME, { recursive: true, force: true });
 
 const { createHttpServer, hostAllowed } = await import('../src/http.js');
+import { installLocalToken } from './_local-token.mjs';
 const { Pairing, lanAddresses } = await import('../src/pairing.js');
 const { store } = await import('../src/store.js');
 
@@ -42,9 +43,13 @@ const pairing = new Pairing();
 const server = createHttpServer({ runner, pairing });
 await new Promise((r) => server.listen(0, '0.0.0.0', r));
 const port = server.address().port;
+const LOCAL_TOKEN = installLocalToken();
 
 /** @returns {Promise<{status:number, body:any, text:string}>} */
-function call(host, pathname, { method = 'GET', body = null, token = '', headers = {} } = {}) {
+function call(host, pathname, { method = 'GET', body = null, token = '', headers = {}, asAnonymous = false } = {}) {
+  // 本机免 token 已收紧：回环请求也必须带本次启动的 token。
+  // 显式传 token 的用例优先；要测"没 token"就用 asAnonymous。
+  if (!asAnonymous && !token && host === '127.0.0.1') token = LOCAL_TOKEN;
   return new Promise((resolve, reject) => {
     const req = http.request(
       {

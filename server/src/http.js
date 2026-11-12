@@ -32,6 +32,7 @@ import {
 } from './attachments.js';
 import { lanAddresses } from './pairing.js';
 import { timingSafeEqual, log } from './util.js';
+import { readLocalToken } from './local-token.js';
 import { shells } from './shells.js';
 import { computeNextRun, validateSchedule } from './automations.js';
 import { VERSION } from './version.js';
@@ -129,11 +130,58 @@ function extractToken(req, url) {
 }
 
 /**
+ * 本次启动的本机 token（懒加载）。
+ *
+ * 由 server-main 在 listen 之前调 issueLocalToken 写盘；
+ * 这里只负责读出来比对。读不到时（文件被删/权限不对）返回 null，
+ * 此时回环请求必须走正常配对流程，不再免 token。
+ */
+let _localTokenCache;
+
+export function localToken() {
+  if (_localTokenCache !== undefined) return _localTokenCache;
+  _localTokenCache = readLocalToken(config.dataDir);
+  return _localTokenCache;
+}
+
+/** 测试用：重置缓存（服务端换 token 或测试里换数据目录时调）。 */
+export function resetLocalTokenCache() {
+  _localTokenCache = undefined;
+}
+
+/**
+ * 请求是否携带了合法的本机 token。
+ *
+ * 用 timingSafeEqual 比对，避免按字节比较泄漏信息。
+ */
+function isLocalTokenValid(req, url) {
+  return isLocalToken(extractToken(req, url));
+}
+
+/** 这个 token 是不是本次启动签发的本机 token（WS 侧也用它）。 */
+export function isLocalToken(provided) {
+  if (!provided) return false;
+  const expected = localToken();
+  if (!expected) return false;
+  return timingSafeEqual(provided, expected);
+}
+
+/**
  * 是不是本机发来的请求。
  *
  * PC 端 App 就跑在本机上，它就是宿主，不应该还要配对。
  * 所以 loopback 来的请求直接信任（本机用户就是主人）。
  * 远程设备（手机）仍然必须带 token。
+ *
+ * ★ 但"回环 = 主人"这个前提有个致命缺陷：**本机任何进程**都能往
+ *   127.0.0.1 发请求，不需要任何权限提升。一个跑在同一台机器上的
+ *   恶意脚本就能直接调审批、改策略、挂 MCP。
+ *   x-pi-bot-client 头挡不住它 —— 那个头防的是浏览器跨站伪造
+ *   （自定义头要过 CORS 预检），本机进程可以随便加。
+ *
+ *   所以现在本机免 token 只给**带着本次启动 token** 的请求
+ *   （由 server-main 写进 0600 文件，桌面端读出来带上）。
+ *   见 localTrustAllowed 的处置。
  *
  * 服务器部署时不信任本机（config.trustLocal = false）：反向代理转发过来的
  * 公网请求在这里看也是回环地址。
@@ -207,13 +255,61 @@ function authenticate(req, url) {
     if (config.staticToken && timingSafeEqual(token, config.staticToken)) {
       return { id: 'static', name: 'static-token', createdAt: 0, lastSeenAt: Date.now(), isStatic: true };
     }
+    // ★ 本机 token：服务端每次启动随机生成、写在 0600 文件里。
+    //   桌面端读它并带在请求上 —— 这才是"本机用户 = 主人"的可靠凭据。
+    if (config.trustLocal && isLocalTokenValid(req, url)) {
+      return { ...LOCAL_DEVICE, lastSeenAt: Date.now(), viaLocalToken: true };
+    }
     const device = store.findDeviceByToken(token);
     if (device) store.touchDevice(token);
     return device;
   }
-  // 没带 token：本机原生客户端 / 同源页面才放行（跨站网页不行）
-  if (localTrustAllowed(req)) return { ...LOCAL_DEVICE, lastSeenAt: Date.now() };
+  // 没带 token：只有**明确允许免 token 的路径**才给主人身份。
+  //
+  // 改状态的接口（approvals / hooks / mcp / policy …）一律不走这条路，
+  // 见 isTokenFreePath。原来这里是无条件放行回环请求，
+  // 于是本机任意进程都成了主人。
+  if (isTokenFreePath(req, url) && localTrustAllowed(req)) {
+    // ★ 打上通过标记：这是"还没拿到 token"的兜底身份，
+    //   只能看"需配对"这类公开事实，**不能**读到配对码。
+    //   /pair 页和 /api/pairing 都靠这个标记决定给不给 code。
+    return { ...LOCAL_DEVICE, lastSeenAt: Date.now(), viaLocalFallback: true };
+  }
   return null;
+}
+
+/**
+ * 免 token 的路径白名单：只读、且不泄漏隐私的。
+ *
+ * ★ 默认拒绝。只有显式列在这里的才允许不带 token 访问。
+ *
+ * 为什么需要白名单：浏览器打开配对页、首次启动读服务器信息，
+ * 这些发生在**还没有 token 之前**，必须能访问。
+ * 但除此之外（尤其是所有改状态接口）都必须带 token。
+ */
+const TOKEN_FREE_PATHS = new Set([
+  '/',            // 引导页
+  '/pair',        // 配对页（页面公开：地址不是秘密）
+  '/api/health',  // 存活探测
+  '/api/ping',
+]);
+
+/** 桌面端首次启动、还没拿到 token 时需要读的基础信息（只读且不含隐私）。 */
+const TOKEN_FREE_PREFIXES = [
+  '/api/server-info',
+  '/api/pairing',
+];
+
+function isTokenFreePath(req, url) {
+  const pathname = url.pathname;
+  if (TOKEN_FREE_PATHS.has(pathname)) return true;
+  for (const prefix of TOKEN_FREE_PREFIXES) {
+    if (pathname === prefix || pathname.startsWith(prefix + '/')) {
+      // 配对快照在无 token 时只返回"需配对"这个事实，不给配对码
+      return req.method === 'GET';
+    }
+  }
+  return false;
 }
 
 /**
@@ -347,7 +443,13 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
       // ---------- 网页版配对页 ----------
       // 页面公开（地址不是秘密），配对码只返回给已鉴权的请求。
       if (pathname === '/pair' && req.method === 'GET') {
-        const snap = config.staticToken ? null : pairing.snapshot({ withCode: Boolean(device) });
+        // ★ withCode 只认**真正带了凭据**的调用方。
+        //
+        //   免 token 路径也会拿到 LOCAL_DEVICE，若直接 Boolean(device)，
+        //   本机任意进程打开 /pair 就能读到配对码 —— 等于绕过整个 token 机制。
+        //   这里要求 device 不是"本机免 token"兜底身份。
+        const trustedForCode = Boolean(device) && !device.viaLocalFallback;
+        const snap = config.staticToken ? null : pairing.snapshot({ withCode: trustedForCode });
         const html = pairPage(snap);
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
         return res.end(html);
@@ -374,7 +476,18 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
 
       // 配对码 / 已配对设备：都是主人才能看的东西，所以放在鉴权之后
       if (pathname === '/api/pairing' && req.method === 'GET') {
-        return send(res, 200, config.staticToken ? { static: true } : pairing.snapshot({ withCode: true }));
+        // ★ 只有**真正带凭据**的调用方才给配对码。
+        //
+        //   原来这里无条件 withCode:true。配合"免 token 路径"，
+        //   本机任意进程 GET /api/pairing 就能拿到 6 位配对码，
+        //   再拿去换设备 token —— 整个 token 机制被完全绕过。
+        //   （p0 回归测试里有一条专门验证这个。）
+        const trustedForCode = Boolean(device) && !device.viaLocalFallback;
+        return send(
+          res,
+          200,
+          config.staticToken ? { static: true } : pairing.snapshot({ withCode: trustedForCode }),
+        );
       }
 
       if (pathname === '/api/devices' && req.method === 'GET') {

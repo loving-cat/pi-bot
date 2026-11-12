@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show Platform;
 
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -18,6 +19,7 @@ import 'native.dart';
 import 'notify.dart';
 import 'platform.dart';
 import 'server/launcher.dart';
+import 'server/local_token.dart';
 import 'server/options.dart';
 import 'text_utils.dart';
 import 'update_info.dart';
@@ -732,8 +734,28 @@ class AppState extends ChangeNotifier {
   Future<void> connectLocal({String? url}) async {
     localMode = true;
     serverUrl = url ?? localUrl;
+    // ★ 本机连接一律带 token。
+    //
+    //   服务端不再把"来自回环地址"当成主人（那是个洞：本机任何进程都能
+    //   往 127.0.0.1 发请求）。它每次启动生成一个随机 token 写进
+    //   数据目录下的 local-token（0600），客户端读出来带在 Bearer 上。
+    //
+    //   优先用用户手动填的 token（服务器模式 / 显式配 PI_BOT_TOKEN 的场景），
+    //   没有就去读服务端写的文件。
+    if (localToken.isEmpty) {
+      final fromFile = await readLocalTokenFromCandidates([
+        serverLauncher.options.data,
+        serverDataDir,
+        // 用户没显式配数据目录时，服务端走自己的默认位置 —— 试一次相对路径
+        // 下的常见位置。找不到就由下面的 401 兜底把提示给用户。
+        _defaultLocalDataDir(),
+      ]);
+      if (fromFile != null) localToken = fromFile;
+    }
+    token = localToken;
+    // 仍然问一次服务端"要不要 token"：服务器模式下这个值为 true，
+    // 界面据此显示填 token 的入口；本机模式即便为 false 我们也照样带 token。
     localNeedsToken = await localServerRequiresToken(serverUrl!);
-    token = localNeedsToken ? localToken : '';
     api = Api(serverUrl!, token!);
       taskRuns.bindApi(api);
     final prefs = await SharedPreferences.getInstance();
@@ -757,6 +779,24 @@ class AppState extends ChangeNotifier {
       return;
     }
     connect();
+  }
+
+  /// 服务端没显式配数据目录时的默认位置（和服务端 config.js 的 userDataDir 对齐）。
+  ///
+  /// 只在用户没填 serverDataDir 时用作**候选**：读不到就返回 null，
+  /// 由 401 兜底引导用户去填 token。
+  String? _defaultLocalDataDir() {
+    final home =
+        Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
+    if (home == null || home.isEmpty) return null;
+    return switch (Platform.operatingSystem) {
+      'macos' => '$home/Library/Application Support/pi-bot/data',
+      'windows' => () {
+          final appData = Platform.environment['APPDATA'] ?? '$home/AppData/Roaming';
+          return '$appData/pi-bot/data';
+        }(),
+      _ => '$home/.local/share/pi-bot/data',
+    };
   }
 
   /// 连接页上的提示：为什么连不上、去哪里填

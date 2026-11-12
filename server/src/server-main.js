@@ -6,6 +6,7 @@ import { Pairing, lanAddresses } from './pairing.js';
 import { createHttpServer } from './http.js';
 import { createSiteRuntime } from './site-runtime.js';
 import { loadOrCreateKey } from './secrets.js';
+import { issueLocalToken, clearLocalToken } from './local-token.js';
 import { attachWs } from './ws.js';
 import { log } from './util.js';
 import { shells } from './shells.js';
@@ -114,6 +115,13 @@ async function main() {
   // 外部 Web 系统的传输层：管 token、转发查询。给工具和 HTTP 接口共用一份。
   const sites = createSiteRuntime({ log });
   runner.sites = sites;
+
+  // 本次启动的本机 token：写进 0600 文件，桌面端读出来带在请求上。
+  //
+  //   有了它，回环地址才真正等于本机用户 —— 原来任何本机进程往 127.0.0.1
+  //   发请求都自动是主人，那是个洞。
+  const localToken = issueLocalToken(config.dataDir, { log });
+  log(`本机 token 已写入 ` + config.dataDir + `/local-token`);
 
   const server = createHttpServer({ runner, pairing, sites });
   attachWs(server, { runner });

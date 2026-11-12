@@ -22,7 +22,7 @@ final Duration serverStartTimeout = Duration(
 /// 找不到 node 或服务端依赖没装（server/node_modules 不存在）时返回 null，用例跳过。
 ///
 /// 脚本写成临时 .mjs 文件再跑：多行脚本经 `node -e` 传参在 Windows 上的引号处理不可靠。
-Future<({int port, Future<void> Function() stop})?> _startServer(
+Future<({int port, String? Function() localToken, Future<void> Function() stop})?> _startServer(
   Map<String, String> env,
 ) async {
   final serverDir = Directory('../server').absolute.path;
@@ -36,6 +36,9 @@ Future<({int port, Future<void> Function() stop})?> _startServer(
 const { createHttpServer } = await import('./src/http.js');
 const { attachWs } = await import('./src/ws.js');
 const { Pairing } = await import('./src/pairing.js');
+// 真实 server-main.js 会签发本机 token；这里直接起 HTTP 所以补上。
+const { issueLocalToken } = await import('./src/local-token.js');
+issueLocalToken(process.env.PI_BOT_HOME);
 const runner = { availableModels: [], modelLabel: () => null, initNote: null, contextUsage: () => ({}) };
 const server = createHttpServer({ runner, pairing: new Pairing() });
 attachWs(server, { runner });
@@ -68,6 +71,15 @@ server.listen(0, '127.0.0.1', () => process.stdout.write('PORT ' + server.addres
   final p = await port.future.timeout(serverStartTimeout);
   return (
     port: p,
+    // 服务端写在数据目录里的本机 token（桌面端正常路径也是读它）
+    localToken: () {
+      try {
+        final text = File('${home.path}/local-token').readAsStringSync().trim();
+        return text.isEmpty ? null : text;
+      } catch (_) {
+        return null;
+      }
+    },
     stop: () async {
       proc.kill();
       await proc.exitCode.timeout(
@@ -157,7 +169,7 @@ void main() {
     expect(prefs.getString('local_server_token'), isNull);
   });
 
-  test('本机部署：照旧不带 token 直连', () async {
+  test('本机部署：读 local-token 文件并带上（不再免 token）', () async {
     final server = await _startServer({});
     if (server == null) {
       markTestSkipped('没有 node 或服务端依赖没装（cd server && npm install），跳过');
@@ -168,8 +180,15 @@ void main() {
     final state = AppState();
     addTearDown(state.dispose);
 
+    // ★ P0-2：本机不再免 token。
+    //   服务端每次启动写 local-token（0600），桌面端读出来带在请求上。
+    final fileToken = server.localToken();
+    expect(fileToken, isNotNull, reason: '服务端应已写出 local-token 文件');
+
+    // 让 AppState 从该数据目录读 —— 直接注入候选目录不可行，
+    // 这里验证"文件里的 token 能被连上"这条链路：手工设 localToken 再连。
+    state.localToken = fileToken!;
     await state.connectLocal(url: 'http://127.0.0.1:${server.port}');
-    expect(state.localNeedsToken, isFalse);
     await _waitFor(() => state.link == LinkState.online, 'WS 连上');
   });
 }

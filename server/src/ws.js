@@ -15,7 +15,7 @@ import { createRequestResultService, createTerminalPublisher } from './tasks/tas
 import { createRequestReceipts } from './tasks/task-request-receipts.js';
 import { projectTaskRunList } from './tasks/task-projection.js';
 import { attachmentDeletionRevision, withoutDeletedAttachments } from './attachments.js';
-import { serverInfo, isLoopback, LOCAL_DEVICE, hostAllowed } from './http.js';
+import { serverInfo, isLoopback, LOCAL_DEVICE, hostAllowed, isLocalToken } from './http.js';
 import { log, timingSafeEqual } from './util.js';
 
 const taskRequestReceipts = createRequestReceipts({ dir: path.join(config.dataDir, 'task-requests') });
@@ -110,12 +110,19 @@ export function attachWs(server, { runner }) {
       if (config.staticToken && timingSafeEqual(token, config.staticToken)) {
         return { id: 'static', name: 'static-token' };
       }
+      // ★ 本机 token：和 HTTP 用同一份凭据（见 http.js 的 isLocalTokenValid）。
+      if (config.trustLocal && isLocalToken(token)) {
+        return { ...LOCAL_DEVICE };
+      }
       const device = store.findDeviceByToken(token);
       if (device) store.touchDevice(token);
       return device;
     }
-    // 没带 token：仅限本机原生客户端（不带 Origin），浏览器页面一律要 token
-    if (isLoopback(req) && !req.headers.origin) return LOCAL_DEVICE;
+    // ★ 不带 token 一律拒绝。
+    //
+    //   原来这里是"回环 + 没 Origin 就放行"，和 HTTP 侧同一个洞：
+    //   本机任何进程都能连 WS，然后发 {t:'send'} 直接指挥 bot ——
+    //   只改 HTTP 不改这里等于没堵。浏览器页面本来就必须带 token。
     return null;
   };
 
