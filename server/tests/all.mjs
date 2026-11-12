@@ -58,6 +58,7 @@ const TESTS = [
   'role-tools',
   'shells',
   'child-env-typed',
+  'local-nonce',
   'change-watch',
   'artifacts',
   'dm',

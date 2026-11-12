@@ -125,6 +125,74 @@ class Api {
     return _decode(res);
   }
 
+
+  // ────────────────── 一次性 nonce（改安全配置用）──────────────────
+
+  /// 申请一个一次性 nonce。
+  ///
+  /// ★ 只在**用户实际点击**之后调用。它单次有效、60 秒过期 ——
+  ///   预先申请或缓存起来都没用，反而会让"这次改动是用户点的"这个
+  ///   前提变得不成立。
+  ///
+  /// 为什么需要它：本地 token 只解决"别的进程能不能连上服务端"，
+  /// 不解决"它能不能冒充界面" —— 同用户进程能读到 token 文件。
+  /// nonce 由服务端在界面点击时签发、用一次就作废，堵的是这条路。
+  Future<String> issueNonce(String purpose) async {
+    final res = await http
+        .post(
+          _uri('/api/local-nonce'),
+          headers: _headers,
+          body: jsonEncode({'purpose': purpose}),
+        )
+        .timeout(const Duration(seconds: 10));
+    final body = await _decode(res);
+    final nonce = body['nonce'] as String? ?? '';
+    if (nonce.isEmpty) {
+      throw ApiException('没能拿到一次性凭据，请重试', status: res.statusCode);
+    }
+    return nonce;
+  }
+
+  /// 改安全配置的请求头：带上一枚刚申请的 nonce。
+  Future<Map<String, String>> _headersWithNonce(String purpose) async =>
+      {..._headers, 'x-pi-bot-nonce': await issueNonce(purpose)};
+
+  /// 改策略（危险动作档位等）。除了 token 还要一次性 nonce。
+  Future<Map<String, dynamic>> patchPolicy(Map<String, dynamic> body) async {
+    final headers = await _headersWithNonce('policy');
+    final res = await http
+        .patch(_uri('/api/policy'), headers: headers, body: jsonEncode(body))
+        .timeout(const Duration(seconds: 20));
+    return _decode(res);
+  }
+
+  /// MCP 库的增（POST）。
+  Future<Map<String, dynamic>> addMcpServer(Map<String, dynamic> body) async {
+    final headers = await _headersWithNonce('mcp');
+    final res = await http
+        .post(_uri('/api/mcp'), headers: headers, body: jsonEncode(body))
+        .timeout(const Duration(seconds: 30));
+    return _decode(res);
+  }
+
+  /// MCP 库的改（PATCH）。
+  Future<Map<String, dynamic>> updateMcpServer(String id, Map<String, dynamic> body) async {
+    final headers = await _headersWithNonce('mcp');
+    final res = await http
+        .patch(_uri('/api/mcp/${Uri.encodeComponent(id)}'), headers: headers, body: jsonEncode(body))
+        .timeout(const Duration(seconds: 30));
+    return _decode(res);
+  }
+
+  /// MCP 库的删（DELETE）。
+  Future<Map<String, dynamic>> deleteMcpServer(String id) async {
+    final headers = await _headersWithNonce('mcp');
+    final res = await http
+        .delete(_uri('/api/mcp/${Uri.encodeComponent(id)}'), headers: headers)
+        .timeout(const Duration(seconds: 30));
+    return _decode(res);
+  }
+
   Future<Map<String, dynamic>> put(
     String path,
     Map<String, dynamic> body,

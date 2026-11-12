@@ -110,6 +110,9 @@ void main() {
   setUpAll(() => HttpOverrides.global = null);
 
   test('服务器模式：没填 token 时停在「需要 token」，不发请求、不重连', () async {
+    // ★ 服务器模式下服务端仍会写 local-token 文件（那是 HTTP 层的凭据），
+    //   但客户端在服务器模式要的是用户填的 PI_BOT_TOKEN ——
+    //   两者不是一回事。这里显式清掉 localToken，模拟"用户还没填"。
     final server = await _startServer({'PI_BOT_TOKEN': 'app-test-token'});
     if (server == null) {
       markTestSkipped('没有 node 或服务端依赖没装（cd server && npm install），跳过');
@@ -119,6 +122,8 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     final state = AppState();
     addTearDown(state.dispose);
+    // 服务器模式不该去读 local-token 文件（那是本机信任模式的凭据），
+    // 所以这里不需要额外隔离 —— connectLocal 会先问服务端要不要 token。
 
     await state.connectLocal(url: 'http://127.0.0.1:${server.port}');
     expect(state.localNeedsToken, isTrue);

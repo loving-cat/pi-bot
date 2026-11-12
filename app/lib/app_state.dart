@@ -740,9 +740,16 @@ class AppState extends ChangeNotifier {
     //   往 127.0.0.1 发请求）。它每次启动生成一个随机 token 写进
     //   数据目录下的 local-token（0600），客户端读出来带在 Bearer 上。
     //
-    //   优先用用户手动填的 token（服务器模式 / 显式配 PI_BOT_TOKEN 的场景），
-    //   没有就去读服务端写的文件。
-    if (localToken.isEmpty) {
+    //   ★ 先问服务端"要不要 token"，再决定去哪拿 —— 顺序很重要。
+    //
+    //   服务器模式（设了 PI_BOT_TOKEN）下，客户端要的是**用户填的**那个 token，
+    //   不是服务端写的 local-token。两者是不同凭据：local-token 只在
+    //   "本机信任"模式下有效，拿它去撞服务器模式会被 401。
+    //   所以服务器模式下不读文件，直接走"请用户填"的提示。
+    //
+    //   本机信任模式下才读 local-token 文件。
+    localNeedsToken = await localServerRequiresToken(serverUrl!);
+    if (!localNeedsToken && localToken.isEmpty) {
       final fromFile = await readLocalTokenFromCandidates([
         serverLauncher.options.data,
         serverDataDir,
@@ -753,9 +760,6 @@ class AppState extends ChangeNotifier {
       if (fromFile != null) localToken = fromFile;
     }
     token = localToken;
-    // 仍然问一次服务端"要不要 token"：服务器模式下这个值为 true，
-    // 界面据此显示填 token 的入口；本机模式即便为 false 我们也照样带 token。
-    localNeedsToken = await localServerRequiresToken(serverUrl!);
     api = Api(serverUrl!, token!);
       taskRuns.bindApi(api);
     final prefs = await SharedPreferences.getInstance();
@@ -1187,9 +1191,9 @@ class AppState extends ChangeNotifier {
     try {
       final id = patch['id'] as String?;
       if (id == null || id.isEmpty) {
-        await api!.post('/api/mcp', patch);
+        await api!.addMcpServer(patch);
       } else {
-        await api!.patch('/api/mcp/${Uri.encodeComponent(id)}', patch);
+        await api!.updateMcpServer(id, patch);
       }
       await loadMcpServers();
       return null;
@@ -1202,7 +1206,7 @@ class AppState extends ChangeNotifier {
   Future<String?> removeMcpServer(String id) async {
     if (api == null) return '未连接服务端';
     try {
-      await api!.delete('/api/mcp/${Uri.encodeComponent(id)}');
+      await api!.deleteMcpServer(id);
       await loadMcpServers();
       return null;
     } catch (err) {
@@ -1999,7 +2003,8 @@ class AppState extends ChangeNotifier {
   /// 改部门规矩（危险动作 / 要不要附证据）
   Future<void> savePolicy(Map<String, dynamic> patch) async {
     try {
-      await api?.patch('/api/policy', patch);
+      // 改策略要一次性 nonce（D3）：服务端在用户点击时签发、用后作废
+      await api?.patchPolicy(patch);
       await refresh();
     } catch (err) {
       lastError = '$err';

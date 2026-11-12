@@ -33,6 +33,7 @@ import {
 import { lanAddresses } from './pairing.js';
 import { timingSafeEqual, log } from './util.js';
 import { readLocalToken } from './local-token.js';
+import { NONCE_PURPOSE, consumeNonce, issueNonce } from './local-nonce.js';
 import { shells } from './shells.js';
 import { computeNextRun, validateSchedule } from './automations.js';
 import { VERSION } from './version.js';
@@ -935,7 +936,22 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         });
       }
 
+      // MCP 库的增删改：除了 token 还要一次性 nonce。
+      // 挡的是读到本地 token 的同用户进程直接挂一个 MCP —— 那是往 bot 里加执行入口，等同于改防线。
+      //   ★ 注意返回一个**真值**标记：send() 本身返回 undefined，
+      //     直接 return send(...) 会让调用方的 if (denied) 判假，
+      //     于是响应已经发出 403、代码却继续往下执行副作用。
+      const requireMcpNonce = () => {
+        const check = consumeNonce(req.headers['x-pi-bot-nonce'], NONCE_PURPOSE.MCP);
+        if (check.ok) return null;
+        log('写 MCP 库被拒：缺少或无效的一次性 nonce(' + check.reason + ')');
+        send(res, 403, { error: 'nonce_required', reason: check.reason });
+        return true;
+      };
+
       if (pathname === '/api/mcp' && req.method === 'POST') {
+        const denied = requireMcpNonce();
+        if (denied) return denied;
         const body = await readBody(req);
         const r = store.addMcpServer(body);
         if (r.error) return send(res, 400, { error: r.error });
@@ -946,6 +962,8 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
 
       const mcpMatch = pathname.match(/^\/api\/mcp\/([^/]+)$/);
       if (mcpMatch && req.method === 'PATCH') {
+        const denied = requireMcpNonce();
+        if (denied) return denied;
         const body = await readBody(req);
         const r = store.updateMcpServer(decodeURIComponent(mcpMatch[1]), body);
         if (r.error) return send(res, 404, { error: r.error });
@@ -953,6 +971,8 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         return send(res, 200, { server: r.server });
       }
       if (mcpMatch && req.method === 'DELETE') {
+        const denied = requireMcpNonce();
+        if (denied) return denied;
         const r = store.removeMcpServer(decodeURIComponent(mcpMatch[1]));
         if (r.error) return send(res, 404, { error: r.error });
         await runner.applyMcpChange?.();
@@ -1314,7 +1334,26 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         // 带上版本号：App 可以把它展示出来，也方便排查"这条活按哪套规矩跑的"
         return send(res, 200, { policy: store.policy(), policyVersion: store.policyVersion() });
       }
+      // ---------- 一次性 nonce（改安全配置用）----------
+      //
+      // ★ 界面在用户**实际点击**时申请一个，然后带着它调下面的接口。
+      //   服务端无法验证"背后真的有人点了按钮"，那是界面的责任 ——
+      //   界面必须把这一步放在 onClick 里，不能在启动或定时任务里预先申请。
+      if (pathname === '/api/local-nonce' && req.method === 'POST') {
+        const body = await readBody(req);
+        const purpose = String(body?.purpose ?? '');
+        if (!Object.values(NONCE_PURPOSE).includes(purpose)) {
+          return send(res, 400, { error: 'unknown_purpose' });
+        }
+        return send(res, 200, issueNonce(purpose));
+      }
+
       if (pathname === '/api/policy' && req.method === 'PATCH') {
+        const nonceCheck = consumeNonce(req.headers['x-pi-bot-nonce'], NONCE_PURPOSE.POLICY);
+        if (!nonceCheck.ok) {
+          log(`⛔ 改策略被拒：缺少或无效的一次性 nonce（${nonceCheck.reason}）`);
+          return send(res, 403, { error: 'nonce_required', reason: nonceCheck.reason });
+        }
         const body = await readBody(req);
         const policy = store.updatePolicy(body);
         // ★ 规矩变了 → 通知仍在跑的活，但**不中断**。

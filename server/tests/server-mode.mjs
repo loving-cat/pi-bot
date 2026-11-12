@@ -20,6 +20,72 @@ import assert from 'node:assert/strict';
 import { WebSocket } from 'ws';
 
 const results = [];
+/**
+ * 受管执行期间，把「部门已建好」这件事接进交接服务。
+ *
+ * ★ 建组本身复用 Store 原语（成员复用、模型预检、模板展开都不变）；
+ *   这里只补上交接：绑定负责人、持久待派、通知。两条创建路（正常/模板）
+ *   共用这一个入口，避免只修一条。
+ *
+ * 非受管执行（普通聊天里建组）返回 null，调用方保持原行为。
+ */
+async function handoffCreatedDepartment({ runner, store, roomId, botId, room, goal }) {
+  const ctx = runner.currentTaskContext?.(roomId, botId) ?? null;
+  if (!ctx?.taskRunId || !ctx?.attemptId) return null;
+  if (!room?.id) return null;
+
+  const { ensureDepartmentAndAssign } = await import('../coordination/department-service.js');
+  const { createHandoffHost } = await import('../coordination/handoff-host.js');
+
+  const host = createHandoffHost({ store, taskRuns: store.taskRuns });
+  const out = await ensureDepartmentAndAssign({
+    store: store.taskRuns,
+    taskRunId: ctx.taskRunId,
+    attemptId: ctx.attemptId,
+    goal: goal ?? { requirement: room.topic || room.name, scope: '', deliverables: [] },
+    plan: { route: 'existing', departmentId: room.id, leadBotId: room.leadBotId },
+    host,
+  });
+  return out;
+}
+
+
+
+/** 申请一个一次性 nonce（D3：改安全配置除了 token 还要它）。 */
+function fetchNonce(port, token, purpose = 'policy') {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify({ purpose });
+    const req = http.request({
+      host: '127.0.0.1',
+      port,
+      path: '/api/local-nonce',
+      method: 'POST',
+      headers: {
+        host: '127.0.0.1:' + port,
+        'content-type': 'application/json',
+        'content-length': Buffer.byteLength(payload),
+        'x-pi-bot-client': 'test',
+        ...(token ? { authorization: 'Bearer ' + token } : {}),
+      },
+    }, (res) => {
+      let text = '';
+      res.on('data', (d) => { text += d; });
+      res.on('end', () => {
+        try { resolve(JSON.parse(text).nonce); } catch { resolve(null); }
+      });
+    });
+    req.on('error', reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
+/** 申请 nonce 再改策略（模拟界面点击后立刻发出那一次请求）。 */
+async function callWithNonce(port, pathname, { method = 'PATCH', token = '', body = null, purpose = 'policy' } = {}) {
+  const nonce = await fetchNonce(port, token, purpose);
+  return call(port, pathname, { method, token, body, extraHeaders: { 'x-pi-bot-nonce': nonce } });
+}
+
 async function test(name, fn) {
   try {
     await fn();
@@ -79,7 +145,7 @@ async function startServer(env, tag) {
   };
 }
 
-function call(port, pathname, { method = 'GET', token = '', host = null, body = null } = {}) {
+function call(port, pathname, { method = 'GET', token = '', host = null, body = null, extraHeaders = null } = {}) {
   return new Promise((resolve, reject) => {
     const req = http.request(
       {
@@ -92,6 +158,7 @@ function call(port, pathname, { method = 'GET', token = '', host = null, body = 
           ...(token ? { authorization: `Bearer ${token}` } : {}),
           ...(body ? { 'content-type': 'application/json' } : {}),
           ...(method !== 'GET' ? { 'x-pi-bot-client': 'test' } : {}),
+          ...(extraHeaders ?? {}),
         },
       },
       (res) => {
@@ -144,7 +211,8 @@ await test('① 本机部署：带本次启动的 token 正常放行', async () 
     assert.ok(s.localToken, '服务端应已写出 local-token 文件');
     assert.equal(await call(s.port, '/api/state', { token: s.localToken }), 200);
     assert.equal(
-      await call(s.port, '/api/policy', { method: 'PATCH', body: { dangerous: 'allow' }, token: s.localToken }),
+      // 改安全配置除了 token 还要一次性 nonce（D3）
+      await callWithNonce(s.port, '/api/policy', { body: { dangerous: 'allow' }, token: s.localToken }),
       200,
     );
   } finally {

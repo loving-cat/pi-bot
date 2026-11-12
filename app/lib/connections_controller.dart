@@ -147,7 +147,7 @@ class ConnectionsController extends ChangeNotifier {
 
   Future<String?> setEnabled(String id, bool enabled) =>
       _change(id, (api) async {
-        await api.patch('/api/mcp/${Uri.encodeComponent(id)}', {
+        await api.updateMcpServer(id, {
           'enabled': enabled,
         });
       });
@@ -160,7 +160,7 @@ class ConnectionsController extends ChangeNotifier {
       });
 
   Future<String?> remove(String id) => _change(id, (api) async {
-    await api.delete('/api/mcp/${Uri.encodeComponent(id)}');
+    await api.deleteMcpServer(id);
   });
 
   Future<String?> save(Map<String, dynamic> patch) =>
@@ -169,7 +169,7 @@ class ConnectionsController extends ChangeNotifier {
         if (id is String && id.isNotEmpty) {
           await api.patch('/api/mcp/${Uri.encodeComponent(id)}', patch);
         } else {
-          await api.post('/api/mcp', patch);
+          await api.addMcpServer(patch);
         }
       });
 
