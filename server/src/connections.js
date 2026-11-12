@@ -1,5 +1,6 @@
 /** 应用连接目录、短期验证结果和 Bot 分配；凭据由 MCP 库解析。 */
 import { testMcpServer } from './mcp.js';
+import { detectPresetAvailability, whichExecutable } from './mcp-presets.js';
 
 // 应用连接目录。
 //
@@ -74,7 +75,14 @@ export function createConnections({ store, runner, probe = testMcpServer, now = 
     list() {
       const ids = new Set(store.mcpLibrary().map((s) => s.id));
       for (const id of verified.keys()) if (!ids.has(id)) verified.delete(id);
-      return { catalog: CONNECTION_CATALOG, connections: [...ids].map(connection), limits: { maxTotal: 50, verificationTtlMs: VERIFICATION_TTL } };
+      return {
+        catalog: CONNECTION_CATALOG,
+        connections: [...ids].map(connection),
+        // ★ 内置预设的本机依赖状态：只查有没有，不下载、不安装。
+        //   界面据此给「已检测到 / 未安装」和安装说明。
+        presets: detectPresetAvailability(whichExecutable),
+        limits: { maxTotal: 50, verificationTtlMs: VERIFICATION_TTL },
+      };
     },
     async testDraft(raw) {
       if (pending.size + draftCount >= 3) return { ok: false, error: '正在验证其他连接，请稍后再试' };
