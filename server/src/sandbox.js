@@ -363,14 +363,41 @@ export function assertSafeWorkDir({ workDir, dataDir = '' }) {
   const h = real(home);
   const d = dataDir ? real(dataDir) : '';
 
-  const isSame = (a, b) => a && b && a === b;
-  const isAncestorOf = (a, b) =>
-    a && b && b.startsWith(a.endsWith('/') ? a : a + '/');
+  // ★ 比较要按平台处理。
+  //
+  //   Windows 上：路径分隔符是 ，且**大小写不敏感**（盘符尤其常见大小写不同，
+  //   还有 8.3 短名如 RUNNER~1 和长名指向同一目录）。用 POSIX 的 "/" 拼接
+  //   和 === 比较会让父目录判断永远为 false —— 于是"workDir 是 home 的上级"
+  //   这种危险配置被当成安全放过去。
+  const norm = (p) => {
+    const s = String(p ?? '').replace(/[\\/]+$/, '');
+    return process.platform === 'win32' ? s.toLowerCase() : s;
+  };
+  const sep = process.platform === 'win32' ? '\\' : '/';
+  const isSame = (a, b) => {
+    const x = norm(a);
+    const y = norm(b);
+    return Boolean(x) && x === y;
+  };
+  const isAncestorOf = (a, b) => {
+    const x = norm(a);
+    const y = norm(b);
+    if (!x || !y) return false;
+    return y.startsWith(x.endsWith(sep) ? x : x + sep);
+  };
 
   if (!w) {
     return { ok: false, reason: 'no_workdir', message: '没有工作目录，拒绝在沙箱里执行。' };
   }
-  if (isSame(w, '/') || isAncestorOf(w, h)) {
+  // 根路径按平台取：Windows 上是盘符根（C:），POSIX 上是 /
+  const rootOf = (p) => {
+    try {
+      return path.parse(p).root;
+    } catch {
+      return process.platform === 'win32' ? '' : '/';
+    }
+  };
+  if (isSame(w, rootOf(w)) || isAncestorOf(w, h)) {
     return {
       ok: false,
       reason: 'workdir_is_home_or_ancestor',

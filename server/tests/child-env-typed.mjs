@@ -70,7 +70,15 @@ function realChildEnv(kind, extra = null) {
       extra,
     }),
   });
-  assert.equal(res.status, 0, res.stderr);
+  // 失败时把 stdout/stderr 都带上：Windows CI 上曾经只报
+  // "PATH 应是固定安全值"，看不到真正原因（子进程根本起不来）
+  assert.equal(
+    res.status,
+    0,
+    '子进程启动失败 status=' + res.status
+      + ' stdout=' + JSON.stringify(res.stdout ?? '').slice(0, 200)
+      + ' stderr=' + JSON.stringify(res.stderr ?? '').slice(0, 300),
+  );
   return JSON.parse(res.stdout);
 }
 

@@ -50,30 +50,36 @@ export const CHILD_KIND = {
  * 变成一个外部可控的输入。这里只列系统目录。
  */
 function computeSafePath() {
+  // ★ 两个平台都要追加 pi-bot 自己运行时所在的目录。
+  //
+  //   Windows 上 CI runner / 用户机器上的 node 通常在
+  //   C:\Program Files\nodejs 或 nvm 的版本目录下，**不在** System32 里。
+  //   不追加的话，后台 shell 里执行 `node xxx.js` 会报
+  //   "'node' is not recognized" —— 这是个真实的功能回归。
+  const selfDir = (() => {
+    try { return path.dirname(process.execPath); } catch { return ''; }
+  })();
+
   if (process.platform === 'win32') {
-    return [
+    const parts = [
       'C:\\Windows\\System32',
       'C:\\Windows',
       'C:\\Windows\\System32\\Wbem',
       'C:\\Windows\\System32\\WindowsPowerShell\\v1.0',
-    ].join(';');
-  }
-  const parts = ['/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin'];
-  // ★ 追加 pi-bot 自己运行时所在的 bin 目录。
-  //
-  //   服务端可能跑在 nvm / volta / pyenv 这类版本管理器下（如
-  //   ~/.nvm/versions/node/v24/bin）。只用系统目录的话，子进程里
-  //   连 node / python 都找不到 —— bash 工具会大面积坏掉。
-  //
-  //   这个目录是**我们自己进程的可执行文件所在处**，不是任意可变的
-  //   PATH 环境变量，所以相对可信：攻击者要利用它，得先能替换掉
-  //   正在运行的 pi-bot 所用的 node 二进制本身（那已经等同于完全控制）。
-  try {
-    const selfDir = path.dirname(process.execPath);
+    ];
     if (selfDir && !parts.includes(selfDir)) parts.unshift(selfDir);
-  } catch {
-    // 拿不到就只用系统目录
+    return parts.join(';');
   }
+
+  const parts = ['/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin'];
+  // 服务端可能跑在 nvm / volta / pyenv 这类版本管理器下（如
+  // ~/.nvm/versions/node/v24/bin）。只用系统目录的话，子进程里
+  // 连 node / python 都找不到 —— bash 工具会大面积坏掉。
+  //
+  // 这个目录是**我们自己进程的可执行文件所在处**，不是任意可变的
+  // PATH 环境变量，所以相对可信：攻击者要利用它，得先能替换掉
+  // 正在运行的 pi-bot 所用的 node 二进制本身（那已经等同于完全控制）。
+  if (selfDir && !parts.includes(selfDir)) parts.unshift(selfDir);
   return parts.join(':');
 }
 
