@@ -112,11 +112,23 @@ await test('★ 能改变加载行为的变量一律不传', () => {
 
 await test('★ PATH 不继承宿主（含宿主里那个 evil 目录）', () => {
   const env = realChildEnv('bash');
-  // Windows 上环境变量名大小写不敏感，子进程可能拿到 Path / PATH
-  const gotPath = env.PATH ?? env.Path ?? '';
-  assert.equal(gotPath, safePath(), 'PATH 应是固定安全值');
-  assert.ok(!gotPath.includes('evil-bin'), '不该含宿主 PATH 里的目录');
-  // 平台相关的系统目录断言
+  // ★ Windows 上环境变量**名字大小写不敏感**，子进程回来的键可能是
+  //   PATH / Path / path 中的任意一种（取决于系统环境块的写法）。
+  //   只试 PATH 和 Path 两种会在某些 runner 上拿到 undefined —— CI 上
+  //   就是踩了这个。改成不区分大小写地找键，Windows 上值也不区分大小写比较。
+  const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH');
+  const gotPath = key ? String(env[key]) : '';
+  const expect = safePath();
+  const samePath = process.platform === 'win32'
+    ? gotPath.toLowerCase() === expect.toLowerCase()
+    : gotPath === expect;
+  assert.ok(
+    samePath,
+    'PATH 应是固定安全值。实际: ' + JSON.stringify(gotPath).slice(0, 300)
+      + ' 期望: ' + JSON.stringify(expect).slice(0, 300),
+  );
+
+  assert.ok(!gotPath.toLowerCase().includes('evil-bin'), '不该含宿主 PATH 里的目录');
   if (process.platform === 'win32') {
     assert.match(gotPath, /System32/i, '要含 Windows 系统目录');
   } else {
