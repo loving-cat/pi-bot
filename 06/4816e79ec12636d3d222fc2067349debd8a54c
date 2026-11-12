@@ -1,0 +1,26 @@
+README.md
+  h_c2e638ff76b3b9 254,297,310-317
+app/lib/connections_models.dart
+  h_c2e638ff76b3b9 122-156,161,166-168,182-188
+app/lib/l10n/strings/panel.dart
+  h_c2e638ff76b3b9 116-120,329-333
+app/lib/models.dart
+  h_c2e638ff76b3b9 625,655-663,694
+app/lib/widgets/connections_cards.dart
+  h_c2e638ff76b3b9 91,98-100,124-142,173-177,264-397
+app/lib/widgets/connections_section.dart
+  h_c2e638ff76b3b9 341-344
+docs/ARCHITECTURE.md
+  h_c2e638ff76b3b9 126-130,146
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "064816e79ec12636d3d222fc2067349debd8a54c",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
