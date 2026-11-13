@@ -350,11 +350,23 @@ try {
 
   $stageServer = Join-Path $stageOut "server"
   New-Item -ItemType Directory -Path $stageServer -Force | Out-Null
-  foreach ($item in @("src", "tools", "package.json", "package-lock.json", ".env.example")) {
+  foreach ($item in @("src", "tools", "resources", "package.json", "package-lock.json", ".env.example")) {
     $from = Join-Path $serverSrc $item
     if (Test-Path -LiteralPath $from) {
       Copy-Item -LiteralPath $from -Destination $stageServer -Recurse -Force
     }
+  }
+
+  # Windows sandbox launcher: required when a bot has MCP attached. Missing it
+  # is fail-closed (shell refused), not a crash -- but shipping without it
+  # would silently disable the feature, so warn loudly here.
+  $sandboxExe = Join-Path $stageServer "resources\pibot-sandbox.exe"
+  if (Test-Path -LiteralPath $sandboxExe) {
+    Write-Host "bundled pibot-sandbox.exe"
+  } else {
+    Write-Host "WARNING: server/resources/pibot-sandbox.exe is missing." -ForegroundColor Yellow
+    Write-Host "         Bots with MCP attached will refuse shell commands on this build." -ForegroundColor Yellow
+    Write-Host "         Build it with scripts/build-sandbox-win.ps1 (needs Rust + MSVC)." -ForegroundColor Yellow
   }
 
   if (-not $SkipDeps) {

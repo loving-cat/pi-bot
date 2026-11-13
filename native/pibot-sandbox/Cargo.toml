@@ -1,0 +1,33 @@
+[package]
+name = "pibot-sandbox"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "pi-bot 的 Windows 沙箱启动器：AppContainer + Job Object"
+
+[[bin]]
+name = "pibot-sandbox"
+path = "src/main.rs"
+
+[dependencies]
+# windows-sys 与 windows 同仓库、同许可（MIT OR Apache-2.0）。
+# 这里选 -sys 版：我们要的是一层薄 FFI（CreateProcessW 的
+# PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES 需要手工填属性块），
+# 用 typed 包装反而绕远。
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_Security_Isolation",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Console",
+  "Win32_System_LibraryLoader",
+] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+panic = "abort"
+strip = true

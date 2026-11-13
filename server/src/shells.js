@@ -22,6 +22,8 @@ import {
 } from './child-env-typed.js';
 import { config } from './config.js';
 import { store } from './store.js';
+import { probeSandbox, wrapCommand } from './sandbox.js';
+import { windowsSandboxMessage } from './sandbox-win.js';
 
 
 import { newId, now, log } from './util.js';
@@ -60,6 +62,21 @@ export function trimChunks(entry, maxBytes) {
 export const MAX_SHELLS = 20;
 export const MAX_BUFFER_BYTES = 64 * 1024;
 export const IDLE_MS = 30 * 60 * 1000;
+
+/**
+ * 这个 bot 是不是挂了 MCP。
+ *
+ * 挂了 MCP 的 bot 已经具备"驱动外部程序"的能力，它自己的 shell 也不该
+ * 能碰到用户凭据 —— 这条判定与 sandboxed-shell.js 里的口径一致。
+ * 查不到就当作**有**（fail-closed：宁可多隔离一层）。
+ */
+function hasMcpFor(botId) {
+  try {
+    return store.mcpServersFor(botId).length > 0;
+  } catch {
+    return true;
+  }
+}
 
 export class ShellRegistry {
   constructor({ maxShells = MAX_SHELLS, maxBytes = MAX_BUFFER_BYTES, idleMs = IDLE_MS } = {}) {
@@ -110,12 +127,61 @@ export class ShellRegistry {
     );
     ensureInstanceDirs(instanceDir);
 
+    // ★ 挂了 MCP 的 bot：后台命令也要走沙箱。
+    //
+    //   这里原来直接 `spawn(text, {shell: true})`，等于完全绕过隔离：
+    //   同一个 bot 的 bash 工具读不到 token，但 run_background 一句话就读到了（实测）。
+    //   只有挂了 MCP 的 bot 才需要隔离（与其他 shell 工具的判定保持一致）；
+    //   没挂 MCP 的 bot 保持原行为。
+    const needsSandbox = hasMcpFor(botId);
+    let spawnFile = text;
+    let spawnArgs = [];
+    let spawnShell = true;
+    let sandboxCleanup = null;
+    let spawnCwd = cwd;
+    let spawnEnv = buildChildEnv({
+      kind: 'bash',
+      homeDir: instanceHomeDir(instanceDir),
+      tmpDir: instanceTmpDir(instanceDir),
+      locale: hostLocale(),
+      // 调用方显式给的 env（后台命令的 extra）仍然生效，
+      // 但敏感键由 buildChildEnv 再挡一次。
+      extra: env || null,
+    });
+
+    if (needsSandbox) {
+      // 后台命令统一用 powershell 跑：spec §18 的 Windows v0 只交付 PowerShell，
+      // 而非 Windows 上 wrapCommand 本来就用 /bin/sh -c，两者行为一致。
+      const wrapped = wrapCommand({
+        command: text,
+        workDir: cwd,
+        tmpDir: instanceTmpDir(instanceDir),
+        instanceDir,
+        dataDir: config.dataDir,
+      });
+      if (!wrapped.ok) {
+        const reason = wrapped.message
+          || (process.platform === 'win32'
+            ? windowsSandboxMessage(wrapped.reason, wrapped.detail)
+            : wrapped.reason)
+          || 'unknown';
+        return { id: null, pid: null, error: `沙箱不可用，已拒绝后台执行：${reason}` };
+      }
+      spawnFile = wrapped.file;
+      spawnArgs = wrapped.args;
+      spawnShell = false;
+      sandboxCleanup = wrapped.cleanup ?? null;
+      // Windows 启动器自己管 cwd / env，Node 再传会和它打架
+      if (process.platform === 'win32') {
+        spawnCwd = undefined;
+        spawnEnv = undefined;
+      }
+    }
+
     let child;
     try {
-      // shell: true —— 交给系统 shell 解析管道/重定向/引号；
-      // 自己拼 argv 会在 Windows 上把引号转义成字面量（cmd 不认反斜杠转义）。
-      child = spawn(text, {
-        cwd,
+      child = spawn(spawnFile, spawnArgs, {
+        cwd: spawnCwd,
         // ★ shell 子进程用类型化白名单：默认什么都不继承。
         //
         //   原来是 childEnv(process.env, ...) —— 继承宿主环境再屏蔽若干危险项，
@@ -124,20 +190,17 @@ export class ShellRegistry {
         //
         //   HOME 和 TMPDIR 指向这个 bot 实例自己的目录，不碰用户真实的
         //   ~ 和宿主 /tmp —— 写进 rc 文件、共享临时目录这两条路都断了。
-        env: buildChildEnv({
-          kind: 'bash',
-          homeDir: instanceHomeDir(instanceDir),
-          tmpDir: instanceTmpDir(instanceDir),
-          locale: hostLocale(),
-          // 调用方显式给的 env（后台命令的 extra）仍然生效，
-          // 但敏感键由 buildChildEnv 再挡一次。
-          extra: env || null,
-        }),
+        //
+        //   needsSandbox 时 spawnEnv 为 undefined 只发生在 Windows
+        //   （启动器自己造环境）。
+        env: spawnEnv,
         windowsHide: true,
-        shell: true,
+        // 沙箱包装已经带了 shell，不能再套一层
+        shell: spawnShell,
         stdio: ['pipe', 'pipe', 'pipe'],
       });
     } catch (err) {
+      try { sandboxCleanup?.(); } catch { /* 已删 */ }
       return { id: null, pid: null, error: String(err?.message || err) };
     }
 
@@ -158,6 +221,8 @@ export class ShellRegistry {
       truncated: false,
       chunks: [],
       waiters: [],
+      // Windows 沙箱的 cmd 文件清理函数（非 Windows / 无沙箱时为 null）
+      sandboxCleanup,
     };
     this.shells.set(id, entry);
 
@@ -178,6 +243,8 @@ export class ShellRegistry {
       entry.exitCode = code;
       entry.signal = signal ?? null;
       entry.endedAt = now();
+      // 沙箱的 cmd 文件由启动器读走后自己删；这里兜一次底
+      try { entry.sandboxCleanup?.(); } catch { /* 已删 */ }
       this.#notify(entry);
     };
     child.on('exit', finish);

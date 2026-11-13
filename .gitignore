@@ -72,3 +72,10 @@ graphify-out/
 
 # Android/Gradle 构建产物（曾误提交过一份 130KB 的报告）
 app/android/build/
+
+# Rust 启动器构建产物（native/pibot-sandbox/target）
+native/*/target/
+
+# Windows 沙箱启动器产物（scripts/build-sandbox-win.ps1 生成，随发版编译）
+server/resources/pibot-sandbox.exe
+server/resources/pibot-sandbox.sha256

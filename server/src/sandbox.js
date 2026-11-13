@@ -13,9 +13,10 @@
  *
  *   macOS  —— sandbox-exec + 自写 Seatbelt profile（默认 deny）
  *   Linux  —— bwrap（bubblewrap）
- *   Windows —— **不实现**：直接拒绝执行，提示"沙箱未就绪"。
- *              宁可不能跑，也不能在没隔离的情况下跑一条已经被判定为
- *              "需要额外防护"的命令。
+ *   Windows —— 仓库自带的 `pibot-sandbox.exe`（AppContainer + Job Object）
+ *             Node 拼不了 `PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES`，
+ *             所以隔离逻辑在 native/pibot-sandbox（Rust），这里只调它。
+ *             细节与实测坑见 docs/WINDOWS-SANDBOX.md。
  *
  * ## fail-closed
  *
@@ -27,6 +28,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+
+import { probeWindowsSandbox, wrapWindowsCommand } from './sandbox-win.js';
 
 /** 沙箱不可用的原因。 */
 export const SANDBOX_UNAVAILABLE = {
@@ -429,7 +432,7 @@ export function assertSafeWorkDir({ workDir, dataDir = '' }) {
  *
  * @returns {{available: boolean, kind: string, reason?: string}}
  */
-export function probeSandbox() {
+export function probeSandbox({ instanceDir = '' } = {}) {
   if (process.platform === 'darwin') {
     const bin = '/usr/bin/sandbox-exec';
     if (!fs.existsSync(bin)) {
@@ -443,6 +446,12 @@ export function probeSandbox() {
       return { available: false, kind: 'bwrap', reason: SANDBOX_UNAVAILABLE.NO_BINARY };
     }
     return { available: true, kind: 'bwrap', binary: found };
+  }
+  if (process.platform === 'win32') {
+    // Windows 走仓库自带的启动器（AppContainer + Job Object）。
+    // 这里**同步**探测：检查 exe 在、版本对得上、（给了 instanceDir 时）
+    // selfcheck 过。任何一环失败 → available:false，上层拒绝执行。
+    return probeWindowsSandbox({ instanceDir });
   }
   return { available: false, kind: 'none', reason: SANDBOX_UNAVAILABLE.UNSUPPORTED_PLATFORM };
 }
@@ -459,14 +468,23 @@ export function probeSandbox() {
  * @returns {{ok: true, file: string, args: string[]} | {ok: false, reason: string}}
  */
 export function wrapCommand({ command, workDir, tmpDir, denyPaths = [], instanceDir = '', dataDir = '' }) {
-  const probe = probeSandbox();
-  if (!probe.available) return { ok: false, reason: probe.reason };
+  const probe = probeSandbox({ instanceDir });
+  if (!probe.available) {
+    return { ok: false, reason: probe.reason, detail: probe.detail };
+  }
 
   // ★ 先拒绝"工作目录是 home / 包含数据目录"这种配置。
   //   沙箱在这种布局下挡不住凭据目录，与其依赖每条 deny 都写对，不如不让跑。
   const safe = assertSafeWorkDir({ workDir, dataDir });
   if (!safe.ok) {
     return { ok: false, reason: safe.reason, message: safe.message };
+  }
+
+  if (probe.kind === 'appcontainer') {
+    // Windows：交给 pibot-sandbox.exe。
+    // 拒绝规则的权威实现在启动器里（它要按 canonical 路径判，还要处理
+    // junction / 8.3 短名）；这里只把 dataDir 传下去让它一并拒。
+    return wrapWindowsCommand({ command, workDir, instanceDir, dataDir });
   }
 
   // 路径里有引号/控制字符时也不玩 —— 拼进 SBPL 是注入面

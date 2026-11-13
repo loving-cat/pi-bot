@@ -785,7 +785,18 @@ class AppState extends ChangeNotifier {
     connect();
   }
 
-  /// 服务端没显式配数据目录时的默认位置（和服务端 config.js 的 userDataDir 对齐）。
+  /// 服务端没显式配数据目录时的默认位置。
+  ///
+  /// ★ 必须和 server/src/config.js 的 `userDataDir()` **逐字对齐**，
+  ///   否则桌面端读不到 local-token，卡在「正在连接本机服务端…」。
+  ///
+  ///   Windows 上这两者曾经写歪了：服务端写 `%LOCALAPPDATA%/pi-bot/data`
+  ///   （= C:/Users/X/AppData/**Local**/pi-bot/data），桌面端找
+  ///   `%APPDATA%/pi-bot/data`（= C:/Users/X/AppData/**Roaming**/pi-bot/data）。
+  ///   Windows 上同一个产品名在 Local 与 Roaming 下各有一个惯用位置，
+  ///   看代码都是"AppData 下的 pi-bot"，实测才知道是两个不同的目录。
+  ///   现象：服务端起来了、/health 200、token 文件也确实在，
+  ///   但桌面端永远拿不到 token，UI 一直转圈。
   ///
   /// 只在用户没填 serverDataDir 时用作**候选**：读不到就返回 null，
   /// 由 401 兜底引导用户去填 token。
@@ -796,10 +807,24 @@ class AppState extends ChangeNotifier {
     return switch (Platform.operatingSystem) {
       'macos' => '$home/Library/Application Support/pi-bot/data',
       'windows' => () {
-          final appData = Platform.environment['APPDATA'] ?? '$home/AppData/Roaming';
+          // 跟服务端 config.js 用同一个环境变量（LOCALAPPDATA）；
+          // 拿不到才退回 Roaming —— 至少不会因为变量缺失直接放弃。
+          final localAppData = Platform.environment['LOCALAPPDATA'];
+          if (localAppData != null && localAppData.trim().isNotEmpty) {
+            return '${localAppData.trim()}/pi-bot/data';
+          }
+          final appData =
+              Platform.environment['APPDATA'] ?? '$home/AppData/Roaming';
           return '$appData/pi-bot/data';
         }(),
-      _ => '$home/.local/share/pi-bot/data',
+      // 服务端优先 XDG_DATA_HOME，这里保持一致
+      _ => () {
+          final xdg = Platform.environment['XDG_DATA_HOME'];
+          final base = (xdg != null && xdg.trim().isNotEmpty)
+              ? xdg.trim()
+              : '$home/.local/share';
+          return '$base/pi-bot/data';
+        }(),
     };
   }
 

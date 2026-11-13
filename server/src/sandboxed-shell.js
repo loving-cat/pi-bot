@@ -35,6 +35,7 @@ function realPath(p) {
   try { return fs.realpathSync(p); } catch { return p; }
 }
 import { wrapCommand } from './sandbox.js';
+import { windowsSandboxMessage } from './sandbox-win.js';
 
 /**
  * 造一个 BashOperations：每条命令都在沙箱里跑。
@@ -92,18 +93,42 @@ export function createSandboxedOperations({ workDir, instanceDir, dataDir }) {
         extra: null,
       });
 
+      // ★ Windows 分支有两处不同：
+      //   · 启动器自己设 cwd（AppContainer 的 AC 目录）和整份环境变量，
+      //     Node 再传一份会和它打架（尤其 cwd 一传就又回到"用户目录不可进"）。
+      //   · 启动器读走 cmd 文件后会删；Node 在收尾时再删一次兜底。
+      const isWindowsWrap = process.platform === 'win32';
+      const spawnCwd = isWindowsWrap ? undefined : effectiveCwd;
+      const spawnEnv = isWindowsWrap ? undefined : env;
+
+// 注意：Windows 分支的 stdout 由启动器接管，stdin 必须给 pipe 而不是 ignore。
+      //
+      // ★ 为什么不能给 'ignore'（实测）：/
+      //   'ignore' 会让子进程的 fd0 变成无效句柄。MSYS2 的 git 启动期做
+      //   sanitize_stdfds()：发现 0/1/2 无效就去开 /dev/null 补上，
+      //   而 AppContainer 里打开 NUL 被拒 → 每条 git 命令都死在
+      //   "could not open '/dev/null'"。
+      //   给 'pipe' 之后 fd0 有效，git 不再走那条路（同一台机器实测）。
+      //
+      //   代价：管道需要有人读。这里让它自然关闭（不写 stdin），
+      //   子进程读 stdin 会得到 EOF。Node 侧在 close 时 destroy。
       return new Promise((resolve) => {
         let child;
         try {
           child = spawn(wrapped.file, wrapped.args, {
-            cwd: effectiveCwd,
-            env,
-            stdio: ['ignore', 'pipe', 'pipe'],
-            // 沙箱包装已经带了 /bin/sh -c，不能再套一层
+            cwd: spawnCwd,
+            env: spawnEnv,
+            stdio: ['pipe', 'pipe', 'pipe'],
+            // 沙箱包装已经带了 shell，不能再套一层
             shell: false,
           });
+          // 我们从不往 stdin 写东西；立即结束它，让子进程读到 EOF。
+          // 'error' 必须吞掉：进程已经退出时 write 会抛 EPIPE。
+          child.stdin?.on('error', () => {});
+          child.stdin?.end();
         } catch (err) {
           onData(Buffer.from(`[沙箱启动失败] ${err?.message || err}\n`, 'utf8'));
+          try { wrapped.cleanup?.(); } catch { /* 已删 */ }
           resolve({ exitCode: 1 });
           return;
         }
@@ -119,10 +144,14 @@ export function createSandboxedOperations({ workDir, instanceDir, dataDir }) {
         child.on('error', (err) => {
           onData(Buffer.from(`[沙箱进程错误] ${err?.message || err}\n`, 'utf8'));
           options.signal?.removeEventListener('abort', onAbort);
+          try { wrapped.cleanup?.(); } catch { /* 已删 */ }
           resolve({ exitCode: 1 });
         });
         child.on('close', (code, signal) => {
           options.signal?.removeEventListener('abort', onAbort);
+          // Windows 的 cmd 文件由启动器读走后自己删；这里兜一次底，
+          // 防止启动器根本没起来（CreateProcess 失败之类）时留下临时文件。
+          try { wrapped.cleanup?.(); } catch { /* 已删 */ }
           if (options.signal?.aborted) resolve({ exitCode: 130 });
           // 契约：被信号杀掉报 128 + signal 号
           else if (code === null && signal) resolve({ exitCode: 128 + (os.constants.signals[signal] ?? 0) });
@@ -174,10 +203,21 @@ export function buildSandboxedShellTools({ bot, workDir, dataDir, tools, pi }) {
   const out = [];
 
   if (wantsBash) {
-    const tool = createRefusingOrSandboxed('bash', pi.createBashTool, {
-      workDir, instanceDir, dataDir, pi,
-    });
-    if (tool) out.push(tool);
+    // spec §18：v0 只交付 PowerShell。Git Bash 在 AppContainer 里能起
+    // （实测 `bash -c 'pwd'` 有输出），但 MSYS2 的 /dev/null、/tmp、/etc/passwd
+    // 生成都没验证过，git 在 bash 里也会退化。宁可明确拒绝，不留半坏状态。
+    if (process.platform === 'win32') {
+      out.push(refusingTool(
+        'bash',
+        'Windows 上这个 bot 的 bash 工具暂不提供（沙箱 v0 只交付 PowerShell）。'
+        + '请改用 powershell 工具；需要 sh 语法时显式调用 bash.exe。',
+      ));
+    } else {
+      const tool = createRefusingOrSandboxed('bash', pi.createBashTool, {
+        workDir, instanceDir, dataDir, pi,
+      });
+      if (tool) out.push(tool);
+    }
   }
   if (wantsPowerShell) {
     // powershell 只在 Windows 存在；非 Windows 上 pi 就算有工厂也不该用
@@ -194,8 +234,10 @@ export function buildSandboxedShellTools({ bot, workDir, dataDir, tools, pi }) {
 }
 
 /**
- * Windows 上不实现隔离实现 → 直接给一个"永远拒绝执行"的工具。
+ * 造一个"永远拒绝执行"的工具。
  *
+ * 用于两种情况：沙箱真的不可用（启动器缺失 / 平台不支持 / selfcheck 失败），
+ * 以及 Windows 上的 bash（v0 只交付 PowerShell，见 spec §18）。
  * 保持工具名存在（模型能看到它、知道它被禁用了），
  * 但任何调用都返回明确的拒绝，而不是悄悄退回无沙箱执行。
  */
@@ -226,17 +268,15 @@ function createRefusingOrSandboxed(name, factory, { workDir, instanceDir, dataDi
   if (typeof factory !== 'function') {
     return refusingTool(name, `pi 没有提供 ${name} 工具工厂。`);
   }
-  if (process.platform === 'win32') {
-    return refusingTool(
-      name,
-      '当前平台（Windows）的沙箱本轮未实现，这个 bot 挂了 MCP，为安全起见禁止执行 shell 命令。',
-    );
-  }
-  const probe = probeSandboxForShell();
+  // ★ 把 instanceDir 传进去：Windows 侧 probe 会对这个实例跑 selfcheck
+  //   （建 profile + 授 ACE），失败就 fail-closed。
+  const probe = probeSandboxForShell({ instanceDir });
   if (!probe.available) {
     return refusingTool(
       name,
-      `沙箱不可用（${probe.reason}），这个 bot 挂了 MCP，为安全起见禁止执行 shell 命令。`,
+      process.platform === 'win32'
+        ? windowsSandboxMessage(probe.reason, probe.detail)
+        : `沙箱不可用（${probe.reason}），这个 bot 挂了 MCP，为安全起见禁止执行 shell 命令。`,
     );
   }
   const operations = createSandboxedOperations({ workDir, instanceDir, dataDir });
@@ -249,8 +289,8 @@ function createRefusingOrSandboxed(name, factory, { workDir, instanceDir, dataDi
 
 /** 简化包装，避免在模块顶层 import store（会造成循环依赖）。 */
 let _probeSandbox = null;
-function probeSandboxForShell() {
-  return _probeSandbox();
+function probeSandboxForShell(opts) {
+  return _probeSandbox(opts);
 }
 
 /** 由 index.js 在启动时注入，避免循环依赖。 */

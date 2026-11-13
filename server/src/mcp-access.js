@@ -1,6 +1,8 @@
 /** 外部工具分类与会话授权快照；配置或分配变化后旧会话停止调用。 */
 import { createHash } from 'node:crypto';
 
+import { windowsSandboxMessage } from './sandbox-win.js';
+
 const RESOURCE_TOOLS = new Set(['list_mcp_resources', 'list_mcp_resource_templates', 'read_mcp_resource']);
 export function isExternalMcpTool(name) {
   return typeof name === 'string' && (name.startsWith('mcp__') || RESOURCE_TOOLS.has(name));
@@ -18,14 +20,20 @@ export function mcpAccessSignature(bot, library = []) {
  * （它们不属于任何具体 server 的 tools/list）。
  */
 /** 沙箱不可用时给用户的话。 */
-export function sandboxUnavailableMessage(reason) {
+export function sandboxUnavailableMessage(reason, detail = '') {
   if (reason === 'unsupported_platform') {
-    return '当前平台的沙箱未就绪（Windows 本轮不提供隔离），这个 bot 挂了 MCP，'
-      + '为安全起见拒绝执行 shell 命令。去掉 MCP 或换到 macOS / Linux 再试。';
+    return '当前平台没有可用的沙箱（macOS 用 sandbox-exec，Linux 用 bwrap，'
+      + 'Windows 用仓库自带的 pibot-sandbox.exe），这个 bot 挂了 MCP，'
+      + '为安全起见拒绝执行 shell 命令。';
   }
   if (reason === 'no_binary') {
-    return '沙箱程序不存在（macOS 需要 sandbox-exec，Linux 需要 bwrap），'
-      + '为安全起见拒绝执行。装上 bubblewrap 后重试。';
+    return '沙箱程序不存在：macOS 需要系统自带 sandbox-exec，Linux 需要 bubblewrap（bwrap），'
+      + 'Windows 需要 pibot-sandbox.exe（随发行包提供，源码在 native/pibot-sandbox）。'
+      + '为安全起见拒绝执行。';
+  }
+  // Windows 启动器自己的机读错误码，文案在 sandbox-win.js 里维护
+  if (typeof reason === 'string' && /^[A-Z0-9_]+$/.test(reason)) {
+    return windowsSandboxMessage(reason, detail);
   }
   return '沙箱启动失败（' + reason + '），为安全起见拒绝执行，不降级成无沙箱运行。';
 }

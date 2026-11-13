@@ -58,15 +58,43 @@ function runSandboxed(command) {
 
 await test('平台探测：能识别出用的哪种沙箱', () => {
   assert.equal(typeof probe.available, 'boolean');
-  assert.ok(['seatbelt', 'bwrap', 'none'].includes(probe.kind));
+  assert.ok(['seatbelt', 'bwrap', 'appcontainer', 'none'].includes(probe.kind));
   if (process.platform === 'darwin') assert.equal(probe.kind, 'seatbelt');
   if (process.platform === 'linux') assert.equal(probe.kind, 'bwrap');
+  // ★ Windows 上是 appcontainer（仓库自带的 pibot-sandbox.exe）。
+  //   启动器没编译时 kind 仍是 appcontainer、available 为 false ——
+  //   那是 fail-closed，不是"平台不支持"。
+  if (process.platform === 'win32') assert.equal(probe.kind, 'appcontainer');
 });
 
-await test('★ Windows 上不支持 → 有明确的拒绝提示（不是静默放行）', () => {
+await test('★ Windows 上沙箱不可用时给的是拒绝提示（不是静默放行）', () => {
   const msg = sandboxUnavailableMessage('unsupported_platform');
   assert.match(msg, /拒绝执行/);
-  assert.match(msg, /Windows/);
+  assert.match(msg, /沙箱/);
+});
+
+await test('★ Windows 启动器错误码翻成人话', async () => {
+  const { windowsSandboxMessage } = await import('../src/sandbox-win.js');
+  const cases = [
+    ['no_binary', /启动器/],
+    ['launcher_version_mismatch', /版本/],
+    ['PROFILE_FAILED', /AppContainer/],
+    ['WORKDIR_IS_DRIVE_ROOT', /盘符根/],
+    ['WORKDIR_IS_UNC', /网络路径/],
+    ['JOB_FAILED', /作业对象|拒绝执行/],
+  ];
+  for (const [code, re] of cases) {
+    assert.match(windowsSandboxMessage(code), re, code);
+  }
+});
+
+await test('★ Windows profile 名按实例派生且稳定', async () => {
+  const { profileNameFor } = await import('../src/sandbox-win.js');
+  const a = profileNameFor('C:\\data\\instances\\a');
+  const b = profileNameFor('C:\\data\\instances\\b');
+  assert.notEqual(a, b, '两个实例必须拿到不同的 profile');
+  assert.equal(a, profileNameFor('C:\\data\\instances\\a'), '同一实例重启后 profile 必须一样');
+  assert.match(a, /^pi-bot\.sbx\.[A-Za-z0-9_-]+\.[0-9a-f]{12}$/);
 });
 
 await test('沙箱不可用时给的是拒绝提示，不是空串', () => {

@@ -60,6 +60,7 @@ const TESTS = [
   'child-env-typed',
   'local-nonce',
   'sandbox',
+  'sandbox-win',
   'change-watch',
   'artifacts',
   'dm',

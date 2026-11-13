@@ -19,6 +19,7 @@ import { newId, now, readJson, writeJsonAtomic, insertionPoint, log } from './ut
 import { normalizeRules } from './shell-policy.js';
 import { sanitizeMemoryText } from './memory-sanitize.js';
 import { TaskRunStore } from './tasks/task-run-store.js';
+import { defaultWindowsInstanceDir, teardownWindowsInstance } from './sandbox-win.js';
 
 const STATE_FILE = path.join(config.dataDir, 'state.json');
 const ROOMS_DIR = path.join(config.dataDir, 'rooms');
@@ -684,6 +685,23 @@ export class Store {
     }
     this.scheduleSave();
     bus.emit('event', { t: 'bot.deleted', botId: id });
+    // ★ Windows 沙箱的收尾：撤销这个实例工作目录上的 ACE，并删掉它的
+    //   AppContainer profile。不在这里做的话，用户删掉的 bot 会在
+    //   `%LOCALAPPDATA%\Packages` 下留一堆 profile，工作目录上留一堆 ACE。
+    //
+    //   失败只记日志：删除 bot 本身已经成功，不该因为收尾失败而回滚。
+    //   泄漏的 ACE 不会变成"看起来能用其实没隔离" —— 下次启动仍然要过
+    //   selfcheck。不过 **工作目录是全局的**（config.workspace），所以
+    //   这里不能 revoke 它（别的 bot 还在用），只删 profile。
+    try {
+      const instanceDir = defaultWindowsInstanceDir(config.dataDir, id);
+      const r = teardownWindowsInstance({ instanceDir });
+      if (!r.ok && !r.skipped) {
+        log('sandbox', `实例清理未完全成功 bot=${id}: ${JSON.stringify(r.steps)}`);
+      }
+    } catch (err) {
+      log('sandbox', `实例清理抛错 bot=${id}: ${err?.message || err}`);
+    }
     return { id };
   }
 

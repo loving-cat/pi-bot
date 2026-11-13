@@ -66,6 +66,24 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts/tests/pack-windows-test.ps1
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts/tests/pack-windows-setup-test.ps1
 
+  native:
+    name: native launcher (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The Windows sandbox launcher (native/pibot-sandbox) is Rust. It is not
+      # required to build the app, but if the crate stops compiling we would
+      # only find out on a release machine, and a missing launcher silently
+      # turns into "shell refused" for every bot with MCP attached.
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build launcher
+        working-directory: native/pibot-sandbox
+        run: cargo build --release
+      - name: Version matches the Node side
+        working-directory: native/pibot-sandbox
+        run: |
+          node ../../server/tools/check-launcher-version.mjs target/release/pibot-sandbox.exe
+
   app:
     name: app analyze + test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

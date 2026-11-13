@@ -117,6 +117,11 @@ try {
   Set-Content -LiteralPath (Join-Path $server "package-lock.json") -Value '{"lockfileVersion":3}' -Encoding Ascii
   Set-Content -LiteralPath (Join-Path $server "src\index.js") -Value "fixture server version one`n" -Encoding Ascii
   Set-Content -LiteralPath (Join-Path $server "tools\check.mjs") -Value "fixture tool`n" -Encoding Ascii
+  # server/resources carries the Windows sandbox launcher (native/pibot-sandbox).
+  # The pack script copies it when present and warns (does not fail) when absent.
+  New-Item -ItemType Directory -Path (Join-Path $server "resources") -Force | Out-Null
+  Set-Content -LiteralPath (Join-Path $server "resources\pibot-sandbox.exe") -Value "fixture launcher`n" -Encoding Ascii
+  Set-Content -LiteralPath (Join-Path $server "resources\pibot-sandbox.sha256") -Value "0000  pibot-sandbox.exe" -Encoding Ascii
   Set-Content -LiteralPath (Join-Path $server ".env.example") -Value "FIXTURE=1`n" -Encoding Ascii
   Set-Content -LiteralPath (Join-Path $server ".env") -Value "TOKEN=fixture`n" -Encoding Ascii
   $packageBefore = Get-Content -LiteralPath (Join-Path $server "package.json") -Raw
@@ -303,6 +308,8 @@ if (process.env.PACK_PLANT === "dotenv") fs.writeFileSync(".env", "TOKEN=fixture
   Assert-True ((Read-Norm (Join-Path $dist "server\src\index.js")) -eq "fixture server version one") "server entry missing"
   Assert-True (Test-Path -LiteralPath (Join-Path $dist "server\node_modules\installed.txt")) "deps were not installed"
   Assert-True (Test-Path -LiteralPath (Join-Path $dist "server\.env.example")) "env example missing"
+  Assert-True (Test-Path -LiteralPath (Join-Path $dist "server\resources\pibot-sandbox.exe")) "sandbox launcher missing"
+  Assert-True ((Read-Norm (Join-Path $dist "server\resources\pibot-sandbox.exe")) -eq "fixture launcher") "sandbox launcher changed"
   Assert-True (-not (Test-Path -LiteralPath (Join-Path $dist "server\.env"))) "server .env was shipped"
   Assert-True ((Get-Content -LiteralPath (Join-Path $dist "server\package-lock.json") -Raw).Contains("lockfileVersion")) "lockfile missing"
   Assert-True ((Read-Norm (Join-Path $fixture "dist\keep.txt")) -eq "preserve this file") "keep file changed"

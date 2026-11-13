@@ -266,3 +266,7 @@ $env:PUB_HOSTED_URL = 'https://pub.dev'; flutter analyze --no-pub
    预编译的官方 `node.exe` 一般只含构建机自己的路径，不包含打包者的用户目录。
 7. **真实的 `flutter build windows` 只能在装了 Visual Studio 的 Windows 上验证**。
    当前自动化测试使用假的 `flutter` / `npm` 和合成 PE，证明分支、回滚和扫描，不证明链接器产物。
+8. **沙箱启动器需要 Rust 工具链单独构建**：`server/resources/pibot-sandbox.exe`
+   不在仓库里（`scripts/build-sandbox-win.ps1` 生成）。打包机没装 Rust 时
+   仍能出包，但**挂了 MCP 的 bot 在那些机器上会 fail-closed 拒绝 shell**。
+   细节、实测坑与验收见 [WINDOWS-SANDBOX.md](WINDOWS-SANDBOX.md)。
