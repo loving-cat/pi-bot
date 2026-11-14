@@ -19,6 +19,7 @@ import { capacityError } from './model-capacity.js';
 import { resolveBotModelSelection } from './model-dispatch.js';
 import { store } from './store.js';
 import { policyChange } from './policy-version.js';
+import { ensureLegacyGrant } from './grant-gate.js';
 import {
   deleteAttachments,
   referencedAttachmentIds,
@@ -361,6 +362,27 @@ export function hostAllowed(hostHeader) {
 }
 
 export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ log }) }) {
+  /**
+   * 规矩变更后重发迁移授权。
+   *
+   * 为什么必须在这里做：迁移授权的 `policyRevision` 钉在签发那一刻的规矩上，
+   * 规矩一变网关就会按 `policy_changed` 拒掉一切 —— 用户把危险动作改成
+   * 「只读」之后连读文件都不行了（实测过）。
+   *
+   * 重发成「新规矩允许的那一组」是合法的：这次规矩变更是**用户在 App 里
+   * 亲手改的**，符合规格 §6.1「授权根只能来自已认证用户交互」。
+   * 它不扩权 —— 新授权描述的就是新规矩本身。
+   */
+  function refreshLegacyGrantsForPolicy() {
+    return ensureLegacyGrant({
+      store,
+      policy: store.policy(),
+      policyRevision: store.policyVersion(),
+      botIds: store.listBots().map((b) => b.id),
+      chiefBotId: store.mainBot()?.id ?? null,
+    });
+  }
+
   const taskRunRoutes = createTaskRunRoutes({ store, runner });
   const httpRequestReceipts = createRequestReceipts({ dir: path.join(config.dataDir, 'task-requests') });
   const requestResultService = createRequestResultService({ receipts: httpRequestReceipts, taskRuns: store.taskRuns });
@@ -1356,6 +1378,21 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         }
         const body = await readBody(req);
         const policy = store.updatePolicy(body);
+        // ★ 规矩改了 → 迁移授权要跟着重发（否则网关会按旧规矩拒掉一切）。
+        //
+        //   这个动作有副作用（会撤掉旧授权、发新的），所以只在这里做，
+        //   不在每次 check 里做 —— 规矩没变的时候一分钱都不该多花。
+        try {
+          const refreshed = refreshLegacyGrantsForPolicy();
+          if (refreshed.revoked.length || refreshed.created.length) {
+            log(
+              `🔑 规矩变更 → 重发 ${refreshed.created.length} 条迁移授权` +
+                (refreshed.revoked.length ? `（撤掉 ${refreshed.revoked.length} 条旧的）` : ''),
+            );
+          }
+        } catch (err) {
+          log('重发迁移授权失败（网关将按新规矩 fail-closed）：', err?.message || err);
+        }
         // ★ 规矩变了 → 通知仍在跑的活，但**不中断**。
         //   只在授权相关字段真的变了才通知（改 requireProof 之类不扰人）。
         const change = policyChange(store.policy(), policy);

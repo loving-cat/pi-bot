@@ -356,7 +356,7 @@ export function createGrantGate({
  * @returns {{created: string[], existing: string[]}}
  */
 export function ensureLegacyGrant({ store, policy, policyRevision, botIds = [], chiefBotId = null } = {}) {
-  if (!store || !Array.isArray(botIds) || !botIds.length) return { created: [], existing: [] };
+  if (!store || !Array.isArray(botIds) || !botIds.length) return { created: [], existing: [], revoked: [] };
   if (!Array.isArray(store.state.grants)) store.state.grants = [];
 
   const readonly = policy?.dangerous === 'deny';
@@ -372,10 +372,31 @@ export function ensureLegacyGrant({ store, policy, policyRevision, botIds = [], 
 
   const created = [];
   const existing = [];
+  const revoked = [];
   for (const botId of botIds) {
     if (!botId) continue;
-    const hit = store.state.grants.find((g) => g.source === SOURCE.legacyPolicy && g.subject?.botId === botId);
-    if (hit) { existing.push(hit.id); continue; }
+    const stale = store.state.grants.filter(
+      (g) => g.source === SOURCE.legacyPolicy && g.subject?.botId === botId,
+    );
+    const fresh = stale.find((g) => !g.revokedAt && g.policyRevision === (policyRevision ? String(policyRevision) : null));
+    if (fresh) { existing.push(fresh.id); continue; }
+
+    // ★ 规矩变过 → 旧的迁移授权必须撤掉重发，不能留着。
+    //
+    //   留着会怎样（实测）：网关发现 policyRevision 对不上，一律 policy_changed，
+    //   于是用户把危险动作改成「只读」之后，**连读文件都被拒** ——
+    //   因为那条授权描述的是一套已经不存在了的规矩。
+    //
+    //   为什么可以重发成「更宽」：这条规矩变更是**已认证用户在 App 里改的**，
+    //   符合规格 §6.1「授权根只能来自已认证用户交互」。重发只是把那次交互
+    //   如实记成一条新授权，不是模型自己扩权。
+    for (const old of stale) {
+      if (old.revokedAt) continue;
+      old.revokedAt = Date.now();
+      old.revokedReason = `规矩已改为 ${revision}，这条按旧规矩重发`;
+      revoked.push(old.id);
+    }
+
     const grant = {
       id: `gr_legacy_${String(botId).replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 20)}_${revision}`,
       source: SOURCE.legacyPolicy,
@@ -407,8 +428,8 @@ export function ensureLegacyGrant({ store, policy, policyRevision, botIds = [], 
     store.state.grants.push({ ...built.grant, usedUses: 0 });
     created.push(grant.id);
   }
-  if (created.length) {
+  if (created.length || revoked.length) {
     try { store.scheduleSave?.(); } catch { /* 见上 */ }
   }
-  return { created, existing };
+  return { created, existing, revoked };
 }

@@ -405,6 +405,33 @@ await test('迁移兼容：legacy grant 幂等、每个 bot 一条、范围等�
   assert.equal(workerGrant.mode, MODE.project, '其他 bot 是 project 模式');
 });
 
+await test('迁移兼容：规矩变了要重发，否则走只读会连读都拒', () => {
+  store.state.grants = [];
+  const ids = [chief.id, worker.id];
+  const refresh = () => ensureLegacyGrant({ store, policy: store.policy(), policyRevision: store.policyVersion(), botIds: ids, chiefBotId: chief.id });
+  const gate = () => createGrantGate({ store, currentPolicyRevision: () => store.policyVersion(), currentGeneration: () => 'g1' });
+
+  store.updatePolicy({ dangerous: 'allow' });
+  refresh();
+  assert.equal(gate().check({ subject: { botId: worker.id }, action: ACTION.fileWrite }).ok, true);
+
+  // 用户把危险动作改成只读
+  store.updatePolicy({ dangerous: 'deny' });
+  // 不重发：网关按 policy_changed 全拒（连读也拒）—— 这就是要修的现象
+  assert.equal(gate().check({ subject: { botId: worker.id }, action: ACTION.fileRead }).ok, false);
+
+  const out = refresh();
+  assert.ok(out.created.length >= 1, '应重发新规矩下的授权');
+  assert.ok(out.revoked.length >= 1, '旧规矩的授权应被撤掉');
+  const g = gate();
+  assert.equal(g.check({ subject: { botId: worker.id }, action: ACTION.fileRead }).ok, true, '重发后读应当恢复');
+  assert.equal(g.check({ subject: { botId: worker.id }, action: ACTION.fileWrite }).ok, false, '重发后仍不能写（只读）');
+  assert.equal(g.check({ subject: { botId: worker.id }, action: ACTION.cmdExec }).ok, false, '重发后仍不能跑命令');
+
+  // 复位，别影响后面的用例
+  store.updatePolicy({ dangerous: 'allow' });
+});
+
 await test('迁移兼容：只读 policy 只给 fileRead', () => {
   store.state.grants = [];
   ensureLegacyGrant({ store, policy: { dangerous: 'deny' }, policyRevision: 'p1', botIds: [chief.id], chiefBotId: chief.id });
