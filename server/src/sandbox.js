@@ -468,16 +468,20 @@ export function probeSandbox({ instanceDir = '' } = {}) {
  * @returns {{ok: true, file: string, args: string[]} | {ok: false, reason: string}}
  */
 export function wrapCommand({ command, workDir, tmpDir, denyPaths = [], instanceDir = '', dataDir = '' }) {
-  const probe = probeSandbox({ instanceDir });
-  if (!probe.available) {
-    return { ok: false, reason: probe.reason, detail: probe.detail };
-  }
-
-  // ★ 先拒绝"工作目录是 home / 包含数据目录"这种配置。
-  //   沙箱在这种布局下挡不住凭据目录，与其依赖每条 deny 都写对，不如不让跑。
+  // ★ 先做**与平台无关**的配置检查，再去探测沙箱。
+  //
+  //   反过来的后果是：机器上没装启动器 / 没装 bwrap 时，用户的错误配置
+  //   （比如工作目录指到 home）会被报成「找不到沙箱程序」—— 用户去装
+  //   沙箱、装完还是不能跑，因为真正的问题一直没被说出来。
+  //   配置错误是确定的，不依赖环境，先报它。
   const safe = assertSafeWorkDir({ workDir, dataDir });
   if (!safe.ok) {
     return { ok: false, reason: safe.reason, message: safe.message };
+  }
+
+  const probe = probeSandbox({ instanceDir });
+  if (!probe.available) {
+    return { ok: false, reason: probe.reason, detail: probe.detail };
   }
 
   if (probe.kind === 'appcontainer') {

@@ -37,7 +37,7 @@ const LEAD_SEP = /^[.\-/\\]+/;
 const TRAIL_SEP = /[.\-/\\]+$/;
 const DIR_GLOB = /\/\*{1,2}$/;
 /** 正文里的 URL：整段剔掉再挑路径。 */
-const URL_like = /[a-zA-Z][a-zA-Z0-9+.-]*:\/\/\S*/g;
+const URL_LIKE = /[a-zA-Z][a-zA-Z0-9+.-]*:\/\/\S*/g;
 
 /**
  * 该平台的文件系统默认是否大小写不敏感。
@@ -180,7 +180,7 @@ export function describeConflict(hit) {
 export function filesInText(text) {
   const raw0 = String(text ?? '');
   if (!raw0.trim()) return [];
-  const body = raw0.replace(URL_like, ' ');
+  const body = raw0.replace(URL_LIKE, ' ');
   const out = [];
   const seen = new Set();
   for (const match of body.matchAll(PATH_TOKEN)) {

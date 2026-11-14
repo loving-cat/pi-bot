@@ -285,6 +285,8 @@ await test('★ 工作目录不安全时，Windows 分支同样先拒绝（共�
   if (process.platform !== 'win32') return;
   const w = wrapCommand({ command: 'echo hi', workDir: os.homedir(), tmpDir: instDir, instanceDir: instDir });
   assert.equal(w.ok, false, 'home 当工作目录必须拒绝');
+  // 配置错误优先于「有没有装启动器」：CI 上没有启动器，
+  // 这条也应该报 workdir_*，而不是报 no_binary。
   assert.match(w.reason, /workdir_/);
 });
 
@@ -293,6 +295,9 @@ await test('★ 实例收尾：revoke + 删 profile 两步都走到（幂等）'
     assert.equal(teardownWindowsInstance({ instanceDir: instDir, workDir }).skipped, true);
     return;
   }
+  // 发行包里的启动器不入库（.gitignore），CI 的 server job 也没有编译它。
+  // 没有启动器时收尾必然失败 —— 这是 fail-closed 的正常表现，不是回归。
+  if (!launcherPath()) return;
   const r = teardownWindowsInstance({ instanceDir: instDir, workDir });
   assert.equal(typeof r.ok, 'boolean');
   assert.deepEqual(r.steps.map((s) => s.step), ['revoke', 'delete-profile']);

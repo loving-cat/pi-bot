@@ -177,10 +177,14 @@ export function clearSelfcheckCache() {
 export function wrapWindowsCommand({
   command, workDir, instanceDir, dataDir = '', extraEnv = [],
 }) {
+  // ★ 参数缺失是**确定的**错误，不依赖环境：先报它，再去探测启动器。
+  //   否则机器上没装启动器时，用户只会看到「找不到启动器」，
+  //   把真正缺的东西（实例目录）掩盖掉。
+  if (!instanceDir) return { ok: false, reason: 'no_instance_dir' };
+
   const probe = probeWindowsSandbox();
   if (!probe.available) return { ok: false, reason: probe.reason, detail: probe.detail };
 
-  if (!instanceDir) return { ok: false, reason: 'no_instance_dir' };
   try {
     fs.mkdirSync(instanceDir, { recursive: true });
   } catch (err) {
