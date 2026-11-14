@@ -54,6 +54,27 @@
 
 `GET /api/{state,policy,bots,rooms,tasks,mcp,sites,skills,hooks,models,...}`
 
+### 已接入（`df549c5`）
+
+`http-admin.js` 把上面「会改状态」那批收成分级表，中间件在鉴权之后统一处理：
+
+| 级别 | 含义 | 处理 | 覆盖 |
+|---|---|---|---|
+| `defense` | 改防线本身 | nonce + 审计 | policy / hooks / mcp / local-capabilities·import / model-groups / decision / bots(带 mcpServers) |
+| `data` | 删改用户数据 | nonce + 审计 | files·delete / bot / room / skills |
+| `probe` | 起子进程或对外请求，不改状态 | 只审计 | mcp/test / sites·probe / model-groups·test / decision·probe / devices·DELETE |
+| `read` | 只读 | 不管 | 全部 GET |
+
+**nonce 是被真正消费的**（`consumeNonce`），不是只看头存在 —— 后者等于没防。
+校验点集中在中间件，各路由不再自己消费（两处都消费会让第二次必然失败）。
+
+两条刻意的例外，理由写在代码里：
+
+- **撤销设备不要 nonce**：它是降低权限的动作，冒充者做这件事只会让自己更不方便；
+  而用户在手机上把另一台设备踢下线，恰恰是发现异常时最想立刻做的事。
+- **改 bot 只有带 `mcpServers` 时才要 nonce**：改名字/换模型是普通操作，
+  挂 MCP 才是改「这个 bot 能用哪些外部能力」。
+
 ## 三、直接调系统 API 的内部模块（28 个文件有真实副作用）
 
 这些**完全绕过工具层**，是规格所说「遗漏入口」的主体。
@@ -124,7 +145,7 @@ System Events 拿不到 CGWindowID，所以是按矩形截；窗口被部分遮�
 1. **授权记录与存储**（规格 §6.1 字段）
 2. **统一执行边界**：一个 `enforce()`，主体/动作/资源/参数 + 每次现查有效性
 3. ~~**把现有唯一的校验点（policy-hook）改成经网关**~~ ✅ 已完成（`b130fc6`）
-4. **HTTP 的危险路由接入网关**（上表「会改状态」那批）—— **未做**
+4. ~~**HTTP 的危险路由接入网关**（上表「会改状态」那批）~~ ✅ 已完成（`df549c5`）
 5. ~~**反向用例优先**~~ ✅ 已完成（`grants.mjs` 30 项：来源、子授权扩权、父链撤销、策略版本、世代）
 
 第 3 步刻意不改任何现有行为（默认授权仍等价于今天的 policy），先把「漏掉的入口」变成可测；之后的 Git / computer use 才有地方挂。
@@ -136,7 +157,7 @@ System Events 拿不到 CGWindowID，所以是按矩形截；窗口被部分遮�
 | 授权模型（`grants.js`）+ 网关（`grant-gate.js`） | ✅ | `b130fc6` |
 | policy-hook 经网关 + 迁移授权（行为不变） | ✅ | `b130fc6` |
 | 桌面观察（`desktop-observe.js` + 两个工具） | ✅ | `c45eb7c` |
-| HTTP 危险路由接网关 | ⬜ 下一步 | — |
+| HTTP 危险路由接网关（`http-admin.js` + 审计） | ✅ | `df549c5` |
 | Git 适配器（P0-6） | ⬜ | — |
 | 确认框架（P0-4，只做不可恢复动作） | ⬜ | — |
 | 桌面输入（P0-3b，输入租约） | ⬜ 最后 | — |
