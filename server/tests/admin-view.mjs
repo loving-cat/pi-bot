@@ -15,7 +15,7 @@ Object.assign(process.env, {
 });
 globalThis.fetch = () => { throw new Error('no net'); };
 
-const src = (f) => pathToFileURL(path.join('D:/pi-bot/server/src', f));
+const src = (f) => pathToFileURL(path.join(import.meta.dirname, '..', 'src', f));
 const { store } = await import(src('store.js'));
 const { createGrantGate, ensureLegacyGrant } = await import(src('grant-gate.js'));
 const { createHttpServer } = await import(src('http.js'));
