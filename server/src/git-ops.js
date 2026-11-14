@@ -123,6 +123,25 @@ export const REFUSED_OPERATIONS = Object.freeze({
   hooks: '改 hooks 属于 G3：那是在改"提交时会执行什么"，需要用户确认。',
 });
 
+/**
+ * 尽量把路径变成真实路径（解析符号链接）。
+ *
+ * ★ 为什么必须做：规格 §6.1「路径使用最终资源标识并处理链接/别名」。
+ *
+ * 实测（macOS CI 上挂了）：`os.tmpdir()` 给的是 `/var/folders/...`，
+ * 而 `/var` 是指向 `/private/var` 的符号链接。git 写进 worktree 指针里的
+ * 是它自己的视角，从另一条路径算出来的 commonDir 就不相等 ——
+ * 于是"这两个是不是同一个主仓"永远判不出来。
+ * Linux 上 `/tmp` 也有同样的链接关系。
+ *
+ * 路径不存在时（还没建出来）原样返回，不抛。
+ */
+function realish(p) {
+  const raw = String(p ?? '');
+  if (!raw) return raw;
+  try { return fs.realpathSync.native ? fs.realpathSync.native(raw) : fs.realpathSync(raw); } catch { return raw; }
+}
+
 function clampInt(value, min, max, fallback) {
   const n = Number(value);
   if (!Number.isFinite(n)) return fallback;
@@ -205,7 +224,7 @@ export function resolveRepoLayout(rootDir) {
     try { stat = fs.statSync(dotGit); } catch { /* 继续往上找 */ }
     if (stat?.isDirectory()) {
       return {
-        ok: true, root: cursor, gitDir: dotGit, commonDir: dotGit,
+        ok: true, root: realish(cursor), gitDir: realish(dotGit), commonDir: realish(dotGit),
         worktree: false, pointerFile: null,
       };
     }
@@ -230,7 +249,7 @@ export function resolveRepoLayout(rootDir) {
         if (cd) commonDir = path.normalize(path.isAbsolute(cd) ? cd : path.resolve(gitDir, cd));
       } catch { /* 没有 commondir 就认为 gitDir 自己就是共享目录 */ }
       return {
-        ok: true, root: cursor, gitDir, commonDir,
+        ok: true, root: realish(cursor), gitDir: realish(gitDir), commonDir: realish(commonDir),
         worktree: true, pointerFile: dotGit,
       };
     }

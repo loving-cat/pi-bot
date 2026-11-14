@@ -95,8 +95,13 @@ await test('worktree：.git 是指针文件，commondir 指向主仓', () => {
   assert.equal(layout.worktree, true, 'worktree 的 .git 是文件');
   assert.ok(layout.pointerFile, '应记下指针文件路径');
   assert.ok(layout.gitDir.includes('worktrees'), 'gitDir 应在主仓的 worktrees 下：' + layout.gitDir);
-  // 关键：commonDir 必须是**主仓**的 .git，不是 worktree 自己那个
-  assert.equal(layout.commonDir, resolveRepoLayout(repo).gitDir);
+  // 关键：commonDir 必须是**主仓**的 .git，不是 worktree 自己那个。
+  // ★ 比较前两边都要 realpath：macOS 的 /var → /private/var、
+  //   Linux 的 /tmp 链接关系会让"同一个目录"有两条写法（CI 上实测挂过）。
+  const realish = (p) => {
+    try { return fs.realpathSync.native ? fs.realpathSync.native(p) : fs.realpathSync(p); } catch { return p; }
+  };
+  assert.equal(realish(layout.commonDir), realish(resolveRepoLayout(repo).gitDir));
 
   raw(['worktree', 'remove', '--force', wt]);
 });
