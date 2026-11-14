@@ -88,7 +88,7 @@ function call(pathname, method, body, headers = {}) {
 await test('★ 只有 token、没有 nonce → 改策略被拒 403', async () => {
   const r = await call('/api/policy', 'PATCH', { dangerous: 'allow' });
   assert.equal(r.status, 403);
-  assert.equal(r.json?.error, 'nonce_required');
+  assert.equal(r.json?.code, 'nonce_required');
 });
 
 await test('★ 只有 token、没有 nonce → 挂 MCP 被拒 403', async () => {

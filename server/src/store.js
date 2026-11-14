@@ -1289,6 +1289,49 @@ export class Store {
     return picked.slice(-Math.max(1, Math.min(limit, 200))).reverse();
   }
 
+  // ---------- 管理动作审计 ----------
+
+  /**
+   * 记一条"用户在界面上改了什么"。
+   *
+   * 规格 §5.5：动作可审计 —— 授权引用、发起者、动作摘要、结果。
+   * 这里只记**做了什么**，不记请求体（里面可能有 key/token）。
+   *
+   * 和 `addDenial` 的区别：那个记的是"命令被规矩拦下"（bot 的动作），
+   * 这个记的是"用户改了配置"（人的动作）。两件事的读者不同：
+   * 拒记录给"为什么它没干成"，这条给"谁在什么时候改了什么"。
+   */
+  addAdminAction({
+    action = '', level = '', label = '', method = '', path = '',
+    deviceId = null, deviceName = '',
+  } = {}) {
+    if (!Array.isArray(this.state.adminAudit)) this.state.adminAudit = [];
+    const entry = {
+      id: newId('aa_'),
+      at: now(),
+      action: String(action).slice(0, 60),
+      level: String(level).slice(0, 20),
+      label: String(label).slice(0, 120),
+      method: String(method).slice(0, 10),
+      path: String(path).slice(0, 200),
+      deviceId,
+      deviceName: String(deviceName ?? '').slice(0, 60),
+    };
+    this.state.adminAudit.push(entry);
+    if (this.state.adminAudit.length > 300) {
+      this.state.adminAudit.splice(0, this.state.adminAudit.length - 300);
+    }
+    this.scheduleSave();
+    bus.emit('event', { t: 'admin.action', entry });
+    return entry;
+  }
+
+  /** 最近的管理动作（新的在前）。 */
+  listAdminActions({ limit = 50 } = {}) {
+    const list = Array.isArray(this.state.adminAudit) ? this.state.adminAudit : [];
+    return list.slice(-Math.max(1, Math.min(Number(limit) || 50, 300))).reverse();
+  }
+
   // ---------- 房间 ----------
 
   listRooms() {

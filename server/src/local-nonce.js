@@ -41,6 +41,12 @@ export const NONCE_PURPOSE = {
   POLICY: 'policy',
   /** 改 MCP 库（POST /api/mcp，含增删改） */
   MCP: 'mcp',
+  /** 改工具钩子（PUT /api/hooks）—— 钩子能改写入参或拦命令，等效于改行为 */
+  HOOKS: 'hooks',
+  /** 从本机 pi 配置导入（可能一次导入多个可执行子进程） */
+  IMPORT: 'import',
+  /** 删附件/删数据 */
+  FILES: 'files',
 };
 
 /** 上限：防止有人刷爆内存。 */

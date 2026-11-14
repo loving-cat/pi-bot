@@ -42,6 +42,7 @@ const TESTS = [
   'task-file-claims',
   'grants',
   'desktop-observe',
+  'http-admin',
   'security-p0',
   'security-shell',
   'mcp-tool-registry',

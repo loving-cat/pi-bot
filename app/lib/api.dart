@@ -98,9 +98,51 @@ class Api {
     return _decode(res);
   }
 
+  /// 管理动作的 nonce 用途（null = 这个请求不需要 nonce）。
+  ///
+  /// 为什么在客户端也维护一份：服务端要求这些接口必须带一次性凭据，
+  /// 而凭据只能由**界面在点击之后**申请。把对应表放在这里，
+  /// 各个调用点就不用每处都记得去要一枚 —— 漏一处就是 403，
+  /// 而且错误信息会让人以为是权限问题。
+  ///
+  /// 与 server/src/http-admin.js 的表保持一致；不一致时以服务端为准
+  /// （多了会 403，少了只是多花一次申请）。
+  static String? _noncePurposeFor(String method, String path) {
+    final m = method.toUpperCase();
+    bool isPath(String p) => path == p || path.startsWith('$p/');
+    if (m == 'PATCH' && path == '/api/policy') return 'policy';
+    if (m == 'PUT' && path == '/api/hooks') return 'hooks';
+    if (isPath('/api/mcp') && (m == 'POST' || m == 'PATCH' || m == 'DELETE')) return 'mcp';
+    if (m == 'POST' && path == '/api/local-capabilities/import') return 'import';
+    if (m == 'POST' && path == '/api/files/delete') return 'files';
+    if (m == 'DELETE' && isPath('/api/files')) return 'files';
+    if (isPath('/api/model-groups') && (m == 'POST' || m == 'PATCH' || m == 'DELETE')) {
+      // 试连（/test）不需要 nonce
+      if (!path.endsWith('/test')) return 'policy';
+    }
+    if (isPath('/api/decision') && (m == 'PATCH' || m == 'PUT')) return 'policy';
+    if (isPath('/api/skills') && (m == 'POST' || m == 'PATCH' || m == 'DELETE')) return 'policy';
+    if (isPath('/api/bots') && (m == 'PATCH' || m == 'DELETE')) return 'policy';
+    if (isPath('/api/rooms') && m == 'DELETE') return 'policy';
+    // 撤销设备不要 nonce：它是"降低权限"的动作，冒充者做这件事只会让自己更不方便。
+    // 用户在手机上将另一台设备踢下线，恰恰是发现异常时最想立刻能做的事。
+    return null;
+  }
+
+  /// 给管理动作补齐 nonce 头。
+  ///
+  /// 申请失败时**不静默吞掉**：直接抛出去，让界面提示"没能拿到凭据，请重试"。
+  /// 悄悄发一个不带 nonce 的请求只会换来一个更难懂的 403。
+  Future<Map<String, String>> _adminHeaders(String method, String path) async {
+    final purpose = _noncePurposeFor(method, path);
+    if (purpose == null) return _headers;
+    return {..._headers, 'x-pi-bot-nonce': await issueNonce(purpose)};
+  }
+
   Future<Map<String, dynamic>> delete(String path) async {
+    final headers = await _adminHeaders('DELETE', path);
     final res = await http
-        .delete(_uri(path), headers: _headers)
+        .delete(_uri(path), headers: headers)
         .timeout(const Duration(seconds: 20));
     return _decode(res);
   }
@@ -109,8 +151,9 @@ class Api {
     String path, [
     Map<String, dynamic>? body,
   ]) async {
+    final headers = await _adminHeaders('POST', path);
     final res = await http
-        .post(_uri(path), headers: _headers, body: jsonEncode(body ?? const {}))
+        .post(_uri(path), headers: headers, body: jsonEncode(body ?? const {}))
         .timeout(const Duration(seconds: 30));
     return _decode(res);
   }
@@ -119,8 +162,9 @@ class Api {
     String path,
     Map<String, dynamic> body,
   ) async {
+    final headers = await _adminHeaders('PATCH', path);
     final res = await http
-        .patch(_uri(path), headers: _headers, body: jsonEncode(body))
+        .patch(_uri(path), headers: headers, body: jsonEncode(body))
         .timeout(const Duration(seconds: 20));
     return _decode(res);
   }

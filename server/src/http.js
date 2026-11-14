@@ -35,6 +35,7 @@ import { lanAddresses } from './pairing.js';
 import { timingSafeEqual, log } from './util.js';
 import { readLocalToken } from './local-token.js';
 import { NONCE_PURPOSE, consumeNonce, issueNonce } from './local-nonce.js';
+import { planAdminRoute } from './http-admin.js';
 import { shells } from './shells.js';
 import { computeNextRun, validateSchedule } from './automations.js';
 import { VERSION } from './version.js';
@@ -495,6 +496,51 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         if (!isJsonContentType(req.headers['content-type'])) {
           return fail(res, 415, 'BAD_CONTENT_TYPE', 'content-type 必须是 application/json');
         }
+      }
+
+      // ★ 管理动作的审计 + 防冒充（规格 §5.5 / §11）。
+      //
+      //   这里**不是**"拦住用户" —— 用户在 App 里改自己的策略当然可以。
+      //   要挡的是同用户的其它进程：它能读到 local-token 文件，
+      //   拿它直接调 PATCH /api/policy 就能把防线改了。
+      //   一次性 nonce 只由界面在真实点击时申请，堵的就是这条路。
+      //
+      //   nonce 的**校验**仍然在各路由自己手里（那里知道自己的 purpose），
+      //   这里只做两件事：记账 + 拒绝"该带 nonce 却完全没带"的请求。
+      const adminPlan = planAdminRoute({ method: req.method, pathname });
+      if (adminPlan) {
+        if (adminPlan.nonce) {
+          // ★ 这里**真正消费** nonce，不是只看有没有这个头。
+          //
+          //   只看"头存在"等于没防：冒充者随手填一个字符串就过了。
+          //   nonce 只能由界面在真实点击时申请（单次、60 秒、绑用途），
+          //   所以"能拿出来一个未用过的"就是"刚有人在界面上点了"的证据。
+          //
+          //   校验点集中在这里之后，各路由**不再自己消费** ——
+          //   两处都消费会让第二次必然失败。
+          const check = consumeNonce(req.headers['x-pi-bot-nonce'], adminPlan.nonce);
+          if (!check.ok) {
+            log(`🔒 ${adminPlan.label} 被拒：${check.reason}（${req.method} ${pathname}）`);
+            return fail(
+              res,
+              403,
+              'nonce_required',
+              '这个操作要由界面在点击之后申请一次性凭据再发起，直接调用会被拒绝',
+              // reason 保留具体原因：missing/unknown/expired/used/purpose。
+              // 客户端据此能区分"没申请"和"申请了但过期了"。
+              { reason: check.reason },
+            );
+          }
+        }
+        store.addAdminAction({
+          action: adminPlan.action,
+          level: adminPlan.level,
+          label: adminPlan.label,
+          method: req.method,
+          path: pathname,
+          deviceId: device?.id ?? null,
+          deviceName: device?.name ?? '',
+        });
       }
 
       // 配对码 / 已配对设备：都是主人才能看的东西，所以放在鉴权之后
@@ -963,13 +1009,9 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
       //   ★ 注意返回一个**真值**标记：send() 本身返回 undefined，
       //     直接 return send(...) 会让调用方的 if (denied) 判假，
       //     于是响应已经发出 403、代码却继续往下执行副作用。
-      const requireMcpNonce = () => {
-        const check = consumeNonce(req.headers['x-pi-bot-nonce'], NONCE_PURPOSE.MCP);
-        if (check.ok) return null;
-        log('写 MCP 库被拒：缺少或无效的一次性 nonce(' + check.reason + ')');
-        send(res, 403, { error: 'nonce_required', reason: check.reason });
-        return true;
-      };
+      // MCP 的 nonce 现在由统一的 admin 中间件消费（见上面的 planAdminRoute），
+      // 这里保留一个恒返回"已通过"的钩子，避免改动各路由的分支结构。
+      const requireMcpNonce = () => null;
 
       if (pathname === '/api/mcp' && req.method === 'POST') {
         const denied = requireMcpNonce();
@@ -1371,11 +1413,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
       }
 
       if (pathname === '/api/policy' && req.method === 'PATCH') {
-        const nonceCheck = consumeNonce(req.headers['x-pi-bot-nonce'], NONCE_PURPOSE.POLICY);
-        if (!nonceCheck.ok) {
-          log(`⛔ 改策略被拒：缺少或无效的一次性 nonce（${nonceCheck.reason}）`);
-          return send(res, 403, { error: 'nonce_required', reason: nonceCheck.reason });
-        }
+        // nonce 由统一的 admin 中间件消费，这里不再重复
         const body = await readBody(req);
         const policy = store.updatePolicy(body);
         // ★ 规矩改了 → 迁移授权要跟着重发（否则网关会按旧规矩拒掉一切）。
