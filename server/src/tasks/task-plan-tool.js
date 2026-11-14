@@ -21,6 +21,7 @@
 import { Type } from 'typebox';
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import { readManagedSubmission, SUBMISSION } from '../coordination/task-context.js';
+import { fileClaimList } from './task-file-claims.js';
 
 const ok = (text, details = {}) => ({ content: [{ type: 'text', text }], details });
 const error = (text) => ({ content: [{ type: 'text', text }], isError: true });
@@ -53,6 +54,8 @@ export function normalizePlan(steps, members = []) {
       memberName: who || '未指定',
       memberBotId: botId,
       deliverable: String(raw?.deliverable ?? '').trim().slice(0, MAX_STEP_CHARS),
+      // 这条分工要动哪些文件。派活时带上它，搅车的活才会排队。
+      files: fileClaimList(raw?.files).files,
     });
   }
   if (!out.length) return { ok: false, text: '没有可用的分工条目（每条要有 task）。' };
@@ -91,6 +94,12 @@ export function buildPlanTool({ runner, store, roomId, botId }) {
           member: Type.String({ description: '交给谁（成员名字或 id）' }),
           task: Type.String({ description: '这个人要做什么' }),
           deliverable: Type.Optional(Type.String({ description: '交付什么' })),
+          files: Type.Optional(
+            Type.Array(Type.String(), {
+              description:
+                '这条分工要改的文件/目录（仓库内相对路径）。填了就能把撞车的活排开；不确定就留空。',
+            }),
+          ),
         }),
         { description: '分工清单：按你希望的执行先后排列' },
       ),

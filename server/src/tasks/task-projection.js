@@ -125,6 +125,9 @@ export function projectForDiagnostics(run) {
 
     evidenceCount: run.progress?.evidence?.length ?? 0,
     unmetCount: run.progress?.unmet?.length ?? 0,
+    // 文件占用声明：撞车的活会被调度器排开。诊断里必须看得见，
+    // 否则用户遇到「任务迟迟不动」时无法判断是不是在等别人的文件。
+    fileClaims: Array.isArray(run.fileClaims) ? [...run.fileClaims] : [],
     lastEffectiveAt: run.lastEffectiveAt,
     updatedAt: run.updatedAt,
   };

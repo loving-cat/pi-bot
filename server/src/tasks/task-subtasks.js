@@ -8,8 +8,15 @@
  *   · 完全相同的一份派工重试 → 同一身份，复用；
  *   · 任一验收参数（例如 count 2→3）变化 → 明确的新派工；
  *   · 短 ID 碰撞但内容不同 → 请求指纹冲突，拒绝复用。
+ *
+ * ## 文件占用（fileClaims）
+ *
+ * 派工时可以声明这份活要碰哪些文件。它**不进**业务身份指纹 ——
+ * 同一份活重派时补一句文件清单不该变成另一条任务；复用同一条时把新声明的
+ * 并进去即可。它的唯一用途是给调度器做互斥判定（见 task-supervisor）。
  */
 import { createTaskRun } from './task-run-factory.js';
+import { fileClaimList } from './task-file-claims.js';
 
 /** 稳定序列化：对象键排序，数组保持顺序。 */
 function stableJson(value) {
@@ -66,6 +73,8 @@ export async function createChildTask({
   taskRuns, parentTaskRun, goal, botId, clock = () => Date.now(),
   /** 调度优先级：负责人安排谁先做（数字小的先跑）。 */
   priority = 0,
+  /** 这份活要碰的文件（可空）。只用于调度互斥，不参与业务身份指纹。 */
+  files = [],
 }) {
   if (!parentTaskRun) return { ok: false, code: 'no_parent', text: '缺少父任务' };
   if (!goal || typeof goal !== 'object') return { ok: false, code: 'no_goal', text: '缺少子任务目标' };
@@ -77,6 +86,7 @@ export async function createChildTask({
   const parentRevision = parentTaskRun.revision;
   const fingerprint = dispatchKeyOf({ botId, goal });
   const code = dispatchCodeOf({ botId, goal });
+  const claims = fileClaimList(files);
   const childId = parentId + '_c' + parentRevision + '_' + code;
   const requestId = parentId + '_r' + parentRevision + '_c' + code;
 
@@ -106,6 +116,8 @@ export async function createChildTask({
       //   「先交首批、别等全量」这种要求如果只写在正文里，调度是看不见的；
       //   记到账本上才能真的影响执行顺序。
       dispatchPriority: Number.isFinite(Number(priority)) ? Number(priority) : 0,
+      // 这份活声明的文件占用：调度器据此把撞车的活排开（同一时刻只跑一份）。
+      fileClaims: claims.files,
     }),
     at: clock(),
   });
@@ -118,6 +130,7 @@ export async function createChildTask({
       if (existing?.dispatchFingerprint && existing.dispatchFingerprint !== fingerprint) {
         return { ok: false, code: 'dispatch_conflict', text: '同一派工身份的内容不一致，拒绝复用' };
       }
+      await mergeClaims(existing?.id, claims.files, taskRuns, clock);
       return { ok: true, child: existing, reused: true };
     }
     return { ok: false, code: accepted.code ?? 'accept_failed', text: accepted.text };
@@ -129,12 +142,32 @@ export async function createChildTask({
     if (child?.dispatchFingerprint && child.dispatchFingerprint !== fingerprint) {
       return { ok: false, code: 'dispatch_conflict', text: '同一派工身份的内容不一致，拒绝复用' };
     }
+    await mergeClaims(child?.id, claims.files, taskRuns, clock);
     return { ok: true, child, reused: true };
   }
   await taskRuns.mutate(child.id, {
     mutate: (cur) => (cur ? { ...cur, parentRevision, dispatchFingerprint: fingerprint, updatedAt: clock() } : null),
   });
   return { ok: true, child, reused: false };
+}
+
+/**
+ * 把新声明的文件并进已有子任务（复用同一条活时用）。
+ *
+ * 并集而不是覆盖：同一份活重派时可能只补一句"还有这个文件"，
+ * 把旧的清掉会让先前的占用丢失，撞车就又挡不住了。
+ */
+async function mergeClaims(childId, files, taskRuns, clock) {
+  if (!childId || !Array.isArray(files) || !files.length) return;
+  await taskRuns.mutate(childId, {
+    mutate: (cur) => {
+      if (!cur) return null;
+      const merged = fileClaimList([...(cur.fileClaims ?? []), ...files]);
+      const same = merged.files.length === (cur.fileClaims ?? []).length;
+      if (same) return null;
+      return { ...cur, fileClaims: merged.files, updatedAt: clock() };
+    },
+  });
 }
 
 /** 父任务当前那版目标下的子任务（按持久 parentRevision 判定）。 */

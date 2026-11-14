@@ -38,10 +38,18 @@ export function buildMemberTaskTool({ runner, store, roomId, botId }) {
     description:
       '把当前目标拆出一份可独立完成的小任务，派给部门里的某个成员去做。' +
       '每份小任务都要写清目标与验收条件；派出去之后成员会自己执行，结果回来你再继续。' +
+      '如果两份活要改同一批文件，填 files 声明一下——撞车的会排队，不会两个人同时改坏同一份文件。' +
       '不要替成员做它们自己的工作。',
     parameters: Type.Object({
       memberBotId: Type.String({ description: '指派给哪个成员（部门成员 id）' }),
       requirement: Type.String({ description: '这份小任务要达成什么' }),
+      files: Type.Optional(
+        Type.Array(Type.String(), {
+          description:
+            '这份活会碰的文件或目录路径（仓库内相对路径）。'
+            + '填了就与其它正在跑的活互斥：别人也在改同一批文件时，这份会排队而不是同时写坏。不填表示不知道/不冲突。',
+        }),
+      ),
       deliverables: Type.Optional(Type.Array(Type.String(), { description: '交付物清单' })),
       verification: Type.Array(
         Type.Object({
@@ -116,6 +124,7 @@ export function buildMemberTaskTool({ runner, store, roomId, botId }) {
         parentTaskRun: parent,
         goal,
         botId: memberBotId,
+        files: params.files ?? [],
       });
       if (!created.ok) return error(`没派出去：${created.text ?? created.code}`);
 
@@ -124,9 +133,14 @@ export function buildMemberTaskTool({ runner, store, roomId, botId }) {
       const stillSame = after?.status === 'found' && after.taskRun?.revision === submission.revision;
       if (!stillSame) return error('派工期间父目标已改版，这次派工不生效。');
 
+      const claims = created.child?.fileClaims ?? [];
       return {
-        content: [{ type: 'text', text: `已派给成员，子任务 ${created.child?.id} 已登记。` }],
-        details: { childTaskRunId: created.child?.id ?? null, reused: created.reused === true },
+        content: [{
+          type: 'text',
+          text: `已派给成员，子任务 ${created.child?.id} 已登记。`
+            + (claims.length ? `\n占用的文件：${claims.join('、')}（撞车的活会排队）` : ''),
+        }],
+        details: { childTaskRunId: created.child?.id ?? null, reused: created.reused === true, files: claims },
       };
     },
   });

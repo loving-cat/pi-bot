@@ -19,6 +19,7 @@
  *   · 单轮上限 MAX_PER_ROUND，超出的记 skipped，不静默丢弃。
  */
 import { parseMentions } from '../mentions.js';
+import { filesInText } from './task-file-claims.js';
 
 /** 单轮最多为多少个成员建子任务。 */
 export const MAX_PER_ROUND = 8;
@@ -51,7 +52,7 @@ function excerptFor(text, name) {
  * @param {string|null} p.leadBotId  负责人本人
  * @param {Array<{botId?:string,state?:string}>} [p.existingChildren] 本版本已有子任务
  * @param {number} [p.maxPerRound]
- * @returns {{targets:Array<{botId:string,name:string,excerpt:string}>, skipped:Array<{name:string,why:string}>}}
+ * @returns {{targets:Array<{botId:string,name:string,excerpt:string,files:string[]}>, skipped:Array<{name:string,why:string}>}}
  */
 export function planMentionDispatch({
   text,
@@ -103,10 +104,15 @@ export function planMentionDispatch({
     }
     // 优先级 = 在正文里出现的先后。负责人说「先交首批」时，
     // 他排在前面的那个成员就该先跑 —— 顺序是信息，不能丢。
+    //
+    // 文件占用从这个人那一句里挑：负责人写「@甲 改 app/lib/a.dart」时，
+    // 那句话里的路径就是甲的占用声明；调度器据此把撞车的活排开。
+    const excerpt = excerptFor(body, m.name);
     targets.push({
       botId: m.id,
       name: m.name,
-      excerpt: excerptFor(body, m.name),
+      excerpt,
+      files: filesInText(excerpt),
       priority: orderOf(body, m.name),
     });
   }

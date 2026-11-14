@@ -228,6 +228,8 @@ export function createTaskRuntime({
           clock,
           // 负责人正文里排在前面的成员先跑
           priority: target.priority ?? 0,
+          // 那句里提到的路径就是这份活的占用声明（见 task-file-claims）
+          files: target.files ?? [],
         });
         if (out.ok) created.push({ botId: target.botId, childTaskRunId: out.child?.id ?? null });
         else failures.push({ botId: target.botId, code: out.code ?? null });
@@ -361,6 +363,8 @@ export function createTaskRuntime({
     },
     clock,
     log,
+    // 名字只用于文案（“谁在改这个文件”）。不传也能跑，只是不显示名字。
+    botNameOf: (botId) => runner.store?.getBot?.(botId)?.name ?? '',
     // 并发数按部门人数走；key 不稳时按健康度自动降级。
     maxConcurrency: concurrencyOf,
     upstreamHealth: healthOf,

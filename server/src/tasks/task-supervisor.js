@@ -20,6 +20,7 @@ import {
   CONTROL, applyControl, reconcileEarlyControls, descendants as descendantsOf,
 } from './task-controls.js';
 import { childrenOf } from './task-subtasks.js';
+import { fileClaimList, pickBlockingClaim } from './task-file-claims.js';
 import { decideRecovery, RECOVERY_STAGE } from './task-recovery.js';
 import { LEAD_PHASE, buildLeadPrompt, buildMemberPrompt, buildDeliverySummary } from './task-prompts.js';
 import { reserveRootBudget, refundRootBudget, settleRootBudget, extendRootBudget } from './task-budget-coordinator.js';
@@ -45,6 +46,36 @@ const AUTONOMY_RETRY_MS = 5_000;
 
 /** 会话忙时的等待基数：执行器可能还在同房间跑上一波，等它空出来。 */
 const BUSY_RETRY_MS = 15_000;
+
+/**
+ * 文件被占时的重试间隔。
+ *
+ * 比 BUSY_RETRY_MS 短：占用的持有者是真的在写文件，一次写入通常几十秒内结束；
+ * 等 15 秒会让排队显得像卡住，而 5 秒只是多几次无副作用的到点唤醒。
+ */
+const CLAIM_RETRY_MS = 5_000;
+
+/**
+ * 哪些状态算「持有文件占用」。
+ *
+ * 只算**真在写**的和即将接着写的：排队（queued）不算 ——
+ * 两个排队任务互相看到对方的占用就会互相等死，而它们都还没动过文件。
+ * 受阻/暂停也不算：它们停在半路，此刻不会写，先让别的活过去；
+ * 重新推进时会重新拿到占用。
+ */
+const CLAIM_HOLDING_STATES = new Set([
+  STATE.running,
+  STATE.verifying,
+  STATE.waiting_approval,
+  STATE.waiting_input,
+  STATE.waiting_dependency,
+]);
+
+/** 任务声明的文件占用（旧记录可能是未规范化的写法，读时再洗一遍）。 */
+function claimFilesOf(run) {
+  if (!Array.isArray(run?.fileClaims) || !run.fileClaims.length) return [];
+  return fileClaimList(run.fileClaims).files;
+}
 
 /** 这次失败是不是「目标会话还在忙」——受管执行可以等，不能判成永久失败。 */
 function isBusyOutcome(raw) {
@@ -95,9 +126,28 @@ export function createTaskSupervisor({
   upstreamHealth = null,
   /** 持久变化后通知宿主（用于客户端投影）；不参与任何判定。 */
   onChanged = null,
+  /**
+   * 执行者 id → 名字（只用于给用户看的文案）。
+   *
+   * 这一层不认识 store：原来直接写 `runner.store.getBot(...)`，
+   * 而 `runner` 根本不在参数里 —— 那条「子任务全部受阻」的分支
+   * 一走到就抛 ReferenceError，被外层 catch 成「推进过程出错」，
+   * 用户看到的是阻塞原因变成一句内部错误。
+   */
+  botNameOf = null,
 } = {}) {
   if (!taskRuns) throw new Error('推进器需要 TaskRunStore');
   if (typeof execute !== 'function') throw new Error('推进器需要执行器');
+
+  /** 执行者名字（拿不到就退回一个中性的称呼）。 */
+  function nameOfBot(botId) {
+    if (typeof botNameOf !== 'function' || !botId) return '';
+    try {
+      return String(botNameOf(botId) ?? '');
+    } catch {
+      return '';
+    }
+  }
 
   const queue = new Set();
   /** 上一轮因前置条件（残留尝试/同 Bot 占用）被挡下的任务，供诊断。 */
@@ -518,7 +568,7 @@ export function createTaskSupervisor({
             .filter((k) => !terminal(k));
           if (stuck.length && stuck.every((k) => k.state === STATE.blocked)) {
             const first = stuck[0];
-            const who = runner.store?.getBot?.(first.owner?.leadBotId ?? '')?.name ?? '成员';
+            const who = nameOfBot(first.owner?.leadBotId) || '成员';
             const why = '等在子任务上：' + who + '受阻（'
               + String(first.flags?.blockedReason ?? '未说明').slice(0, 80) + '）';
             await block(taskRunId, why);
@@ -797,6 +847,21 @@ export function createTaskSupervisor({
       return { status: 'retry_scheduled', dueAt, why: '执行者还在忙，稍后重派' };
     }
 
+    // ★ 声明的文件被别人占着：同样让出一轮，不登记尝试、不扣额度。
+    //
+    //   两个人并行改同一个文件时，读-改-写之间没有任何锁：
+    //   后写的静默覆盖先写的，而且双方都以为自己成功了。
+    //   与其让它们撞完再靠人工发现，不如让后一份等一会儿 ——
+    //   等的时间不计入失败次数，也不花额度。
+    const claimBlock = fileClaimBlocker(taskRun);
+    if (claimBlock) {
+      const dueAt = clock() + CLAIM_RETRY_MS;
+      await patch(taskRun.id, { nextAction: null, retryAt: dueAt });
+      setTimer(dueAt, taskRun.id);
+      log('文件占用排到后面：' + taskRun.id + ' → ' + claimBlock.why);
+      return { status: 'retry_scheduled', dueAt, why: claimBlock.why, blockedByFile: claimBlock };
+    }
+
     // 先持久下一步；写不进去就不许产生副作用
     const persisted = await patch(taskRun.id, {
       nextAction: {
@@ -948,6 +1013,48 @@ export function createTaskSupervisor({
       if (!terminal(kid)) notify(kid.id);
     }
     return { status: 'ok' };
+  }
+
+  /**
+   * 这个任务现在被谁的文件占用拦住（返回冲突说明，没有则 null）。
+   *
+   * ## 为什么排除自己的任务树
+   *
+   * 一棵树内的先后由负责人安排（父任务常年停在「等待子任务」），
+   * 把祖先算成占用会让子任务永远排不到 —— 那是个自锁，不是互斥。
+   *
+   * ## 为什么只算「正在持有」的状态
+   *
+   * 排队中的任务还没动过文件；两个排队的互相看见对方的占用就会互相等死。
+   * 受阻/暂停同理：它们停在半路，此刻不会写，先让别的活过去（
+   * 重新推进时会重新拿到占用）。
+   *
+   * ## 为什么要扫全场
+   *
+   * 撞车的两个活往往分属不同任务树（用户提了两件事，各派一个人），
+   * 只看同树等于没拦。
+   */
+  function fileClaimBlocker(taskRun) {
+    const mine = claimFilesOf(taskRun);
+    if (!mine.length) return null;
+    const runs = [];
+    for (const run of allRuns()) {
+      if (!run || !run.id) continue;
+      const files = claimFilesOf(run);
+      if (!files.length) continue;
+      runs.push({
+        id: run.id,
+        parentTaskId: run.parentTaskId ?? null,
+        state: run.state,
+        files,
+        botName: nameOfBot(run.owner?.leadBotId),
+      });
+    }
+    return pickBlockingClaim({
+      self: { id: taskRun.id, files: mine },
+      runs,
+      holdingStates: CLAIM_HOLDING_STATES,
+    });
   }
 
   /** 把一次执行失败接到既有状态机：预算暂停 / 有界重试 / 结果未知 / 阻塞。 */
