@@ -44,6 +44,7 @@ const TESTS = [
   'desktop-observe',
   'http-admin',
   'git-ops',
+  'confirm',
   'security-p0',
   'security-shell',
   'mcp-tool-registry',

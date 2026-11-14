@@ -1289,6 +1289,76 @@ export class Store {
     return picked.slice(-Math.max(1, Math.min(limit, 200))).reverse();
   }
 
+  // ---------- 危险动作确认（P0-4） ----------
+
+  /**
+   * 新建一条待确认。
+   *
+   * 去重按 (动作, 目标摘要) —— 同一个目标反复请求不该堆出一串卡片。
+   */
+  requestConfirmation(confirmation) {
+    if (!confirmation?.id) return null;
+    if (!Array.isArray(this.state.confirmations)) this.state.confirmations = [];
+    const dup = this.state.confirmations.find(
+      (c) => c.decision === null && c.action === confirmation.action && c.targetDigest === confirmation.targetDigest,
+    );
+    if (dup) return dup;
+    this.state.confirmations.push({ ...confirmation });
+    // 只留 200 条：确认是短期事实，留太多没意义
+    if (this.state.confirmations.length > 200) {
+      this.state.confirmations.splice(0, this.state.confirmations.length - 200);
+    }
+    this.scheduleSave();
+    bus.emit('event', { t: 'confirmation.created', confirmation });
+    return confirmation;
+  }
+
+  getConfirmation(id) {
+    return (this.state.confirmations ?? []).find((c) => c.id === id) ?? null;
+  }
+
+  /** 待确认列表（界面用）。过期的也返回，但标出来。 */
+  pendingConfirmations({ roomId = null } = {}) {
+    const now = Date.now();
+    return (this.state.confirmations ?? [])
+      .filter((c) => c.decision === null || (c.decision === 'approved' && !c.consumedAt))
+      .filter((c) => !roomId || c.roomId === roomId)
+      .map((c) => ({ ...c, expired: now >= Number(c.expiresAt ?? 0) }))
+      .sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  /**
+   * 做决定。
+   *
+   * @param {string} id
+   * @param {object} p
+   * @param {boolean} p.approved
+   * @param {string} p.channel  'local' 或 'device'
+   * @param {object|null} p.device 决定来自哪台设备
+   */
+  decideConfirmation(id, { approved = false, channel = 'local', device = null } = {}) {
+    const c = this.getConfirmation(id);
+    if (!c) return null;
+    if (c.decision !== null) return c; // 已决过，幂等
+    c.decision = approved ? 'approved' : 'denied';
+    c.decidedAt = Date.now();
+    c.channel = channel;
+    c.decidedByDeviceId = device?.id ?? null;
+    c.decidedByDeviceName = device?.name ?? '';
+    this.scheduleSave();
+    bus.emit('event', { t: 'confirmation.decided', confirmation: c });
+    return c;
+  }
+
+  /** 标记用掉（一次一用）。 */
+  consumeConfirmation(id) {
+    const c = this.getConfirmation(id);
+    if (!c) return null;
+    c.consumedAt = Date.now();
+    this.scheduleSave();
+    return c;
+  }
+
   // ---------- 管理动作审计 ----------
 
   /**

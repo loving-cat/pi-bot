@@ -36,6 +36,7 @@ import { timingSafeEqual, log } from './util.js';
 import { readLocalToken } from './local-token.js';
 import { NONCE_PURPOSE, consumeNonce, issueNonce } from './local-nonce.js';
 import { planAdminRoute } from './http-admin.js';
+import { channelSuffices, describeConfirmation } from './confirm.js';
 import { shells } from './shells.js';
 import { computeNextRun, validateSchedule } from './automations.js';
 import { VERSION } from './version.js';
@@ -624,6 +625,56 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         return send(res, 200, {
           approvals: store.listApprovals({ roomId, status, limit: 100 }),
         });
+      }
+
+      // ---------- 危险动作确认（P0-4） ----------
+      //
+      // ★ 通道决定权重：`device`（已配对手机）能确认不可恢复动作；
+      //   `local`（本机桌面）只能确认可恢复的动作 —— 因为主 Bot 拿到
+      //   宿主 shell 之后能驱动本机界面，它自己弹的卡片它可以自己点
+      //   （规格 §9 明确要求承认这一点）。
+      if (pathname === '/api/confirmations' && req.method === 'GET') {
+        const roomId = url.searchParams.get('roomId');
+        return send(res, 200, { confirmations: store.pendingConfirmations({ roomId }) });
+      }
+
+      // 客户端自报通道：桌面端带 x-pi-bot-channel: local，手机端带 device。
+      // 不信任头本身 —— 用它只是"降权"，声称 local 只会让确认更难通过。
+      const clientChannel = String(req.headers['x-pi-bot-channel'] ?? '').toLowerCase() === 'device'
+        && !device?.isLocal
+        ? 'device'
+        : 'local';
+
+      const confirmMatch = pathname.match(/^\/api\/confirmations\/([^/]+)$/);
+      if (confirmMatch && req.method === 'POST') {
+        const body = await readBody(req);
+        const id = decodeURIComponent(confirmMatch[1]);
+        const existing = store.getConfirmation(id);
+        if (!existing) return fail(res, 404, 'CONFIRMATION_NOT_FOUND', '没有这条确认');
+        if (existing.decision !== null) {
+          return send(res, 200, { confirmation: existing, replayed: true });
+        }
+        const approved = body?.approve === true;
+
+        // 批准前先看通道够不够这个动作的格
+        if (approved) {
+          const suffices = channelSuffices(clientChannel, existing.action);
+          if (!suffices.ok) {
+            return fail(res, 403, 'WEAK_CHANNEL', suffices.reason);
+          }
+        }
+
+        const c = store.decideConfirmation(id, {
+          approved,
+          channel: clientChannel,
+          device,
+        });
+        log(
+          `🛡 ${approved ? '批准' : '拒绝'}：${describeConfirmation(c)}` +
+            `（通道 ${clientChannel}${device?.name ? '，' + device.name : ''}）`,
+        );
+        bus.emit('event', { t: 'confirmation.updated', confirmation: c });
+        return send(res, 200, { confirmation: c });
       }
 
       const approvalMatch = pathname.match(/^\/api\/approvals\/([^/]+)$/);
