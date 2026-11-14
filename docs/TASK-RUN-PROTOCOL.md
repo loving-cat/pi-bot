@@ -161,6 +161,20 @@ appliedCommands 与命令回执同键：requesterId + commandId + fingerprint �
 
 入口：TaskRunStrip（输入框上方状态卡）→ showTaskRunSheet（详情/暂停/继续/取消/补输入/审批）。新增图标沿用 lucide_icons_flutter 既有字形。
 
+## 文件占用（fileClaims）
+
+同一波派出去的成员是并行跑的，调度器只按执行者去重、不看文件。两个人各改同一个文件时，
+读-改-写之间没有任何锁（bash 工具更不经过任何队列），后写的静默覆盖先写的。
+
+| 项 | 约定 |
+|---|---|
+| 声明 | `assign_member_task` 的 `files`、`task_plan` 每步的 `files`；正文里 `@甲 改 app/lib/a.js` 那一句会自动挑出路径 |
+| 规范化 | 反斜杠统一成 `/`，去 `./` 与结尾斜杠，`/*`、`/**` 视作目录本身；Windows/macOS 折叠大小写，Linux 不折叠 |
+| 覆盖 | 声明目录即覆盖其下所有文件（`src/auth` 与 `src/auth/login.js` 冲突） |
+| 互斥 | 另一份活正占着同一批文件时，这一份排到 5 秒后重试：**不登记尝试、不扣额度**，日志写清被谁占着 |
+| 不算冲突 | 祖先与子孙（否则父等子、子等父自锁）；排队/受阻/暂停中的活（它们此刻不会写） |
+| 审核 | 文件清单**不进**派工指纹：同一份活重派时补一句文件只是合并，不新建任务；诊断投影里能看到实际占用 |
+
 ## 模块
 
 服务端：coordination/task-admission.js（首次准入）、coordination/task-request-gate.js（预约/生命周期）、tasks/task-request-receipts.js（持久回执与恢复）、tasks/task-projection.js（用户投影）、task-routes.js（HTTP 任务路由）。
