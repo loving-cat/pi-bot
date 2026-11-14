@@ -10,6 +10,9 @@ export const READONLY_ALLOW = [
   'list_bots', 'list_departments', 'read_department', 'message_bot', 'reply_bot',
   'list_sites', 'query_site',
   'list_models', 'list_skills', 'list_department_templates', 'list_local_capabilities',
+  // Git 读操作（status/diff/log/show/branches）是只读的，只读模式放行；
+  // git_add / git_commit 会改仓库，不在名单里（只读模式下会被拒）。
+  'git_status', 'git_diff', 'git_log', 'git_show', 'git_branches',
   // 桌面观察是**只读**的（看得到、改不了），只读模式也放行。
   // 但它在网关里仍然要过一次授权（desktop.observe），两层都要过。
   'desktop_observe', 'desktop_screenshot',
@@ -24,6 +27,9 @@ export const MUTATING_TOOLS = [
   'write', 'edit', 'bash', 'powershell',
   'run_background', 'write_stdin', 'kill_shell',
   'ego_browser',
+  // git_add 只改索引、git_commit 改历史，都是"动了东西"，ask 档要批准。
+  // git 读操作不在此列（它们不改任何状态）。
+  'git_add', 'git_commit',
 ];
 
 /**
@@ -84,6 +90,9 @@ const READ_ONLY_BUILTINS = new Set(['read', 'ls', 'grep', 'find']);
 const COORDINATION_TOOLS = new Set([
   'list_bots', 'list_departments', 'read_department', 'message_bot', 'reply_bot',
   'task_report', 'task_plan', 'assign_member_task', 'task_expert_review',
+  // ★ 负责人对自己的项目有 git 权限（用户 2026-11-14 的产品要求）。
+  //   只到"本地提交"这一层：push/merge 是 G2，要用户确认。
+  'git_status', 'git_diff', 'git_log', 'git_show', 'git_branches', 'git_add', 'git_commit',
 ]);
 
 export function isReadonlyPolicy(policy) {

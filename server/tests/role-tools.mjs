@@ -92,7 +92,13 @@ try {
   await test('真实会话工厂只注册负责人的只读和调度工具，并禁止外部扩展', async () => {
     const f = fixture(), { room, lead } = department();
     const o = (await f.builder(room.id, lead.id)).session.options;
-    assert.deepEqual([...o.tools].sort(), ['read', 'ls', 'grep', 'find', 'list_bots', 'list_departments', 'read_department', 'message_bot', 'reply_bot'].sort());
+    // 负责人现在还有 git（用户产品要求：负责人对自己的任务有 git 权限）。
+    // 只到本地提交这一层 —— push/merge 在 git-ops 的白名单里根本没有。
+    assert.deepEqual([...o.tools].sort(), [
+      'read', 'ls', 'grep', 'find',
+      'list_bots', 'list_departments', 'read_department', 'message_bot', 'reply_bot',
+      'git_status', 'git_diff', 'git_log', 'git_show', 'git_branches', 'git_add', 'git_commit',
+    ].sort());
     assert.equal(o.resourceLoader.options.noExtensions, true);
     assert.equal(o.resourceLoader.options.noMcp, true);
     assert.equal(guard(o, 'read'), undefined);

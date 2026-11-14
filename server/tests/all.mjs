@@ -43,6 +43,7 @@ const TESTS = [
   'grants',
   'desktop-observe',
   'http-admin',
+  'git-ops',
   'security-p0',
   'security-shell',
   'mcp-tool-registry',

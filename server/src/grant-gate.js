@@ -63,6 +63,13 @@ export const TOOL_ACTIONS = Object.freeze({
   add_mcp_server: { action: ACTION.mcpAdd, risk: RISK.critical },
   // 桌面观察：只读但看得到整个屏幕，风险记 medium（隐私面，不是破坏面）。
   // 它只给主 Bot，且必须先过 desktop.observe 授权（见 role-tools 的 CHIEF_ONLY_TOOLS）。
+  git_status: { action: ACTION.gitRead, risk: RISK.low },
+  git_diff: { action: ACTION.gitRead, risk: RISK.low },
+  git_log: { action: ACTION.gitRead, risk: RISK.low },
+  git_show: { action: ACTION.gitRead, risk: RISK.low },
+  git_branches: { action: ACTION.gitRead, risk: RISK.low },
+  git_add: { action: ACTION.gitCommit, risk: RISK.medium },
+  git_commit: { action: ACTION.gitCommit, risk: RISK.medium },
   desktop_observe: { action: ACTION.desktopObserve, risk: RISK.medium },
   desktop_screenshot: { action: ACTION.desktopObserve, risk: RISK.medium },
   stage_site: { action: ACTION.fileWrite, risk: RISK.medium },

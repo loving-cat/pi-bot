@@ -32,6 +32,7 @@ import { buildIntakeTools, intakeEnabled } from './coordination/intake-tool.js';
 import { buildReportTool } from './tasks/task-report-tool.js';
 import { buildMemberTaskTool } from './tasks/task-member-tool.js';
 import { buildPlanTool } from './tasks/task-plan-tool.js';
+import { buildGitTools } from './git-tools.js';
 import { buildExpertReviewTool } from './tasks/task-expert-tool.js';
 import { buildTaskInsightTools } from './coordination/task-insight-tool.js';
 import { createPolicyExtension } from './policy-hook.js';
@@ -147,6 +148,17 @@ export function createSessionBuilder({
       ? [buildExpertReviewTool({ runner, store, roomId, botId })]
       : [];
 
+    // ★ Git：负责人对自己的任务有 git 权限（用户 2026-11-14 的产品要求），
+    //   主控也有（它在根目录调度整机）。执行 Bot 不给 ——
+    //   规格 §5.3「执行 Bot 不能自批、转授或修改策略」，
+    //   而提交是"把改动落成事实"，那一步该由负责人核对后做。
+    //
+    //   能力边界在 git-ops.js 的白名单里（只有 status/diff/log/show/branches/add/commit），
+    //   push/merge/reset/clean 在那张表里根本没有。
+    const gitTools = isChief || isDeptLead
+      ? buildGitTools({ runner, store, roomId, botId })
+      : [];
+
     // ★ 接单工具：正式内部入口。默认关闭，不影响真实用户路径。
     const intakeTools =
       isChief && intakeEnabled()
@@ -166,6 +178,7 @@ export function createSessionBuilder({
       ...reportTools,
       ...memberTools,
       ...expertTools,
+      ...gitTools,
       ...intakeTools,
       ...insightTools,
       ...(isChief ? buildChiefTools({ runner, health, roomId, botId }) : []),
