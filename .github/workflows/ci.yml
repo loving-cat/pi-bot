@@ -35,8 +35,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Windows 必须跑：PATH / 进程 / 编码 / 换行只在那边才暴露
-        os: [ubuntu-latest, windows-latest]
+        # 三个平台都跑：
+        #   · Windows —— PATH / 进程 / 编码 / 换行只在那边暴露；
+        #   · macOS   —— 沙箱走 sandbox-exec（Seatbelt）、数据目录在
+        #                ~/Library/Application Support、代理从系统设置读，
+        #                这些分支在 Linux 上一条都跑不到；
+        #   · Linux   —— bwrap 与 XDG 那套。
+        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

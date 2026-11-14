@@ -22,7 +22,7 @@ Flutter 官方的做法就是所有平台目录放在一个仓库里：`flutter 
 | macOS 运行器 | `app/macos/**` | macOS |
 | Android | `app/android/**` | 移动端 |
 | 平台适配小文件 | `app/lib/clipboard_image_macos.dart`、`app/lib/server/spawn_posix.dart` | 对应平台；共享文件只留接口 |
-| 服务端（Node，跨平台） | `server/src/**` | 任何平台。碰进程/路径/编码的改动，**必须在 Windows 上跑 `node tests/all.mjs`** |
+| 服务端（Node，跨平台） | `server/src/**` | 任何平台。碰进程/路径/编码的改动，**三端都要跑 `node tests/all.mjs`**（CI 的 server job 是 ubuntu + windows + macos） |
 | 打包脚本 | `scripts/pack-windows.ps1`、`scripts/pack-macos.sh` | 各自平台，规则一致：干净临时构建 → 暂存 → 扫描本机路径 → 换成品 → 失败回滚 |
 | 平台文档 | `docs/WINDOWS.md`、`docs/MACOS.md` | 各自平台（构建命令 + 真机验收记录） |
 
@@ -44,7 +44,7 @@ Flutter 官方的做法就是所有平台目录放在一个仓库里：`flutter 
 PR 之前逐条过一遍：
 
 - [ ] 共享 Dart 改动：Windows 和 macOS **各跑一次** `cd app && flutter test` + `flutter analyze`
-- [ ] 服务端改动：`cd server && node tests/all.mjs`（Windows 上也要跑一遍，见 CI）
+- [ ] 服务端改动：`cd server && node tests/all.mjs`。三条平台分支各不相同，本地只有一个平台，所以**以 CI 的三端结果为准**（ubuntu / windows / macos 各一个 job）
 - [ ] 新增路径拼接/解析：`Platform.pathSeparator`、双分隔符兼容
 - [ ] 新增子进程：想一遍 `.cmd/.bat`、空格与引号、控制台窗口、怎么杀
 - [ ] 用户可见的平台能力：更新对应的 `docs/WINDOWS.md` / `docs/MACOS.md`
