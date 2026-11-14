@@ -97,7 +97,7 @@ try {
     assert.deepEqual([...o.tools].sort(), [
       'read', 'ls', 'grep', 'find',
       'list_bots', 'list_departments', 'read_department', 'message_bot', 'reply_bot',
-      'git_status', 'git_diff', 'git_log', 'git_show', 'git_branches', 'git_add', 'git_commit',
+      'git_status', 'git_diff', 'git_log', 'git_show', 'git_branches', 'git_add', 'git_commit', 'git_push',
     ].sort());
     assert.equal(o.resourceLoader.options.noExtensions, true);
     assert.equal(o.resourceLoader.options.noMcp, true);

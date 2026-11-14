@@ -254,14 +254,40 @@ await test('hooks 拦下提交时，退出码非 0 且明确报错', () => {
 });
 
 // ---------------------------------------------------------------- 白名单
-await test('★ push / reset / clean / rebase 明确拒绝（不是悄悄失败）', () => {
-  for (const op of ['push', 'merge', 'rebase', 'reset', 'clean']) {
+await test('★ reset / clean / merge / rebase 明确拒绝（不是悄悄失败）', () => {
+  for (const op of ['merge', 'rebase', 'reset', 'clean']) {
     const r = runGit({ repoDir: repo, op });
     assert.equal(r.ok, false, op + ' 应当被拒');
     assert.equal(r.refused, true, op + ' 应当标成 refused');
     assert.ok(r.error && r.error.length > 10, op + ' 要说清为什么不给');
   }
-  assert.ok(Object.keys(REFUSED_OPERATIONS).length >= 5);
+  assert.ok(Object.keys(REFUSED_OPERATIONS).length >= 4);
+});
+
+await test('★ push 可以用，但没有确认票据就拒（不可绕过）', () => {
+  // 没票据
+  const noTicket = runGit({ repoDir: repo, op: 'push', params: { remote: 'origin', branches: ['main'] } });
+  assert.equal(noTicket.ok, false);
+  assert.equal(noTicket.refused, true);
+  assert.match(noTicket.error, /手机上确认/);
+
+  // 票据还没批
+  const pending = runGit({
+    repoDir: repo, op: 'push', params: { remote: 'origin', branches: ['main'] },
+    confirmation: { decision: null },
+  });
+  assert.equal(pending.refused, true);
+  assert.match(pending.error, /还没被批准/);
+
+  // 票据被拒绝
+  const denied = runGit({
+    repoDir: repo, op: 'push', params: { remote: 'origin', branches: ['main'] },
+    confirmation: { decision: 'denied' },
+  });
+  assert.equal(denied.refused, true);
+
+  // 注意：这里不真测"批准后能 push"—— 那要一个真远端。
+  // 只验"没有票据过不去"这个不变量，它是安全边界所在。
 });
 
 await test('未知操作也说清可用列表', () => {
@@ -270,11 +296,13 @@ await test('未知操作也说清可用列表', () => {
   assert.match(r.error, /status/);
 });
 
-await test('白名单里没有 push（避免以后误加）', () => {
-  assert.ok(!Object.keys(GIT_OPERATIONS).includes('push'));
-  assert.ok(!Object.keys(GIT_OPERATIONS).includes('reset'));
-  assert.ok(!Object.keys(GIT_OPERATIONS).includes('clean'));
-  assert.ok(!Object.keys(GIT_OPERATIONS).includes('push --force'));
+await test('白名单：push 在，但标了 requiresConfirmation；reset/clean 不在', () => {
+  assert.ok(Object.keys(GIT_OPERATIONS).includes('push'), 'push 现在可用');
+  assert.equal(GIT_OPERATIONS.push.requiresConfirmation, true, 'push 必须有确认');
+  assert.equal(GIT_OPERATIONS.commit.requiresConfirmation, undefined, '本地提交不需要确认');
+  for (const bad of ['reset', 'clean', 'merge', 'rebase']) {
+    assert.ok(!Object.keys(GIT_OPERATIONS).includes(bad), bad + ' 不该在白名单里');
+  }
 });
 
 await test('每个读操作都标了 mutates: false', () => {

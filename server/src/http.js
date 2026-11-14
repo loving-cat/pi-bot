@@ -36,7 +36,7 @@ import { timingSafeEqual, log } from './util.js';
 import { readLocalToken } from './local-token.js';
 import { NONCE_PURPOSE, consumeNonce, issueNonce } from './local-nonce.js';
 import { planAdminRoute } from './http-admin.js';
-import { channelSuffices, describeConfirmation } from './confirm.js';
+import { describeConfirmation } from './confirm.js';
 import { shells } from './shells.js';
 import { computeNextRun, validateSchedule } from './automations.js';
 import { VERSION } from './version.js';
@@ -656,19 +656,17 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         }
         const approved = body?.approve === true;
 
-        // 批准前先看通道够不够这个动作的格
-        if (approved) {
-          const suffices = channelSuffices(clientChannel, existing.action);
-          if (!suffices.ok) {
-            return fail(res, 403, 'WEAK_CHANNEL', suffices.reason);
-          }
-        }
-
+        // 通道校验在 store.decideConfirmation 里（集中一处，绕不过去）；
+        // 这里只把 403 翻成人话。
         const c = store.decideConfirmation(id, {
           approved,
           channel: clientChannel,
           device,
         });
+        if (!c) return fail(res, 404, 'CONFIRMATION_NOT_FOUND', '没有这条确认');
+        if (c.rejected) {
+          return fail(res, 403, 'WEAK_CHANNEL', c.rejectedReason);
+        }
         log(
           `🛡 ${approved ? '批准' : '拒绝'}：${describeConfirmation(c)}` +
             `（通道 ${clientChannel}${device?.name ? '，' + device.name : ''}）`,

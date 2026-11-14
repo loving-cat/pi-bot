@@ -28,7 +28,9 @@ import { log } from './util.js';
 import {
   runGit, parseStatus, verifyCommitLanded, currentHead, listActiveHooks,
   GIT_OPERATIONS, REFUSED_OPERATIONS, locateGit,
+  describePushTarget, verifyPushLanded,
 } from './git-ops.js';
+import { buildConfirmation, checkConfirmation, describeConfirmation } from './confirm.js';
 
 const ok = (text, details = {}) => ({ content: [{ type: 'text', text }], details });
 const fail = (text, details = {}) => ({ content: [{ type: 'text', text }], details, isError: true });
@@ -304,22 +306,160 @@ export function buildGitTools({ runner, store, roomId, botId }) {
         if (hooks.length) {
           lines.push(`这次提交时仓库里有这些 hooks（它们照常执行了，没有跳过）：${hooks.join('、')}`);
         }
-        lines.push('这是本地提交。要推到远端得由用户确认 —— 现在还没做确认框架，所以 push 不可用。');
+        lines.push('这是本地提交，还没有推到远端。要推的话用 git_push：它会先请你在手机上确认。');
         log(`📦 ${store.getBot(botId)?.name ?? botId} 在 ${path.basename(target)} 提交了 ${afterHead}`);
         return ok(lines.join('\n'), { head: afterHead, hooks, beforeHead });
+      },
+    }),
+
+    // ---------------------------------------------------------------- G2：push（要确认）
+    defineTool({
+      name: 'git_push',
+      label: '推到远端（需要用户在手机上确认）',
+      description:
+        '把本地提交推到远端。**这一步不可撤销，必须在手机上确认**——'
+        + '本机桌面上的批准不算数，因为主 Bot 能操作桌面。'
+        + '\n'
+        + '调用后会给你一张待确认，用户批准之后再调一次同一个工具（带同一个 ticket）才会真的推。'
+        + '不要换成别的办法绕过这一步（比如直接跑 bash git push）—— 那条路也是要确认的。',
+      parameters: Type.Object({
+        repo: Type.Optional(Type.String({ description: '仓库目录（相对工作目录）' })),
+        remote: Type.Optional(Type.String({ description: '远端名，默认 origin' })),
+        branch: Type.Optional(Type.String({ description: '推哪个分支，默认当前分支' })),
+        ticket: Type.Optional(Type.String({ description: '上次调用拿到的确认票据。用户批准后带它再调一次' })),
+      }),
+      execute: async (_toolCallId, { repo, remote, branch, ticket }) => {
+        const target = resolveRepo(repo);
+        if (!target) return fail(`只能在你的工作目录里操作仓库（${config.workspace}）。`);
+
+        const remoteName = String(remote ?? 'origin').trim() || 'origin';
+
+        // ---- 已有票据：核对后执行 ----
+        if (ticket) {
+          const existing = store.getConfirmation(String(ticket));
+          if (!existing) return fail(`找不到确认票据 ${ticket}。先不带 ticket 调一次，生成确认请求。`);
+
+          // ★ 必须**重新算一次**当前的 push 目标，不能拿确认里存的那份自我比对。
+          //
+          //   拿存的那份比，摘要永远相等 —— 用户批准之后代码又变了也照样放行。
+          //   这正是规格 §9「确认绑定具体对象…目标变化则重新确认」要防的事。
+          const nowTarget = describePushTarget({
+            repoDir: target,
+            remote: remoteName,
+            branches: existing.branchList ?? [],
+          });
+          if (!nowTarget.ok) return fail(nowTarget.error);
+
+          const verdict = checkConfirmation({
+            confirmation: existing,
+            target: nowTarget.target,
+            policyRevision: store.policyVersion(),
+          });
+          if (!verdict.ok) {
+            return fail(`这次 push 不能执行：${verdict.text}（${verdict.code}）`);
+          }
+
+          const res = runGit({
+            repoDir: target, op: 'push',
+            params: { remote: remoteName, branches: existing.branchList ?? [] },
+            confirmation: existing,
+          });
+          if (!res.ok) {
+            audit({ op: 'push', repo: target, res });
+            return fail(res.error ?? 'git push 失败');
+          }
+
+          // ★ 规格 §7.1：退出码 + 预期仓库状态都符合才算成功
+          const verified = verifyPushLanded({ repoDir: target, remote: remoteName, branch: existing.branchName ?? '' });
+          store.consumeConfirmation(existing.id); // 一次一用
+          audit({ op: 'push', repo: target, res });
+
+          if (!verified.ok) return fail(`push 报告成功，但核对失败：${verified.error}`);
+          if (!verified.matched) {
+            return fail(
+              `push 报告成功，但远端引用（${verified.remoteHead || '(空)'}）和本地 HEAD（${verified.localHead}）不一致。`
+              + '标成「结果未知」，不要重复推 —— 先核对远端实际状态。',
+            );
+          }
+          return ok(
+            `已推送：${remoteName}/${existing.branchName}（${String(verified.localHead).slice(0, 8)}）
+`
+            + `用户确认来自：${existing.decidedByDeviceName || existing.channel}`,
+            { remote: remoteName, head: verified.localHead },
+          );
+        }
+
+        // ---- 还没有票据：算出"用户到底在批什么"，生成确认 ----
+        const described = describePushTarget({ repoDir: target, remote: remoteName, branches: branch ? [branch] : [] });
+        if (!described.ok) return fail(described.error);
+
+        const totalCommits = described.target.branches.reduce((n, b) => n + b.commitCount, 0);
+        if (!totalCommits) {
+          return fail('没有要推的提交（当前分支和远端一致）。');
+        }
+
+        const summary = described.display.branches
+          .map((b) => `把 ${b.commitCount} 个提交推到 ${b.upstream}`)
+          .join('；');
+
+        // ★ buildConfirmation 返回的是冻结对象（防止调用方事后偷改）。
+        //   执行时要用到的额外字段因此得**在构造时一起给**，不能再 Object.assign。
+        const confirmation = {
+          ...buildConfirmation({
+            id: `cf_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+            action: 'git.push',
+            target: described.target,
+            summary,
+            display: described.display,
+            requestedBy: botId,
+            roomId,
+            policyRevision: store.policyVersion(),
+          }),
+          // 目标原文：执行时 checkConfirmation 要拿它重算摘要
+          targetJson: JSON.stringify(described.target),
+          branchName: described.target.branches[0]?.branch ?? '',
+          branchList: described.target.branches.map((b) => b.branch),
+          repoDir: path.relative(config.workspace, target) || '.',
+        };
+
+        const saved = store.requestConfirmation(confirmation);
+        store.appendMessage({
+          roomId,
+          authorType: 'bot',
+          authorId: botId,
+          authorName: store.getBot(botId)?.name ?? '',
+          authorEmoji: store.getBot(botId)?.emoji ?? null,
+          kind: 'confirmation',
+          text: `${store.getBot(botId)?.name ?? '它'} 想推代码，等你在手机上确认：${summary}`,
+          status: 'done',
+          meta: { confirmationId: saved.id, action: 'git.push' },
+        });
+        log(`🛡 ${store.getBot(botId)?.name ?? botId} 请求 push 确认：${summary}`);
+
+        const lines = [
+          `要推这些（还没推）：`,
+          ...described.display.branches.flatMap((b) => [
+            `${b.branch} → ${b.upstream}（${b.commitCount} 个提交）`,
+            ...b.commits.map((c) => `  ${c}`),
+          ]),
+          '',
+          '已经在会话里发了确认卡片。**这一步必须在手机上点批准**——本机桌面上的批准不算数。',
+          `批准后带 ticket=${saved.id} 再调一次 git_push 才会真的推。`,
+        ];
+        return ok(lines.join('\n'), { ticket: saved.id, display: described.display });
       },
     }),
   ];
 }
 
-/** 让提示词能说明"现在能不能 push"（不能）。 */
+/** 让提示词能说明"现在能不能 push"（能，但要手机确认）。 */
 export function gitCapabilityNote() {
   const git = locateGit();
   if (!git.ok) {
     return '这台机器上没找到 Git：' + git.error;
   }
-  return `Git ${git.version}（${git.source}）。当前可用：${Object.keys(GIT_OPERATIONS).join('、')}。`
-    + `push/merge/reset 等要用户确认，暂时不提供。`;
+  return `Git ${git.version}（${git.source}）。可用：${Object.keys(GIT_OPERATIONS).join('、')}。`
+    + 'push 需要在手机上确认；merge/reset/clean 不提供。';
 }
 
 export { REFUSED_OPERATIONS };

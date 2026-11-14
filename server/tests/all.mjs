@@ -45,6 +45,7 @@ const TESTS = [
   'http-admin',
   'git-ops',
   'confirm',
+  'git-push-flow',
   'security-p0',
   'security-shell',
   'mcp-tool-registry',

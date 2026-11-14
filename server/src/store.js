@@ -19,6 +19,7 @@ import { newId, now, readJson, writeJsonAtomic, insertionPoint, log } from './ut
 import { normalizeRules } from './shell-policy.js';
 import { sanitizeMemoryText } from './memory-sanitize.js';
 import { TaskRunStore } from './tasks/task-run-store.js';
+import { channelSuffices } from './confirm.js';
 import { defaultWindowsInstanceDir, teardownWindowsInstance } from './sandbox-win.js';
 
 const STATE_FILE = path.join(config.dataDir, 'state.json');
@@ -1330,16 +1331,35 @@ export class Store {
   /**
    * 做决定。
    *
+   * ★ 通道校验放在**这里**，不放在 HTTP 层。
+   *
+   *   放在 HTTP 层时，任何绕过 HTTP 的路径（另一个工具、一条内部调用、
+   *   以后加的子进程）都能把"本机桌面批准了 push"写进存储 ——
+   *   而 confirm.js 的 checkConfirmation 会看见 approved 就放行。
+   *   校验一次在一个地方，比在两个地方各写一遍更难漏。
+   *
    * @param {string} id
    * @param {object} p
    * @param {boolean} p.approved
    * @param {string} p.channel  'local' 或 'device'
    * @param {object|null} p.device 决定来自哪台设备
+   * @returns {object|null} 成功时返回（可能已决过）那条确认；
+   *   通道不够时返回带 `rejected: true` 的副本，**且不落盘**。
    */
   decideConfirmation(id, { approved = false, channel = 'local', device = null } = {}) {
     const c = this.getConfirmation(id);
     if (!c) return null;
     if (c.decision !== null) return c; // 已决过，幂等
+
+    // 批准不可撤销动作时，通道必须够格（规格 §9）
+    if (approved && !channelSuffices(channel, c.action).ok) {
+      return {
+        ...c,
+        rejected: true,
+        rejectedReason: channelSuffices(channel, c.action).reason,
+      };
+    }
+
     c.decision = approved ? 'approved' : 'denied';
     c.decidedAt = Date.now();
     c.channel = channel;

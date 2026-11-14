@@ -93,6 +93,9 @@ const COORDINATION_TOOLS = new Set([
   // ★ 负责人对自己的项目有 git 权限（用户 2026-11-14 的产品要求）。
   //   只到"本地提交"这一层：push/merge 是 G2，要用户确认。
   'git_status', 'git_diff', 'git_log', 'git_show', 'git_branches', 'git_add', 'git_commit',
+  // push 也能调，但它自己会要求确认票据（见 git-ops 的 requiresConfirmation）。
+  // 放在这里的意思是"角色上允许走这条路"，不是"允许直接推"。
+  'git_push',
 ]);
 
 export function isReadonlyPolicy(policy) {

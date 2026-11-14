@@ -108,17 +108,39 @@ export const GIT_OPERATIONS = Object.freeze({
       return args;
     },
   },
+
+  /**
+   * G2：push。**必须**先过用户确认（confirm.js 会要求手机通道）。
+   *
+   * `requiresConfirmation: true` 不是给调用方看的提示 —— runGit 会直接拒绝
+   * 没有确认票据的调用。这样可以保证"能执行 push 的唯一路径"是先确认。
+   *
+   * 参数固定成 `push <remote> <ref>`：
+   *   · 不给 `--force` / `--force-with-lease`（那是 G3，表里没有）
+   *   · 不给 `--all` / `--tags` / `--mirror`（一次推一堆引用没法确认"推了什么"）
+   */
+  push: {
+    needs: 'git.push',
+    mutates: true,
+    requiresConfirmation: true,
+    args: (p) => {
+      const remote = String(p.remote ?? 'origin').trim();
+      const branches = Array.isArray(p.branches) ? p.branches.map(String) : [String(p.branch ?? '')].filter(Boolean);
+      return ['push', remote, ...branches];
+    },
+  },
 });
 
 /** 明确拒绝的操作 —— 不是"忘了实现"，是刻意不给。 */
 export const REFUSED_OPERATIONS = Object.freeze({
-  push: 'push 属于 G2：要由用户确认后才能做，而确认框架（P0-4）还没做完。'
-    + '现在直接推等于绕过了确认，所以这里不给。',
-  merge: 'merge 改共享分支，属于 G2：同上，要确认。',
-  rebase: 'rebase 改写历史，属于 G2/G3：要确认。',
+  // push 现在**是**可用的（见 GIT_OPERATIONS.push），但必须先过确认。
+  // 这几个仍然不给 —— 它们是 G3，改动比 push 更难收拾：
+  merge: 'merge 改共享分支，属于 G2/G3：要具体确认（现在不提供）。',
+  rebase: 'rebase 改写历史，属于 G2/G3：要确认（现在不提供）。',
   reset: 'reset 可能丢工作区改动，属于 G3：需要用户确认，这里不提供。',
   clean: 'clean 会删未跟踪文件，属于 G3：需要用户确认，这里不提供。',
-  'push --force': 'force push 属于 G3：要确认，这里不提供。',
+  'push --force': 'force push 属于 G3：要确认，这里不提供。'
+    + '（普通 push 可用，但要手机确认；force 连那条路都不给。）',
   'remote set-url': '改远端属于 G3：要确认，这里不提供。',
   hooks: '改 hooks 属于 G3：那是在改"提交时会执行什么"，需要用户确认。',
 });
@@ -270,7 +292,11 @@ export function resolveRepoLayout(rootDir) {
  * @param {string} [p.gitFile] 显式指定 git 可执行文件（不传则现场找）
  * @returns {{ok:boolean, op:string, stdout?:string, stderr?:string, code?:number, error?:string, truncated?:boolean}}
  */
-export function runGit({ repoDir, op, params = {}, gitFile = null, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+export function runGit({
+  repoDir, op, params = {}, gitFile = null, timeoutMs = DEFAULT_TIMEOUT_MS,
+  /** 确认票据：只有 requiresConfirmation 的操作需要它。 */
+  confirmation = null,
+} = {}) {
   const key = String(op ?? '');
   if (REFUSED_OPERATIONS[key]) {
     return { ok: false, op: key, error: REFUSED_OPERATIONS[key], refused: true };
@@ -282,6 +308,29 @@ export function runGit({ repoDir, op, params = {}, gitFile = null, timeoutMs = D
       error: `不支持的 git 操作「${key}」。可用：${Object.keys(GIT_OPERATIONS).join('、')}`,
       refused: true,
     };
+  }
+
+  // ★ requiresConfirmation 的操作**在这里**就拦住没有票据的调用。
+  //
+  //   为什么拦在这一层而不是工具层：这样"能执行 push 的唯一路径"是
+  //   `先确认 → 再调用`，而不是靠每个调用点自己记得检查。
+  //   票据的校验（目标摘要、通道、过期、一次一用）在 confirm.js 里，
+  //   这里只确认"你带了票据且它自称已批准" —— 真正的校验由调用方
+  //   在更外层做完（它知道当前策略版本）。
+  if (spec.requiresConfirmation) {
+    if (!confirmation) {
+      return {
+        ok: false, op: key, refused: true,
+        error: `${key} 属于不可撤销动作，必须在手机上确认后才能执行。`
+          + '先生成确认请求，用户批准后再带着票据调用。',
+      };
+    }
+    if (confirmation.decision !== 'approved') {
+      return {
+        ok: false, op: key, refused: true,
+        error: `${key} 的确认还没被批准（当前：${confirmation.decision ?? '等待中'}）。`,
+      };
+    }
   }
 
   const git = gitFile ? { ok: true, file: gitFile } : locateGit();
@@ -466,3 +515,130 @@ export function parseStatus(text) {
 }
 
 export { spawnCommand };
+
+/**
+ * push 的**确认目标**：用户到底在批准什么。
+ *
+ * 规格 §9：「确认绑定具体对象、内容/差异、金额（如适用）、目的地、有效期」。
+ * 对 push 来说，目的地 = 远端 + 分支，内容 = 将要推上去的那些提交。
+ *
+ * 所以要先把 diff 摘要算进来 —— 只绑 remote+ref 不够：用户在确认时看到的
+ * 是"推这 3 个提交"，如果之后又提交了一次，那 3 个就变成 4 个，
+ * 摘要必须跟着变，逼他重新看。
+ *
+ * @param {object} p
+ * @param {string} p.repoDir
+ * @param {string} [p.remote]
+ * @param {string[]} [p.branches]
+ * @param {string} [p.gitFile]
+ * @returns {{ok:true, target:object, display:object}|{ok:false, error:string}}
+ */
+export function describePushTarget({ repoDir, remote = 'origin', branches = [], gitFile = null } = {}) {
+  const git = gitFile ? { ok: true, file: gitFile } : locateGit();
+  if (!git.ok) return { ok: false, error: git.error };
+  const layout = resolveRepoLayout(repoDir);
+  if (!layout.ok) return { ok: false, error: layout.error };
+
+  /** 跑一条只读命令拿文本（不走 runGit，避免 push 自己又要求确认）。 */
+  const read = (args) => {
+    const res = spawnSync(git.file, ['--no-pager', ...args], {
+      cwd: layout.root, encoding: 'utf8', timeout: 15_000, windowsHide: true,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C', GIT_CONFIG_NOSYSTEM: '1' },
+    });
+    return { ok: res.status === 0, text: (res.stdout || '').trim(), err: (res.stderr || '').trim() };
+  };
+
+  const refs = (Array.isArray(branches) && branches.length ? branches : [currentBranchName(git.file, layout.root) ?? '']);
+  const names = refs.filter(Boolean);
+  if (!names.length) return { ok: false, error: '不知道要推哪个分支' };
+
+  const details = [];
+  for (const name of names) {
+    // 上游：origin/main 之类。没有上游时远端分支名就是本地名。
+    const up = read(['rev-parse', '--abbrev-ref', `${name}@{upstream}`]);
+    const upstream = up.ok ? up.text : `${remote}/${name}`;
+    const upstreamRef = upstream.includes('/') ? upstream.split('/').slice(1).join('/') : name;
+
+    // 将要推上去的提交（远端没有的一侧）
+    const range = read(['log', '--oneline', '--date=short', '--pretty=format:%h %ad %s', `${upstream}..${name}`]);
+    const commits = range.ok ? range.text.split('\n').filter(Boolean) : [];
+    const head = read(['rev-parse', '--short', 'HEAD']);
+
+    details.push({
+      branch: name,
+      upstream,
+      upstreamRef,
+      head: head.ok ? head.text : '',
+      commitCount: commits.length,
+      commits: commits.slice(0, 20),
+    });
+  }
+
+  // ★ 目标里只放**会影响结果**的事实：远端、分支、每个分支的 HEAD。
+  //   不放时间戳之类 —— 那会让每次生成的摘要都不同，用户被反复要求确认。
+  const target = {
+    remote,
+    branches: details.map((d) => ({ branch: d.branch, upstream: d.upstream, head: d.head, commitCount: d.commitCount })),
+  };
+  return {
+    ok: true,
+    target,
+    display: {
+      remote,
+      branches: details.map((d) => ({
+        branch: d.branch,
+        upstream: d.upstream,
+        commitCount: d.commitCount,
+        commits: d.commits,
+      })),
+    },
+  };
+}
+
+/** 当前分支名（detached HEAD 时返回 null）。 */
+function currentBranchName(gitFile, cwd) {
+  const res = spawnSync(gitFile, ['rev-parse', '--abbrev-ref', 'HEAD'], {
+    cwd, encoding: 'utf8', timeout: 10_000, windowsHide: true,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C' },
+  });
+  if (res.status !== 0) return null;
+  const name = (res.stdout || '').trim();
+  return name && name !== 'HEAD' ? name : null;
+}
+
+/**
+ * push 之后的核对：规格 §7.1 要求"退出码 + 预期仓库状态"同时满足。
+ *
+ * push 的"仓库状态"= 本地分支的 HEAD 与远端引用一致。
+ * 只信退出码不够 —— 有些 hook / 远端配置会让 push"成功但不生效"。
+ *
+ * @returns {{ok:boolean, remoteHead?:string, localHead?:string, matched?:boolean, error?:string}}
+ */
+export function verifyPushLanded({ repoDir, remote = 'origin', branch, gitFile = null } = {}) {
+  const git = gitFile ? { ok: true, file: gitFile } : locateGit();
+  if (!git.ok) return { ok: false, error: git.error };
+  const layout = resolveRepoLayout(repoDir);
+  if (!layout.ok) return { ok: false, error: layout.error };
+
+  const run = (args) => spawnSync(git.file, ['--no-pager', ...args], {
+    cwd: layout.root, encoding: 'utf8', timeout: 20_000, windowsHide: true,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C' },
+  });
+
+  const local = run(['rev-parse', branch]);
+  if (local.status !== 0) return { ok: false, error: `读不出本地 ${branch}` };
+  const localHead = (local.stdout || '').trim();
+
+  // 远端引用在本地仓库里有一份缓存（refs/remotes/<remote>/<branch>），
+  // push 成功后它会更新。这正是"预期仓库状态"的可用证据。
+  const branchName = String(branch).includes('/') ? String(branch).split('/').slice(1).join('/') : String(branch);
+  const remoteRef = run(['rev-parse', `refs/remotes/${remote}/${branchName}`]);
+  const remoteHead = remoteRef.status === 0 ? (remoteRef.stdout || '').trim() : '';
+
+  return {
+    ok: true,
+    localHead,
+    remoteHead,
+    matched: Boolean(remoteHead) && remoteHead === localHead,
+  };
+}

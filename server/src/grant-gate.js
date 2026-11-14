@@ -70,6 +70,7 @@ export const TOOL_ACTIONS = Object.freeze({
   git_branches: { action: ACTION.gitRead, risk: RISK.low },
   git_add: { action: ACTION.gitCommit, risk: RISK.medium },
   git_commit: { action: ACTION.gitCommit, risk: RISK.medium },
+  git_push: { action: ACTION.gitPush, risk: RISK.high },
   desktop_observe: { action: ACTION.desktopObserve, risk: RISK.medium },
   desktop_screenshot: { action: ACTION.desktopObserve, risk: RISK.medium },
   stage_site: { action: ACTION.fileWrite, risk: RISK.medium },
