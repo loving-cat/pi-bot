@@ -40,6 +40,7 @@ const TESTS = [
   'task-projection',
   'task-supervisor',
   'task-file-claims',
+  'grants',
   'security-p0',
   'security-shell',
   'mcp-tool-registry',

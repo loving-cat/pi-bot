@@ -121,7 +121,7 @@ function mcpServerSecretKeys(tool) {
   }
 }
 
-export function createPolicyExtension({ roomId, bot, onBlocked = () => {}, managedContextOf = null }) {
+export function createPolicyExtension({ roomId, bot, onBlocked = () => {}, managedContextOf = null, grantGate = null }) {
   /** 通知观察者：这次调用被某条 pending 审批挡住了。 */
   function notifyBlocked(approval, created) {
     if (typeof onBlocked !== 'function') return;
@@ -147,11 +147,46 @@ export function createPolicyExtension({ roomId, bot, onBlocked = () => {}, manag
           return { block: true, reason: '部门负责人负责拆解、派活和汇总；请把这项操作交给成员执行。' };
         }
 
-        // 只读：默认拒绝。审批授权、命令白名单和会话里残留的工具都不能放行。
+        // ★ 只读：默认拒绝。审批授权、命令白名单和会话里残留的工具都不能放行。
         const readonlyReason = readonlyBlockReason(policy, tool);
         if (readonlyReason) return { block: true, reason: readonlyReason };
         const scriptReason = opaqueScriptBlockReason(policy, tool);
         if (scriptReason) return { block: true, reason: scriptReason };
+
+        // ★ 授权网关（P0-1）：**在执行边界逐次核**。
+        //
+        //   顺序刻意放在角色/只读/脚本判定**之后**：那些是"这个工具本身允许吗"，
+        //   网关回答的是"这个人有没有资格做这次动作"，两者都要过。
+        //   但它必须在命令黑名单与审批**之前** —— 没资格的动作不该先弹一张
+        //   "要不要批准"的卡片给用户，那等于用麻烦换一个本该直接拒绝的请求。
+        //
+        //   网关不可用（没装 = 理论上只有测试环境）时**不拦截**：
+        //   否则所有未接网关的单测一次性红掉。生产环境 server-main 一定装它。
+        if (grantGate && typeof grantGate.check === 'function') {
+          const mapped = grantGate.actionForTool(tool);
+          if (mapped) {
+            const subject = { botId: bot?.id ?? '', role: currentBot?.role ?? '', instanceId: '' };
+            const taskCtx = typeof managedContextOf === 'function' ? managedContextOf() : null;
+            const verdict = grantGate.check({
+              subject,
+              action: mapped.action,
+              targets: grantGate.targetsForTool(tool, event?.input ?? {}),
+              params: event?.input ?? {},
+              taskId: taskCtx?.taskRunId ?? null,
+            });
+            if (!verdict.ok) {
+              log(
+                `⛔ ${currentBot?.name ?? bot?.id ?? 'bot'} 的动作被授权网关拒绝（${verdict.code}）：` +
+                  `${tool} —— ${verdict.text}`,
+              );
+              return {
+                block: true,
+                reason: `这次操作没有被授权：${verdict.text}（${verdict.code}）。` +
+                  '不要换工具或换编码重试；如果确实需要，向用户说明要新增什么权限。',
+              };
+            }
+          }
+        }
 
         // ---- 钩子：可以先改入参（重写命令），也可以直接拦下 ----
         const hooked = applyHooks(loadHooks(), { tool, input: event?.input ?? {} });

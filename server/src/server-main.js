@@ -15,6 +15,15 @@ import { createAutomationScheduler } from './automations.js';
 import { createTaskHost } from './bootstrap/task-host.js';
 import { createTaskCommands } from './tasks/task-commands.js';
 import { intakeEnabled } from './coordination/intake-tool.js';
+import { createGrantGate, ensureLegacyGrant } from './grant-gate.js';
+
+/**
+ * 本次进程的「实例世代」。
+ *
+ * 规格 §6.1：策略、实例和资源世代绑定，防止复用旧批准。
+ * 每次启动换一个值 —— 崩溃/重启后旧授权（尤其是后台进程相关的）不会自动续命。
+ */
+const SERVER_GENERATION = `gen-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
 async function banner(pairing, runner) {
   const c = describeConfig();
@@ -91,6 +100,38 @@ async function main() {
   }
 
   const runner = await new PiRunner().init();
+
+  // ★ 授权网关（P0-1）：**必须在任何会话建立之前装好**。
+  //
+  //   规格 §11 的原话是「入口逐次强制核对当前有效授权」——
+  //   网关晚一步装，那段时间里起的会话就没有它，于是"漏掉的入口"又长回来。
+  //
+  //   迁移兼容：升级前那份全局 policy 就是用户当时批准过的口径，
+  //   这里把它如实记成每个 bot 一条根授权（范围等于 policy 现在允许的，不多一分），
+  //   所以网关上线**不改变任何现有行为**。收紧要靠用户新建授权 + 撤销这条。
+  try {
+    const legacy = ensureLegacyGrant({
+      store,
+      policy: store.policy(),
+      policyRevision: store.policyVersion(),
+      botIds: store.listBots().map((b) => b.id),
+      chiefBotId: store.mainBot()?.id ?? null,
+    });
+    if (legacy.created.length) {
+      log(`🔑 已为 ${legacy.created.length} 个 bot 建立迁移授权（范围等于当前 policy，不可转授）`);
+    }
+  } catch (err) {
+    // 迁移失败不能挡住启动：网关在没有任何授权时是 fail-closed 的，
+    // 会显式拒绝并说明原因，不会静默放行。
+    log('建立迁移授权失败（网关将 fail-closed）：', err?.message || err);
+  }
+  runner.grantGate = createGrantGate({
+    store,
+    currentPolicyRevision: () => store.policyVersion(),
+    // 实例世代：进程重启就换代，旧批准不会自动续命。
+    currentGeneration: () => SERVER_GENERATION,
+  });
+
   // 07：生产启动装配一个任务宿主；关闭态不要求接单工具。
   runner.taskIntakeEnabled = intakeEnabled();
   const taskHost = createTaskHost({ store, runner });

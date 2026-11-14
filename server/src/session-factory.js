@@ -180,6 +180,9 @@ export function createSessionBuilder({
         createPolicyExtension({
           roomId,
           bot,
+          // ★ 授权网关：每个会话都拿到它，工具调用时逐次核（P0-1）。
+          //   runner 上没装（测试环境）时会给 null，扩展内部据此跳过，不改变行为。
+          grantGate: runner.grantGate ?? null,
           managedContextOf: () => runner.currentTaskContext?.(roomId, bot.id) ?? null,
           // ★ 把真实的策略阻塞告诉 runner：受管执行据此记录「我在等哪个真实审批」。
           onBlocked: (approval, info) => runner.notePolicyBlocked?.(roomId, bot.id, approval, info),
