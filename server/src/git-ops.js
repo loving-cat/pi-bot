@@ -333,11 +333,7 @@ export function runGit({ repoDir, op, params = {}, gitFile = null, timeoutMs = D
     stdout = stdout.slice(0, MAX_OUTPUT_CHARS);
     truncated = true;
   }
-  // ★ 身份没配时给一句能照着做的话。
-  //   git 的原话是 "Author identity unknown"，模型看了只会去猜怎么修，
-  //   而这是**用户环境**的事，不是它能修的。
   const stderrText = res.stderr || '';
-  const authorMissing = res.status !== 0 && /Author identity unknown|unable to auto-detect email/i.test(stderrText);
   return {
     ok: res.status === 0,
     op: key,
@@ -345,13 +341,7 @@ export function runGit({ repoDir, op, params = {}, gitFile = null, timeoutMs = D
     stdout,
     stderr: stderrText.slice(0, 4000),
     // 规格 §7.1：结果真实性要看进程退出码，不能只看有没有抛异常
-    error: res.status === 0
-      ? undefined
-      : authorMissing
-        ? '这台机器上的 Git 还没配提交身份（user.name / user.email），所以提交不了。'
-          + '这不是代码能修的，得由用户在仓库里或全局配一次：'
-          + 'git config user.name "你的名字" 和 git config user.email "你的邮箱"。'
-        : `git ${key} 退出码 ${res.status}：${stderrText.slice(0, 400)}`,
+    error: res.status === 0 ? undefined : describeGitError({ key, code: res.status, stderr: stderrText }),
     truncated,
     layout: { root: layout.root, gitDir: layout.gitDir, commonDir: layout.commonDir, worktree: layout.worktree },
     git: { file: git.file, version: git.version ?? '', source: git.source ?? '' },
@@ -376,6 +366,45 @@ export function verifyCommitLanded({ beforeHead, repoDir, gitFile = null } = {})
   const afterHead = (head.stdout || '').split('\n')[0].split(' ')[0] ?? '';
   if (!afterHead) return { ok: false, error: '读不出 HEAD' };
   return { ok: true, afterHead, advanced: Boolean(beforeHead) && afterHead !== beforeHead };
+}
+
+/**
+ * 把 git 的 stderr 翻成"模型能照着做的话"。
+ *
+ * 纯函数，不碰进程 —— 这样能跨平台单测。
+ * （曾经把它写成"跑一次真实提交看会不会失败"，结果 macOS CI 上
+ *  runner 自带的 /etc/gitconfig 让提交成功了，用例就假红/假绿。）
+ *
+ * @param {object} p
+ * @param {string} p.key     操作名
+ * @param {number} p.code    退出码
+ * @param {string} p.stderr
+ * @returns {string}
+ */
+export function describeGitError({ key = '', code = 1, stderr = '' } = {}) {
+  const text = String(stderr ?? '');
+  if (/Author identity unknown|unable to auto-detect email/i.test(text)) {
+    return '这台机器上的 Git 还没配提交身份（user.name / user.email），所以提交不了。'
+      + '这不是代码能修的，得由用户在仓库里或全局配一次：'
+      + 'git config user.name "你的名字" 和 git config user.email "你的邮箱"。';
+  }
+  if (/nothing to commit|no changes added to commit/i.test(text)) {
+    return '没有可提交的改动（暂存区是空的）。先 git_add 要提交的文件。';
+  }
+  if (/pathspec .* did not match/i.test(text)) {
+    return '指定的路径在仓库里不存在。先 git_status 看实际有哪些改动。';
+  }
+  if (/not a git repository/i.test(text)) {
+    return '这个目录不是 git 仓库。用 repo 参数指定一个仓库目录。';
+  }
+  if (/Permission denied|EACCES/i.test(text)) {
+    return '没有权限写这个仓库（文件被占用或权限不足）。';
+  }
+  if (/index\.lock|Unable to create .*\.lock/i.test(text)) {
+    return '这个仓库有别的 git 进程正在跑（.git/index.lock 还在）。'
+      + '等它结束再试 —— **不要手动删锁文件**，那可能删掉别人正在写的东西。';
+  }
+  return `git ${key} 退出码 ${code}：${text.slice(0, 400)}`;
 }
 
 /** 当前 HEAD 的短 hash（没有提交时返回空串）。 */
