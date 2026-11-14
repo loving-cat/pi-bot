@@ -627,6 +627,40 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         });
       }
 
+      // ---------- 授权与审计（只读，给界面看） ----------
+      //
+      // 规格 §11：「用户始终可以接管、取消、收回授权」。
+      // 后端已经有 revoke()，但用户看不到有哪些授权 —— 那等于收不回。
+      // 这三个都是 GET：不改状态，所以不要 nonce、不写管理审计。
+      if (pathname === '/api/grants' && req.method === 'GET') {
+        const gate = runner.grantGate;
+        if (!gate) return send(res, 200, { grants: [], note: '网关未启用' });
+        const botId = url.searchParams.get('botId');
+        return send(res, 200, {
+          grants: gate.list({ botId: botId || null }),
+          // 顺带给出"当前规矩版本"，界面能看出哪些授权是基于旧规矩的
+          policyRevision: store.policyVersion(),
+        });
+      }
+
+      const grantRevokeMatch = pathname.match(/^\/api\/grants\/([^/]+)\/revoke$/);
+      if (grantRevokeMatch && req.method === 'POST') {
+        const gate = runner.grantGate;
+        if (!gate) return fail(res, 503, 'NO_GATE', '网关未启用');
+        const id = decodeURIComponent(grantRevokeMatch[1]);
+        const out = gate.revoke(id, '用户在界面上收回');
+        if (!out.ok) return fail(res, 404, 'GRANT_NOT_FOUND', out.text);
+        log(`🔒 用户收回授权 ${id}${out.downstream?.length ? `（连带 ${out.downstream.length} 条）` : ''}`);
+        return send(res, 200, { revoked: id, downstream: out.downstream ?? [] });
+      }
+
+      if (pathname === '/api/admin-actions' && req.method === 'GET') {
+        const limit = Number(url.searchParams.get('limit') || 50);
+        return send(res, 200, {
+          actions: store.listAdminActions({ limit }),
+        });
+      }
+
       // ---------- 危险动作确认（P0-4） ----------
       //
       // ★ 通道决定权重：`device`（已配对手机）能确认不可恢复动作；

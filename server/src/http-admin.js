@@ -133,3 +133,14 @@ export function planAdminRoute({ method, pathname, body = null } = {}) {
 export function listAdminRoutes() {
   return ADMIN_ROUTE_TABLE.map((r) => `${r.method} ${r.path}  [${r.level}]`);
 }
+
+/**
+ * 只读接口：把授权/确认/审计摊给界面看（规格 §11「用户始终可以接管、取消、收回授权」）。
+ *
+ * 这三个是 GET —— 不改变任何状态，所以不过 nonce、不写管理审计
+ * （否则光是打开设置页就会刷出一串"改了什么"的记录，那些记录本来就没发生）。
+ */
+export const ADMIN_VIEW_ROUTES = Object.freeze([
+  '/api/grants',
+  '/api/admin-actions',
+]);
