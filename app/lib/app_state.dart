@@ -1038,6 +1038,33 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// 对一条「不可撤销动作」的确认表态。
+  ///
+  /// ★ 只有手机端调得动：服务端要求确认来自已配对的独立设备，
+  ///   桌面端会收到 403 WEAK_CHANNEL。所以这里把通道一起带上，
+  ///   让错误在客户端就能说清（而不是等服务端回一个 403 才提示）。
+  Future<void> decideConfirmation(
+    String confirmationId, {
+    required bool approve,
+  }) async {
+    if (!isMobilePlatform) {
+      lastError = '这一步不可撤销，要在这台手机上确认。桌面上的批准不算数 —— '
+          '主 Bot 能操作那台电脑，它自己也能点。';
+      _notify();
+      return;
+    }
+    try {
+      await api?.post(
+        '/api/confirmations/$confirmationId',
+        {'approve': approve},
+        'device',
+      );
+    } catch (err) {
+      lastError = '$err';
+      _notify();
+    }
+  }
+
   // ---------------------------------------------------------------- 定时任务
 
   List<Automation> automationsFor(String roomId) =>

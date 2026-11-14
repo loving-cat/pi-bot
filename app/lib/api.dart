@@ -150,8 +150,15 @@ class Api {
   Future<Map<String, dynamic>> post(
     String path, [
     Map<String, dynamic>? body,
+    String? channel,
   ]) async {
-    final headers = await _adminHeaders('POST', path);
+    var headers = await _adminHeaders('POST', path);
+    // 通道头：确认接口用它声明"这条决定来自哪台设备"。
+    // 服务端只用来**降权**（声称 device 但身份是本机 -> 仍按本机算），
+    // 所以这里照实写，不写也不会更宽。
+    if (channel != null && channel.isNotEmpty) {
+      headers = {...headers, 'x-pi-bot-channel': channel};
+    }
     final res = await http
         .post(_uri(path), headers: headers, body: jsonEncode(body ?? const {}))
         .timeout(const Duration(seconds: 30));

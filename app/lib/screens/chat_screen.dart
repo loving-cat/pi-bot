@@ -30,6 +30,8 @@ import '../widgets/attachment_view.dart';
 import '../widgets/avatar_life.dart';
 import '../widgets/ask_card.dart';
 import '../widgets/approval_card.dart';
+import '../widgets/confirmation_card.dart';
+import '../platform.dart';
 import '../widgets/blob_avatar.dart';
 import '../widgets/context_chip.dart';
 import '../widgets/floating_menu.dart';
@@ -2308,6 +2310,19 @@ class _MessageRow extends StatelessWidget {
         onDecide: (approve) =>
             AppScope.read(context)
                 .decideApproval(msg.approvalId ?? '', approve: approve),
+      );
+    }
+    // 「这一步不可撤销，去手机上确认」卡片。
+    //
+    // ★ 只有手机端（已配对的独立设备）给批准按钮。
+    //   桌面端不给 —— 主 Bot 能操作这台电脑，它自己能点，
+    //   所以桌面上的"批准"只是仪式，不是安全边界。
+    if (msg.isConfirmation) {
+      return ConfirmationCard(
+        msg: msg,
+        canApproveHere: isMobilePlatform,
+        onDecide: (approve) => AppScope.read(context)
+            .decideConfirmation(msg.confirmationId ?? '', approve: approve),
       );
     }
 

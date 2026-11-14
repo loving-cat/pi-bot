@@ -305,6 +305,14 @@ class Msg {
 
   /// 审批卡片（危险动作第三档：ask）
   bool get isApproval => kind == 'approval';
+
+  /// 不可撤销动作的确认卡片（P0-4）。
+  ///
+  /// 和 isApproval 分开是因为**确认通道不同**：审批卡片在本机点一下就算数
+  /// （那是可撤销动作）；这张必须由已配对的独立设备确认 —— 主 Bot 能操作
+  /// 本机桌面，它自己弹的卡片它可以自己点（规格 §9）。
+  bool get isConfirmation => kind == 'confirmation';
+  String? get confirmationId => meta?['confirmationId'] as String?;
   String? get approvalId => meta?['approvalId'] as String?;
   String? get approvalTool => meta?['tool'] as String?;
   String? get approvalSummary => meta?['summary'] as String?;
