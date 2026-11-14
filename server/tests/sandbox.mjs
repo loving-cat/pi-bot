@@ -499,7 +499,10 @@ function runInSandbox(profilePath, cmd, { cwd, env }) {
 }
 
 await test('★ 回归①：默认工作目录在 dataDir 下时，bash 仍能用（pwd / 写文件）', async () => {
-  if (!canRun) return;
+  // ★ 这条用 /usr/bin/sandbox-exec（Seatbelt 专用），不是跨平台的 wrapCommand。
+  //   Linux 上 bwrap 存在时 canRun 也是 true，会去 spawn 一个不存在的程序 ——
+  //   CI 上实测就这么红过（同一份代码换一台 runner 结果不同）。
+  if (process.platform !== 'darwin') return;
   const sim = makeSimDataDir('ws');
   const profilePath = path.join(sim.base, 'sb.sb');
   fs.writeFileSync(profilePath, seatbeltProfile({
@@ -520,7 +523,10 @@ await test('★ 回归①：默认工作目录在 dataDir 下时，bash 仍能�
 });
 
 await test('★ 回归②：能写本实例的 $TMPDIR 和 $HOME', async () => {
-  if (!canRun) return;
+  // ★ 这条用 /usr/bin/sandbox-exec（Seatbelt 专用），不是跨平台的 wrapCommand。
+  //   Linux 上 bwrap 存在时 canRun 也是 true，会去 spawn 一个不存在的程序 ——
+  //   CI 上实测就这么红过（同一份代码换一台 runner 结果不同）。
+  if (process.platform !== 'darwin') return;
   const sim = makeSimDataDir('tmp');
   const profilePath = path.join(sim.base, 'sb.sb');
   fs.writeFileSync(profilePath, seatbeltProfile({
@@ -549,7 +555,10 @@ await test('★ 回归②：能写本实例的 $TMPDIR 和 $HOME', async () => {
 });
 
 await test('★ 回归③：dataDir 内的敏感项即使被 allow 也读不到', async () => {
-  if (!canRun) return;
+  // ★ 这条用 /usr/bin/sandbox-exec（Seatbelt 专用），不是跨平台的 wrapCommand。
+  //   Linux 上 bwrap 存在时 canRun 也是 true，会去 spawn 一个不存在的程序 ——
+  //   CI 上实测就这么红过（同一份代码换一台 runner 结果不同）。
+  if (process.platform !== 'darwin') return;
   const sim = makeSimDataDir('deny');
   const profilePath = path.join(sim.base, 'sb.sb');
   fs.writeFileSync(profilePath, seatbeltProfile({
@@ -572,7 +581,10 @@ await test('★ 回归③：dataDir 内的敏感项即使被 allow 也读不到'
 });
 
 await test('★ 回归④：凭据目录和 rc 文件仍然挡住', async () => {
-  if (!canRun) return;
+  // ★ 这条用 /usr/bin/sandbox-exec（Seatbelt 专用），不是跨平台的 wrapCommand。
+  //   Linux 上 bwrap 存在时 canRun 也是 true，会去 spawn 一个不存在的程序 ——
+  //   CI 上实测就这么红过（同一份代码换一台 runner 结果不同）。
+  if (process.platform !== 'darwin') return;
   const sim = makeSimDataDir('cred');
   const profilePath = path.join(sim.base, 'sb.sb');
   fs.writeFileSync(profilePath, seatbeltProfile({
