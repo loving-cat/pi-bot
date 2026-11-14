@@ -102,11 +102,32 @@
 
 > 其中 `local-token.js` / `secrets.js` / `data-migration.js` 属于**宿主自身**的数据管理，不是「某个 Bot 的动作」。授权网关要区分「主体是 Bot」还是「主体是宿主」——规格 §3 的权限服务本身就在宿主边界内。
 
-## 四、Git
+## 四、Git（已交付 G0/G1）
 
-**当前为零**：工具清单里 0 个 git 工具，代码里没有任何 git 调用。
+调用用户已安装的 Git（规格 §14.2），不随包分发。`git-ops.js` 是能力白名单：
 
-P0-6 要新增。按规格 §14.2，调用用户已安装的 Git（探测可执行路径 + 版本），不随包分发。
+| 级别 | 操作 | 说明 |
+|---|---|---|
+| G0 | status / diff / log / show / branches / blobs | 只读 |
+| G1 | add / commit | 本地普通提交 |
+| G2 | push / merge / rebase | **不提供** —— 要用户确认，确认框架刚做完（P0-4），还没接上 |
+| G3 | reset / clean / 改远端 / 改 hooks | **不提供** —— 需要确认 |
+
+**读操作的坑（实测）**：`--no-ext-diff` / `--no-textconv` 是**子命令**参数，
+放到 `git` 前面直接 `unknown option`（退出码 129）。所以只有 `--no-pager`
+是全局的，那两个各自带在 `diff`/`show` 的 args 里。
+
+**固定配置**：`-c core.pager=cat`、`GIT_CONFIG_NOSYSTEM=1`、`LC_ALL=C`。
+前两个防"仓库里写了 core.pager=某程序"，后一个让输出可解析。
+
+**hooks 会跑**：不传 `--no-verify`（规格 §7.1 禁止静默关闭项目要求），
+跑过哪些 hooks 写进返回值和审计。
+
+**成功判定**：看 HEAD 有没有前进，不只看退出码 —— hooks 可以 `exit 0` 但什么都不做。
+
+**worktree**：`.git` 是指针文件时解析 gitdir / commondir，并 **realpath**
+（macOS 的 `/var`→`/private/var`、Windows 的 8.3 短名都会让"同一个目录"
+有两条写法）。
 
 ## 五、GUI / 桌面
 
@@ -158,8 +179,8 @@ System Events 拿不到 CGWindowID，所以是按矩形截；窗口被部分遮�
 | policy-hook 经网关 + 迁移授权（行为不变） | ✅ | `b130fc6` |
 | 桌面观察（`desktop-observe.js` + 两个工具） | ✅ | `c45eb7c` |
 | HTTP 危险路由接网关（`http-admin.js` + 审计） | ✅ | `df549c5` |
-| Git 适配器（P0-6） | ⬜ | — |
-| 确认框架（P0-4，只做不可恢复动作） | ⬜ | — |
+| Git 适配器（P0-6，G0/G1） | ✅ | `f73f3f9` `4db0812` `14eded9` `7e674e9` `f6e8422` |
+| 确认框架（P0-4） | ✅ | `cdb9f5a` |
 | 桌面输入（P0-3b，输入租约） | ⬜ 最后 | — |
 
 ## 七、明确不做（本阶段）
