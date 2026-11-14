@@ -333,14 +333,25 @@ export function runGit({ repoDir, op, params = {}, gitFile = null, timeoutMs = D
     stdout = stdout.slice(0, MAX_OUTPUT_CHARS);
     truncated = true;
   }
+  // ★ 身份没配时给一句能照着做的话。
+  //   git 的原话是 "Author identity unknown"，模型看了只会去猜怎么修，
+  //   而这是**用户环境**的事，不是它能修的。
+  const stderrText = res.stderr || '';
+  const authorMissing = res.status !== 0 && /Author identity unknown|unable to auto-detect email/i.test(stderrText);
   return {
     ok: res.status === 0,
     op: key,
     code: res.status,
     stdout,
-    stderr: (res.stderr || '').slice(0, 4000),
+    stderr: stderrText.slice(0, 4000),
     // 规格 §7.1：结果真实性要看进程退出码，不能只看有没有抛异常
-    error: res.status === 0 ? undefined : `git ${key} 退出码 ${res.status}：${(res.stderr || '').slice(0, 400)}`,
+    error: res.status === 0
+      ? undefined
+      : authorMissing
+        ? '这台机器上的 Git 还没配提交身份（user.name / user.email），所以提交不了。'
+          + '这不是代码能修的，得由用户在仓库里或全局配一次：'
+          + 'git config user.name "你的名字" 和 git config user.email "你的邮箱"。'
+        : `git ${key} 退出码 ${res.status}：${stderrText.slice(0, 400)}`,
     truncated,
     layout: { root: layout.root, gitDir: layout.gitDir, commonDir: layout.commonDir, worktree: layout.worktree },
     git: { file: git.file, version: git.version ?? '', source: git.source ?? '' },

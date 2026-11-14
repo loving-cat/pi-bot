@@ -180,6 +180,34 @@ await test('add + commit：HEAD 前进，状态回读干净', () => {
   assert.deepEqual(parsed.untracked, []);
 });
 
+await test('★ 没配提交身份时给一句能照着做的话（不是把 git 原话甩给模型）', () => {
+  // 造一个"没有全局身份"的环境：HOME 指向空目录 + 禁用全局/系统配置。
+  // 这正是 CI runner 的状态（本机一般有 ~/.gitconfig，所以平时测不出来）。
+  const bare = path.join(root, 'bare-identity');
+  const emptyHome = path.join(bare, 'home');
+  fs.mkdirSync(emptyHome, { recursive: true });
+  fs.mkdirSync(bare, { recursive: true });
+  const prev = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, GIT_CONFIG_GLOBAL: process.env.GIT_CONFIG_GLOBAL };
+  Object.assign(process.env, {
+    HOME: emptyHome,
+    USERPROFILE: emptyHome,
+    GIT_CONFIG_GLOBAL: path.join(emptyHome, '.gitconfig'),
+  });
+  try {
+    raw(['init', '-q', '-b', 'main'], bare);
+    fs.writeFileSync(path.join(bare, 'f.txt'), 'x\n');
+    raw(['add', '-A'], bare);
+    const out = runGit({ repoDir: bare, op: 'commit', params: { message: 't' } });
+    assert.equal(out.ok, false, '没身份时提交必须失败');
+    assert.match(out.error, /还没配提交身份/, '应给出可照做的说明：' + out.error);
+    assert.match(out.error, /user\.name/);
+  } finally {
+    for (const [k, v] of Object.entries(prev)) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  }
+});
+
 await test('★ commit 成功判定：HEAD 没前进就不算成功', () => {
   const head = currentHead({ repoDir: repo });
   // 没有改动时 commit 会失败；这里直接验 verifyCommitLanded 的判据
