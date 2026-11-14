@@ -10,6 +10,9 @@ export const READONLY_ALLOW = [
   'list_bots', 'list_departments', 'read_department', 'message_bot', 'reply_bot',
   'list_sites', 'query_site',
   'list_models', 'list_skills', 'list_department_templates', 'list_local_capabilities',
+  // 桌面观察是**只读**的（看得到、改不了），只读模式也放行。
+  // 但它在网关里仍然要过一次授权（desktop.observe），两层都要过。
+  'desktop_observe', 'desktop_screenshot',
   'ask_user', 'dispatch_to_department', 'assign_member_task',
   // 受管阶段报告：只登记模型声明，不碰文件/命令，只读模式也可用
   'task_report', 'task_expert_review',
@@ -139,9 +142,20 @@ export function toolsForRole({
 }
 
 /** 负责人先按角色过滤；只读模式再按同一份放行名单收掉写工具。 */
+/**
+ * 只有主 Bot 能用的工具（规格 §5.3：普通桌面输入默认仅主 Bot 使用）。
+ *
+ * 观察虽然只读，但**看得到用户整个屏幕**——那本身就是敏感能力。
+ * 所以它跟输入一样只给主 Bot；负责人/成员要看某个窗口的内容，
+ * 走文件/网页那条线，或者请主 Bot 转述。
+ */
+const CHIEF_ONLY_TOOLS = new Set(['desktop_observe', 'desktop_screenshot']);
+
 export function customToolsForRole(tools, { room, bot, leadTools = [], policy = {} } = {}) {
+  const chief = bot?.role === 'main';
+  const base = tools.filter((tool) => chief || !CHIEF_ONLY_TOOLS.has(tool.name));
   const list = isDelegatingLead(room, bot)
-    ? tools.filter((tool) => leadToolAllowed(tool.name, leadTools)) : [...tools];
+    ? base.filter((tool) => leadToolAllowed(tool.name, leadTools)) : [...base];
   return isReadonlyPolicy(policy)
     ? list.filter((tool) => readonlyToolAllowed(tool.name)) : list;
 }

@@ -12,6 +12,7 @@
  */
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
+import fs from 'node:fs';
 import path from 'node:path';
 import { bus } from './bus.js';
 import { config } from './config.js';
@@ -22,6 +23,7 @@ import { extractText } from './extract.js';
 import { webSearch, webFetch } from './web.js';
 import { runEgoScript, EGO_USAGE_GUIDE } from './ego-browser.js';
 import { shells } from './shells.js';
+import { listWindows, captureScreenshot, screenshotPath, describeWindow } from './desktop-observe.js';
 import { verdictForTool, commitStdin, resetStdin } from './shell-policy.js';
 import { readonlyBlockReason, opaqueScriptBlockReason } from './role-tools.js';
 import { log, now, isBusyError, planDispatchRetry } from './util.js';
@@ -393,6 +395,101 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
         );
       },
     })]),
+    // ---------------- 桌面观察（只读） ----------------
+    //
+    // 规格 §5.1/§5.3：主 Bot 在当前用户身份下"观察并操作普通应用"；
+    // 普通桌面输入默认只有主 Bot 能拿到。观察虽是只读，但**看得到整个屏幕**，
+    // 所以和输入一样只给主 Bot（见 role-tools 的 CHIEF_ONLY_TOOLS）。
+    //
+    // 为什么先只做观察：它风险低（改不了任何东西）、系统接口成熟、
+    // 而且"知道用户在干什么"本身就是这个产品最直观的价值。
+    // 输入需要输入租约/接管检测/世代号那一整套（§5.2），另排。
+    ...(isMain ? [defineTool({
+      name: 'desktop_observe',
+      label: '★ 看屏幕上有哪些窗口',
+      description:
+        '列出当前桌面上可见的窗口（应用名、标题、位置尺寸），用来判断用户现在在用什么。'
+        + '它只读，不会点击也不会改任何东西。'
+        + '\n'
+        + '想知道"用户正在干什么""这个报错在哪个窗口里"时先用它，'
+        + '再用 desktop_screenshot 看清具体内容。',
+      parameters: Type.Object({
+        limit: Type.Optional(Type.Number({ description: '最多返回几个窗口，默认 20，最多 40' })),
+      }),
+      execute: async (_toolCallId, { limit }) => {
+        const r = listWindows({ limit: Math.min(Math.max(Number(limit) || 20, 1), 40) });
+        if (!r.ok) return fail(`看不了桌面窗口：${r.error}`);
+        if (!r.windows.length) return ok('当前没有可见窗口。');
+        const lines = r.windows.map((w, i) => describeWindow(w, i));
+        return ok(lines.join('\n'), { count: r.windows.length, platform: r.platform });
+      },
+    }), defineTool({
+      name: 'desktop_screenshot',
+      label: '★ 截一张窗口的图看清楚',
+      description:
+        '截取**指定窗口**的画面给自己看（不会发给用户，也不进群）。'
+        + '用 desktop_observe 拿到的序号指定窗口（index 从 1 开始）。'
+        + '\n'
+        + '默认只截那一个窗口 —— 不截整个桌面，因为整屏会把用户别的窗口'
+        + '（密码管理器、私聊、别的项目）一起带进来，那不是任务需要的东西。'
+        + '真要整屏时显式传 fullScreen=true，且只在用户确实要求"看看我桌面上"时用。',
+      parameters: Type.Object({
+        index: Type.Optional(Type.Number({ description: 'desktop_observe 列表里的序号（从 1 开始）' })),
+        title: Type.Optional(Type.String({ description: '按标题片段找窗口（不知道序号时用）' })),
+        fullScreen: Type.Optional(Type.Boolean({ description: '截整个屏幕（默认 false，尽量别用）' })),
+      }),
+      execute: async (_toolCallId, { index, title, fullScreen }) => {
+        let target = null;
+        let scopeLabel = '整屏';
+        if (!fullScreen) {
+          const list = listWindows({ limit: 40 });
+          if (!list.ok) return fail(`看不了桌面窗口：${list.error}`);
+          if (!list.windows.length) return fail('当前没有可截的窗口。');
+          if (Number(index) >= 1) {
+            target = list.windows[Math.trunc(Number(index)) - 1] ?? null;
+            if (!target) return fail(`没有第 ${index} 个窗口（当前 ${list.windows.length} 个）`);
+          } else if (title) {
+            const needle = String(title).toLowerCase();
+            target = list.windows.find((w) => String(w.title).toLowerCase().includes(needle))
+              ?? list.windows.find((w) => String(w.app).toLowerCase().includes(needle))
+              ?? null;
+            if (!target) return fail(`没找到标题含「${title}」的窗口。先 desktop_observe 看看有哪些。`);
+          } else {
+            return fail('要截哪个窗口？给 index（desktop_observe 的序号）或 title；整屏请显式 fullScreen=true。');
+          }
+          scopeLabel = `${target.app}${target.title ? ' · ' + target.title.slice(0, 40) : ''}`;
+        }
+
+        // ★ 截图落在 dataDir/desktop-shots，不进 workspace：
+        //   workspace 里的新文件会被 changed_files 扫到、可能被自动附件发出去。
+        const taskId = runner.currentTaskContext?.(roomId, botId)?.taskRunId ?? null;
+        const spot = screenshotPath({ dataDir: config.dataDir, taskId, botId });
+        const shot = captureScreenshot({ outFile: spot.file, window: target, fullScreen: !!fullScreen });
+        if (!shot.ok) return fail(`截图失败：${shot.error}`);
+
+        // 把图交给模型看（type: 'image' 是 SDK 约定的图片内容块）
+        let data;
+        try {
+          data = fs.readFileSync(spot.file).toString('base64');
+        } catch (err) {
+          return fail(`截图读不出来：${String(err?.message || err)}`);
+        }
+        return {
+          content: [
+            { type: 'text', text: `已截取：${scopeLabel}（${shot.width}x${shot.height}）` },
+            { type: 'image', data, mimeType: 'image/png' },
+          ],
+          details: {
+            scope: shot.scope,
+            width: shot.width,
+            height: shot.height,
+            bytes: shot.bytes,
+            // 只给文件名不给绝对路径：路径本身会泄本机目录结构
+            file: path.basename(spot.file),
+          },
+        };
+      },
+    })] : []),
     defineTool({
       name: 'list_bots',
       label: '看花名册',

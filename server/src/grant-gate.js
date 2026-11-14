@@ -61,6 +61,10 @@ export const TOOL_ACTIONS = Object.freeze({
   announce: { action: ACTION.netSend, risk: RISK.medium },
   dispatch_to_department: { action: ACTION.netSend, risk: RISK.medium },
   add_mcp_server: { action: ACTION.mcpAdd, risk: RISK.critical },
+  // 桌面观察：只读但看得到整个屏幕，风险记 medium（隐私面，不是破坏面）。
+  // 它只给主 Bot，且必须先过 desktop.observe 授权（见 role-tools 的 CHIEF_ONLY_TOOLS）。
+  desktop_observe: { action: ACTION.desktopObserve, risk: RISK.medium },
+  desktop_screenshot: { action: ACTION.desktopObserve, risk: RISK.medium },
   stage_site: { action: ACTION.fileWrite, risk: RISK.medium },
   commit_site: { action: ACTION.netSend, risk: RISK.high },
   discard_site: { action: ACTION.fileDelete, risk: RISK.medium },
