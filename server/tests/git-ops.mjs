@@ -42,6 +42,10 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-git-'));
 const repo = path.join(root, 'repo');
 fs.mkdirSync(repo, { recursive: true });
 
+const realish = (p) => {
+  try { return fs.realpathSync.native ? fs.realpathSync.native(p) : fs.realpathSync(p); } catch { return p; }
+};
+
 /** 直接跑 git（测试自己的准备动作，不走被测代码）。 */
 function raw(args, cwd = repo) {
   return spawnSync(git.file, args, {
@@ -51,6 +55,11 @@ function raw(args, cwd = repo) {
 }
 
 raw(['init', '-q', '-b', 'main']);
+// ★ CI runner 上没有全局 user.name/email，git commit 会以 128 失败。
+//   真实仓库里一定有这条配置，所以在临时仓库里配一份 ——
+//   否则测的不是"适配器能不能提交"，而是"这台机器有没有全局 git 身份"。
+raw(['config', 'user.name', 'pi-bot-test']);
+raw(['config', 'user.email', 'test@local']);
 fs.writeFileSync(path.join(repo, 'a.txt'), 'one\n');
 raw(['add', '-A']);
 raw(['commit', '-q', '-m', 'init']);
@@ -82,7 +91,7 @@ await test('子目录里也能找到仓库根', () => {
   fs.mkdirSync(sub, { recursive: true });
   const layout = resolveRepoLayout(sub);
   assert.equal(layout.ok, true);
-  assert.equal(layout.root, repo);
+  assert.equal(realish(layout.root), realish(repo));
 });
 
 await test('worktree：.git 是指针文件，commondir 指向主仓', () => {
@@ -97,10 +106,8 @@ await test('worktree：.git 是指针文件，commondir 指向主仓', () => {
   assert.ok(layout.gitDir.includes('worktrees'), 'gitDir 应在主仓的 worktrees 下：' + layout.gitDir);
   // 关键：commonDir 必须是**主仓**的 .git，不是 worktree 自己那个。
   // ★ 比较前两边都要 realpath：macOS 的 /var → /private/var、
-  //   Linux 的 /tmp 链接关系会让"同一个目录"有两条写法（CI 上实测挂过）。
-  const realish = (p) => {
-    try { return fs.realpathSync.native ? fs.realpathSync.native(p) : fs.realpathSync(p); } catch { return p; }
-  };
+  //   Linux 的 /tmp 链接、Windows runner 的 8.3 短名（RUNNER~1）
+  //   都会让"同一个目录"有两条写法（CI 上实测挂过）。
   assert.equal(realish(layout.commonDir), realish(resolveRepoLayout(repo).gitDir));
 
   raw(['worktree', 'remove', '--force', wt]);
