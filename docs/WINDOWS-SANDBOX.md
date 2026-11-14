@@ -53,7 +53,7 @@ winget install Rustlang.Rustup          # 一次性
 
 ### 1. 每层祖先都要可遍历，而普通用户授不了祖先
 
-AppContainer 访问 `C:\Users\XL\work` 需要 `C:\`、`C:\Users`、`C:\Users\XL`
+AppContainer 访问 `C:\Users\example\work` 需要 `C:\`、`C:\Users`、`C:\Users\example`
 每一层都对该 SID 可遍历。实测：
 
 ```

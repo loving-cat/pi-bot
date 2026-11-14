@@ -548,7 +548,7 @@ mod imp {
             // 不去掉前缀会被下面的 UNC 规则误杀。
             let stripped = lower.strip_prefix("\\\\?\\").unwrap_or(&lower).to_string();
             // ★ 分隔符要统一。canonicalize 给的是全反斜杠，而工作目录 / dataDir
-            //   可能是 `C:\Users\XL\AppData\Local/pi-bot/data` 这种混写（环境变量、
+            //   可能是 `<用户目录>\AppData\Local/pi-bot/data` 这种混写（环境变量、
             //   脚本传参都会这样）。不归一化的话比较永远不相等，
             //   dataDir 保护被静默绕过（实测：混写路径能拿到 grant）。
             let unified = stripped.replace('/', "\\");
