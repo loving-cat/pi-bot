@@ -382,6 +382,9 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
       policyRevision: store.policyVersion(),
       botIds: store.listBots().map((b) => b.id),
       chiefBotId: store.mainBot()?.id ?? null,
+      // 世代要跟着发：网关校验时拿当前世代去比，签发时不写就永远不会过期
+      // （规格 §6.3 要求重启后旧批准不续命，两边都得有值才成立）。
+      generation: typeof runner?.grantGeneration === 'function' ? runner.grantGeneration() : null,
     });
   }
 

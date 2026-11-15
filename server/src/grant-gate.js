@@ -85,12 +85,26 @@ export const TOOL_ACTIONS = Object.freeze({
  * @param {object} p.store 应用 store（授权记录与审计写在这里）
  * @param {()=>string} p.currentPolicyRevision 当前策略版本
  * @param {()=>string|null} [p.currentGeneration] 当前实例世代（不传则不校验）
+ * @param {(p:{botIds:string[]})=>{created:string[], existing:string[], revoked:string[]}} [p.syncGrants]
+ *   把“现在该有迁移授权却没有”的 bot 补上（多退少补）。
+ *
+ *   为什么要这一步：`ensureLegacyGrant` 只在启动时跑一次，而 bot 是**运行期**
+ *   造出来的 —— 用户在 App 里 `create_bot` / 建部门 / 用模板开部门，都会
+ *   新增 bot。那些 bot 从来没经过启动那一步，于是它们在网关上就是
+ *   “没有任何授权”：写文件、跑命令全被 no_grant 拦下，而界面上一片正常。
+ *   迁就办法只能是重启服务端 —— 这不该是用户的日常操作。
+ *
+ *   所以网关挂上“新增/改动的 bot”事件，给还没登记的 bot 补一条。
+ *   没有这一步，网关就是“重启之前新同事干不了活”。
+ * @param {object} [p.bus] 事件总线（默认不订阅，测试里显式传）
  * @param {Function} [p.log]
  */
 export function createGrantGate({
   store,
   currentPolicyRevision,
   currentGeneration = () => null,
+  syncGrants = null,
+  bus: busSource = null,
   log: logFn = log,
 } = {}) {
   if (!store) throw new Error('网关需要 store');
@@ -274,8 +288,16 @@ export function createGrantGate({
    * 模型与其他 Bot 只能通过 `derive()` 派生子集。
    */
   function add(spec) {
+    // ★ 调用方没写世代时，按**当前世代**落盘。
+    //
+    //   规格 §6.3：后台任务不得续接旧权限，重启后旧授权作废。
+    //   但这条得两边都写才有意义：如果签发时不写、校验时又拿着世代去比，
+    //   结果是“刚连出来的授权永远是空的”。这里不写就填现状，
+    //   让每条新授权都带上“它属于哪个进程”。
+    const stamp = typeof currentGeneration === 'function' ? currentGeneration() : currentGeneration;
     const built = normalizeGrant({
       ...spec,
+      generation: spec?.generation === undefined ? stamp ?? null : spec.generation,
       id: spec?.id ?? `gr_${randomUUID().replace(/-/g, '').slice(0, 20)}`,
       createdAt: spec?.createdAt ?? Date.now(),
     });
@@ -312,6 +334,57 @@ export function createGrantGate({
     return { ok: true, revoked: grantId, downstream };
   }
 
+  let syncGrantsFn = syncGrants;
+  function setSyncGrants(fn) {
+    syncGrantsFn = typeof fn === 'function' ? fn : null;
+  }
+  /**
+   * 把“应该有迁移授权但没有”的 bot 补上。
+   *
+   * 幂等：已经有当前规矩下合法授权的不动。重复调用不会长出一堆记录。
+   * 失败不抛：补登记不应该把建 bot 的主流程搞红，但会记一行日志，
+   * 而且下一次 check 仍然是 fail-closed（没授权就拒）——
+   * “漏登记”不该静默变成“放行”。
+   */
+  function ensureForBots(botIds = []) {
+    if (typeof syncGrantsFn !== 'function') return null;
+    try {
+      const out = syncGrantsFn({ botIds: (botIds ?? []).filter(Boolean) });
+      if (out?.created?.length) {
+        logFn(`🔑 给 ${out.created.length} 个新 bot 补上迁移授权（否则它们一上来就没有任何权限）`);
+      }
+      return out;
+    } catch (err) {
+      logFn('补登记迁移授权失败（网关仍 fail-closed）：', err?.message || err);
+      return null;
+    }
+  }
+
+  /**
+   * 事件驱动：新建 bot 后立刻补登记。
+   *
+   * 只认 `bot.updated`：store.createBot 会发它，updateBot 也会 ——
+   * 重复调用由 ensureForBots 自己幂等兑掉。不订 room/template 事件是因为
+   * 它们最后都会落到 createBot 上，订一处就够。
+   */
+  function start() {
+    if (!busSource || typeof busSource.on !== 'function' || !syncGrantsFn) return;
+    busSource.on('event', (ev) => {
+      if (ev?.t !== 'bot.updated') return;
+      const id = ev?.bot?.id;
+      if (id) ensureForBots([id]);
+    });
+  }
+
+  // 直接把 check 包一层：切面太多，统一入口最不容易漏。
+  function checkAndCatchUp(args) {
+    const botId = args?.subject?.botId;
+    if (!botId) return check(args);
+    const hasAny = grants().some((g) => g && g.subject?.botId === botId && !g.revokedAt);
+    if (!hasAny) ensureForBots([botId]);
+    return check(args);
+  }
+
   /** 当前有效授权（界面/审计用）。 */
   function list({ botId = null, includeRevoked = false } = {}) {
     const now = Date.now();
@@ -335,7 +408,11 @@ export function createGrantGate({
       .reverse();
   }
 
-  return { check, consume, add, revoke, list, recentAudit, actionForTool, targetsForTool, lookup };
+  return {
+    check: checkAndCatchUp,
+    consume, add, revoke, list, recentAudit, actionForTool, targetsForTool, lookup,
+    ensureForBots, start, setSyncGrants,
+  };
 }
 
 /**
@@ -376,7 +453,7 @@ export function createGrantGate({
  * @param {string} [p.chiefBotId] 主 Bot（给它标 role=main，模式是 host）
  * @returns {{created: string[], existing: string[]}}
  */
-export function ensureLegacyGrant({ store, policy, policyRevision, botIds = [], chiefBotId = null } = {}) {
+export function ensureLegacyGrant({ store, policy, policyRevision, botIds = [], chiefBotId = null, generation = null } = {}) {
   if (!store || !Array.isArray(botIds) || !botIds.length) return { created: [], existing: [], revoked: [] };
   if (!Array.isArray(store.state.grants)) store.state.grants = [];
 
@@ -447,7 +524,10 @@ export function ensureLegacyGrant({ store, policy, policyRevision, botIds = [], 
       risk: RISK.medium,
       mode: isChief ? MODE.host : MODE.project,
       policyRevision: policyRevision ? String(policyRevision) : null,
-      generation: null,
+      // 实例世代：记下“这条授权是哪个进程发的”。重启后网关拿新世代一比就作废
+      // （规格 §6.3 后台任务不得续接旧权限）。签发时不写、校验时却比，
+      // 会让重启后的旧授权被当成合法——两边都得有值。
+      generation: generation ? String(generation) : null,
       // ★ 不能再转授：迁移来的授权只是“保持升级前的行为”，不是新增的授权能力。
       canDelegate: false,
       maxUses: null,

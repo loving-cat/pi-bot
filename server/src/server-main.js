@@ -16,6 +16,7 @@ import { createTaskHost } from './bootstrap/task-host.js';
 import { createTaskCommands } from './tasks/task-commands.js';
 import { intakeEnabled } from './coordination/intake-tool.js';
 import { createGrantGate, ensureLegacyGrant } from './grant-gate.js';
+import { bus } from './bus.js';
 
 /**
  * 本次进程的「实例世代」。
@@ -116,6 +117,7 @@ async function main() {
       policyRevision: store.policyVersion(),
       botIds: store.listBots().map((b) => b.id),
       chiefBotId: store.mainBot()?.id ?? null,
+      generation: SERVER_GENERATION,
     });
     if (legacy.created.length) {
       log(`🔑 已为 ${legacy.created.length} 个 bot 建立迁移授权（范围等于当前 policy，不可转授）`);
@@ -130,7 +132,23 @@ async function main() {
     currentPolicyRevision: () => store.policyVersion(),
     // 实例世代：进程重启就换代，旧批准不会自动续命。
     currentGeneration: () => SERVER_GENERATION,
+    // 运行期新建的 bot 也要能干活：store.createBot / 建部门 / 模板开部门都会走到
+    // bot.updated。没有这一步，网关上线后新建的 bot 会“存在但没有任何权限”，
+    // 只能重启服务端才能补上 —— 这不该是用户的日常操作。
+    syncGrants: ({ botIds }) => ensureLegacyGrant({
+      store,
+      policy: store.policy(),
+      policyRevision: store.policyVersion(),
+      botIds,
+      chiefBotId: store.mainBot()?.id ?? null,
+      generation: SERVER_GENERATION,
+    }),
+    bus,
   });
+  runner.grantGate.start();
+  // http.js 里的“规矩改了重发迁移授权”也要带同一个世代（否则新发出来的
+  // 授权一校验就被 generation_stale ——签发与校验得不到同一个值）。
+  runner.grantGeneration = () => SERVER_GENERATION;
 
   // 07：生产启动装配一个任务宿主；关闭态不要求接单工具。
   runner.taskIntakeEnabled = intakeEnabled();

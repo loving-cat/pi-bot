@@ -460,6 +460,65 @@ await test('迁移兼容：主 Bot 拿到桌面观察与 push，其他 Bot 拿�
   assert.equal(gate.check({ subject: asWorker, action: ACTION.gitPush }).ok, false);
 });
 
+await test('新 bot 不会“存在但没有任何授权”（运行期补登记）', () => {
+  store.state.grants = [];
+  ensureLegacyGrant({
+    store, policy: { dangerous: 'allow' }, policyRevision: 'p1',
+    botIds: [chief.id], chiefBotId: chief.id, generation: 'g1',
+  });
+  const gate = createGrantGate({
+    store,
+    currentPolicyRevision: () => 'p1',
+    currentGeneration: () => 'g1',
+    // 和 server-main 里挂的是同一个东西：给没登记的 bot 补一条
+    syncGrants: ({ botIds }) => ensureLegacyGrant({
+      store, policy: { dangerous: 'allow' }, policyRevision: 'p1',
+      botIds, chiefBotId: chief.id, generation: 'g1',
+    }),
+  });
+  // 直接造一条“启动之后新建的 bot”的授权记录状态：store.createBot 会发事件，
+  // 但这里不挂事件，故意的 —— 要守住的是“就算事件没收到，判之前也会补”。
+  const newborn = store.createBot({ name: '新同事' });
+  assert.equal(
+    store.state.grants.some((g) => g.subject?.botId === newborn.id), false,
+    '前提：新 bot 一开始确实没有授权',
+  );
+  const verdict = gate.check({ subject: { botId: newborn.id }, action: ACTION.fileWrite });
+  assert.equal(verdict.ok, true, `新 bot 拿不到权限的话，用户只能重启服务端：${verdict.text}`);
+  // 补登记要幂等，不能每 check 一次就长一条
+  gate.check({ subject: { botId: newborn.id }, action: ACTION.fileWrite });
+  gate.check({ subject: { botId: newborn.id }, action: ACTION.fileRead });
+  assert.equal(store.state.grants.filter((g) => g.subject?.botId === newborn.id).length, 1);
+});
+await test('新授权落盘时带上当前世代（否则重启后旧批准永远不会作废）', () => {
+  store.state.grants = [];
+  const gate = createGrantGate({ store, currentPolicyRevision: () => 'p1', currentGeneration: () => 'gen-new' });
+  const out = gate.add({
+    source: 'user',
+    subject: { botId: chief.id, role: 'main' },
+    actions: [ACTION.fileRead],
+    resources: [],
+    mode: 'host',
+  });
+  assert.equal(out.ok, true, JSON.stringify(out));
+  const saved = store.state.grants.find((g) => g.id === out.grant.id);
+  assert.equal(saved.generation, 'gen-new', '签发时不写世代，校验时又拿着世代去比 —— 结果就是永不生效/永不过期');
+  assert.equal(gate.check({ subject: { botId: chief.id }, action: ACTION.fileRead }).ok, true);
+});
+await test('迁移授权也记世代：重启后旧批准不续命', () => {
+  store.state.grants = [];
+  const mk = (gen) => ensureLegacyGrant({
+    store, policy: { dangerous: 'allow' }, policyRevision: 'p1',
+    botIds: [chief.id], chiefBotId: chief.id, generation: gen,
+  });
+  mk('gen-A');
+  assert.equal(store.state.grants[0].generation, 'gen-A');
+  // 换一个进程世代：旧授权还在盘上，但它属于上一个进程
+  const gate = createGrantGate({ store, currentPolicyRevision: () => 'p1', currentGeneration: () => 'gen-B' });
+  const verdict = gate.check({ subject: { botId: chief.id }, action: ACTION.fileRead });
+  assert.equal(verdict.ok, false);
+  assert.equal(verdict.code, DENY.generationStale, verdict.text);
+});
 // ---------------------------------------------------------------- 工具映射
 await test('工具→动作映射覆盖全部动手工具', () => {
   for (const tool of ['bash', 'powershell', 'write', 'edit', 'run_background', 'write_stdin']) {
