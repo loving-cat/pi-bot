@@ -1162,17 +1162,29 @@ const roleArgs = {
   policy: POLICY_DEFAULT,
 };
 
-await test('★ 主控是调度者：只拿只读工具，没有 bash/write/edit', () => {
-  const got = toolsForRole({ ...roleArgs, isChief: true });
-  assert.deepEqual(got, RO);
-  assert.ok(!got.includes('bash'), '主控不能自己跑命令干活');
+await test('★ 主控和负责人都有手：默认能自己动手干活', () => {
+  // 用户 2026-11-15 的产品要求：目标是帮懒人推进任务，不是让用户当调度中心。
+  // 「先派活」是提示词层面的行为规矩，不再靠“能力上没有”来实现 ——
+  // 否则用户对主 Bot 说“把这个 bug 修了”，它只能先造人再建群再派活。
+  const full = ['read', 'write', 'edit', 'ls', 'find', 'grep', 'bash'];
+  const args = { ...roleArgs, chiefTools: full, leadTools: full };
+  for (const [label, extra] of [['主控', { isChief: true }], ['负责人', { isDeptLead: true }]]) {
+    const got = toolsForRole({ ...args, ...extra });
+    assert.deepEqual(got, full, label);
+    assert.ok(got.includes('bash'), `${label} 应当能自己跑命令`);
+    assert.ok(got.includes('write'), `${label} 应当能自己写文件`);
+  }
 });
 
-await test('★ 部门老大只负责拆解/派活/汇总：同样只拿只读工具', () => {
-  const got = toolsForRole({ ...roleArgs, isDeptLead: true });
-  assert.deepEqual(got, RO);
-  assert.ok(!got.includes('bash'), '老大不能自己查数据/跑命令');
-  assert.ok(!got.includes('write'), '老大不能自己写文件');
+await test('只读策略仍然收得住：deny 档下主控/负责人只剩只读', () => {
+  const full = ['read', 'write', 'edit', 'ls', 'find', 'grep', 'bash'];
+  const args = { chiefTools: full, leadTools: full, memberTools: full, policy: { ...POLICY_DEFAULT, dangerous: 'deny' } };
+  for (const extra of [{ isChief: true }, { isDeptLead: true }]) {
+    const got = toolsForRole({ ...args, ...extra });
+    assert.ok(!got.includes('bash'), '只读档不能跑命令');
+    assert.ok(!got.includes('write'), '只读档不能写文件');
+    assert.ok(got.includes('read'), '只读档还能读');
+  }
 });
 
 await test('普通成员：全量工具（干活的人）', () => {
@@ -1303,11 +1315,16 @@ await test('★ 会话层：老大的提示词里有"验收标准"，成员的�
   assert.match(leadPrompt, /验收标准/, '★ 派活三样必须写进老大提示词');
   assert.match(leadPrompt, /第 1 个/, '要说清发言顺序');
   assert.match(leadPrompt, /同时开干/, '要说清是并行的，不然它以为要排队');
-  // 多人负责人的提示仅要求拆解、派活和汇总。
-  assert.match(leadPrompt, /不亲自干活/, '★ 老大只做三件事，不自己干活');
-  assert.match(leadPrompt, /@一个同事去查/, '缺信息要让成员去查，不能自己查');
-  assert.match(leadPrompt, /绝不自己上/, '没人能接时如实上报，不许自己接手');
-  assert.ok(!/确实只有你能干/.test(leadPrompt), '不能留"只有你能干就自己做"的口子');
+  // ★ 多人负责人：默认先派活，但不许“只能派活”。
+  //
+  //   用户 2026-11-15 的产品要求：主 Bot 和负责人都要能主动帮 user 推进任务。
+  //   所以提示词要求的是「先派 → 卡住就自己上 → 接手必须公开说明」，
+  //   而不是「绝不自己上」。老版本写的是后者，实测会让活永远停在等用户。
+  assert.match(leadPrompt, /先派活/, '默认做法要先派活');
+  assert.match(leadPrompt, /你自己上/, '★ 没人能接时要自己上，不能让活停在那里');
+  assert.match(leadPrompt, /接手了/, '★ 接手必须公开说明，不能悄悄干完当成别人的交付');
+  assert.match(leadPrompt, /不要派活|别为一次 ls 多等一轮|自己查完继续推进/, '小事不该为了派活多绕一轮');
+  assert.ok(!/绝不自己上/.test(leadPrompt), '不许再写“绝不自己上”');
 
   const matePrompt = composeGroupPrompt(room, mate, [], {
     isLead: false,

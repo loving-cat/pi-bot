@@ -85,20 +85,34 @@ try {
     assert.notEqual(roleConfigurationKey({ kind: 'group', botIds: ['a', 'b'] }, { id: 'a' }),
       roleConfigurationKey({ kind: 'group', botIds: ['b', 'a'] }, { id: 'a' }));
   });
-  await test('负责人配置不能增加执行工具，未知工具默认拒绝', () => {
-    assert.deepEqual(toolsForRole({ isDeptLead: true, leadTools: ['read', 'bash', 'write', 'run_background'] }), ['read']);
-    for (const tool of ['bash', 'run_background', 'mcp_fixture_write', 'unexpected']) assert.equal(leadToolAllowed(tool, ['read', tool]), false);
+  await test('负责人配置给了执行工具就给，不给就没有（配置说了算）', () => {
+    // ★ 老版本这里是反的：即便把 bash 写进 leadTools 也会被静默过滤掉，
+    //   而拦截理由写的是"请把这项操作交给成员执行"，用户根本看不出问题在哪。
+    //   现在能力边界只由配置 + 只读策略决定。
+    assert.deepEqual(
+      toolsForRole({ isDeptLead: true, leadTools: ['read', 'bash', 'write', 'run_background'] }),
+      ['read', 'bash', 'write', 'run_background'],
+    );
+    // 没配置的执行工具不会凭空出现
+    assert.deepEqual(toolsForRole({ isDeptLead: true, leadTools: ['read', 'ls'] }), ['read', 'ls']);
+    // 组织类工具恒放行（那是负责人的本职通道）
+    assert.equal(leadToolAllowed('list_bots', ['read']), true);
+    // 没配置 + 不是组织类 → 不给
+    assert.equal(leadToolAllowed('mcp_fixture_write', ['read']), false);
   });
   await test('真实会话工厂只注册负责人的只读和调度工具，并禁止外部扩展', async () => {
     const f = fixture(), { room, lead } = department();
     const o = (await f.builder(room.id, lead.id)).session.options;
     // 负责人现在还有 git（用户产品要求：负责人对自己的任务有 git 权限）。
     // 只到本地提交这一层 —— push/merge 在 git-ops 的白名单里根本没有。
-    assert.deepEqual([...o.tools].sort(), [
-      'read', 'ls', 'grep', 'find',
-      'list_bots', 'list_departments', 'read_department', 'message_bot', 'reply_bot',
-      'git_status', 'git_diff', 'git_log', 'git_show', 'git_branches', 'git_add', 'git_commit', 'git_push',
-    ].sort());
+    // ★ 负责人现在有手：文件与命令工具都在（用户 2026-11-15 的产品要求）。
+    //   「先派后干」是提示词层面的行为规矩，不再靠断能力实现。
+    for (const tool of ['read', 'write', 'edit', 'bash']) {
+      assert.ok(o.tools.includes(tool), `负责人应当能 ${tool}`);
+    }
+    for (const tool of ['list_bots', 'read_department', 'message_bot', 'git_commit']) {
+      assert.ok(o.tools.includes(tool), `负责人应当能 ${tool}`);
+    }
     assert.equal(o.resourceLoader.options.noExtensions, true);
     assert.equal(o.resourceLoader.options.noMcp, true);
     assert.equal(guard(o, 'read'), undefined);
@@ -122,19 +136,20 @@ try {
     assert.equal(guard(b, 'run_background'), undefined);
     assert.equal(guard(c, 'run_background'), undefined);
   });
-  await test('晋升后旧会话的执行工具立即被拒绝，已有审批不能覆盖角色限制', async () => {
+  await test('晋升后旧会话仍然能执行（能力不再随角色消失），审批也走原有路径', async () => {
     const f = fixture(), { room, member } = department();
     const o = (await f.builder(room.id, member.id)).session.options;
     store.updateRoom(room.id, { leadBotId: member.id });
     store.updatePolicy({ dangerous: 'ask' });
     store.grantApproval({ roomId: room.id, botId: member.id });
-    for (const tool of ['bash', 'write', 'edit', 'run_background', 'write_stdin', 'kill_shell', 'mcp_fixture_write']) assert.equal(guard(o, tool)?.block, true, tool);
-    const verdict = guard(o, 'run_background');
-    if (!verdict?.block) await o.customTools.find(t => t.name === 'run_background').execute('fixture-call', { command: 'fixture-command' });
-    assert.equal(shellCalls, 0);
+    // 负责人不再是“只能派活”的角色，所以晋升不该把能力收走 ——
+    // 只读/审批那两道门照旧生效（这里 ask 档会要审批，但不会说“交给成员执行”）。
     store.updatePolicy({ dangerous: 'allow' });
+    for (const tool of ['bash', 'write', 'edit', 'run_background']) {
+      const v = guard(o, tool);
+      assert.ok(!String(v?.reason ?? '').includes('交给成员执行'), `${tool} 不该因为“是负责人”被拦`);
+    }
     assert.equal(guard(o, 'list_bots'), undefined);
-    assert.equal(guard(o, 'run_background')?.block, true);
   });
   await test('单人部门同时拿到执行工具和执行提示，不要求向不存在的同事派活', async () => {
     const f = fixture(), bot = store.createBot({ name: 'fixture solo' });
@@ -146,7 +161,7 @@ try {
     assert.match(prompt, /自行查询、执行并提交结果/);
     assert.doesNotMatch(prompt, /你不亲自干活|绝不自己上|@一个同事去查/);
   });
-  await test('实际失败上报按接收方角色生成提示，负责人不自行执行、主控保持原行为', async () => {
+  await test('实际失败上报：负责人和主控都自己上，只是措辞不同', async () => {
     const { room, lead, member } = department();
     const calls = [];
     const escalate = createEscalator({ store, run: async (...args) => { calls.push(args); } });
@@ -154,8 +169,10 @@ try {
     assert.equal(delegated.hostId, lead.id);
     assert.equal(calls[0][0], room.id);
     assert.equal(calls[0][1], lead.id);
-    assert.match(calls[0][2], /等待用户决定，不自行执行/);
-    assert.doesNotMatch(calls[0][2], /你自己上|说明你接手了/);
+    // ★ 用户 2026-11-15 的要求：活不能因为“没人能接”就停在那里等用户。
+    assert.match(calls[0][2], /你自己上/, '负责人没人能接时要自己上');
+    assert.match(calls[0][2], /接手了/, '接手要公开说明');
+    assert.doesNotMatch(calls[0][2], /等待用户决定，不自行执行/);
     const elevated = await escalate({ roomId: room.id, fromBotId: lead.id, reason: 'fixture failure' });
     assert.equal(elevated.hostId, store.mainBot().id);
     assert.equal(store.getRoom(calls[1][0]).kind, 'dm');
@@ -169,7 +186,8 @@ try {
     assert.equal(f.captures.length, 4);
     assert.equal(a.session.disposed, true);
     assert.equal(b.session.disposed, true);
-    assert.equal(newLead.session.options.tools.includes('bash'), false);
+    // 两个角色都有手，区别只在提示词里的行为规矩
+    assert.equal(newLead.session.options.tools.includes('bash'), true);
     assert.equal(newMember.session.options.tools.includes('bash'), true);
   });
   await test('忙碌会话延后释放，期间执行守门生效，下一轮使用新能力', async () => {
@@ -180,9 +198,8 @@ try {
     assert.equal((await f.runner.run(room.id, member.id, 'fixture second')).code, 'SESSION_BUSY');
     assert.equal(entry.session.disposed, false);
     assert.equal(entry.reloadPending, true);
-    assert.equal(guard(entry.session.options, 'run_background')?.block, true);
     entry.busy = false;
-    assert.equal((await run(f, room, member)).session.options.tools.includes('bash'), false);
+    assert.equal((await run(f, room, member)).session.options.tools.includes('bash'), true);
     assert.equal(entry.session.disposed, true);
     assert.equal(f.captures.length, 2);
   });
@@ -199,18 +216,20 @@ try {
     assert.equal((await pending).ok, true);
     assert.equal(f.captures.length, 2);
     const current = f.runner.sessions.get(`${room.id}:${member.id}`);
-    assert.equal(current.session.options.tools.includes('bash'), false);
+    assert.equal(current.session.options.tools.includes('bash'), true);
     assert.equal(current.configurationCurrent(), true);
   });
-  await test('成员增减可在单人执行和多人调度之间切换', async () => {
+  await test('★ 成员增减不再改变执行能力（只改变提示词里的调度规矩）', async () => {
+    // 老规则是“有同事就不能自己干”，于是同样一句话在单人部门和多人部门
+    // 行为完全不同。现在两种房型都有手，差别只在提示词。
     const f = fixture(), bot = store.createBot({ name: 'fixture changing' }), peer = store.createBot({ name: 'fixture joining' });
     const room = store.createGroup({ name: 'fixture changing room', botIds: [bot.id], leadBotId: bot.id });
-    assert.equal((await run(f, room, bot)).session.options.tools.includes('bash'), true);
+    const solo = (await run(f, room, bot)).session.options;
+    assert.equal(solo.tools.includes('bash'), true);
     store.updateRoom(room.id, { botIds: [bot.id, peer.id] });
-    assert.equal((await run(f, room, bot)).session.options.tools.includes('bash'), false);
-    store.updateRoom(room.id, { botIds: [bot.id] });
-    assert.equal((await run(f, room, bot)).session.options.tools.includes('bash'), true);
-    assert.equal(f.captures.length, 3);
+    const multi = (await run(f, room, bot)).session.options;
+    assert.equal(multi.tools.includes('bash'), true, '多人部门里负责人也要能动手');
+    assert.equal(f.captures.length, 2);
   });
 } finally {
   for (const runner of runners) for (const entry of runner.sessions.values()) entry.session?.dispose();

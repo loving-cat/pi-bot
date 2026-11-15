@@ -179,10 +179,28 @@ export const config = {
    * 默认最多等 30 秒；依赖压缩的前台任务还受本轮剩余时间约束。
    */
   backgroundSlotWaitMs: Number(process.env.PI_BOT_BACKGROUND_SLOT_WAIT_MS ?? 30_000),
-  /** 主控只有只读文件工具 —— 它是调度者，不是干活的人 */
-  chiefTools: (process.env.PI_BOT_CHIEF_TOOLS || 'read,ls,grep,find').split(',').map((s) => s.trim()).filter(Boolean),
-  /** 多人部门负责人的只读内置工具；执行工具不参与此配置。 */
-  leadTools: (process.env.PI_BOT_LEAD_TOOLS || 'read,ls,grep,find').split(',').map((s) => s.trim()).filter(Boolean),
+  /**
+   * 主控的内置文件工具。
+   *
+   * ★ 默认和成员一样 —— **能自己动手**。
+   *
+   *   原来这里是只读（`read,ls,grep,find`），理由是“它是调度者，不是干活的人”。
+   *   实测下来这条规则把一个只会拼写错的任务也变成了“造人 → 建部门 → 派活
+   *   → 等结果”四步，而字快不了多少。产品的目标是帮懒人推进任务，
+   *   不是让用户当调度中心。
+   *
+   *   行为上的区别靠提示词管（先派后干），不靠“能力上没有”。
+   *   想改回只读可以用环境变量覆盖。
+   */
+  chiefTools: (process.env.PI_BOT_CHIEF_TOOLS || 'read,write,edit,ls,find,grep,bash').split(',').map((s) => s.trim()).filter(Boolean),
+  /**
+   * 多人部门负责人的内置文件工具。
+   *
+   * ★ 同样默认和成员一样（能自己动手）。原来只给只读，结果是一旦部门
+   *   有两个以上的人，负责人就完全失去了执行能力 —— 用户对它说“你直接改吧”，
+   *   它也只能再派一次。现在能自己上，但默认仍然先派（见 group-prompt 的规矩）。
+   */
+  leadTools: (process.env.PI_BOT_LEAD_TOOLS || 'read,write,edit,ls,find,grep,bash').split(',').map((s) => s.trim()).filter(Boolean),
   /**
    * 联网搜索用什么接口。
    * 不配也能用 —— 默认走搜索引擎的 HTML 端点（不需要 key）。

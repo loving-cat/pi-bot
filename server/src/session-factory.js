@@ -182,7 +182,7 @@ export function createSessionBuilder({
       ...intakeTools,
       ...insightTools,
       ...(isChief ? buildChiefTools({ runner, health, roomId, botId }) : []),
-    ], { room, bot, leadTools: config.leadTools, policy });
+    ], { room, bot, policy });
 
 
     const resourceLoader = new DefaultResourceLoader({

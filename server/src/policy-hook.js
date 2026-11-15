@@ -12,8 +12,7 @@ import { verdictForTool } from './shell-policy.js';
 import { log } from './util.js';
 import { bus } from './bus.js';
 import { loadHooks, applyHooks } from './hooks.js';
-import { config } from './config.js';
-import { isDelegatingLead, leadToolAllowed, readonlyBlockReason, opaqueScriptBlockReason, MUTATING_TOOLS, isSecurityConfigCall } from './role-tools.js';
+import { readonlyBlockReason, opaqueScriptBlockReason, MUTATING_TOOLS, isSecurityConfigCall } from './role-tools.js';
 import { isExternalMcpTool, externalApprovalSummary, mcpAccessSignature } from './mcp-access.js';
 import { mcpApprovalSummary } from './mcp-approval-summary.js';
 
@@ -140,12 +139,16 @@ export function createPolicyExtension({ roomId, bot, onBlocked = () => {}, manag
         const tool = event?.toolName;
         const policy = store.policy();
 
-        // 执行前读取当前角色，审批授权和缓存中的旧工具不能覆盖负责人限制。
+        // 执行前读取当前角色：审批授权和缓存中的旧工具不能绕过只读模式。
+        //
+        // ★ 这里原来还有一道“负责人只能用 leadToolAllowed 里的工具”的门，
+        //   实测后果是：哪怕用户把 bash 写进 PI_BOT_LEAD_TOOLS，负责人也永远
+        //   拿不到 —— 而且拦下的理由写的是“请把这项操作交给成员执行”，
+        //   用户完全看不出问题出在哪里。
+        //
+        //   现在改成只靠工具集本身（按配置 + 角色算出来的那一份）控制，
+        //   不再在执行边界做第二次静默收窄。“先派后干”是提示词层面的行为规矩。
         const currentBot = store.getBot(bot?.id) ?? bot;
-        if (isDelegatingLead(store.getRoom(roomId), currentBot) &&
-            !leadToolAllowed(tool, config.leadTools)) {
-          return { block: true, reason: '部门负责人负责拆解、派活和汇总；请把这项操作交给成员执行。' };
-        }
 
         // ★ 只读：默认拒绝。审批授权、命令白名单和会话里残留的工具都不能放行。
         const readonlyReason = readonlyBlockReason(policy, tool);

@@ -86,7 +86,6 @@ export function opaqueScriptBlockReason(policy, tool) {
     : null;
 }
 
-const READ_ONLY_BUILTINS = new Set(['read', 'ls', 'grep', 'find']);
 const COORDINATION_TOOLS = new Set([
   'list_bots', 'list_departments', 'read_department', 'message_bot', 'reply_bot',
   'task_report', 'task_plan', 'assign_member_task', 'task_expert_review',
@@ -97,6 +96,15 @@ const COORDINATION_TOOLS = new Set([
   // 放在这里的意思是"角色上允许走这条路"，不是"允许直接推"。
   'git_push',
 ]);
+
+/**
+ * 负责人总是拿得到的只读内置工具。
+ *
+ * 这几个是"看一眼就知道在干什么"的基础能力（读文件、列目录、搜文本），
+ * 不该因为环境变量里忘了写就失去。执行工具不在这份名单里 ——
+ * 那些必须是用户明配置的。
+ */
+const LEAD_EXTRA_BUILTINS = new Set(['read', 'ls', 'grep', 'find']);
 
 export function isReadonlyPolicy(policy) {
   return policy?.dangerous === 'deny';
@@ -125,7 +133,14 @@ export function isLeadOfRoom(room, botId) {
   return leadId === botId;
 }
 
-/** 主控保留自己的能力配置；普通 bot 在多人部门担任负责人时限制执行。 */
+/**
+ * 这个 bot 在多人部门里当负责人吗。
+ *
+ * ★ 它现在只影响**提示词和行为习惯**（先派后干、汇报要写清谁做了什么），
+ *   不再限制“能不能执行”。原来叫 `isDelegatingLead`，含义是“这个负责人
+ *   只派活不干活”，于是 policy-hook 拿它当第二道门把执行工具全拦了。
+ *   实测后果：用户对负责人说“你直接改吧”，它也只能再派人。
+ */
 export function isDelegatingLead(room, bot) {
   return bot?.role !== 'main' && isLeadOfRoom(room, bot?.id);
 }
@@ -137,10 +152,26 @@ export function toolsForPolicy(baseTools = [], policy = {}) {
     : [...baseTools];
 }
 
-/** 负责人仅可使用配置内的只读内置工具，以及固定的组织查询和派活工具。 */
+/**
+ * 负责人能不能用这个工具。
+ *
+ * ★ 现在**不再只放行只读** —— 负责人和成员一样能动手。
+ *
+ *   原来的实现是 `COORDINATION_TOOLS.has(name) || 只读集合.has(name) && 配置里有`：
+ *   哪怕你把 `bash` 写进 `PI_BOT_LEAD_TOOLS`，也会被这个函数过滤掉 ——
+ *   配置形同虚设，而且没有任何提示说明为什么改了不生效。
+ *
+ *   现在：配置里有什么就给什么（属于“负责人额外通道”的组织工具恒放行）。
+ *   “先派后干”是**提示词层面的行为规则**，不靠断能力来实现。
+ *   真要禁，把工具从 `PI_BOT_LEAD_TOOLS` / `PI_BOT_TOOLS` 里拿掉就行，
+ *   那是配置该干的事，不是代码里静默覆盖。
+ */
 export function leadToolAllowed(name, leadTools = []) {
-  return COORDINATION_TOOLS.has(name) ||
-    (READ_ONLY_BUILTINS.has(name) && leadTools.includes(name));
+  if (COORDINATION_TOOLS.has(name)) return true;
+  // 负责人自己的通道：配置里列了就给（含执行工具）
+  if (leadTools.includes(name)) return true;
+  // 配置里没列，但它是内置只读工具（默认就有，不依赖配置）
+  return LEAD_EXTRA_BUILTINS.has(name);
 }
 
 /** 按角色选择内置工具，再应用统一行为策略。 */
@@ -148,8 +179,8 @@ export function toolsForRole({
   isChief = false, isDeptLead = false,
   chiefTools = [], leadTools = [], memberTools = [], policy = {},
 } = {}) {
-  const raw = isChief ? chiefTools : isDeptLead
-    ? leadTools.filter((name) => READ_ONLY_BUILTINS.has(name)) : memberTools;
+  // ★ 负责人不再被剃成只读：它有自己的配置，没有回退成员配置。
+  const raw = isChief ? chiefTools : isDeptLead ? leadTools : memberTools;
   return toolsForPolicy(raw, policy);
 }
 
@@ -163,11 +194,15 @@ export function toolsForRole({
  */
 const CHIEF_ONLY_TOOLS = new Set(['desktop_observe', 'desktop_screenshot']);
 
-export function customToolsForRole(tools, { room, bot, leadTools = [], policy = {} } = {}) {
+export function customToolsForRole(tools, { room, bot, policy = {} } = {}) {
+  // ★ 负责人不再额外收窄自定义工具。
+  //
+  //   原来这里对“多人部门的负责人”再过滤一遍 leadToolAllowed，而那份名单
+  //   只有只读 + 组织类 —— 于是即便用户把 run_background 加进
+  //   PI_BOT_LEAD_TOOLS，负责人也永远拿不到。能力边界现在只由两处决定：
+  //   工具集本身（按配置/角色算出来的那一份）和只读策略。
   const chief = bot?.role === 'main';
-  const base = tools.filter((tool) => chief || !CHIEF_ONLY_TOOLS.has(tool.name));
-  const list = isDelegatingLead(room, bot)
-    ? base.filter((tool) => leadToolAllowed(tool.name, leadTools)) : [...base];
+  const list = tools.filter((tool) => chief || !CHIEF_ONLY_TOOLS.has(tool.name));
   return isReadonlyPolicy(policy)
     ? list.filter((tool) => readonlyToolAllowed(tool.name)) : list;
 }
@@ -185,7 +220,7 @@ export function customToolsForRole(tools, { room, bot, leadTools = [], policy = 
  *   +1 会让所有老会话在下次使用时重建一次（丢的只是进程内的会话缓存，
  *   聊天记录都在库里，不受影响）。
  */
-export const SESSION_TOOLS_VERSION = 2;
+export const SESSION_TOOLS_VERSION = 3;
 
 /** 房间角色、成员或工具集版本变化时签名变化，用于重建缓存会话。 */
 export function roleConfigurationKey(room, bot) {
