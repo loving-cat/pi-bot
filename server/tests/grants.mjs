@@ -432,11 +432,32 @@ await test('迁移兼容：规矩变了要重发，否则走只读会连读都�
   store.updatePolicy({ dangerous: 'allow' });
 });
 
-await test('迁移兼容：只读 policy 只给 fileRead', () => {
+await test('迁移兼容：只读 policy 给读 + 桌面观察，不给写和命令', () => {
   store.state.grants = [];
   ensureLegacyGrant({ store, policy: { dangerous: 'deny' }, policyRevision: 'p1', botIds: [chief.id], chiefBotId: chief.id });
   const g = store.state.grants[0];
-  assert.deepEqual([...g.actions], [ACTION.fileRead]);
+  // 桌面观察是**只读**的：只读模式在 role-tools 的 READONLY_ALLOW 里也放行它，
+  // 两边口径必须一致 —— 否则会出现“工具看得见、一调就被网关拒”。
+  assert.deepEqual([...g.actions], [ACTION.fileRead, ACTION.desktopObserve]);
+});
+await test('迁移兼容：主 Bot 拿到桌面观察与 push，其他 Bot 拿不到', () => {
+  store.state.grants = [];
+  const gate = createGrantGate({ store, currentPolicyRevision: () => 'p1', currentGeneration: () => 'g1' });
+  ensureLegacyGrant({
+    store, policy: { dangerous: 'allow' }, policyRevision: 'p1',
+    botIds: [chief.id, worker.id], chiefBotId: chief.id,
+  });
+  const asChief = { botId: chief.id, role: 'main' };
+  const asWorker = { botId: worker.id };
+  for (const tool of ['desktop_observe', 'desktop_screenshot']) {
+    const mapped = gate.actionForTool(tool);
+    assert.equal(mapped.action, ACTION.desktopObserve);
+    assert.equal(gate.check({ subject: asChief, action: mapped.action }).ok, true, `${tool} 不能让主 Bot 一上线就坏`);
+    assert.equal(gate.check({ subject: asWorker, action: mapped.action }).ok, false, `${tool} 不该给普通 Bot`);
+  }
+  // push：放行的是“允许发起”，真正推之前还有手机确认（confirm.js）
+  assert.equal(gate.check({ subject: asChief, action: ACTION.gitPush }).ok, true);
+  assert.equal(gate.check({ subject: asWorker, action: ACTION.gitPush }).ok, false);
 });
 
 // ---------------------------------------------------------------- 工具映射

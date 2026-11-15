@@ -347,7 +347,20 @@ export function createGrantGate({
  * 所以这条授权的范围**写死成 policy 现在已经允许的**，不多一分：
  *   · `dangerous: 'allow'` → 命令/文件写都给，但仍受 denyCommands 约束
  *   · `dangerous: 'ask'`   → 一样给（ask 的拦截在审批层，不在授权层）
- *   · `dangerous: 'deny'`  → 什么动手能力都不给
+ *   · `dangerous: 'deny'`  → 只给读（含桌面观察），动手能力一个都不给
+ *
+ * ## 主 Bot 还要额外给的两项（只给主 Bot）
+ *
+ *   · `desktop.observe` —— 观察层（P0-3a）早在网关之前就上线了。
+ *     不给它，升级到带网关的版本之后 `desktop_observe` 会直接 no_grant 报错：
+ *     一个本来只是“只读看屏幕”的能力被静默关掉，用户看到的是“功能坏了”。
+ *     规格 §5.3 也是这个口径：普通桌面输入/观察默认只给主 Bot。
+ *   · `git.push` —— `git_push` 自己会要求手机确认票据（见 git-tools），
+ *     这里放行的是“允许走这条路”；真正推之前还要过确认框架。
+ *     不给它的话主 Bot 连**发起**一次 push 请求都做不到。
+ *
+ * 这两项都**只给主 Bot**：其他 Bot 是 project 模式，桌面和 push 都不该有。
+ * 而且都在确认/观察层有各自的二次门（截图只截目标窗口、push 要手机批准）。
  *
  * 幂等：已经存在 `source: legacy-policy` 且属于该 bot 的授权就不再建第二条。
  *
@@ -369,12 +382,13 @@ export function ensureLegacyGrant({ store, policy, policyRevision, botIds = [], 
 
   const readonly = policy?.dangerous === 'deny';
   const actions = readonly
-    ? [ACTION.fileRead]
+    ? [ACTION.fileRead, ACTION.desktopObserve]
     : [
         ACTION.fileRead, ACTION.fileWrite, ACTION.fileDelete,
         ACTION.cmdExec, ACTION.cmdBackground,
         ACTION.gitRead, ACTION.gitCommit,
         ACTION.netFetch, ACTION.netSend,
+        ACTION.desktopObserve, ACTION.gitPush,
       ];
   const revision = policyRevision ? String(policyRevision).slice(0, 8) : 'v0';
 
@@ -405,23 +419,33 @@ export function ensureLegacyGrant({ store, policy, policyRevision, botIds = [], 
       revoked.push(old.id);
     }
 
+    // 只给主 Bot 的那两项：桌面观察与 push。
+    //
+    // 桌面相关的两个工具在 role-tools 里本来就是 CHIEF_ONLY_TOOLS，
+    // 这里再收一道是为了让授权记录**自己**说得清（不然审计里会看到
+    // “某个 project 模式的 bot 有一条 desktop.observe 授权”——很吓人且没用）。
+    const isChief = botId === chiefBotId;
+    const ownActions = isChief
+      ? actions
+      : actions.filter((a) => a !== ACTION.desktopObserve && a !== ACTION.gitPush);
+
     const grant = {
       id: `gr_legacy_${String(botId).replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 20)}_${revision}`,
       source: SOURCE.legacyPolicy,
       sourceRef: '升级前的全局 policy（迁移兼容，范围等于当时的允许口径）',
       subject: {
         botId,
-        role: botId === chiefBotId ? 'main' : '',
+        role: isChief ? 'main' : '',
         instanceId: '',
       },
       taskId: null,
       parentId: null,
-      actions,
+      actions: ownActions,
       // 资源不设限：升级前的 policy 就是全局的。收紧要靠用户新建授权 + 撤销这条。
       resources: [],
       constraints: {},
       risk: RISK.medium,
-      mode: botId === chiefBotId ? MODE.host : MODE.project,
+      mode: isChief ? MODE.host : MODE.project,
       policyRevision: policyRevision ? String(policyRevision) : null,
       generation: null,
       // ★ 不能再转授：迁移来的授权只是“保持升级前的行为”，不是新增的授权能力。
