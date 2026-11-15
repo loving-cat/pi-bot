@@ -103,6 +103,32 @@ HTML 附件在两种阅读位置都使用独立离线预览策略。客户端和
 留空保留原值，新模型留空采用服务端默认值；配置值不代表接口已确认支持该容量。
 `/models` 可访问只证明模型列表接口可达，仍需实际推理鉴权通过。
 
+### 桌面输入（`desktop_input` / `desktop_lease`）
+
+**状态：空壳，未实现。** `server/src/desktop-input-mac.js` 的六个入口
+全部返回 `not_platform`；`describePlatform('darwin').supported === false`。
+`server/tests/desktop-input-mac.mjs` 的 13 项测试守着这一点 ——
+空壳不许谎报成功，也不许抛异常。
+
+要做什么、改哪些文件、先验哪三件事，全部写在
+**[MACOS-DESKTOP-INPUT.md](MACOS-DESKTOP-INPUT.md)**。一句话概览：
+
+| | Windows（已实机） | macOS（待填） |
+|---|---|---|
+| 坐标单位 | 物理像素 | **点**（points，Retina = 像素 ÷ 2） |
+| 移动 | `SetCursorPos` | `CGWarpMouseCursorPosition` |
+| 点击/按键 | `SendInput` | `CGEventPost` |
+| 输入探针 | `GetLastInputInfo` | `CGEventSourceSecondsSinceLastEventType` |
+| 文字输入 | 剪贴板 + Ctrl+V | `NSPasteboard` + **⌘V** |
+| 系统授权 | 无（UAC/安全桌面会拦） | **辅助功能 + 屏幕录制两道** |
+
+**判定逻辑一行都不用重写**：租约、接管检测、动作规划、坐标校验、
+输入噪声判据全部是平台无关的纯逻辑（`desktop-lease.js` /
+`desktop-takeover.js` / `desktop-input.js`），已有 106 项测试守着。
+macOS 侧只需要实现六个函数，签名与返回形状与 Windows 版完全一致。
+
+---
+
 ## 验证状态
 
 2026-10-19 已使用 Xcode 16.4 在真实 Mac 上完成 Flutter Release 构建，真实打包得到

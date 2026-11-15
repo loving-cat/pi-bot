@@ -357,13 +357,17 @@ export function describePlatform(platform) {
     };
   }
   if (platform === 'darwin') {
+    // ★ 照实标 false。macOS 实现现在是空壳（desktop-input-mac.js），
+    //   每个入口返回 not_platform。改成 true 的唯一时机是：
+    //   docs/MACOS-DESKTOP-INPUT.md 的验收清单全部实机跑过。
     return {
       platform,
       supported: false,
       verified: null,
       actions: [],
-      unsupported: ['全部'],
-      probe: 'CGEventSourceSecondsSinceLastEventType（未实现，需实机）',
+      unsupported: ['全部（空壳实现已就位，待填）'],
+      probe: 'CGEventSourceSecondsSinceLastEventType（未实现）',
+      todo: 'docs/MACOS-DESKTOP-INPUT.md',
     };
   }
   return { platform, supported: false, verified: null, actions: [], unsupported: ['全部'], probe: null };

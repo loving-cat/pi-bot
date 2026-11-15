@@ -33,6 +33,7 @@ import {
   createLeaseState, acquire, release, renew, revoke, checkLease, assertHolder, sweep, describeLease, DENY,
 } from './desktop-lease.js';
 import * as winPlatform from './desktop-input-win.js';
+import * as macPlatform from './desktop-input-mac.js';
 import {
   createWatchState, watch, noteInjection, describeWatch, ACTION as WATCH_ACTION,
 } from './desktop-takeover.js';
@@ -259,18 +260,31 @@ export function createDesktopInputSession({
 }
 
 /**
- * 平台实现。默认是 Windows；测试可以通过 `setDesktopInputPlatform()` 换掉，
- * 这样整条链路（含工具层）都能在没有真机的环境下跑。
+ * 按运行平台选实现。**这是全仓库唯一一处"今天是什么平台"的判断** ——
+ * 工具层、装配层都不知道自己在 Windows 还是 macOS 上。
  *
- * 为什么平台实现放在**这个文件**里而不是 `tools.js`：工具层只该翻译参数，
- * 不该知道"今天的平台是什么"。放在这里，加 macOS 时只改这一处。
+ * | 平台 | 实现 | 状态 |
+ * |---|---|---|
+ * | win32 | `desktop-input-win.js` | 已实机验证 |
+ * | darwin | `desktop-input-mac.js` | **空壳**（每个入口返回 not_platform） |
+ * | 其它 | 空槽位（同上） | 不支持 |
+ *
+ * macOS 的空壳不是"忘了写"，是刻意的：桌面输入点错了就是点了。
+ * 一个"大部分情况能跑"的实现比没有更危险 —— 它会让上层以为这条路通了。
+ * 要改哪里、怎么改、先验什么，全写在 `docs/MACOS-DESKTOP-INPUT.md`。
  */
-let platform = {
-  probeEnvironment: winPlatform.probeEnvironment,
-  probeLastInput: winPlatform.lastInputAt,
-  perform: winPlatform.perform,
-  sampleNoise: winPlatform.sampleInputNoise,
-};
+function platformForCurrentOS() {
+  const chosen = process.platform === 'win32' ? winPlatform : macPlatform;
+  return {
+    probeEnvironment: chosen.probeEnvironment,
+    probeLastInput: chosen.lastInputAt,
+    perform: chosen.perform,
+    sampleNoise: chosen.sampleInputNoise,
+  };
+}
+
+/** 当前平台实现。测试可以通过 `setDesktopInputPlatform()` 换掉。 */
+let platform = platformForCurrentOS();
 
 /** 当前平台实现的只读视图（工具层做诊断时用）。 */
 export function desktopInputPlatform() {
@@ -280,6 +294,9 @@ export function desktopInputPlatform() {
 /**
  * 换掉平台实现（**只给测试用**）。换掉会顺带清掉单例会话，
  * 免得旧会话还挂着旧探针。
+ *
+ * 不给生产代码留"运行时切平台"的口子：平台是进程的事实，
+ * 运行中换实现只会让两次审计出自不同的坐标基准。
  */
 export function setDesktopInputPlatform(over = {}) {
   platform = { ...platform, ...over };

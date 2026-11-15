@@ -24,7 +24,7 @@
 | 用户接管检测（W2b） | ✅ `296a744` | — | — |
 | 用户自定义覆盖层（W3） | ✅ `fb3fe31` | — | — |
 | 桌面输入 Windows 实现（W2c） | ✅ `d3b77fc` | — | 实机记录见 `docs/WINDOWS.md`「桌面输入」；锁屏/多屏仍是 ⚠ 未实测 |
-| **桌面输入 macOS 实现**（W2d） | ⬜ | 缺实机 | `CGEvent` 封装；辅助功能未授权时明确交还用户（`desktop-input.js` 的判据可直接复用） |
+| **桌面输入 macOS 实现**（W2d） | 🟨 空壳就位 `docs/MACOS-DESKTOP-INPUT.md` | 缺实机 | 六个函数已留好实现槽位 + 13 项测试守着"不许谎报成功"；照文档填 `desktop-input-mac.js`，先验三件事（探针可用性 / 授权被拒行为 / 坐标单位） |
 | desktop_input 工具 + 接网关（W2e） | ✅ `eaca498` | — | — |
 | 锁屏 / 断开会话的实机验证 | ⬜ | 静态实现已有（`OpenInputDesktop` 失败 → 交还并吊销） | 锁屏后调一次 `desktop_lease status` + `desktop_input`，把结果填进 `docs/WINDOWS.md` 那张表 |
 | 多屏 / 混合缩放的实机验证 | ⬜ | 屏幕矩形已用虚拟屏 API（天然支持负坐标） | 接一块不同缩放的屏，验证窗口坐标 → 点击位置对得上 |

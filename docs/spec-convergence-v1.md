@@ -218,6 +218,12 @@ node scripts/check-style.mjs           # §1 的三条机器可判断约定
 **验收**：`tests/desktop-takeover.mjs` ≥ 8 项。**探针不可用时保守判定为"用户在"并拒绝注入**
 
 **W2c / W2d · Windows / macOS 实现**（需实机）
+
+> 进度：W2c 已完成（`d3b77fc`，实机记录在 `docs/WINDOWS.md`）。
+> W2d 的空壳已就位：`server/src/desktop-input-mac.js` 六个函数返回
+> `not_platform`，`describePlatform('darwin').supported === false`，
+> 13 项测试守着"空壳不许谎报成功"。要填什么、改哪些文件、先验哪三件事
+> 全写在 `docs/MACOS-DESKTOP-INPUT.md`。
 `SendInput` / `CGEvent` 封装；坐标带显示器与缩放版本；布局变化使旧坐标失效
 辅助功能未授权时**明确交还用户**，不静默降级
 **验收**：`docs/WINDOWS.md` / `docs/MACOS.md` 各加一节实机记录（锁屏 / 多屏 / 125% 缩放）
