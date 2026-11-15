@@ -40,6 +40,7 @@ const TESTS = [
   'task-projection',
   'task-supervisor',
   'task-commands',
+  'task-budget',
   'task-file-claims',
   'capabilities',
   'desktop-lease',
