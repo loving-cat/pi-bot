@@ -164,6 +164,31 @@ export function actionForTool(toolName) {
   return action ? { action, risk: riskOf(action) } : null;
 }
 
+/** 所有“有工具会产生它”的动作（去重）。 */
+export const GATED_ACTIONS = Object.freeze(
+  [...new Set(Object.values(TOOLS))].sort(),
+);
+
+/**
+ * 一批工具会产生哪些动作（去重、保序）。
+ *
+ * 用途：让“某个档位允许哪些工具”和“这个档位的授权要覆盖哪些动作”
+ * 只在源头维护一份。手工拄一份动作清单迟早漂移 —— 实测过：只读档
+ * 策略层放行“查资料/找同事/看仓库”，网关那边却只发了读文件一条，
+ * 切成只读之后连 web_search 都被拒。
+ *
+ * @param {string[]} toolNames
+ * @returns {string[]}
+ */
+export function actionsForTools(toolNames = []) {
+  const out = [];
+  for (const tool of toolNames) {
+    const action = TOOLS[String(tool ?? '')];
+    if (action && !out.includes(action)) out.push(action);
+  }
+  return out;
+}
+
 /**
  * 从工具入参里认出目标资源。
  *

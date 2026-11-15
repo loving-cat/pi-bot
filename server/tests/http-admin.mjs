@@ -243,11 +243,15 @@ await test('改策略后迁移授权自动重发（否则只读会连读都拒�
   );
   assert.ok(legacy.length >= 1, '应当有一条当前规矩下的迁移授权');
   const fresh = legacy.at(-1);
-  // 只读规矩下只留“不动手”的动作：读文件 + 看屏幕。
-  //
-  // 桌面观察是只读的（role-tools 的 READONLY_ALLOW 里也放行它），两边口径必须
-  // 一致 —— 否则会出现“工具看得见、一调就被网关拒”。这个断言就是那条约定。
-  assert.deepEqual([...fresh.actions], ['file.read', 'desktop.observe']);
+  const actions = [...fresh.actions];
+  // 只读规矩下只剩“不动手”的动作。清单不是手写的：它由 role-tools 的
+  // READONLY_ALLOW 推导（查资料、找同事、看仓库、看屏幕都在里面）——
+  // 策略层放行而网关没发授权的组合，会让用户切成只读之后连查资料都做不了。
+  assert.ok(actions.includes('file.read'));
+  assert.ok(actions.includes('desktop.observe'));
+  for (const unsafe of ['file.write', 'file.delete', 'cmd.exec', 'cmd.background', 'git.commit', 'git.push']) {
+    assert.ok(!actions.includes(unsafe), `只读模式不该有 ${unsafe}`);
+  }
 });
 
 const failed = results.filter((r) => !r.ok);

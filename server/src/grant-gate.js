@@ -31,9 +31,13 @@ import {
   checkChain, checkGrantValidity, grantCovers, normalizeGrant, normalizeResource, describeGrant,
 } from './grants.js';
 import {
-  ACTIONS, TOOLS, actionForTool as catalogActionForTool, riskOf, needsTarget,
+  ACTIONS, TOOLS, GATED_ACTIONS, actionsForTools, auditCatalog,
+  actionForTool as catalogActionForTool, riskOf, needsTarget,
   targetsForTool as catalogTargetsForTool,
 } from './action-catalog.js';
+// role-tools 是叶子模块（内部不 import 任何东西），引用它不会成环。
+// 只读档“允许哪些工具”的唯一来源在它那里，迁移授权的动作清单从这里推导。
+import { READONLY_ALLOW } from './role-tools.js';
 
 /** 审计里保留的最近条数（超出后落盘裁剪）。 */
 const MAX_AUDIT = 500;
@@ -323,6 +327,13 @@ export function createGrantGate({
     return { ok: true, revoked: grantId, downstream };
   }
 
+  /**
+   * 补登记的实现可以后装（`setSyncGrants`）。
+   *
+   * 为什么需要后装：生产里 `server-main` 建网关时就能把
+   * `ensureLegacyGrant` 传进来；但测试和各种装配顺序下，网关可能先建、
+   * 补登记的实现后到位。留一个 setter 比强迫所有调用方按特定顺序装配简单。
+   */
   let syncGrantsFn = syncGrants;
   function setSyncGrants(fn) {
     syncGrantsFn = typeof fn === 'function' ? fn : null;
@@ -405,28 +416,72 @@ export function createGrantGate({
 }
 
 /**
+ * 迁移授权应该覆盖哪些动作 —— 「网关上线之前，政策已经允许的全部动作」。
+ *
+ * 这是本项目里唯一允许“推导而不是手写”的授权范围，因为它是**兼容层**：
+ * 目的不是新增权限，而是让网关上线不改变现有行为（规格 §11「隔离旧规则与
+ * 新策略版本」）。推导的好处是它不会比政策窄 —— 手写清单实测漏过三次：
+ * `desktop.observe`、`git.push`、`mcp.add` 都是“工具在、网关却没发授权”，
+ * 而且全静默：工具看着在那里，一调就报没有权限。
+ *
+ * 两个档位的区别就是 policy 本来的区别：
+ *   · 只读（`dangerous: 'deny'`）→ 只发“只读放行名单里的工具”所对应的动作 + 读文件
+ *   · 其他档位 → 所有有工具的动作（拿掉 `MIGRATION_WITHHELD`）
+ *
+ * 放宽方向靠什么拦：真正危险的动作仍然要过各自的二次门 ——
+ * MCP 与改防线走 `SECURITY_CONFIG_TOOLS` 逐次审批，push 走手机确认。
+ * 迁移授权只回答“有没有资格走这条路”，不回答“这一步要不要人点”。
+ *
+ * @param {object} p
+ * @param {boolean} [p.readonly] 当前是不是只读模式
+ * @param {boolean} [p.chief] 是不是主 Bot（桌面观察只给它）
+ * @returns {string[]}
+ */
+export function migrationActions({ readonly = false, chief = false } = {}) {
+  const base = readonly
+    // 读工具（read/ls/grep/find）本身不过网关，所以 file.read 要单独加上；
+    // 其余的按“只读放行名单里的工具”推导，不再手写第二份清单。
+    ? [ACTION.fileRead, ...actionsForTools(READONLY_ALLOW)]
+    : [ACTION.fileRead, ...GATED_ACTIONS];
+  const withheld = chief ? MIGRATION_WITHHELD : [...MIGRATION_WITHHELD, ...CHIEF_ONLY_ACTIONS];
+  return [...new Set(base.filter((a) => !withheld.includes(a)))];
+}
+
+/**
+ * 只给主 Bot 的动作。
+ *
+ *   · `desktop.observe` —— 看得到用户整个屏幕。role-tools 的两个桌面工具
+ *     本来就在 `CHIEF_ONLY_TOOLS` 里，这里再收一道是为了让**授权记录自己**
+ *     说得清：审计里不该出现“某个 project 模式的 bot 有一条看屏幕授权”。
+ *   · `git.push` —— 规格 §7.1 的 G2 是“集成动作”。负责人对自己的项目有
+ *     本地提交权，但把东西推出本机是主 Bot 的活（而它自己还要过手机确认）。
+ */
+export const CHIEF_ONLY_ACTIONS = Object.freeze([ACTION.desktopObserve, ACTION.gitPush]);
+
+/**
+ * 拆权时必须默认“不给”的动作（不是“忘了要”，是**故意**扣着）。
+ *
+ *   · `desktop.input`：桌面输入层还没建（P0-3b），先把格子留出来 ——
+ *     等接上时只能是用户新建授权，不能从迁移授权自动继承。
+ *   · `git.destructive`：force push / reset --hard / 删分支那类，
+ *     规格 §7.1 的 G3，本来就要逐次确认，不该被迁移授权一括。
+ */
+export const MIGRATION_WITHHELD = Object.freeze([ACTION.desktopInput, ACTION.gitDestructive]);
+
+/**
  * 迁移兼容：把升级前那份全局 policy 记成一条根授权。
  *
  * 规格 §11：「隔离旧规则与新策略版本，切换时停止/核对旧后台进程，
  * 不让旧批准迁移成更宽的新批准」。
  *
- * 所以这条授权的范围**写死成 policy 现在已经允许的**，不多一分：
- *   · `dangerous: 'allow'` → 命令/文件写都给，但仍受 denyCommands 约束
- *   · `dangerous: 'ask'`   → 一样给（ask 的拦截在审批层，不在授权层）
- *   · `dangerous: 'deny'`  → 只给读（含桌面观察），动手能力一个都不给
+ * 所以这条授权的范围**写死成 policy 现在已经允许的**，不多一分。
  *
- * ## 主 Bot 还要额外给的两项（只给主 Bot）
+ * 具体清单不在这里手写，而是 `migrationActions()` 从动作目录 + 只读放行名单
+ * 推导出来的 —— 手写清单实测漏过三次（`desktop.observe`、`git.push`、
+ * `mcp.add`），每次都是“工具在、网关却没发授权”这种静默故障。
  *
- *   · `desktop.observe` —— 观察层（P0-3a）早在网关之前就上线了。
- *     不给它，升级到带网关的版本之后 `desktop_observe` 会直接 no_grant 报错：
- *     一个本来只是“只读看屏幕”的能力被静默关掉，用户看到的是“功能坏了”。
- *     规格 §5.3 也是这个口径：普通桌面输入/观察默认只给主 Bot。
- *   · `git.push` —— `git_push` 自己会要求手机确认票据（见 git-tools），
- *     这里放行的是“允许走这条路”；真正推之前还要过确认框架。
- *     不给它的话主 Bot 连**发起**一次 push 请求都做不到。
- *
- * 这两项都**只给主 Bot**：其他 Bot 是 project 模式，桌面和 push 都不该有。
- * 而且都在确认/观察层有各自的二次门（截图只截目标窗口、push 要手机批准）。
+ * **不继承的**：`MIGRATION_WITHHELD` 里那两项（桌面输入、破坏性 Git）。
+ * 它们要么还没建（P0-3b），要么本来就要求逐次确认，都不该被兼容层一括带上。
  *
  * 幂等：已经存在 `source: legacy-policy` 且属于该 bot 的授权就不再建第二条。
  *
@@ -447,15 +502,6 @@ export function ensureLegacyGrant({ store, policy, policyRevision, botIds = [], 
   if (!Array.isArray(store.state.grants)) store.state.grants = [];
 
   const readonly = policy?.dangerous === 'deny';
-  const actions = readonly
-    ? [ACTION.fileRead, ACTION.desktopObserve]
-    : [
-        ACTION.fileRead, ACTION.fileWrite, ACTION.fileDelete,
-        ACTION.cmdExec, ACTION.cmdBackground,
-        ACTION.gitRead, ACTION.gitCommit,
-        ACTION.netFetch, ACTION.netSend,
-        ACTION.desktopObserve, ACTION.gitPush,
-      ];
   const revision = policyRevision ? String(policyRevision).slice(0, 8) : 'v0';
 
   const created = [];
@@ -485,15 +531,11 @@ export function ensureLegacyGrant({ store, policy, policyRevision, botIds = [], 
       revoked.push(old.id);
     }
 
-    // 只给主 Bot 的那两项：桌面观察与 push。
-    //
-    // 桌面相关的两个工具在 role-tools 里本来就是 CHIEF_ONLY_TOOLS，
-    // 这里再收一道是为了让授权记录**自己**说得清（不然审计里会看到
-    // “某个 project 模式的 bot 有一条 desktop.observe 授权”——很吓人且没用）。
+    // 桌面观察只给主 Bot（role-tools 里那俩工具本来也是 CHIEF_ONLY_TOOLS）。
+    // 这里再收一道是为了让授权记录**自己**说得清：审计里不该出现
+    // “某个 project 模式的 bot 有一条 desktop.observe 授权”——看着吓人又没用。
     const isChief = botId === chiefBotId;
-    const ownActions = isChief
-      ? actions
-      : actions.filter((a) => a !== ACTION.desktopObserve && a !== ACTION.gitPush);
+    const ownActions = migrationActions({ readonly, chief: isChief });
 
     const grant = {
       id: `gr_legacy_${String(botId).replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 20)}_${revision}`,

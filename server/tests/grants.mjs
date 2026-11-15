@@ -437,13 +437,32 @@ await test('迁移兼容：规矩变了要重发，否则走只读会连读都�
   store.updatePolicy({ dangerous: 'allow' });
 });
 
-await test('迁移兼容：只读 policy 给读 + 桌面观察，不给写和命令', () => {
+await test('迁移兼容：只读 policy 给读 + 桌面观察，不给写和命令', async () => {
   store.state.grants = [];
   ensureLegacyGrant({ store, policy: { dangerous: 'deny' }, policyRevision: 'p1', botIds: [chief.id], chiefBotId: chief.id });
   const g = store.state.grants[0];
-  // 桌面观察是**只读**的：只读模式在 role-tools 的 READONLY_ALLOW 里也放行它，
-  // 两边口径必须一致 —— 否则会出现“工具看得见、一调就被网关拒”。
-  assert.deepEqual([...g.actions], [ACTION.fileRead, ACTION.desktopObserve]);
+  const actions = [...g.actions];
+  // 只读模式**不是**“只剩读文件”：role-tools 的 READONLY_ALLOW 里本来还放行了
+  // 查资料（web_search/web_fetch）、找同事（message_bot）、看仓库（git_*）、
+  // 看屏幕（desktop_observe）。策略层放行、网关却没发授权的组合，实测会让
+  // 用户切成只读之后连查资料都做不了 —— 所以这里按同一份名单推导，不再手写。
+  assert.ok(actions.includes(ACTION.fileRead), '读文件');
+  assert.ok(actions.includes(ACTION.desktopObserve), '看屏幕：role-tools 也放行它');
+  assert.ok(actions.includes(ACTION.netFetch), '查资料：只读模式本来就允许');
+  assert.ok(actions.includes(ACTION.gitRead), '看仓库状态：只读');
+  assert.ok(!actions.includes(ACTION.fileWrite), '不能写文件');
+  assert.ok(!actions.includes(ACTION.cmdExec), '不能跑命令');
+  assert.ok(!actions.includes(ACTION.fileDelete), '不能删文件');
+  assert.ok(!actions.includes(ACTION.gitCommit), '不能提交');
+  assert.ok(!actions.includes(ACTION.gitPush), '不能推');
+  // 与策略层逐条对齐：READONLY_ALLOW 里有工具、网关就必须有对应动作
+  const R = await import(src('role-tools.js'));
+  const { actionForTool } = await import(src('action-catalog.js'));
+  for (const tool of R.READONLY_ALLOW) {
+    const mapped = actionForTool(tool);
+    if (!mapped) continue;
+    assert.ok(actions.includes(mapped.action), `策略放行 ${tool}，迁移授权却没有 ${mapped.action}`);
+  }
 });
 await test('迁移兼容：主 Bot 拿到桌面观察与 push，其他 Bot 拿不到', () => {
   store.state.grants = [];
