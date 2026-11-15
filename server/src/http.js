@@ -645,6 +645,12 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
 
       const grantRevokeMatch = pathname.match(/^\/api\/grants\/([^/]+)\/revoke$/);
       if (grantRevokeMatch && req.method === 'POST') {
+        // 收回授权是**降低权限**的动作，所以不要 nonce、不写管理审计。
+        //
+        // 理由和「撤销设备」一样：冒充者替你收回一条授权，损失的只有你自己
+        // （那个 bot 少了一项能力），他不会因此获得任何东西。反过来要求 nonce
+        // 会让“发现异常时立刻收权”变复杂 —— 安全动作不该被防冒充的门槛挡住。
+        // “撤销”本身靠身份 + CSRF 就够（http-admin 里也标的是 probe 档）。
         const gate = runner.grantGate;
         if (!gate) return fail(res, 503, 'NO_GATE', '网关未启用');
         const id = decodeURIComponent(grantRevokeMatch[1]);

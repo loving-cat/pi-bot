@@ -103,6 +103,27 @@ await test('收回不存在的授权返回 404', async () => {
   assert.equal(r.status, 404);
   assert.equal(r.json.code, 'GRANT_NOT_FOUND');
 });
+// ★ 收权是**降低权限**的动作：不该被 nonce 门槛挡住，也不该写管理审计。
+//   理由和「撤销设备」一样 —— 冒充者帮你收权只会让你少了项能力。
+//   这两条写死在用例里，以后谁想给它加 nonce 会先看到这里的意图。
+await test('收权不要 nonce，且不刷管理审计', async () => {
+  // 前面的用例可能已经把仅有的迁移授权收完了，这里现造一条 ——
+  // 断言点不是“列表里恰好有”，而是“收一条授权不需要 nonce、不写审计”。
+  const gate = runner.grantGate;
+  const made = gate.add({
+    source: 'user',
+    subject: { botId: chief.id, role: 'main' },
+    actions: ['file.read'],
+    resources: [],
+    mode: 'host',
+  });
+  assert.equal(made.ok, true, JSON.stringify(made));
+  const target = made.grant.id;
+  const beforeAudit = store.state.adminAudit?.length ?? 0;
+  const r = await req(`/api/grants/${target}/revoke`, { method: 'POST', body: {} });
+  assert.equal(r.status, 200, `收权不该要 nonce：${JSON.stringify(r.json)}`);
+  assert.equal(store.state.adminAudit?.length ?? 0, beforeAudit, '收权不该往“改了什么”里写记录');
+});
 
 await test('GET /api/admin-actions 能看到审计', async () => {
   store.addAdminAction({ action: 'policy.change', level: 'defense', label: '改部门规矩', method: 'PATCH', path: '/api/policy' });
