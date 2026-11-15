@@ -135,7 +135,7 @@ await test('GET /api/admin-actions 能看到审计', async () => {
 });
 
 await test('★ 只读接口不要 nonce（否则一打开设置页就 403）', async () => {
-  for (const p of ['/api/grants', '/api/admin-actions', '/api/confirmations']) {
+  for (const p of ['/api/grants', '/api/grant-audit', '/api/admin-actions', '/api/confirmations']) {
     const r = await req(p);
     assert.equal(r.status, 200, p + ' 不该要 nonce：' + JSON.stringify(r.json));
   }
@@ -144,6 +144,7 @@ await test('★ 只读接口不要 nonce（否则一打开设置页就 403）', 
 await test('★ 只读接口不写管理审计（看≠改）', async () => {
   const before = (await req('/api/admin-actions')).json.actions.length;
   await req('/api/grants');
+  await req('/api/grant-audit');
   await req('/api/grants');
   const after = (await req('/api/admin-actions')).json.actions.length;
   assert.equal(after, before, '只看不改的请求不该产生审计');
@@ -183,6 +184,34 @@ await test('已经决过的确认重复提交是幂等的', async () => {
   assert.equal(r.status, 200);
   assert.equal(r.json.replayed, true);
   assert.equal(store.getConfirmation('cf_view_1').decision, 'approved', '不该被改成拒绝');
+});
+
+await test('★ GET /api/grant-audit 能读出网关的判定记录', async () => {
+  const gate = runner.grantGate;
+  gate.add({
+    source: 'user',
+    subject: { botId: chief.id, role: 'main' },
+    actions: ['file.read'], resources: [], mode: 'host',
+  });
+  gate.check({ subject: { botId: chief.id }, action: 'file.read' });
+  const r = await req('/api/grant-audit');
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.ok(Array.isArray(r.json.audit));
+  assert.ok(r.json.audit.length >= 1, '至少能看到刚放行的那一条');
+  const hit = r.json.audit[0];
+  assert.equal(hit.result, 'allow');
+  assert.ok(hit.risk, 'risk 不该是 null（动作目录是唯一来源）');
+  assert.equal(typeof hit.action, 'string');
+  // 只读接口：不要 nonce、不写管理审计（上面那条用例已经守了）
+});
+
+await test('★ 审计能只看被拒的（排查现场用）', async () => {
+  const gate = runner.grantGate;
+  gate.check({ subject: { botId: chief.id }, action: 'git.push' }); // 没有覆盖它的授权
+  const r = await req('/api/grant-audit?denied=1');
+  assert.equal(r.status, 200);
+  assert.ok(r.json.audit.every((a) => a.result === 'deny'), '带 denied=1 时只返回拒绝记录');
+  assert.ok(r.json.audit.length >= 1);
 });
 
 const failed = results.filter((r) => !r.ok);

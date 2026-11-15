@@ -142,5 +142,6 @@ export function listAdminRoutes() {
  */
 export const ADMIN_VIEW_ROUTES = Object.freeze([
   '/api/grants',
+  '/api/grant-audit',
   '/api/admin-actions',
 ]);

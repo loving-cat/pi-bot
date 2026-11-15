@@ -663,6 +663,20 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         return send(res, 200, { revoked: id, downstream: out.downstream ?? [] });
       }
 
+      // 授权审计：谁在什么时候做了什么、被放进还是被拒、为什么。
+      //
+      // 规格 §5.5 要求动作可审计，而 `gate.recentAudit()` 从 P0-1 起就有
+      // ——只是没有任何接口把它读出去，等于白记。只读：不要 nonce、不写审计。
+      if (pathname === '/api/grant-audit' && req.method === 'GET') {
+        const gate = runner.grantGate;
+        if (!gate) return send(res, 200, { audit: [], note: '网关未启用' });
+        const botId = url.searchParams.get('botId');
+        const limit = Number(url.searchParams.get('limit') || 100);
+        const onlyDenied = url.searchParams.get('denied') === '1';
+        return send(res, 200, {
+          audit: gate.recentAudit({ botId: botId || null, limit, onlyDenied }),
+        });
+      }
       if (pathname === '/api/admin-actions' && req.method === 'GET') {
         const limit = Number(url.searchParams.get('limit') || 50);
         return send(res, 200, {
