@@ -41,6 +41,7 @@ const TESTS = [
   'task-supervisor',
   'task-file-claims',
   'capabilities',
+  'desktop-lease',
   'action-catalog',
   'template-grants',
   'grants',
