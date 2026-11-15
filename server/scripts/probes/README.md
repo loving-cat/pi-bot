@@ -21,3 +21,13 @@ powershell -NoProfile -STA -ExecutionPolicy Bypass -File scripts/probes/desktop-
 两个靶子都必须**自己先声明 DPI 感知**：不声明的话它记录的坐标是逻辑坐标
 （本机 2048x1152 而不是 2560x1440），拿它去和物理坐标比就会误判成"点偏了"。
 这一点踩过，脚本里有注释。
+
+## 注入回归
+
+`desktop-input-injection-probe.mjs` 验证 `type_text` 的 PowerShell 转义：
+它把一串元字符（`"` `$` `` ` `` `'`）喂进去，判据是**靶子收到原文**且
+**用来做标记的文件没被创建**。本机实测两条都过。
+
+```powershell
+node scripts/probes/desktop-input-injection-probe.mjs
+```
