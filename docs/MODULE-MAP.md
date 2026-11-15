@@ -73,7 +73,15 @@
 | `attachments.js` / `extract.js` / `upload-sessions.js` | 附件存取、正文提取、**分片上传**；附件按房间存放，删除先持久化最小标记再清理文件，历史读取与实时推送统一过滤 |
 | `shells.js` | 后台进程注册表（启动/读/写/杀、容量与回收） |
 | `shell-policy.js` | 命令级规则：归一化、解析、通配匹配、判不了就拒绝（纯函数） |
-| `policy-hook.js` | 命令规则的执行点（pi 内联扩展，拦 `tool_call`） |
+| `policy-hook.js` | 命令规则的执行点（pi 内联扩展，拦 `tool_call`），并在这里逐次过授权网关 |
+| — 权限与授权（P0-1）— | --- |
+| `grants.js` | 授权记录与判定（纯逻辑、无 IO）：动作/资源覆盖、派生收窄、父链、有效性 |
+| `action-catalog.js` | **动作目录**：一个动作多危险、能不能撤销、要不要认出目标、哪些工具产生它、怎么从入参认出目标 |
+| `grant-gate.js` | 授权网关：候选→有效性→父链→覆盖→审计；迁移授权与运行期补登记 |
+| `confirm.js` | 不可撤销动作的确认：通道分级（本机 vs 手机）、目标摘要绑定、有效期 |
+| `http-admin.js` | HTTP 管理门的分级表：defense/data/probe，nonce 与审计 |
+| `desktop-observe.js` | 桌面**观察**（列窗口/截指定窗口）；输入层属 P0-3b，未做 |
+| `git-ops.js` / `git-tools.js` | Git 适配器：G0 读 / G1 本地提交 / G2 push（要手机确认）；G3 明确拒绝 |
 | `dm.js` | 私聊开场文案、回执条件与结果、来源和调度关联的保存 |
 | `progress-senders.js` / `progress-migration.js` | 根据明确消息或调度关联规划来源补齐，再应用迁移；不通过正文猜测派活人 |
 | `hooks.js` | 工具钩子：改写入参 / 拦下（规则存 `data/hooks.json`，判定纯函数） |
@@ -94,7 +102,21 @@
 - 新的**数据**：加在 `store.js` 的对应 section（tasks/automations 已经这么放）；
 - 新的**纯算法**：单独文件 + `tests/` 里配测试（如 `shell-policy.js`、`automations.js`）；
 - 新的**路由**：只写参数校验与调用，逻辑放到模块里；
-- 新的**执行期拦截**：走 `policy-hook.js` 这类 pi 内联扩展，不往 runner 里塞判断。
+- 新的**执行期拦截**：走 `policy-hook.js` 这类 pi 内联扩展，不往 runner 里塞判断；
+- 新的**能产生副作用的动作**：在 `action-catalog.js` 登记（动作条目 + 工具映射 + 目标认法），
+  否则网关看不见它。迁移授权的动作清单从目录推导，不用手改第二处。
+
+### 「一个事实只存一份」的几处约定
+
+| 事实 | 唯一来源 | 谁读它 |
+|---|---|---|
+| 动作多危险 / 能不能撤销 / 要不要目标 | `action-catalog.js` 的 `ACTIONS` | 网关审计、确认框架、迁移授权 |
+| 哪些工具产生哪个动作 | `action-catalog.js` 的 `TOOLS` | 网关覆盖面、迁移授权 |
+| 只读模式放行哪些工具 | `role-tools.js` 的 `READONLY_ALLOW` | 会话工具集、迁移授权（只读档） |
+| 谁是主 Bot / 谁能单用某工具 | `role-tools.js` 的 `CHIEF_ONLY_TOOLS` | 会话工具集、迁移授权 |
+
+以前「动作多危险」被抄成三份，实测后果是审计里 risk 恒为 null、
+窄范围授权靠“认不出目标”就能绕过。加新动作时照上面四处对齐。
 
 ## 客户端 `app/lib`
 
