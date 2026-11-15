@@ -43,6 +43,7 @@ const TESTS = [
   'task-budget',
   'task-reduce',
   'run-managed-attempt',
+  'task-controls',
   'task-file-claims',
   'capabilities',
   'desktop-lease',
