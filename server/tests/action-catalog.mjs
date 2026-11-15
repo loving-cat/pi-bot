@@ -31,7 +31,7 @@ const C = await import(src('action-catalog.js'));
 const G = await import(src('grants.js'));
 const { ACTION, DENY } = G;
 const { store } = await import(src('store.js'));
-const { createGrantGate, ensureLegacyGrant, TOOL_ACTIONS } = await import(src('grant-gate.js'));
+const { createGrantGate, ensureLegacyGrant, TOOL_ACTIONS, migrationActions } = await import(src('grant-gate.js'));
 const { reversibilityOf, REVERSIBILITY } = await import(src('confirm.js'));
 
 const results = [];
@@ -221,6 +221,30 @@ await test('迁移授权仍然不限范围（行为不变）', () => {
   assert.deepEqual([...g.resources], [], '迁移授权不限范围，这是它与窄授权最大的区别');
 });
 
+await test('迁移授权：只读档的动作清单与策略层逐条对齐', async () => {
+  const R = await import(src('role-tools.js'));
+  const { actionForTool } = await import(src('action-catalog.js'));
+  const actions = migrationActions({ readonly: true, chief: true });
+  // 策略层放行的工具，网关必须有对应动作 —— 否则用户切成只读之后
+  // 连查资料都做不了（实测 12 个工具被静默拦住）。
+  for (const tool of R.READONLY_ALLOW) {
+    const mapped = actionForTool(tool);
+    if (!mapped) continue;
+    assert.ok(actions.includes(mapped.action), `策略放行 ${tool}，迁移授权却没有 ${mapped.action}`);
+  }
+});
+await test('迁移授权：故意扣着的两类不继承', () => {
+  const chiefActions = migrationActions({ readonly: false, chief: true });
+  const workerActions = migrationActions({ readonly: false, chief: false });
+  // 还没建的能力和 G3 破坏性动作，即使网关上线前的政策“允许”，也不默认继承
+  assert.ok(!chiefActions.includes(ACTION.desktopInput), '桌面输入要用户新建授权');
+  assert.ok(!chiefActions.includes(ACTION.gitDestructive), 'force push 那类要逐次确认');
+  // 主 Bot 专属的两项
+  assert.ok(chiefActions.includes(ACTION.desktopObserve));
+  assert.ok(chiefActions.includes(ACTION.gitPush));
+  assert.ok(!workerActions.includes(ACTION.desktopObserve), '看屏幕只给主 Bot');
+  assert.ok(!workerActions.includes(ACTION.gitPush), '推远端是 G2，属主 Bot');
+});
 // ---------------------------------------------------------------- 工具映射兼容
 await test('TOOL_ACTIONS 与目录同源（兼容导出不会漂移）', () => {
   for (const [tool, action] of Object.entries(C.TOOLS)) {
