@@ -78,10 +78,40 @@ function run(cmd, args, { timeout = TIMEOUT_MS } = {}) {
  * 用 DWM 的 `DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS)` 取边框：
  * `GetWindowRect` 在 Win10+ 会把不可见的阴影边距也算进去，
  * 按那个矩形裁出来的截图右边和下边会多一圈别的窗口。
+ *
+ * ## ★ 必须先声明 DPI 感知（否则坐标是缩小的逻辑坐标）
+ *
+ * 本机实测（2560x1440 / 125% 缩放）：
+ *
+ * ```
+ * 未声明感知 → 窗口矩形 / 虚拟屏都是 2048x1152（被缩小 80%）
+ * 声明 Per-Monitor V2 → 2560x1440（物理像素）
+ * ```
+ *
+ * 用逻辑坐标去截屏会得到**放大的局部画面**（截一块却拿到整个窗口的一部分），
+ * 而且不报错。截屏和输入用的是同一套坐标，所以两边都必须先声明感知 ——
+ * 否则桌面输入把光标移到 A，观察截回来却是 B，整条链路对不上。
  */
+const PS_DPI_AWARE = `
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class DpiAware {
+  [DllImport("user32.dll", SetLastError=true)] public static extern bool SetProcessDpiAwarenessContext(IntPtr v);
+  [DllImport("user32.dll", SetLastError=true)] public static extern bool SetProcessDPIAware();
+  public static bool Make() {
+    try { if (SetProcessDpiAwarenessContext(new IntPtr(-4))) return true; } catch { }
+    try { return SetProcessDPIAware(); } catch { return false; }
+  }
+}
+"@
+[void][DpiAware]::Make()
+`;
+
 const PS_LIST_WINDOWS = `
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+${PS_DPI_AWARE}
 Add-Type -AssemblyName System.Drawing
 Add-Type @"
 using System;
@@ -170,6 +200,7 @@ function psPrintWindow({ handle, outFile }) {
   const safe = String(outFile).replace(/'/g, "''");
   const script = `
 $ErrorActionPreference = 'Stop'
+${PS_DPI_AWARE}
 Add-Type -AssemblyName System.Drawing
 Add-Type @"
 using System;
@@ -209,6 +240,7 @@ Write-Output ("printwindow=" + $ok + " size=" + $winW + "x" + $winH)
 function psCaptureRect({ x, y, width, height, outFile }) {
   const script = `
 $ErrorActionPreference = 'Stop'
+${PS_DPI_AWARE}
 Add-Type -AssemblyName System.Drawing
 # 不用 $w / $h：PowerShell 变量大小写不敏感，$h 撞窗口句柄会静默出错。
 $capW = ${Math.round(width)}
@@ -337,8 +369,10 @@ export function listWindows({ limit = MAX_WINDOWS } = {}) {
 /** 屏幕尺寸（截全屏时用）。 */
 function screenSize() {
   if (process.platform === 'win32') {
-    const res = run('powershell', ['-NoProfile', '-NonInteractive', '-Command',
-      "Add-Type -AssemblyName System.Windows.Forms; $s=[System.Windows.Forms.SystemInformation]::VirtualScreen; \"$($s.Width)x$($s.Height)\""]);
+    const res = run('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
+      `${PS_DPI_AWARE}
+Add-Type -AssemblyName System.Windows.Forms
+$s=[System.Windows.Forms.SystemInformation]::VirtualScreen; "$($s.Width)x$($s.Height)"`]);
     if (res.ok) {
       const m = /^(\d+)x(\d+)$/.exec((res.stdout || '').trim());
       if (m) return { width: Number(m[1]), height: Number(m[2]) };

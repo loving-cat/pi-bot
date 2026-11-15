@@ -1,0 +1,332 @@
+/**
+ * 桌面输入的**纯逻辑**部分：动作怎么规划、坐标怎么换算、键怎么认。
+ *
+ * 对应规格 `architecture-permissions-v1.0.1` §5.2 / §5.4 的输入层。
+ * 这个文件不碰平台、不发输入、不读时钟 —— 平台调用在
+ * `desktop-input-win.js`（Windows）里，判定在 `desktop-lease.js` 与
+ * `desktop-takeover.js` 里。
+ *
+ * ## 为什么把"规划"和"发送"分开
+ *
+ * 输入这一步一旦发出去就收不回来：点错了就是点了。所以顺序是
+ *
+ * ```
+ * 规划（纯函数，可穷举测试） → 发送（平台调用，一次）
+ * ```
+ *
+ * 规划层负责把一切能在发之前发现的问题拦下来：
+ *
+ * | 拦什么 | 为什么必须在发之前 |
+ * |---|---|
+ * | 屏幕外的坐标 | 布局变了（拔了外接屏、改了分辨率），旧坐标会点到别处 |
+ * | 不认识的键 | 猜一个键码 = 在用户文档里乱打 |
+ * | 拖拽 | 需要"按下—移动—抬起"持续持租约 + 中断恢复，没做完不许半截上线 |
+ * | 超长的连点 | 一次 20 下点击会把界面点穿 |
+ *
+ * 发送层拿到的是已经核对过的计划，它只做一件事：照着发。
+ *
+ * ## ★ 坐标是物理像素，不是逻辑像素
+ *
+ * 本机实测（2560x1440 / 125% 缩放 / 同一台机器）：
+ *
+ * ```
+ * 进程未声明 DPI 感知 → SystemInformation.VirtualScreen = 2048x1152
+ * 进程声明 Per-Monitor V2 → 同上接口 = 2560x1440
+ * ```
+ *
+ * Win32 的 `SetCursorPos` / `SendInput` 认的是**物理**像素。没声明感知的
+ * 进程拿到的是被系统缩小的逻辑坐标，两者差 25%（2048 → 2560），
+ * 整屏偏移，而且**不报错**。所以：
+ *
+ *   · 这个文件只处理物理像素，不做任何缩放换算；
+ *   · 平台层发输入前必须先 `SetProcessDpiAwarenessContext(-4)`，
+ *     拿不到就**不发**（宁可这一轮干不了，也不能点到别处）。
+ *
+ * 把缩放换算写进这一层是错的：一旦这里也做除法，声明失败时就变成
+ * "两次缩放抵消一半"，错得更隐蔽。
+ */
+
+/** 拒绝/失败原因码。上层据此决定是提示、排队、还是交还用户。 */
+export const INPUT_FAIL = Object.freeze({
+  /** 当前平台没有实现 */
+  notPlatform: 'not_platform',
+  /** DPI 感知声明失败 —— 坐标不可信，**不敢发** */
+  notAware: 'not_dpi_aware',
+  /** 目标坐标在屏幕外（布局变过） */
+  outOfScreen: 'out_of_screen',
+  /** 没有可操作会话（锁屏 / 断开 / 安全桌面） */
+  noSession: 'no_session',
+  /** 参数不合法 / 不认识的动作或键 */
+  invalid: 'invalid',
+  /** 平台调用本身失败 */
+  callFailed: 'call_failed',
+  /** 探针不可用（拿不到最后输入时间） */
+  probeUnavailable: 'probe_unavailable',
+  /** 这一轮被用户接管了 */
+  yielded: 'yielded',
+});
+
+/**
+ * 支持的动作。
+ *
+ * `drag` 和 `drag_drop` 刻意**不在**这里 —— 见 `planInput` 里的说明。
+ */
+export const INPUT_ACTIONS = Object.freeze([
+  'move', 'click', 'scroll', 'key', 'keyCombo', 'type_text',
+]);
+
+/** 一次动作最多连点几下（防"把界面点穿"）。 */
+export const MAX_CLICKS = 3;
+
+/** 一次滚轮最多几格（防"一脚滚到底"）。 */
+export const MAX_SCROLL_NOTCHES = 10;
+
+/** 一次输入文本最多多少字符（防把整篇文档粘进去）。 */
+export const MAX_TEXT_CHARS = 4_000;
+
+/** 鼠标键名 → 平台无关的语义。 */
+export const BUTTONS = Object.freeze(['left', 'right', 'middle']);
+
+/**
+ * 虚拟键码表（Windows 语义，但键名是平台无关的）。
+ *
+ * 只登记**常用且意义确定**的键。故意不做"任意字符 → 键码"的映射：
+ * 那要靠键盘布局表，做半套会在中文输入法下乱打。要输入文字就走 `type_text`。
+ */
+const VK = Object.freeze({
+  ctrl: 0x11, control: 0x11, shift: 0x10, alt: 0x12, win: 0x5b, meta: 0x5b,
+  enter: 0x0d, return: 0x0d, tab: 0x09, esc: 0x1b, escape: 0x1b,
+  space: 0x20, backspace: 0x08, delete: 0x2e, del: 0x2e, insert: 0x2d,
+  left: 0x25, up: 0x26, right: 0x27, down: 0x28,
+  home: 0x24, end: 0x23, pageup: 0x21, pagedown: 0x22,
+  f1: 0x70, f2: 0x71, f3: 0x72, f4: 0x73, f5: 0x74, f6: 0x75,
+  f7: 0x76, f8: 0x77, f9: 0x78, f10: 0x79, f11: 0x7a, f12: 0x7b,
+  // 组合键里最常用的几个单字母（ctrl+v 粘贴、ctrl+s 保存、ctrl+f 查找…）
+  a: 0x41, c: 0x43, f: 0x46, s: 0x53, v: 0x56, x: 0x58, z: 0x5a,
+  ...Object.fromEntries('0123456789'.split('').map((d, i) => [d, 0x30 + i])),
+});
+
+/**
+ * 键名 → 虚拟键码；不认识返回 0。
+ *
+ * 只认单字母（A-Z）与小写键名。多字符的字符串不会被猜成"按顺序打"——
+ * 那是 `type_text` 的活，猜错会在用户文档里乱打字。
+ */
+export function vkCode(name) {
+  const k = String(name ?? '').trim().toLowerCase();
+  if (!k) return 0;
+  if (VK[k]) return VK[k];
+  if (k.length === 1) {
+    const c = k.toUpperCase().charCodeAt(0);
+    if (c >= 0x41 && c <= 0x5a) return c;
+  }
+  return 0;
+}
+
+/** 一个点是不是在屏幕矩形里（左闭右开，与 Win32 一致）。 */
+export function insideScreen({ point, screen } = {}) {
+  if (!point || !screen) return false;
+  const x = Number(point.x);
+  const y = Number(point.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+  const sx = Number(screen.x) || 0;
+  const sy = Number(screen.y) || 0;
+  const w = Number(screen.width) || 0;
+  const h = Number(screen.height) || 0;
+  if (!(w > 0 && h > 0)) return false;
+  return x >= sx && x < sx + w && y >= sy && y < sy + h;
+}
+
+/**
+ * 把物理坐标夹/拒到屏幕内。
+ *
+ * 刻意**不做静默夹取**：坐标落到屏幕外说明"我们记的布局和现在的布局不一样"，
+ * 夹到边缘然后点下去，等于在错误的元素上点。规格 §5.4 原话是
+ * 「布局变化使旧坐标失效」—— 失效就该拒绝，让上层重新观察一次。
+ */
+export function checkPoint({ point, screen } = {}) {
+  if (!point) return { ok: false, code: INPUT_FAIL.invalid, text: '没有给目标坐标' };
+  if (!insideScreen({ point, screen })) {
+    const size = screen ? `${screen.width}x${screen.height}` : '未知';
+    return {
+      ok: false,
+      code: INPUT_FAIL.outOfScreen,
+      text: `目标点 (${point.x},${point.y}) 不在当前屏幕 ${size} 内 —— 布局变过，先重新观察一次`,
+    };
+  }
+  return { ok: true, point: { x: Math.round(Number(point.x)), y: Math.round(Number(point.y)) } };
+}
+
+/**
+ * 规划一次输入：**发之前**把能查的都查掉。
+ *
+ * @param {object} p
+ * @param {string} p.action move / click / scroll / key / keyCombo / type_text
+ * @param {{x:number,y:number}} [p.point] 物理像素坐标
+ * @param {{x:number,y:number,width:number,height:number}} p.screen 当前屏幕矩形（平台层探到的）
+ * @param {'left'|'right'|'middle'} [p.button]
+ * @param {number} [p.clicks]
+ * @param {number} [p.delta] 滚轮格数（正 = 向上）
+ * @param {string} [p.key]
+ * @param {string[]} [p.keyCombo]
+ * @param {string} [p.text]
+ * @returns {{ok:true, plan:object} | {ok:false, code:string, text:string}}
+ */
+export function planInput({
+  action, point = null, screen = null, button = 'left', clicks = 1,
+  delta = 0, key = null, keyCombo = null, text = '',
+} = {}) {
+  const act = String(action ?? '').trim();
+  if (!act) return { ok: false, code: INPUT_FAIL.invalid, text: '没说要做什么（action）' };
+  if (act === 'drag' || act === 'drag_drop') {
+    // ★ 拖拽不是"少写一点"，是**另一套状态机**：按下之后、抬起之前
+    //   租约不能断、用户接管要能中断、键盘/鼠标意外断开要能释放。
+    //   半截实现会在用户桌面上留下"鼠标按着不放"，比不实现危险得多。
+    return {
+      ok: false,
+      code: INPUT_FAIL.invalid,
+      text: '拖拽暂不支持：需要"按下—移动—抬起"之间持续持租约并处理中断恢复，做完之前不半截上线',
+    };
+  }
+  if (!INPUT_ACTIONS.includes(act)) {
+    return {
+      ok: false,
+      code: INPUT_FAIL.invalid,
+      text: `不认识的动作「${act}」（支持 ${INPUT_ACTIONS.join(' / ')}）`,
+    };
+  }
+  if (!screen || !(Number(screen.width) > 0)) {
+    // 没有屏幕基准就发输入 = 闭眼点。这一条必须排在坐标检查前面。
+    return { ok: false, code: INPUT_FAIL.invalid, text: '没有屏幕基准（先探一次环境：锁屏/无会话时也会走到这里）' };
+  }
+  const needPoint = act === 'move' || act === 'click';
+  if (needPoint) {
+    const chk = checkPoint({ point, screen });
+    if (!chk.ok) return chk;
+    point = chk.point;
+  }
+  if (act === 'click') {
+    if (!BUTTONS.includes(String(button))) {
+      return { ok: false, code: INPUT_FAIL.invalid, text: `不认识的鼠标键「${button}」（支持 ${BUTTONS.join(' / ')}）` };
+    }
+    // ★ 不能写成 `Number(clicks) || 1`：那样显式传 0 会被**静默改成 1**，
+    //   调用方以为“什么都没点”，实际点了一下。参数不合法就要报错。
+    const n = clicks === undefined || clicks === null ? 1 : Math.trunc(Number(clicks));
+    if (!Number.isFinite(n) || n < 1) return { ok: false, code: INPUT_FAIL.invalid, text: '连点次数必须是 ≥ 1 的整数' };
+    if (n > MAX_CLICKS) {
+      return { ok: false, code: INPUT_FAIL.invalid, text: `一次最多连点 ${MAX_CLICKS} 下（要更多就分几次，中间重新观察）` };
+    }
+    return { ok: true, plan: { action: 'click', point, button: String(button), clicks: n, screen } };
+  }
+  if (act === 'move') return { ok: true, plan: { action: 'move', point, screen } };
+  if (act === 'scroll') {
+    const n = Math.trunc(Number(delta) || 0);
+    if (!n) return { ok: false, code: INPUT_FAIL.invalid, text: 'scroll 要给 delta（正数向上，负数向下）' };
+    if (Math.abs(n) > MAX_SCROLL_NOTCHES) {
+      return {
+        ok: false,
+        code: INPUT_FAIL.invalid,
+        text: `一次最多滚 ${MAX_SCROLL_NOTCHES} 格（要更多就分几次，每滚一段重新观察）`,
+      };
+    }
+    // 滚动可以带坐标（先把鼠标移过去再滚），也可以不带（在当前位置滚）
+    let at = null;
+    if (point) {
+      const chk = checkPoint({ point, screen });
+      if (!chk.ok) return chk;
+      at = chk.point;
+    }
+    return { ok: true, plan: { action: 'scroll', point: at, delta: n, screen } };
+  }
+  if (act === 'key' || act === 'keyCombo') {
+    const keys = act === 'key' ? [String(key ?? '')] : (Array.isArray(keyCombo) ? keyCombo.map(String) : []);
+    const trimmed = keys.map((k) => k.trim()).filter(Boolean);
+    if (!trimmed.length) {
+      return { ok: false, code: INPUT_FAIL.invalid, text: act === 'key' ? 'key 要给键名' : 'keyCombo 要给一组键（如 ["ctrl","v"]）' };
+    }
+    if (trimmed.length > 4) {
+      return { ok: false, code: INPUT_FAIL.invalid, text: `组合键最多 4 个（给了 ${trimmed.length} 个，键盘也按不过来）` };
+    }
+    const codes = [];
+    for (const k of trimmed) {
+      const c = vkCode(k);
+      if (!c) return { ok: false, code: INPUT_FAIL.invalid, text: `不认识的键「${k}」（要输入文字请用 type_text）` };
+      codes.push(c);
+    }
+    return {
+      ok: true,
+      plan: { action: act === 'key' ? 'key' : 'keyCombo', keys: trimmed, codes, screen },
+    };
+  }
+  // type_text
+  const body = String(text ?? '');
+  if (!body) return { ok: false, code: INPUT_FAIL.invalid, text: 'type_text 要给文字' };
+  if (body.length > MAX_TEXT_CHARS) {
+    return {
+      ok: false,
+      code: INPUT_FAIL.invalid,
+      text: `一次最多输入 ${MAX_TEXT_CHARS} 字（给了 ${body.length}）—— 长文本分几段，每段之间重新确认焦点`,
+    };
+  }
+  return { ok: true, plan: { action: 'type_text', text: body, screen } };
+}
+
+/**
+ * 把要输入的文字转义成能安全嵌进 PowerShell 双引号字符串的形式。
+ *
+ * ★ 这不是"顺手防注入"，是**必须**：文字来自模型，里面完全可能有
+ *   `` ` `` `$` `"` 这些 PS 里能改变语义的字符。一次没转义，
+ *   整段脚本就变成"执行模型写的东西" —— 那就等于把 shell 交给了它。
+ *
+ * 反引号必须在最前面换（否则后面换出来的反引号又会被当成转义符）。
+ */
+export function escapeForPsDoubleQuotes(text) {
+  return String(text ?? '')
+    .replace(/`/g, '``')
+    .replace(/\$/g, '`$')
+    .replace(/"/g, '`"');
+}
+
+/** 平台无关的动作摘要（审计/日志用，不含输入内容原文）。 */
+export function describePlan(plan) {
+  if (!plan) return '(空计划)';
+  const at = plan.point ? ` @${plan.point.x},${plan.point.y}` : '';
+  switch (plan.action) {
+    case 'move': return `移动鼠标${at}`;
+    case 'click': return `${plan.button} 键点 ${plan.clicks} 下${at}`;
+    case 'scroll': return `滚轮 ${plan.delta > 0 ? '上' : '下'} ${Math.abs(plan.delta)} 格${at}`;
+    case 'key': return `按键 ${plan.keys.join('')}`;
+    case 'keyCombo': return `组合键 ${plan.keys.join('+')}`;
+    case 'type_text': return `输入文字 ${plan.text.length} 字`;
+    default: return String(plan.action);
+  }
+}
+
+/**
+ * 平台状态表（写进文档时用它，别手写"应该可以"）。
+ *
+ * @param {string} platform `process.platform`
+ */
+export function describePlatform(platform) {
+  if (platform === 'win32') {
+    return {
+      platform,
+      supported: true,
+      verified: '本机 Windows 11 / 2560x1440 / 125% 缩放（见 docs/WINDOWS.md）',
+      actions: [...INPUT_ACTIONS],
+      unsupported: ['drag'],
+      probe: 'GetLastInputInfo + GetTickCount64',
+    };
+  }
+  if (platform === 'darwin') {
+    return {
+      platform,
+      supported: false,
+      verified: null,
+      actions: [],
+      unsupported: ['全部'],
+      probe: 'CGEventSourceSecondsSinceLastEventType（未实现，需实机）',
+    };
+  }
+  return { platform, supported: false, verified: null, actions: [], unsupported: ['全部'], probe: null };
+}
