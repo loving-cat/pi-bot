@@ -20,6 +20,7 @@ const m = await import('../src/git-ops.js');
 const {
   locateGit, resolveRepoLayout, runGit, GIT_OPERATIONS, REFUSED_OPERATIONS,
   parseStatus, verifyCommitLanded, currentHead, listActiveHooks, describeGitError,
+  readAlternates,
 } = m;
 
 const results = [];
@@ -109,8 +110,44 @@ await test('worktree：.git 是指针文件，commondir 指向主仓', () => {
   //   Linux 的 /tmp 链接、Windows runner 的 8.3 短名（RUNNER~1）
   //   都会让"同一个目录"有两条写法（CI 上实测挂过）。
   assert.equal(realish(layout.commonDir), realish(resolveRepoLayout(repo).gitDir));
+  // 普通 worktree 不共享对象库（没配置 alternates），这里应该是空数组。
+  // 断言它存在且是空的，比不写好：以后有人加 alternates 支持时，
+  // 会立刻看到"这里预期变了"。
+  assert.ok(Array.isArray(layout.alternates), 'alternates 字段应当在 layout 里');
+  assert.deepEqual(layout.alternates, [], '普通 worktree 不该有 alternates');
 
   raw(['worktree', 'remove', '--force', wt]);
+});
+
+// ---------------------------------------------------------------- alternates（规格 §7.3）
+await test('★ alternates：绝对路径原样登记、相对路径按 objects/ 解析', () => {
+  // 规格 §7.3 要求"登记 objects alternates" —— 不登记就看不见
+  // "这个仓库能读到别处的全部对象"这件事。
+  const fakeCommon = path.join(root, 'fake-git');
+  fs.mkdirSync(path.join(fakeCommon, 'objects', 'info'), { recursive: true });
+  const altFile = path.join(fakeCommon, 'objects', 'info', 'alternates');
+  fs.writeFileSync(altFile, '/shared/objects\n../rel/objects\n', 'utf8');
+  const got = readAlternates(fakeCommon);
+  assert.equal(got.length, 2);
+  assert.equal(got[0], '/shared/objects', '绝对路径原样保留');
+  // 相对路径的基准是 <commonDir>/objects，不是仓库根
+  assert.equal(got[1], path.resolve(path.join(fakeCommon, 'objects'), '../rel/objects'));
+});
+
+await test('alternates：没有文件 / 空文件 / 注释行都返回空数组（不炸）', () => {
+  assert.deepEqual(readAlternates(path.join(root, 'nope')), []);
+  assert.deepEqual(readAlternates(''), []);
+  const fakeCommon = path.join(root, 'fake-git2');
+  fs.mkdirSync(path.join(fakeCommon, 'objects', 'info'), { recursive: true });
+  fs.writeFileSync(path.join(fakeCommon, 'objects', 'info', 'alternates'), '# 只有注释\n\n', 'utf8');
+  assert.deepEqual(readAlternates(fakeCommon), []);
+});
+
+await test('alternates：同一个路径写两遍只登记一次', () => {
+  const fakeCommon = path.join(root, 'fake-git3');
+  fs.mkdirSync(path.join(fakeCommon, 'objects', 'info'), { recursive: true });
+  fs.writeFileSync(path.join(fakeCommon, 'objects', 'info', 'alternates'), '/x\n/x\n', 'utf8');
+  assert.deepEqual(readAlternates(fakeCommon), ['/x']);
 });
 
 // ---------------------------------------------------------------- 读操作

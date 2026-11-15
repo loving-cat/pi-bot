@@ -221,6 +221,57 @@ export function locateGit({ env = process.env } = {}) {
 }
 
 /**
+ * 读 `objects/info/alternates` —— 这个仓库会不会去读**别的目录**的对象库。
+ *
+ * 规格 §7.3 原话：
+ *
+ *   > 解析并登记 `.git` 指针、gitdir、commondir、objects alternates…
+ *   > 所有目标都要属于明确授予的信任域，否则拒绝该操作并提出授权差异。
+ *
+ * ## 为什么这条不能只看工作目录
+ *
+ * `alternates` 是 Git 的"对象库复用"机制：里面写了另一个仓库的 objects
+ * 路径之后，本仓库能直接读到那个仓库的**全部对象**（提交内容、历史、tag）。
+ * `git clone --shared` / `--reference` 会生成它。
+ *
+ * 后果：一个看起来只在 `/proj/a` 里干活的仓库，可以读到
+ * `<别人的>` 仓库的全部历史。只校验工作目录字符串的话，
+ * 这条路完全看不见。
+ *
+ * ## 这个函数只负责"读出来"，不负责"允许不允许"
+ *
+ * 判"在不在信任域里"需要授权的资源表 —— 那是 `grants.js` 的事。
+ * 这里把目标**如实登记**（含它指向的具体路径），由网关在判 `git.*` 动作时
+ * 把这些路径算进目标集合。
+ *
+ * 相对路径按 Git 的规矩解析：相对于 `<commonDir>/objects`，不是仓库根。
+ *
+ * @param {string} commonDir
+ * @returns {string[]} 绝对路径列表；没有 alternates 文件时是空数组
+ */
+/** 换行切分（用 RegExp 构造，避免源码里的转义被再解释一次）。 */
+const SPLIT_RE = new RegExp('\r?\n');
+export function readAlternates(commonDir) {
+  if (!commonDir) return [];
+  const file = path.join(commonDir, 'objects', 'info', 'alternates');
+  let text = '';
+  try { text = fs.readFileSync(file, 'utf8'); } catch { return []; }
+  const base = path.join(commonDir, 'objects');
+  const out = [];
+  for (const raw of String(text).split(SPLIT_RE)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    // Git 支持 C 风格引号的路径；这里只取引号内的内容，不做转义展开 ——
+    // 猜错一条转义规则比老实不做更危险。
+    const quoted = /^"(.*)"$/.exec(line);
+    const value = quoted ? quoted[1] : line;
+    const abs = path.isAbsolute(value) ? value : path.resolve(base, value);
+    if (!out.includes(abs)) out.push(abs);
+  }
+  return out;
+}
+
+/**
  * 解析仓库的 `.git` 指向（规格 §7.3「不能只校验工作目录字符串」）。
  *
  * 三种情况：
@@ -248,6 +299,7 @@ export function resolveRepoLayout(rootDir) {
       return {
         ok: true, root: realish(cursor), gitDir: realish(dotGit), commonDir: realish(dotGit),
         worktree: false, pointerFile: null,
+        alternates: readAlternates(dotGit),
       };
     }
     if (stat?.isFile()) {
@@ -273,6 +325,7 @@ export function resolveRepoLayout(rootDir) {
       return {
         ok: true, root: realish(cursor), gitDir: realish(gitDir), commonDir: realish(commonDir),
         worktree: true, pointerFile: dotGit,
+        alternates: readAlternates(commonDir),
       };
     }
     const parent = path.dirname(cursor);
