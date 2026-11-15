@@ -34,21 +34,21 @@
 | 拖拽支持 | ⬜ | 刻意不做（要"按下—移动—抬起"持续持租约 + 中断恢复，规格 §5.2 要求纳入验收） | 先写中断恢复的验收用例，再实现 |
 | **本机有程序持续合成输入** | ⚠ 已知环境问题 | 接管检测会一直判"有人在动"，第一次输入发不出去 | `desktop_lease status` 现在会点名说出来；根治要么关掉那个程序，要么由你决定"信任这台桌面"（产品决策） |
 
-### 规格写了但代码里没生效（`SPEC-COVERAGE.md` 零、#1～#3）
+### 规格写了但代码里没生效 —— **已全部收口**
 
-| 项 | 状态 | 阻塞谁 | 下一步最小动作 |
-|---|---|---|---|
-| **执行模式从没传进网关** | ⬜ | §8 整节形同虚设：`isolated` 授权在运行时能被当 `host` 用 | `policy-hook.js:173` 的 `grantGate.check(...)` 加 `mode` 参数，值从当前 bot 的执行模式取；`check-consistency.mjs` 加一项"授权 mode 必须被校验" |
-| **桌面租约不随任务结束回收** | ⬜ | §6.3 要求级联回收；现在只有模型自己调 `desktop_lease release` | 在任务取消/完成/超时处调 `desktopInputSession().revokeLease({by:'task'})`；`sweepLeases()` 接上定时器 |
-| **主体移除不回收授权** | ⬜ | §6.3；删 bot 之后它的 grant 还在，重建同名 bot 会继承 | `store.deleteBot` / `revokeDevice` 里调 `grantGate.revokeForSubject(botId)`，`revokedBy: 'user'` |
-| **截图清理没接上** | ⬜ | §5.5「保留期」；`pruneScreenshots()` 有实现有测试、生产零调用 | `server-main.js` 起一个低频定时器（或启动时跑一次） |
+| 项 | 状态 | 怎么修的 |
+|---|---|---|
+| 执行模式从没传进网关 | ✅ `406fb89` | `exec-mode.js` 判档 → `session-factory` 算一次 → `policy-hook` 传给网关；一致性检查加第 7 项 |
+| 桌面租约不随任务结束回收 | ✅ `202f0d7` | `task-runtime.onCancel` 先撤租约再落状态；`reportTerminal` 三条终态兜底 |
+| 主体移除不回收授权 | ✅ `202f0d7` | `deleteBot` 撤销它的 grant（`revokedBy:'user'`，自动补登记不会发回来） |
+| 截图清理 / 租约 sweep 没接上 | ✅ `202f0d7` | `server-main` 60 秒 housekeeping（`unref`） |
+| objects alternates 从没解析 | ✅ `25b9092` | `readAlternates()` → `resolveRepoLayout()` 返回里带 `alternates[]` |
 
 ## 二、权限层 P1 / P2
 
 | 项 | 状态 | 阻塞谁 | 下一步最小动作 |
 |---|---|---|---|
 | worktree 授权图（登记公共元数据并限制） | ⬜ | §7.3；解析已做（`gitdir/commondir/realpath`） | 先写"哪些路径必须属于授权域"的纯判定 + 测试 |
-| **objects alternates 解析** | ⬜ | §7.3 明确要求；`grep alternates src/` 零命中 | `resolveRepoLayout` 加一段：读 `<commonDir>/objects/info/alternates` |
 | **§13.2 首次授权流程** | ⬜ | §13.2 五步一步都没做；现在权限散在设置页，没有"首次使用向导" | 先定形态（一页说明 + 项目选择 + 硬隔离边界），再做状态机 |
 | **§14 第三方组件许可证清单** | ⬜ | §14.2；仓库只有根 `LICENSE` | `npm ls --all` 导出 + 许可证列，写进 `docs/LICENSES.md` |
 | `scripts/check-spec-progress.mjs` / `check-style.mjs` | ⬜ | 收束 spec 的 W1 承诺过，没做 | 前者校验台账里的 commit 真在 `git log`；后者校验 §1 三条机器可判断的风格约定 |

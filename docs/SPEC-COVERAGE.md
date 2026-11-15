@@ -9,17 +9,24 @@
 
 ---
 
-## 零、先说三件最要紧的
+## 零、曾经"规格写了但代码里没生效"的五条 —— **已全部收口**
 
-按「规格明确要求 vs 现在实际」，这三条的差距最大，都不是"再加点功能"能补的：
+这五条不是"再加点功能"，是规格明确要求、代码里其实没生效。
+核实出来时它们**都不报错、不告警**，只是安静地不起作用。
+2026-11-15 夜里全部修完：
 
-| # | 差距 | 为什么最要紧 |
-|---|---|---|
-| **1** | **执行模式（§8 `host`/`project`/`isolated`）从来没被传进网关** | 授权记录里有 `mode` 字段、`check()` 支持 `mode` 参数，但唯一的调用方 `policy-hook.js` **不传**它。也就是说：用户在 UI 里看到的"隔离执行模式"实质上不存在 —— 一条 `isolated` 授权在运行时能被当成 `host` 用 |
-| **2** | **桌面租约从来不随任务结束释放** | `revokeLease()` 生产代码里**零调用**；只有模型自己主动调 `desktop_lease release`。任务取消/超时/成员移除时不会回收（§6.3 明确要求级联回收桌面租约） |
-| **3** | **主体被移除时的级联回收只做了一半** | `deleteBot` 会删房间/会话/撤销沙箱 ACE（那行 `revoke` 是 ACE 不是授权），但**不回收它的 grant**；`revokeDevice` 只断 ws 也不收授权。§6.3 列的七个触发点里只实现了两个（父链撤销、策略变更） |
+| # | 曾经的问题 | 修法 | commit |
+|---|---|---|---|
+| 1 | **执行模式从来没被传进网关**。`grants.js` 有完整三档、`check()` 支持按 mode 过滤，但唯一调用方 `policy-hook.js` 不传 → 那道过滤永远短路，§8 整节运行时不生效 | 新增 `exec-mode.js`（纯逻辑）+ `session-factory` 算一次 + `policy-hook` 传进去 | `406fb89` |
+| 2 | **桌面租约不随任务结束释放**。`revokeLease()` 生产零调用，只有模型自己调 `desktop_lease release` | `task-runtime.onCancel` 先撤租约再落状态；`reportTerminal` 对三条终态兜底释放 | `202f0d7` |
+| 3 | **主体移除不回收授权**。`deleteBot` 删房间/会话/沙箱 ACE，但不碰 grant → 删掉同名重建会继承旧授权 | `deleteBot` 撤销它的全部授权（`revokedBy: 'user'`，自动补登记不会发回来）；子授权两轮分开标父链失效 | `202f0d7` |
+| 4 | **两个清理函数有实现、零调用**：`sweepLeases()`（僵住的租约）、`pruneScreenshots()`（§5.5 的保留期） | `server-main` 起 60 秒 housekeeping（`unref`，不阻止退出），收工时清掉 | `202f0d7` |
+| 5 | **objects alternates 从来没被解析**（`grep alternates src/` 零命中）→ "这个仓库能读到别处的全部对象"完全看不见 | `readAlternates()` 登记绝对/相对路径，挂进 `resolveRepoLayout()` 返回 | `25b9092` |
 
-其余是"补覆盖"或"补实现"，这三条是"规格写了、代码里其实没生效"。
+**这五条的共同点**：都不报错。规格写的是"必须做 X"，代码里写的是"X 的机制都有了"，
+中间那一根线没人接 —— 而**没有测试守着的接线，一定会断**。
+所以每条修完都配了测试，而且优先守"接线"本身
+（`policy-hook 真的传了 mode` 这种），不是只守"纯函数算得对"。
 
 ---
 
@@ -38,7 +45,7 @@
 | §5.4 多屏/缩放：坐标与显示器绑定 | 🟨 | 屏幕矩形每次重探，屏幕外坐标拒绝；**但坐标本身不带"哪个显示器/哪次布局"的标记**，两次动作之间布局变了不会被发现 | `desktop-input.js` `planInput` |
 | §5.4 锁屏/断开：暂停输入并释放租约 | ✅ | `OpenInputDesktop` 失败 → `no_session` + 自动 revoke | `tests/desktop-input.mjs` |
 | §5.5 审计记录授权引用、发起者、实际执行角色、目标摘要、结果 | 🟨 | 授权审计有（§5.5 全套）；**桌面输入的审计只记动作摘要 + 前台窗口标题**，不记授权引用 | `desktop-input-session.js` 的 `pushAudit` |
-| §5.5 截图最小化取景 / 保留期 | 🟨 | 默认只截目标窗口（最小化取景 ✅）；**保留期没生效** —— `pruneScreenshots()` 有实现、有测试，生产**零调用** | grep `pruneScreenshots` |
+| §5.5 截图最小化取景 / 保留期 | ✅ | 默认只截目标窗口；`server-main` 的 60 秒 housekeeping 调 `pruneScreenshots()` | `tests/reclamation.mjs` |
 
 ---
 
@@ -57,7 +64,7 @@
 | §6.1 撤销状态 | ✅ | `revokedAt` / `revokedBy`（user/policy/parent 三态） | 同上 |
 | §6.1 子授权只能收窄 | ✅ | `deriveGrant` 逐项比；**执行 Bot 默认不能转授**（`canDelegate` 强制 false） | 同上 |
 | §6.2 分能力规则（文件/命令/GUI/Git/网络/凭据） | 🟨 | 五类都接网关了；**GUI 那一行的「删除、发送、付款、提权仍需确认」没实现**（桌面输入不走 `confirm.js`） | 读 `capabilities.js` + `confirm.js` |
-| §6.3 **任务结束/超时/取消/成员移除/项目变更/解绑工具/用户撤销 → 级联回收子授权、桌面租约、后台执行、临时工件** | ⬜ | 只实现了「父链撤销」和「策略变更」两条。<br>· 桌面租约：`revokeLease` 生产零调用<br>· 后台执行：靠 `kill_shell` 手动，任务取消不清<br>· 临时工件：截图不清理<br>· 成员移除：删 bot 不回收授权 | grep `revokeLease` / `pruneScreenshots` |
+| §6.3 级联回收（七触发点） | 🟨 五条已接通 | 只实现了「父链撤销」和「策略变更」两条。<br>· 桌面租约：`revokeLease` 生产零调用<br>· 后台执行：靠 `kill_shell` 手动，任务取消不清<br>· 临时工件：截图不清理<br>· 成员移除：删 bot 不回收授权 | grep `revokeLease` / `pruneScreenshots` |
 | §6.3 后台任务记录主体和资源世代，不能通过 `write_stdin` 续接越过撤销 | ✅ | `write_stdin` 走同一套策略；`tests/shell-bypass-regress.mjs` 守着 | 该测试文件 |
 
 ---
@@ -72,7 +79,7 @@
 | §7.1 G3 破坏性操作 | ⛔ | 刻意不给（`REFUSED_OPERATIONS` 里根本没有） | `git-ops.js` |
 | §7.2 三种工作区（同树/worktree/独立 clone） | 🟨 | 同树 ✅（`worktree` 字段能认）；**独立 clone 没有独立入口**（靠用户自己 clone 到别的路径）；**同一工作树的写租约没有** | grep `worktree` in git-tools |
 | §7.3 解析 `.git` 指针 / gitdir / commondir | ✅ | `resolveRepoLayout` 三种情况都处理，含 Windows 正反斜杠归一化 | `git-ops.js:228-290` |
-| §7.3 **objects alternates** | ⬜ | `grep alternates src/` → **零命中** | grep |
+| §7.3 objects alternates | ✅ | `readAlternates()` 登记绝对/相对路径，挂进 `resolveRepoLayout()` 返回 | `tests/git-ops.mjs` 3 项 |
 | §7.3 所有目标必须属于授予的信任域，否则拒绝并提出授权差异 | ⬜ | 登记了 gitdir/commondir，**没有"必须属于授权域"的判定** | 读 `resolveRepoLayout` 返回后无校验 |
 | §7.3 同一公共目录的 Git 写入按公共目录标识协调 | ⬜ | 没有 | grep |
 | §7.3 尊重原生锁，禁止见锁就删 | ✅ | 遇到 `index.lock` 只翻译成一句人话并**明确禁止用户手动删锁**（`git-ops.js:452`）；我们自己从不删锁 | 读 `git-ops.js:452-455` |
@@ -86,7 +93,7 @@
 | 条款 | 状态 | 实际 | 差距 |
 |---|---|---|---|
 | 三种模式定义（host / project / isolated） | ✅ | `MODE` 常量 + `ALL_MODES` + 迁移授权按主 Bot / 其他分派 | — |
-| **模式在判定时被真的使用** | ⬜ | `check()` 支持 `mode`，`candidatesFor` 会按它过滤；**但唯一调用方不传** | ★ 见零、#1 |
+| 模式在判定时被真的使用 | ✅ | `exec-mode.js` 判档 → `session-factory` 算一次 → `policy-hook` 传给网关；一致性检查第 7 项守着 | `tests/exec-mode.mjs` 11 项 |
 | 模式不能自动降级 | ⬜ | 没有"降级"这个概念，因为没有"当前模式"这个状态 | — |
 | 「主 Bot 可信宿主模式，OS 实际能力须明示」 | 🟨 | 文档写了（`docs/WINDOWS.md`/`MACOS.md`）；**界面上没有明示这个能力边界** | — |
 
@@ -200,25 +207,21 @@
 
 | 状态 | 条数 | 说明 |
 |---|---|---|
-| ✅ 完成 | 38 | 有代码 + 有测试 |
-| 🟨 部分 | 25 | 有代码但覆盖不全，或只做了多重触发点里的一两个 |
-| ⬜ 没做 | 15 | 规格明确要求、代码里没有 |
+| ✅ 完成 | 43 | 有代码 + 有测试 |
+| 🟨 部分 | 22 | 有代码但覆盖不全，或只做了多重触发点里的一两个 |
+| ⬜ 没做 | 13 | 规格明确要求、代码里没有 |
 | ⛔ 产品决策 | 3 | 刻意不做：G3 破坏性 Git / merge-rebase / 替代 Git 库 |
 
 ### 按优先级（我建议的顺序）
 
-**P0 · 规格写了但代码里没生效（三件，都不大但影响判断）**
-
-1. 把执行模式传进网关（`policy-hook.js` 加一个 `mode` 参数，取当前执行模式）
-2. 桌面租约随任务结束回收（在 `task-runtime.onCancel` / 执行结束处调 `revokeLease`）
-3. 主体移除时级联回收授权（`deleteBot` / `revokeDevice` 里调 `grantGate.revokeForSubject`）
+**P0 · ~~规格写了但代码里没生效~~ → 已全部收口（见零）**
 
 **P1 · 规格明确要、但整个模块没做**
 
-4. §13.2 首次授权流程（界面 + 一段简单的状态机）
-5. §7.3 worktree 授权图 + alternates 解析 + 信任域判定
-6. §6.3 剩下的回收点（后台执行、临时工件）
-7. macOS 桌面输入（`docs/MACOS-DESKTOP-INPUT.md`，需实机）
+1. §13.2 首次授权流程（界面 + 一段简单的状态机）
+2. §7.3 worktree **信任域判定**（登记有了，"必须属于授权域否则拒绝"还没有）
+3. §6.3 剩下的回收点（解绑工具 / 项目变更 / 后台执行）
+4. macOS 桌面输入（`docs/MACOS-DESKTOP-INPUT.md`，需实机）
 
 **P2 · 补覆盖（不补会影响"这条到底能不能用"的判断）**
 
