@@ -20,6 +20,7 @@ import { normalizeRules } from './shell-policy.js';
 import { sanitizeMemoryText } from './memory-sanitize.js';
 import { TaskRunStore } from './tasks/task-run-store.js';
 import { channelSuffices } from './confirm.js';
+import { normalizeOverride, checkOverrideBounds, resolve as resolveOverride } from './overrides.js';
 import { defaultWindowsInstanceDir, teardownWindowsInstance } from './sandbox-win.js';
 
 const STATE_FILE = path.join(config.dataDir, 'state.json');
@@ -365,6 +366,9 @@ export class Store {
     if (!Array.isArray(this.state.automations)) this.state.automations = [];
     if (!Array.isArray(this.state.approvals)) this.state.approvals = [];
     if (!Array.isArray(this.state.approvalGrants)) this.state.approvalGrants = [];
+    // 规格 §13.1 四层配置的第②层：用户自定义覆盖。与 bot 记录分开存 ——
+    // 合在一起的话模板一升级就把用户改的覆盖掉了。
+    if (!Array.isArray(this.state.botOverrides)) this.state.botOverrides = [];
     /** @type {Map<string, any[]>} roomId -> messages */
     this.messages = new Map();
     for (const room of Object.values(this.state.rooms)) {
@@ -2155,6 +2159,66 @@ export class Store {
     this.scheduleSave();
     bus.emit('event', { t: 'templates.updated', templates: next });
     return { ok: true };
+  }
+
+  // ---------- 用户自定义覆盖（规格 §13.1 第②层） ----------
+
+  /** 读某个 bot 的覆盖记录（没有就返回 null）。 */
+  botOverride(botId) {
+    const list = Array.isArray(this.state.botOverrides) ? this.state.botOverrides : [];
+    return list.find((o) => o.botId === botId) ?? null;
+  }
+
+  /**
+   * 写某个 bot 的覆盖记录。
+   *
+   * ★ 校验在 `overrides.js`（纯逻辑），这里只负责持久化。
+   *
+   *   覆盖与 bot 记录**分开存**是关键：模板升级只改模板，不会碰这里；
+   *   而"用户改过什么"这件事必须独立可见，否则出问题时说不清
+   *   "这个 bot 的人设到底是谁定的"。
+   *
+   * @param {object} spec 交给 `normalizeOverride` 的原始输入
+   * @returns {{ok:true, override:object}|{ok:false, code:string, text:string}}
+   */
+  setBotOverride(spec = {}) {
+    const built = normalizeOverride(spec);
+    if (!built.ok) return built;
+    const bounds = checkOverrideBounds({ override: built.override });
+    if (!bounds.ok) return bounds;
+    const list = Array.isArray(this.state.botOverrides) ? this.state.botOverrides : [];
+    const next = { ...built.override, updatedAt: now() };
+    const at = list.findIndex((o) => o.botId === next.botId);
+    if (at >= 0) list[at] = next;
+    else list.push(next);
+    this.state.botOverrides = list;
+    this.scheduleSave();
+    bus.emit('event', { t: 'bot.override.updated', botId: next.botId, override: next });
+    return { ok: true, override: next };
+  }
+
+  /** 删掉某个 bot 的覆盖（回到模板原样）。 */
+  clearBotOverride(botId) {
+    const list = Array.isArray(this.state.botOverrides) ? this.state.botOverrides : [];
+    const next = list.filter((o) => o.botId !== botId);
+    if (next.length === list.length) return { ok: true, noop: true };
+    this.state.botOverrides = next;
+    this.scheduleSave();
+    bus.emit('event', { t: 'bot.override.cleared', botId });
+    return { ok: true, cleared: botId };
+  }
+
+  /**
+   * 某个 bot 的**最终**人设相关字段 = 模板值 + 用户覆盖。
+   *
+   * 会话工厂调它来拿 persona / tagline / emoji / model / thinking / skills。
+   * 覆盖只允许白名单字段（见 `overrides.js`），所以这里不可能被用来扩权。
+   *
+   * @returns {{values:object, sources:object, conflicts:Array}}
+   */
+  effectiveBotConfig(botId, { templateValues = {}, templateVersion = '' } = {}) {
+    const override = this.botOverride(botId);
+    return resolveOverride({ templateValues, override, templateVersion });
   }
 
   /** 照模板开一个部门（重名的人复用现成的，不重复造） */

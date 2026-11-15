@@ -108,10 +108,36 @@ export function createSessionBuilder({
    *   `reportTool`：这次会话要不要带受管阶段报告工具。
    *   只有受管执行才需要 —— 普通调用拿到它也没有消费者。
    */
+  /**
+   * 把用户覆盖盖到 bot 记录上（只碰白名单字段）。
+   *
+   * 为什么要单独一个函数：这是**唯一**允许"覆盖影响行为"的地方。
+   * 散在别处就会出现"我以为改了人设、其实没生效"或者反过来的情况。
+   */
+  function applyBotOverride(bot, override) {
+    if (!override || !override.values) return bot;
+    const merged = { ...bot };
+    for (const [key, value] of Object.entries(override.values)) {
+      if (value === undefined || value === null) continue;
+      merged[key] = value;
+    }
+    return merged;
+  }
+
   return async function buildSession(roomId, botId, opts = {}) {
     const wantsReportTool = opts.reportTool === true;
-    const bot = store.getBot(botId);
-    if (!bot) throw new Error(`找不到 bot ${botId}`);
+    const stored = store.getBot(botId);
+    if (!stored) throw new Error(`找不到 bot ${botId}`);
+
+    // ★ 用户自定义覆盖（规格 §13.1 第②层）：人设/模型/技能这些"软配置"
+    //   在**用的时候**合成，不在存的时候合并。
+    //
+    //   这样模板升级只改模板，用户改过的东西还在；而且"这个值是谁定的"
+    //   随时查得到（`sources`）。合并进 bot 记录会让两件事都做不到。
+    //
+    //   注意覆盖**只允许白名单字段**（见 overrides.js），所以这里不可能被
+    //   用来改 mcpServers / role 这类能扩权的字段。
+    const bot = applyBotOverride(stored, store.botOverride(botId));
 
     const sessionDir = path.join(config.dataDir, 'sessions');
     const savedFile = store.sessionFileFor(roomId, botId);
