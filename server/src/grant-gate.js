@@ -30,6 +30,10 @@ import {
   ACTION, DENY, MODE, RISK, SOURCE,
   checkChain, checkGrantValidity, grantCovers, normalizeGrant, normalizeResource, describeGrant,
 } from './grants.js';
+import {
+  ACTIONS, TOOLS, actionForTool as catalogActionForTool, riskOf, needsTarget,
+  targetsForTool as catalogTargetsForTool,
+} from './action-catalog.js';
 
 /** 审计里保留的最近条数（超出后落盘裁剪）。 */
 const MAX_AUDIT = 500;
@@ -38,45 +42,17 @@ const MAX_AUDIT = 500;
 const MAX_GRANTS = 500;
 
 /**
- * 由哪些「动作」构成一次工具调用。工具名到动作的映射是**白名单**：
- * 不在表里的工具不经过网关判定（它要么纯读、要么走自己的专用校验）。
+ * 工具 → 动作的覆盖面表（网关的可见范围本身）。
  *
- * ★ 这张表是网关的覆盖面本身。新增一个能产生副作用的工具就必须在这里登记，
- *   否则它就是一个"网关看不见的执行入口"。
+ * 定义搬到了 `action-catalog.js` —— 那里还同时管着风险档、可撤销性、
+ * 目标认法，三件相关的事放一处才不会各写各的。
+ *
+ * 这里只做**兼容转出**：老调用方和测试 `import { TOOL_ACTIONS }` 仍然能用。
+ * 内容与 `TOOLS` 同源，改一处两边都变，不可能漂移。
  */
-export const TOOL_ACTIONS = Object.freeze({
-  bash: { action: ACTION.cmdExec, risk: RISK.medium },
-  powershell: { action: ACTION.cmdExec, risk: RISK.medium },
-  run_background: { action: ACTION.cmdBackground, risk: RISK.medium },
-  write_stdin: { action: ACTION.cmdBackground, risk: RISK.medium },
-  kill_shell: { action: ACTION.cmdBackground, risk: RISK.low },
-  write: { action: ACTION.fileWrite, risk: RISK.low },
-  edit: { action: ACTION.fileWrite, risk: RISK.low },
-  ego_browser: { action: ACTION.netFetch, risk: RISK.medium },
-  web_fetch: { action: ACTION.netFetch, risk: RISK.low },
-  web_search: { action: ACTION.netFetch, risk: RISK.low },
-  send_image: { action: ACTION.netSend, risk: RISK.high },
-  message_bot: { action: ACTION.netSend, risk: RISK.medium },
-  reply_bot: { action: ACTION.netSend, risk: RISK.medium },
-  announce: { action: ACTION.netSend, risk: RISK.medium },
-  dispatch_to_department: { action: ACTION.netSend, risk: RISK.medium },
-  add_mcp_server: { action: ACTION.mcpAdd, risk: RISK.critical },
-  // 桌面观察：只读但看得到整个屏幕，风险记 medium（隐私面，不是破坏面）。
-  // 它只给主 Bot，且必须先过 desktop.observe 授权（见 role-tools 的 CHIEF_ONLY_TOOLS）。
-  git_status: { action: ACTION.gitRead, risk: RISK.low },
-  git_diff: { action: ACTION.gitRead, risk: RISK.low },
-  git_log: { action: ACTION.gitRead, risk: RISK.low },
-  git_show: { action: ACTION.gitRead, risk: RISK.low },
-  git_branches: { action: ACTION.gitRead, risk: RISK.low },
-  git_add: { action: ACTION.gitCommit, risk: RISK.medium },
-  git_commit: { action: ACTION.gitCommit, risk: RISK.medium },
-  git_push: { action: ACTION.gitPush, risk: RISK.high },
-  desktop_observe: { action: ACTION.desktopObserve, risk: RISK.medium },
-  desktop_screenshot: { action: ACTION.desktopObserve, risk: RISK.medium },
-  stage_site: { action: ACTION.fileWrite, risk: RISK.medium },
-  commit_site: { action: ACTION.netSend, risk: RISK.high },
-  discard_site: { action: ACTION.fileDelete, risk: RISK.medium },
-});
+export const TOOL_ACTIONS = Object.freeze(
+  Object.fromEntries(Object.entries(TOOLS).map(([tool, action]) => [tool, { action, risk: riskOf(action) }])),
+);
 
 /**
  * 建一个网关。
@@ -173,7 +149,12 @@ export function createGrantGate({
    */
   function check({ subject, action, targets = [], params = {}, mode = null, taskId = null, grantId = null } = {}) {
     const now = Date.now();
-    const risk = TOOL_ACTIONS[action]?.risk ?? null;
+    // ★ 风险档按**动作**查。
+    //
+    //   原来这里拿动作名去查按工具名建的表（`TOOL_ACTIONS[action]`），
+    //   键对不上，于是审计里的 risk 永远是 null —— 界面上看不出哪次动作危险。
+    //   现在唯一来源是 action-catalog 的 ACTIONS，同一动作不再随工具各记一档。
+    const risk = riskOf(action);
     const cleanTargets = (Array.isArray(targets) ? targets : []).map(normalizeResource).filter(Boolean);
 
     if (!subject?.botId) {
@@ -230,6 +211,21 @@ export function createGrantGate({
       const covers = grantCovers({ grant, action, targets: cleanTargets, params });
       if (!covers.ok) { failures.push(covers); continue; }
 
+      // ★ 窄范围授权 + 认不出目标 = 拒绝（fail-closed）。
+      //
+      //   规格 §6.1：资源范围是**真边界**，不是装饰。授权写了"只许动 /proj/alpha"，
+      //   而这次动作的目标推不出来（命令里的路径、脚本里的 URL），
+      //   如果当成"没有目标"放行，那范围就等于没写 —— 实测就是这么漏的。
+      //   不是窄范围授权（resources 为空）不受影响，它本来就没限范围。
+      if (!cleanTargets.length && grant.resources.length && needsTarget(action)) {
+        failures.push({
+          ok: false,
+          code: DENY.resourceNotCovered,
+          text: `这条授权限定了范围，但「${action}」这次的目标认不出来（入参里没有可核对的资源），无法确认在范围内`,
+        });
+        continue;
+      }
+
       const a = audit({ grantId: grant.id, subject, action, targets: cleanTargets, result: true, risk });
       return { ok: true, grant, audit: a };
     }
@@ -246,26 +242,19 @@ export function createGrantGate({
     return { ok: false, code: preferred.code, text: preferred.text, audit: a };
   }
 
-  /** 这条动作在网关上要不要判（工具名映射）。 */
+  /** 这条动作在网关上要不要判（工具名映射）。实现在 action-catalog。 */
   function actionForTool(toolName) {
-    return TOOL_ACTIONS[String(toolName ?? '')] ?? null;
+    return catalogActionForTool(toolName);
   }
 
-  /** 从工具入参里推断目标资源（只认确定能推断的字段）。 */
+  /**
+   * 从工具入参里推断目标资源。实现在 action-catalog 的规则表里。
+   *
+   * 保留这个方法名是为了不动 policy-hook 那条调用链；
+   * 认法（读哪个字段）不再散在这里，加工具时改一处就够。
+   */
   function targetsForTool(toolName, input = {}) {
-    const pick = (k) => (typeof input?.[k] === 'string' ? input[k] : '');
-    const path = pick('path') || pick('file_path') || pick('filePath');
-    if (path) return [{ kind: 'path', ref: path }];
-    if (toolName === 'web_fetch' || toolName === 'egp_browser') {
-      const url = pick('url');
-      if (url) {
-        try {
-          const host = new URL(url).hostname;
-          if (host) return [{ kind: 'host', ref: host }];
-        } catch { /* 不是合法 URL 就不给目标，交给适配器自己判 */ }
-      }
-    }
-    return [];
+    return catalogTargetsForTool(toolName, input);
   }
 
   /**

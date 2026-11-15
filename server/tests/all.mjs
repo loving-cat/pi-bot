@@ -40,6 +40,7 @@ const TESTS = [
   'task-projection',
   'task-supervisor',
   'task-file-claims',
+  'action-catalog',
   'grants',
   'desktop-observe',
   'http-admin',

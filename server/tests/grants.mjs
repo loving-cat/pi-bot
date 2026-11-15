@@ -315,7 +315,11 @@ await test('网关：指定 grantId 时只看那一条，且必须属于本人',
   const others = gate.add(rootGrant({ id: 'gr_other', subject: { botId: chief.id }, actions: [ACTION.fileRead] }));
   assert.equal(others.ok, true);
 
-  const ok = gate.check({ subject: { botId: worker.id }, action: ACTION.fileRead, grantId: 'gr_mine' });
+  // 目标是本领范围里的 → 放行（窄范围授权必须给出可核对的目标，见下面那条 fail-closed 用例）
+  const ok = gate.check({
+    subject: { botId: worker.id }, action: ACTION.fileRead, grantId: 'gr_mine',
+    targets: [{ kind: 'path', ref: '/proj/alpha/a.js' }],
+  });
   assert.equal(ok.ok, true);
 
   const stolen = gate.check({ subject: { botId: worker.id }, action: ACTION.fileRead, grantId: 'gr_other' });
@@ -365,9 +369,10 @@ await test('网关：撤销父授权后，下游立刻失效（不靠子授权�
 await test('网关：consume 记次数，用满后 exhausted', () => {
   const gate = makeGate();
   gate.add(rootGrant({ id: 'gr_use', subject: { botId: worker.id }, maxUses: 1 }));
-  assert.equal(gate.check({ subject: { botId: worker.id }, action: ACTION.fileRead, grantId: 'gr_use' }).ok, true);
+  const inScope = [{ kind: 'path', ref: '/proj/alpha/a.js' }];
+  assert.equal(gate.check({ subject: { botId: worker.id }, action: ACTION.fileRead, targets: inScope, grantId: 'gr_use' }).ok, true);
   assert.equal(gate.consume('gr_use'), 1);
-  const after = gate.check({ subject: { botId: worker.id }, action: ACTION.fileRead, grantId: 'gr_use' });
+  const after = gate.check({ subject: { botId: worker.id }, action: ACTION.fileRead, targets: inScope, grantId: 'gr_use' });
   assert.equal(after.ok, false);
   assert.equal(after.code, DENY.exhausted);
 });

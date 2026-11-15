@@ -30,6 +30,7 @@
  *   · 不在确认里存凭据。它只有摘要和给人看的文字。
  */
 import crypto from 'node:crypto';
+import { isIrreversible } from './action-catalog.js';
 
 /** 动作的风险档：这一档的"做错了能不能撤销"。 */
 export const REVERSIBILITY = Object.freeze({
@@ -40,22 +41,20 @@ export const REVERSIBILITY = Object.freeze({
 });
 
 /**
- * 哪些动作不可恢复（必须强通道确认）。
+ * 这条动作做错了能不能撤销。
  *
- * 这张表是**保守的**：拿不准就归到不可恢复。
- * 漏判的代价是"该确认的没确认"，误判的代价只是多点一次。
+ * ★ 清单在 `action-catalog.js`（`ACTIONS[x].irreversible`），不在这里另存一份。
+ *
+ *   原来这里有个 `IRREVERSIBLE_ACTIONS` 集合，网关那边又有自己的风险档，
+ *   两边各写各的：新增动作时得记得改两处，漏一处就是“确认层觉得可撤销、
+ *   审计层标的是 high”。现在唯一来源是动作目录，本文件只负责把布尔值
+ *   翻成给界面看的枚举。
+ *
+ *   目录里没登记的动作按**不可撤销**算（`isIrreversible` 的默认值就是 true）——
+ *   拿不准就往严了算：漏判的代价是“该确认的没确认”，误判只是多点一次。
  */
-const IRREVERSIBLE_ACTIONS = new Set([
-  'git.push',
-  'file.delete',
-  'net.send',
-  'secret.use',
-  'policy.change',
-  'mcp.add',
-]);
-
 export function reversibilityOf(action) {
-  return IRREVERSIBLE_ACTIONS.has(String(action ?? ''))
+  return isIrreversible(action)
     ? REVERSIBILITY.irreversible
     : REVERSIBILITY.reversible;
 }
