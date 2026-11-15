@@ -23,6 +23,7 @@ import {
 import { config, resourceOptions } from './config.js';
 import { store } from './store.js';
 import { isDelegatingLead, isRoomLead, isReadonlyPolicy, toolsForRole, customToolsForRole, roleConfigurationKey } from './role-tools.js';
+import { executionModeOf } from './exec-mode.js';
 import { applyCompactionBudget, withCapacity } from './context-budget.js';
 import { buildAppendSystemPrompt } from './system-prompt.js';
 import { buildSandboxedShellTools, setMcpCounter, setSandboxProbe } from './sandboxed-shell.js';
@@ -211,6 +212,36 @@ export function createSessionBuilder({
     ], { room, bot, policy });
 
 
+    // 角色能力与行为策略共同决定内置工具；单人部门保留执行能力。
+    const baseTools = toolsForRole({
+      isChief,
+      isDeptLead,
+      chiefTools: config.chiefTools,
+      leadTools: config.leadTools,
+      memberTools: config.tools,
+      policy,
+    });
+
+    // ★ 挂了 MCP 的 bot：把 bash / powershell 换成沙箱版（同名覆盖内置）。
+    //
+    //   审批能决定"要不要人点同意"，管不住命令能碰到什么 ——
+    //   一条被批准的 `cat ~/.ssh/id_ed25519` 照样读到私钥。
+    //   所以对有外部执行能力的 bot，命令本身也要受限。
+    //
+    //   没挂 MCP 的 bot 原样不动（保持既有行为）。
+    const shellTools = buildSandboxedShellTools({
+      bot,
+      workDir: config.workspace,
+      dataDir: config.dataDir,
+      tools: baseTools,
+      pi: { createBashTool, createPowerShellTool },
+    });
+
+    // ★ 执行模式（规格 §8）—— **必须在这里算**，因为只有这里知道
+    //   命令工具到底换没换成沙箱版。算晚了（或者干脆不传）就变成
+    //   “授权上写了 mode、运行时根本不看”，§8 整节形同虚设。
+    const execMode = executionModeOf({ bot, sandboxedToolNames: shellTools.map((t) => t.name) });
+
     const resourceLoader = new DefaultResourceLoader({
       cwd: config.workspace,
       agentDir: getAgentDir(),
@@ -222,6 +253,9 @@ export function createSessionBuilder({
           // ★ 授权网关：每个会话都拿到它，工具调用时逐次核（P0-1）。
           //   runner 上没装（测试环境）时会给 null，扩展内部据此跳过，不改变行为。
           grantGate: runner.grantGate ?? null,
+          // ★ 执行模式（规格 §8）。不传的话网关那道 mode 过滤会直接短路，
+          //   一条 isolated 授权在 host 会话里也能过。
+          mode: execMode,
           managedContextOf: () => runner.currentTaskContext?.(roomId, bot.id) ?? null,
           // ★ 把真实的策略阻塞告诉 runner：受管执行据此记录「我在等哪个真实审批」。
           onBlocked: (approval, info) => runner.notePolicyBlocked?.(roomId, bot.id, approval, info),
@@ -274,31 +308,6 @@ export function createSessionBuilder({
       ...(isDeptLead || isReadonlyPolicy(policy) ? { noExtensions: true, noMcp: true } : {}),
     });
     await resourceLoader.reload();
-
-    // 角色能力与行为策略共同决定内置工具；单人部门保留执行能力。
-    const baseTools = toolsForRole({
-      isChief,
-      isDeptLead,
-      chiefTools: config.chiefTools,
-      leadTools: config.leadTools,
-      memberTools: config.tools,
-      policy,
-    });
-
-    // ★ 挂了 MCP 的 bot：把 bash / powershell 换成沙箱版（同名覆盖内置）。
-    //
-    //   审批能决定"要不要人点同意"，管不住命令能碰到什么 ——
-    //   一条被批准的 `cat ~/.ssh/id_ed25519` 照样读到私钥。
-    //   所以对有外部执行能力的 bot，命令本身也要受限。
-    //
-    //   没挂 MCP 的 bot 原样不动（保持既有行为）。
-    const shellTools = buildSandboxedShellTools({
-      bot,
-      workDir: config.workspace,
-      dataDir: config.dataDir,
-      tools: baseTools,
-      pi: { createBashTool, createPowerShellTool },
-    });
 
     const botModel = bot.model ? resolveModel(bot.model) : null;
     const picked = pickModelAndThinking({

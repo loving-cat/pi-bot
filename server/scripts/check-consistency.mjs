@@ -136,7 +136,43 @@ console.log('\n[6] 不限范围的授权 + 能推出目标');
   else ok('不限范围照常放行');
 }
 
+// ---- 7) 执行模式真的被校验（规格 §8）
+console.log('\n[7] 执行模式（§8）：host 授权不能在 project 会话里生效');
+{
+  // 这一项守的是本轮修的洞：`grants.js` 有完整三档模式、`check()` 支持按它过滤，
+  // 但唯一调用方**不传** —— 于是那道 `.filter((g) => !mode || ...)` 永远短路，
+  // §8 整节在运行时不生效。任何一处接线退回去，这里就红。
+  const { MODE } = await import(src('grants.js'));
+  const modeBot = store.createBot({ name: '模式自查' });
+  // ★ 先把它的迁移授权清掉。
+  //
+  //   createBot 会按规矩自动补一条 legacy-policy 授权（mode=project，非主 Bot），
+  //   那条会覆盖 file.write —— 于是下面"project 模式应当被拒"就永远是放行，
+  //   看着像 mode 没生效。这是**测试自己的夹具污染**，不是被测代码的问题。
+  store.state.grants = (store.state.grants ?? []).filter((g) => g.subject?.botId !== modeBot.id);
+  const g = gate.add({
+    source: 'user',
+    subject: { botId: modeBot.id, role: '' },
+    actions: ['file.write'],
+    resources: [],
+    mode: MODE.host,
+  });
+  if (!g.ok) fail(`造不出 host 授权：${g.code}`);
+  const inHost = gate.check({ subject: { botId: modeBot.id }, action: 'file.write', mode: MODE.host });
+  if (!inHost.ok) fail(`host 授权在 host 模式下被拒了（${inHost.code}）`);
+  const inProject = gate.check({ subject: { botId: modeBot.id }, action: 'file.write', mode: MODE.project });
+  if (inProject.ok) fail('★ host 授权在 project 模式下被放行了 —— mode 没传进网关（§8 形同虚设）');
+  else ok(`被正确拒绝：${inProject.code}`);
+  // 静态检查：policy-hook 调网关时必须带 mode 字段
+  const hookSrc = fs.readFileSync(path.join(ROOT, 'src', 'policy-hook.js'), 'utf8');
+  const checkCall = hookSrc.slice(hookSrc.indexOf('grantGate.check({'));
+  const head = checkCall.slice(0, 600);
+  if (!head.includes('mode:')) {
+    fail('★ policy-hook 调 grantGate.check() 时没有传 mode —— §8 会静默失效');
+  } else ok('policy-hook 调用网关时带了 mode');
+}
+
 clearTimeout(store.saveTimer);
 fs.rmSync(fixture, { recursive: true, force: true });
-console.log(problems ? `\n✗ ${problems} 处不一致` : '\n✓ 六项一致性检查全部通过');
+console.log(problems ? `\n✗ ${problems} 处不一致` : '\n✓ 七项一致性检查全部通过');
 process.exit(problems ? 1 : 0);

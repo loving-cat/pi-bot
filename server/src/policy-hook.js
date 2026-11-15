@@ -120,7 +120,21 @@ function mcpServerSecretKeys(tool) {
   }
 }
 
-export function createPolicyExtension({ roomId, bot, onBlocked = () => {}, managedContextOf = null, grantGate = null }) {
+export function createPolicyExtension({
+  roomId, bot, onBlocked = () => {}, managedContextOf = null, grantGate = null,
+  /**
+   * 这个会话的执行模式（规格 §8）。由 `session-factory` 算好传进来 ——
+   * 那里才知道命令工具换没换成沙箱版。
+   *
+   * ★ 以前这里**不传**，于是 `grantGate.check()` 的 `mode` 参数永远是 undefined，
+   *   `candidatesFor` 里那一道 `.filter((g) => !mode || g.mode === mode)` 直接短路掉了。
+   *   后果：一条 `isolated` 授权在 `host` 会话里照样能用，反之亦然 ——
+   *   规格 §8 整节在运行时不生效。
+   *
+   * 不给时（测试环境）传 null，与原来行为一致（不按模式过滤）。
+   */
+  mode = null,
+}) {
   /** 通知观察者：这次调用被某条 pending 审批挡住了。 */
   function notifyBlocked(approval, created) {
     if (typeof onBlocked !== 'function') return;
@@ -176,10 +190,15 @@ export function createPolicyExtension({ roomId, bot, onBlocked = () => {}, manag
               targets: grantGate.targetsForTool(tool, event?.input ?? {}),
               params: event?.input ?? {},
               taskId: taskCtx?.taskRunId ?? null,
+              // ★ 把执行模式传进去。不传的话 `candidatesFor` 里那道
+              //   `.filter((g) => !mode || ...)` 只是短路，等于没判 ——
+              //   一条 isolated 授权在 host 会话里也能过。
+              mode: mode || null,
             });
             if (!verdict.ok) {
               log(
-                `⛔ ${currentBot?.name ?? bot?.id ?? 'bot'} 的动作被授权网关拒绝（${verdict.code}）：` +
+                `⛔ ${currentBot?.name ?? bot?.id ?? 'bot'} 的动作被授权网关拒绝（${verdict.code}）` +
+                  `${mode ? `〔${mode} 模式〕` : ''}：` +
                   `${tool} —— ${verdict.text}`,
               );
               return {
