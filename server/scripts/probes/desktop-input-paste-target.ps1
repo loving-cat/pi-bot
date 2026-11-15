@@ -12,6 +12,6 @@ $box.Dock = 'Fill'
 $form.Controls.Add($box)
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = 1000
-$timer.Add_Tick({ Set-Content -Path 'C:\Users\XL\AppData\Local\Temp\pib-paste-target.txt' -Value $box.Text -Encoding UTF8 })
+$timer.Add_Tick({ Set-Content -Path (Join-Path $env:TEMP 'pib-paste-target.txt') -Value $box.Text -Encoding UTF8 })
 $form.Add_Shown({ $form.Activate(); $box.Focus(); $timer.Start() })
 [void]$form.ShowDialog()

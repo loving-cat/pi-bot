@@ -8,7 +8,7 @@ public class Aware { [DllImport("user32.dll")] public static extern bool SetProc
 [void][Aware]::SetProcessDpiAwarenessContext([IntPtr](-4))   # 先声明，否则记录的是逻辑坐标
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
-$log = 'C:\Users\XL\AppData\Local\Temp\pib-click-log.txt'
+$log = Join-Path $env:TEMP 'pib-click-log.txt'
 Set-Content -Path $log -Value '' -Encoding UTF8
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'pi-bot click target'

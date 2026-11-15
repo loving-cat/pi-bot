@@ -16,7 +16,9 @@
  */
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
-const marker = 'C:/Users/XL/AppData/Local/Temp/pib-inject-proof.txt';
+import os from 'node:os';
+import path from 'node:path';
+const marker = path.join(os.tmpdir(), 'pib-inject-proof.txt');
 try { fs.unlinkSync(marker); } catch {}
 const p = spawn('powershell', ['-NoProfile','-STA','-ExecutionPolicy','Bypass','-File',
   new URL('./desktop-input-paste-target.ps1', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')], { stdio: 'ignore' });
@@ -32,7 +34,7 @@ setTimeout(async () => {
   const r = m.performAction({ action: 'type_text', text: evil });
   console.log('type ok:', r.ok, r.ok ? '' : r.text.slice(0, 120));
   await new Promise((z) => setTimeout(z, 1600));
-  const got = fs.readFileSync('C:/Users/XL/AppData/Local/Temp/pib-paste-target.txt', 'utf8')
+  const got = fs.readFileSync(path.join(os.tmpdir(), 'pib-paste-target.txt'), 'utf8')
     .replace(/^\uFEFF/, '').trim();
   console.log('typed   :', JSON.stringify(got));
   console.log('expected:', JSON.stringify(evil));
