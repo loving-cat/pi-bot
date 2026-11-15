@@ -15,6 +15,7 @@ import 'browser_pane_state.dart';
 import 'models.dart';
 import 'reconnect_sweep.dart';
 import 'attachment_deletions.dart';
+import 'grant_view.dart';
 import 'native.dart';
 import 'notify.dart';
 import 'platform.dart';
@@ -130,6 +131,17 @@ class AppState extends ChangeNotifier {
   /// 经验库（从执行里学到的“下次别这样”）。只有 active 的会进主控提示词。
   List<LibraryLesson> lessons = const [];
   bool lessonsLoaded = false;
+
+  /// 有效授权（设置 → 系统）。空列表 + 未加载是两件事。
+  ///
+  /// 规格 §11：用户始终可以接管、取消、收回授权。后端早就有 revoke()，
+  /// 但界面上看不到有哪些授权 —— 那就等于收不回。
+  List<GrantView> grants = const [];
+  bool grantsLoaded = false;
+
+  /// 服务端当前规矩版本。授权记录里的 policyRevision 和它对不上，
+  /// 那条授权此刻已经被网关按 policy_changed 拒掉了，界面上要标出来。
+  String? grantPolicyRevision;
 
   /// 本机 pi 上已经装好的能力（只读扫描结果）。
   /// 用户在终端里早就装了一堆，这里让他一键导进来，不用手抄。
@@ -1212,6 +1224,38 @@ class AppState extends ChangeNotifier {
   }
 
   // ---------------------------------------------------------------- MCP 服务库
+
+  /// 拉有效授权（设置 → 系统里看）。
+  ///
+  /// 这个 GET 不要 nonce，所以进设置页就能拉 —— 看一眼权限不该要一次点击。
+  Future<void> loadGrants() async {
+    if (api == null) return;
+    try {
+      final json = await api!.get('/api/grants');
+      grants = grantsFromResponse(json);
+      grantPolicyRevision = json['policyRevision'] as String?;
+      grantsLoaded = true;
+      _notify();
+    } catch (err) {
+      lastError = '授权列表加载失败：$err';
+      _notify();
+    }
+  }
+
+  /// 收回一条授权。返回错误文案（成功时 null）。
+  ///
+  /// 收权是**降低权限**的动作，服务端刻意不要 nonce：
+  /// 发现异常时应该一点就收，不该再走一道“证明你是你”的流程。
+  Future<String?> revokeGrant(String id) async {
+    if (api == null) return '未连接服务端';
+    try {
+      await api!.post('/api/grants/${Uri.encodeComponent(id)}/revoke', const {});
+      await loadGrants();
+      return null;
+    } catch (err) {
+      return '$err';
+    }
+  }
 
   /// 同步已加载的公共连接库，不触发连接中心再次刷新。
   void applyMcpServers(List<McpServer> servers) {
