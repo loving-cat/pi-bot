@@ -41,6 +41,7 @@ const TESTS = [
   'task-supervisor',
   'task-commands',
   'task-budget',
+  'task-reduce',
   'task-file-claims',
   'capabilities',
   'desktop-lease',
