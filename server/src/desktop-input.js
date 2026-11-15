@@ -287,6 +287,44 @@ export function escapeForPsDoubleQuotes(text) {
     .replace(/"/g, '`"');
 }
 
+/**
+ * 判断采样到的「输入噪声」属于哪一种（纯逻辑，平台只负责采样）。
+ *
+ * ## 为什么要区分三种，而不是一句"有输入"
+ *
+ * `GetLastInputInfo` 只说"最后一次输入发生在什么时候"，它分不清：
+ *
+ * | 情况 | 证据 | 该怎么办 |
+ * |---|---|---|
+ * | 真有人在用 | 输入很新 **且** 光标在动 | 让开（那是用户） |
+ * | 有别的东西在合成输入 | 输入一直很新 **但** 光标不动 | 让开，并且**告诉用户是谁** |
+ * | 有人远程在操作 | 输入很新 **且** 光标在动 | 让开（等同"真有人在用"） |
+ *
+ * 本机实测的合成输入源是远程控制工具的心跳：它不断重置最后输入时间，
+ * 但从不移动光标。如果只判"输入新"，结论会是"用户正在动"，用户会以为
+ * 自己碰了鼠标 —— 排查方向就错了。
+ *
+ * @param {object} p
+ * @param {number[]} p.gaps 每次采样的 `idleMs`
+ * @param {Array<{x:number,y:number}>} [p.cursors] 每次采样的光标位置
+ * @param {number} [p.quietMs] 多新算"刚刚"
+ * @returns {{kind:'quiet'|'phantom'|'moving', noisy:boolean, cursorStill:boolean}}
+ */
+export function classifyInputNoise({ gaps = [], cursors = [], quietMs = 250 } = {}) {
+  const list = (Array.isArray(gaps) ? gaps : []).map((g) => Math.max(0, Number(g) || 0));
+  if (!list.length) return { kind: 'quiet', noisy: false, cursorStill: true };
+  const tight = list.filter((g) => g < Math.max(1, Number(quietMs) || 250)).length;
+  // 多数采样都"刚刚有输入"才算噪声：人不会以毫秒精度连续动，但采样也会被
+  // 系统拖慢，所以用"多数"抗住偶发的调度抖动。
+  const noisy = tight * 2 > list.length;
+  const pts = Array.isArray(cursors) ? cursors.filter(Boolean) : [];
+  const cursorStill = pts.length < 2
+    ? true
+    : pts.every((c) => c.x === pts[0].x && c.y === pts[0].y);
+  if (!noisy) return { kind: 'quiet', noisy: false, cursorStill };
+  return { kind: cursorStill ? 'phantom' : 'moving', noisy: true, cursorStill };
+}
+
 /** 平台无关的动作摘要（审计/日志用，不含输入内容原文）。 */
 export function describePlan(plan) {
   if (!plan) return '(空计划)';

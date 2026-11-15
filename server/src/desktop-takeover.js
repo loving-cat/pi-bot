@@ -197,6 +197,14 @@ export function classify({ state, lastInputAt, now = Date.now(), toleranceMs = D
 export function watch({ state, lastInputAt, now = Date.now(), toleranceMs = DEFAULT_TOLERANCE_MS, activeWindowMs = DEFAULT_ACTIVE_WINDOW_MS, strikesToYield = 2 } = {}) {
   const raw = classify({ state, lastInputAt, now, toleranceMs, activeWindowMs });
 
+  // ★ 只对 `userActive` 做抖动抑制，但 `unknown` 也不清零计数。
+  //
+  //   `unknown` 有两种来源，上层动作不同：
+  //     · 探针拿不到值 / 时间戳非法 → `yieldToUser`（确定性失败，立刻让开）
+  //     · 时间戳与本地记录对不上 → `wait`（可疑但不致命，先别继续）
+  //   两者都不该把"连续第几次"清零：不然 `userActive → unknown → userActive`
+  //   就被探针抖动偷走一次，"连续两次才让开"永远攒不满。
+  //   真正安静下来（quiet / selfRecent）才清零。
   if (raw.verdict === TAKEOVER.userActive) {
     state.consecutiveUserActive = (Number(state.consecutiveUserActive) || 0) + 1;
     const enough = state.consecutiveUserActive >= Math.max(1, Number(strikesToYield) || 1);
@@ -213,7 +221,15 @@ export function watch({ state, lastInputAt, now = Date.now(), toleranceMs = DEFA
     };
   }
 
-  // 不是 userActive 就把计数清零 —— 抖动不该累积成"接管"
+  if (raw.verdict === TAKEOVER.unknown) {
+    // 探针不可用 / 时间戳对不上：**不动计数**，也不假装它是清白的。
+    // 已有 strike 保留 —— 连续三次里夹一次 unknown 仍然是连续的。
+    // 动作照抄 classify 给的（拿不到值 → 让开；时间戳可疑 → 先停）。
+    state.lastVerdict = raw.verdict;
+    return { ...raw, strikes: Number(state.consecutiveUserActive) || 0 };
+  }
+
+  // 真的安静下来（quiet / selfRecent）才清零 —— 那才叫"抖动没累积成接管"
   state.consecutiveUserActive = 0;
   state.lastVerdict = raw.verdict;
   return { ...raw, strikes: 0 };

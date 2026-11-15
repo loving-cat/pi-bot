@@ -223,6 +223,14 @@ export const TOOL_SPECS = Object.freeze({
   // ---------------- desktop.observe
   desktop_observe: { action: ACTION.desktopObserve, readonly: true, chiefOnly: true },
   desktop_screenshot: { action: ACTION.desktopObserve, readonly: true, chiefOnly: true },
+  // ---------------- desktop.input
+  // ★ 租约工具本身不过网关：它只排队，不碰用户的东西。真正危险的是
+  //   `desktop_input`，它必须持着租约才动得了手，而"能不能发"的判定在
+  //   `desktop-input-session.js` 里（租约 / epoch / 接管检测三道）。
+  desktop_lease: { action: null, readonly: true, chiefOnly: true },
+  // 输入动作不可撤销（点错了就是点了），迁移授权永不给（migration: 'never'），
+  // 且只给主 Bot —— 三件事全部从 ACTIONS[desktop.input] 派生，这里不重复写。
+  desktop_input: { action: ACTION.desktopInput, chiefOnly: true },
 
   // ---------------- net.fetch
   // ★ 这三个必须分开标：

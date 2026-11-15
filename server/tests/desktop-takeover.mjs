@@ -216,6 +216,44 @@ test('默认阈值合理：容差远小于"算安静"的窗口', () => {
   assert.ok(DEFAULT_ACTIVE_WINDOW_MS >= DEFAULT_TOLERANCE_MS, '安静窗口不该比容差还短');
 });
 
+test('★ 探针抖动不该把"连续三次"的计数偷走', () => {
+  // 场景：userActive → unknown → userActive。
+  // 中间那次 unknown（探针报了个对不上的时间戳）如果清零，
+  // "连续两次才让开"就永远攒不满 —— 而 unknown 本身是**保守让开**，
+  // 也就是说用户在两轮之间偷到了"再来一次"的机会。
+  const s = { ...createWatchState() };
+  noteInjection(s, { now: T0 });
+  const first = watch({ state: s, lastInputAt: T0 + 4_000, now: T0 + 4_100 });
+  assert.equal(first.verdict, TAKEOVER.userActive);
+  assert.equal(first.action, ACTION.wait);
+  assert.equal(first.strikes, 1);
+  // 探针抖一下：报的时间比我们的注入早一点、又不够旧（对不上）。
+  // 这一支才是 `unknown`；报得太早会被判成"很久没人动"的 quiet。
+  const mid = watch({ state: s, lastInputAt: T0 - 500, now: T0 + 1_000 });
+  assert.equal(mid.verdict, TAKEOVER.unknown);
+  // 时间戳对不上这一支给的是 `wait`（先停一次）；拿不到值才是 `yieldToUser`。
+  // 两支都不许清零计数。
+  assert.equal(mid.action, ACTION.wait, '时间戳可疑：先停下，不直接吊销');
+  assert.equal(mid.strikes, 1, 'unknown 不该清零，也不该累加');
+  // 再命中一次：这仍然是"连续第二次"，应当让开
+  // 用 4s 而不是 1.4s：1.4s 落在 1.5s 容差内，会被正确地判成"我们自己那次动作"
+  const third = watch({ state: s, lastInputAt: T0 + 4_000, now: T0 + 4_100 });
+  assert.equal(third.verdict, TAKEOVER.userActive);
+  assert.equal(third.strikes, 2);
+  assert.equal(third.action, ACTION.yieldToUser);
+});
+
+test('真正安静下来才清零（quiet 之后重新从 1 数）', () => {
+  const s = { ...createWatchState() };
+  noteInjection(s, { now: T0 });
+  assert.equal(watch({ state: s, lastInputAt: T0 + 4_000, now: T0 + 4_100 }).strikes, 1);
+  // 一分钟后没人动（最后一次输入早于我们那次注入）：安静，清零
+  const quiet = watch({ state: s, lastInputAt: T0 - 60_000, now: T0 + 70_000 });
+  assert.equal(quiet.verdict, TAKEOVER.quiet);
+  assert.equal(quiet.strikes, 0);
+  assert.equal(s.consecutiveUserActive, 0);
+});
+
 const failed = results.filter((r) => !r.ok);
 for (const r of results) {
   console.log(`${r.ok ? '✓' : '✗'} ${r.name}${r.ok ? '' : ' —— ' + r.err}`);

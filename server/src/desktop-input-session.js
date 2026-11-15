@@ -32,6 +32,7 @@
 import {
   createLeaseState, acquire, release, renew, revoke, checkLease, assertHolder, sweep, describeLease, DENY,
 } from './desktop-lease.js';
+import * as winPlatform from './desktop-input-win.js';
 import {
   createWatchState, watch, noteInjection, describeWatch, ACTION as WATCH_ACTION,
 } from './desktop-takeover.js';
@@ -52,6 +53,22 @@ export const REFUSE = Object.freeze({
   revoked: DENY.revoked,
   /** 用户在动，已交还 */
   yielded: 'yielded',
+  /**
+   * 用户在动，但还在抖动抑制阶段（只停这一次，不吊销租约）。
+   *
+   * 和 `yielded` 分开是因为上层行为不同：`yielded` 表示“已经交还，别再试了”；
+   * `userActivePending` 只是“等一下”，提醒模型**重新观察再决定**，不是故障。
+   * 两者都不该用 isError 返回，否则模型会把它当成工具坏了然后重试。
+   */
+  userActivePending: 'user_active_pending',
+  /**
+   * 探针给出的时间戳与本地记录对不上（时钟漂移 / 探针抖动）。
+   *
+   * 和 `userActivePending` 分开：那个是"用户在动"，这个是"我们看不清"。
+   * 两者都只是停这一次、不吊销租约，但给模型的说法不一样 ——
+   * 说成"用户在动"会让它以为是自己被接管了，实际可能只是探针抖了一下。
+   */
+  probeUncertain: 'probe_uncertain',
 });
 
 /**
@@ -190,8 +207,11 @@ export function createDesktopInputSession({
         };
       }
       if (verdict.action === WATCH_ACTION.wait) {
-        pushAudit({ kind: 'wait', code: 'probe_uncertain', taskId, botId, why: verdict.verdict });
-        return { ok: false, code: REFUSE.probeUnavailable, text: verdict.reason };
+        // 只停这一次，**不吊销租约**：抖动抑制阶段的 pause 不是接管。
+        // 两种情况分开报：判断得出"用户在动"和"我们看不清"对模型是两件事。
+        const code = verdict.verdict === 'user_active' ? REFUSE.userActivePending : REFUSE.probeUncertain;
+        pushAudit({ kind: 'wait', code, taskId, botId, why: verdict.verdict });
+        return { ok: false, code, text: verdict.reason };
       }
 
       // ⑤ 规划 + 坐标校验（纯函数，一个平台调用都没有）
@@ -238,17 +258,52 @@ export function createDesktopInputSession({
   };
 }
 
-/** 进程级单例（一个桌面一份租约）。测试里用 `createDesktopInputSession()` 自己建。 */
+/**
+ * 平台实现。默认是 Windows；测试可以通过 `setDesktopInputPlatform()` 换掉，
+ * 这样整条链路（含工具层）都能在没有真机的环境下跑。
+ *
+ * 为什么平台实现放在**这个文件**里而不是 `tools.js`：工具层只该翻译参数，
+ * 不该知道"今天的平台是什么"。放在这里，加 macOS 时只改这一处。
+ */
+let platform = {
+  probeEnvironment: winPlatform.probeEnvironment,
+  probeLastInput: winPlatform.lastInputAt,
+  perform: winPlatform.perform,
+  sampleNoise: winPlatform.sampleInputNoise,
+};
+
+/** 当前平台实现的只读视图（工具层做诊断时用）。 */
+export function desktopInputPlatform() {
+  return platform;
+}
+
+/**
+ * 换掉平台实现（**只给测试用**）。换掉会顺带清掉单例会话，
+ * 免得旧会话还挂着旧探针。
+ */
+export function setDesktopInputPlatform(over = {}) {
+  platform = { ...platform, ...over };
+  resetDesktopInputSession();
+  return platform;
+}
+
+/** 进程级单例（一个桌面一份租约）。 */
 let singleton = null;
 
 /**
  * 拿进程级会话。
  *
- * @param {object} [deps] 首次调用时注入平台实现；之后忽略（沿用第一份）
+ * @param {object} [deps] 首次调用时注入依赖（测试用）；之后忽略
  * @returns {object}
  */
 export function desktopInputSession(deps) {
-  if (!singleton) singleton = createDesktopInputSession(deps ?? {});
+  if (!singleton) {
+    singleton = createDesktopInputSession(deps ?? {
+      probeEnvironment: (...a) => platform.probeEnvironment(...a),
+      probeLastInput: (...a) => platform.probeLastInput(...a),
+      perform: (...a) => platform.perform(...a),
+    });
+  }
   return singleton;
 }
 

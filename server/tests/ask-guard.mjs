@@ -99,12 +99,12 @@ await test('主控少这一个工具，其余工具不受影响', async () => {
     .map((t) => t.name);
   // 主控排除的工具：ask_user（它在跟用户直接对话，不需要卡片）
   // 和 ego_browser（主控负责指挥，开浏览器这种动手活派给成员）。
-  // 主控**独有**的工具：桌面观察（规格 §5.3 普通桌面默认只给主 Bot，
-  // 观察虽是只读但看得到整个屏幕）。
+  // 主控**独有**的工具：桌面那三件套（规格 §5.3 普通桌面默认只给主 Bot；
+  // 观察虽是只读但看得到整个屏幕，输入等于把登录身份交出去）。
   // 除此之外两边应当完全一致 —— 这条断言防的是"给主控加工具时
   // 顺手把别的工具也漏给了/漏掉了"。
   const mainOnlyExcluded = new Set(['ask_user', 'ego_browser']);
-  const mainOnlyAdded = new Set(['desktop_observe', 'desktop_screenshot']);
+  const mainOnlyAdded = new Set(['desktop_observe', 'desktop_screenshot', 'desktop_lease', 'desktop_input']);
   assert.deepEqual(
     withMain.slice().sort(),
     [

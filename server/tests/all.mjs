@@ -44,6 +44,7 @@ const TESTS = [
   'desktop-lease',
   'desktop-takeover',
   'desktop-input',
+  'desktop-tools',
   'overrides',
   'action-catalog',
   'template-grants',

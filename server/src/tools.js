@@ -24,6 +24,10 @@ import { webSearch, webFetch } from './web.js';
 import { runEgoScript, EGO_USAGE_GUIDE } from './ego-browser.js';
 import { shells } from './shells.js';
 import { listWindows, captureScreenshot, screenshotPath, describeWindow } from './desktop-observe.js';
+import {
+  desktopInputSession, desktopInputPlatform, REFUSE,
+} from './desktop-input-session.js';
+import { describePlan, MAX_CLICKS } from './desktop-input.js';
 import { verdictForTool, commitStdin, resetStdin } from './shell-policy.js';
 import { readonlyBlockReason, opaqueScriptBlockReason } from './role-tools.js';
 import { log, now, isBusyError, planDispatchRetry } from './util.js';
@@ -490,6 +494,173 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
         };
       },
     })] : []),
+    // ---------------- 桌面输入（主 Bot 专属，认件 + 接管检测都必须过） ----------------
+    //
+    // 规格 §5.2/§5.3：普通桌面输入默认只给主 Bot，且必须持有桌面租约。
+    // 这个工具**只负责翻译**：参数 → 会话 → 人话。判定全在
+    // desktop-input-session.js 里（租约 / epoch / 接管 / 规划）。
+    //
+    // 为什么把租约做成工具而不是启动时自动拿：租约属于**任务**，不属于进程。
+    // 启动就抢一个桌面租约，等于这个 bot 不开任务也霸着用户的鼠标。
+    ...(isMain ? [
+      defineTool({
+        name: 'desktop_lease',
+        label: '★ 申请/释放桌面控制权',
+        description:
+          '要用鼠标键盘操作这台电脑之前，先跟它要一张「桌面租约」。\n'
+          + '同一时刻只有一个任务能动鼠标（规格 §5.2）—— 所以这是排队机制，'
+          + '不是形式主义：拿到租约才知道该用哪个 epoch，也才知道你有没有被抢。\n'
+          + '操作做完要 release，否则别人一直排队。',
+        parameters: Type.Object({
+          action: Type.Union([
+            Type.Literal('acquire'),
+            Type.Literal('renew'),
+            Type.Literal('release'),
+            Type.Literal('status'),
+          ], { description: 'acquire 要租约 / renew 续期 / release 释放 / status 看现状' }),
+          epoch: Type.Optional(Type.Number({ description: 'renew 时带上 acquire 给你的 epoch' })),
+          ttlSeconds: Type.Optional(Type.Number({ description: 'acquire 时租多久，默认 60 秒' })),
+        }),
+        execute: async (_toolCallId, { action, epoch, ttlSeconds }) => {
+          const session = desktopInputSession();
+          const taskCtx = runner.currentTaskContext?.(roomId, botId) ?? null;
+          const taskId = taskCtx?.taskRunId ?? `${roomId}:${botId}`;
+          const generation = taskCtx?.generation ?? 'runtime';
+          if (action === 'status') {
+            // ★ 顺手采一次"环境里有没有东西一直在合成输入"。
+            //
+            //   本机实测：装着远程控制工具时 GetLastInputInfo 永远报"刚刚有人动"，
+            //   接管检测于是永远判"用户在动"，第一次输入永远发不出去，而文案说的是
+            //   "用户在动" —— 用户本人根本没动。这种时候得多说一句。
+            const noise = desktopInputPlatform().sampleNoise();
+            const extra = !noise.ok ? ''
+              : noise.kind === 'phantom'
+                ? `
+⚠ 这台机器上**持续有别的东西在合成鼠标/键盘输入**（采样 idle：${noise.samples.join(' / ')} ms，光标全程没动），`
+                  + '所以接管检测会一直判"有人在动"。不是用户碰了鼠标；'
+                  + '换掉或关掉那个程序（远程控制类最常见）之后再试。'
+                : noise.kind === 'moving'
+                  ? `
+⚠ 有别的东西正在**动这台机器的鼠标**（采样 idle：${noise.samples.join(' / ')} ms），那不是我们 —— `
+                    + '可能有人正连在这台电脑上（远程控制），也可能是别的自动化在跑。这种时候我们不动手。'
+                  : '';
+            return ok(session.describe() + extra, {
+              lease: session.lease.status,
+              epoch: session.lease.epoch,
+              taskId: session.lease.taskId,
+              inputNoise: noise.ok
+                ? {
+                  kind: noise.kind, phantom: noise.phantom, noisy: noise.noisy,
+                  cursorStill: noise.cursorStill, samples: noise.samples,
+                }
+                : null,
+            });
+          }
+          if (action === 'release') {
+            const r = session.releaseLease({ taskId, reason: '工具调用释放' });
+            return ok(`已释放桌面租约（epoch ${r.epoch}）。下一个在排队的先来先得。`, {
+              epoch: r.epoch,
+              next: r.next ?? null,
+            });
+          }
+          if (action === 'renew') {
+            const r = session.renewLease({ taskId, botId, epoch: Number(epoch) });
+            if (!r.ok) return fail(`续不了租约：${r.text}（${r.code}）`);
+            return ok(`租约已续到 ${new Date(r.expiresAt).toLocaleTimeString()}。`, { expiresAt: r.expiresAt });
+          }
+          const ttlMs = Number(ttlSeconds) > 0 ? Math.min(Number(ttlSeconds), 600) * 1000 : undefined;
+          const r = session.acquireLease({ taskId, botId, generation, ...(ttlMs ? { ttlMs } : {}) });
+          if (!r.ok) {
+            // 排队不是错误，所以不返回 isError：让模型知道"等一等"而不是"坏了"
+            return ok(`${r.text}${r.queued ? `（你在第 ${r.position} 位）` : ''}`, {
+              queued: r.queued === true,
+              position: r.position ?? null,
+            });
+          }
+          return ok(
+            `拿到桌面租约（epoch ${r.epoch}${r.renewed ? '，续期' : ''}）。`
+            + '接下来每次 desktop_input 都要带这个 epoch。做完记得 release。',
+            { epoch: r.epoch, expiresAt: session.lease.expiresAt },
+          );
+        },
+      }),
+      defineTool({
+        name: 'desktop_input',
+        label: '★ 操作这台电脑（鼠标/键盘）',
+        description:
+          '在**当前用户登录的桌面**上动鼠标或键盘：移动、点击、滚动、按组合键、输入文字。\n'
+          + '★ 必须先 desktop_lease 拿到 epoch，并且每次调用都带上它。\n'
+          + '用户只要碰了鼠标键盘，这次动作会被取消并把控制权交还给他（规格 §5.2）—— '
+          + '看到「已交还控制权」就停下，不要重试。\n'
+          + '不支持拖拽（没做完就不上线）。要输入中文/emoji 用 type_text，它走剪贴板粘贴。\n'
+          + '坐标是**物理像素**，从 desktop_observe 拿到的窗口矩形直接减半不起作用 —— '
+          + '它给的已经是同一套物理坐标。',
+        parameters: Type.Object({
+          epoch: Type.Number({ description: 'desktop_lease acquire 给你的世代号' }),
+          action: Type.Union([
+            Type.Literal('move'),
+            Type.Literal('click'),
+            Type.Literal('scroll'),
+            Type.Literal('key'),
+            Type.Literal('keyCombo'),
+            Type.Literal('type_text'),
+          ], { description: '做什么（不支持 drag）' }),
+          x: Type.Optional(Type.Number({ description: 'move/click 的目标 x（物理像素）' })),
+          y: Type.Optional(Type.Number({ description: 'move/click 的目标 y（物理像素）' })),
+          button: Type.Optional(Type.Union([
+            Type.Literal('left'), Type.Literal('right'), Type.Literal('middle'),
+          ], { description: 'click 用哪个键，默认 left' })),
+          clicks: Type.Optional(Type.Number({ description: `click 连点几次，默认 1，最多 ${MAX_CLICKS}` })),
+          delta: Type.Optional(Type.Number({ description: 'scroll 滚几格（正数向上）' })),
+          key: Type.Optional(Type.String({ description: 'key 动作的键名（enter/tab/esc/f5…）' })),
+          keys: Type.Optional(Type.Array(Type.String(), { description: 'keyCombo 的键名数组，如 ["ctrl","v"]' })),
+          text: Type.Optional(Type.String({ description: 'type_text 要输入的文字（走剪贴板粘贴）' })),
+        }),
+        execute: async (_toolCallId, input) => {
+          const session = desktopInputSession();
+          const taskCtx = runner.currentTaskContext?.(roomId, botId) ?? null;
+          const taskId = taskCtx?.taskRunId ?? `${roomId}:${botId}`;
+          const point = Number.isFinite(input.x) && Number.isFinite(input.y)
+            ? { x: Number(input.x), y: Number(input.y) }
+            : null;
+          const r = session.act({
+            identity: { taskId, botId, epoch: Number(input.epoch) },
+            input: {
+              action: input.action,
+              point,
+              button: input.button,
+              clicks: input.clicks,
+              delta: input.delta,
+              key: input.key,
+              keyCombo: input.keys,
+              text: input.text,
+            },
+          });
+          if (!r.ok) {
+            // ★ 交给用户的四种情况用 ok() 而不是 fail()：它们是**正常的停下**，
+            //   不是故障。用 isError 会让模型以为工具坏了然后重试 —— 而这几种
+            //   情况最不该重试（用户正在用这台电脑）。
+            const stopped = [
+              REFUSE.yielded, REFUSE.userActivePending,
+              REFUSE.noSession, REFUSE.noLease, REFUSE.notHolder,
+            ];
+            // ★ 这几种是"正常停下"（用户在动 / 锁屏 / 没租约），不是故障：
+            //   用 isError 会让模型以为工具坏了然后重试，而这几种最不该重试。
+            if (stopped.includes(r.code)) {
+              return ok(`${r.text}（${r.code}）`, { code: r.code, stopped: true });
+            }
+            return fail(`${r.text}（${r.code}）`, { code: r.code });
+          }
+          const where = r.at ? `到 (${r.at.x},${r.at.y})` : '';
+          const fg = r.foreground ? `（当前窗口：${r.foreground}）` : '';
+          return ok(`${describePlan(r.plan)}${where}${fg}`, {
+            at: r.at,
+            action: r.plan.action,
+            screen: r.screen,
+          });
+        },
+      }),
+    ] : []),
     defineTool({
       name: 'list_bots',
       label: '看花名册',

@@ -126,8 +126,12 @@ await test('★ 同一动作下的工具可以有不同的只读/改状态标记
 });
 
 await test('★ 主 Bot 专属：工具级和动作级是两件事', () => {
-  // 工具级：桌面那两个（成员不该看屏幕）
-  assert.deepEqual([...C.CHIEF_ONLY_TOOLS].sort(), ['desktop_observe', 'desktop_screenshot']);
+  // 工具级：桌面三件（成员不该看屏幕，也不该动鼠标）
+  // desktop_lease 不过网关（它只排队不碰东西），但仍然是主 Bot 专属。
+  assert.deepEqual(
+    [...C.CHIEF_ONLY_TOOLS].sort(),
+    ['desktop_input', 'desktop_lease', 'desktop_observe', 'desktop_screenshot'],
+  );
   // 动作级：桌面观察 + push（迁移授权只给主 Bot）
   // desktop.input 属于 migration:'never'（谁都不给），比分给主 Bot 更严，
   // 所以它出现在 MIGRATION_WITHHELD 而不是这里 —— 这两个列表语义不同。
@@ -135,6 +139,13 @@ await test('★ 主 Bot 专属：工具级和动作级是两件事', () => {
   // git_push 在动作级但不在工具级：负责人也能调，但迁移授权不给它
   assert.equal(C.CHIEF_ONLY_TOOLS.includes('git_push'), false);
   assert.equal(C.CHIEF_ONLY_ACTIONS.includes('git.push'), true);
+  // ★ 输入动作三件事全部从动作声明派生，工具层不重复写
+  assert.equal(C.actionForTool('desktop_input').action, ACTION.desktopInput);
+  assert.equal(C.isIrreversible(ACTION.desktopInput), true, '点错了就是点了，不可撤销');
+  assert.equal(C.riskOf(ACTION.desktopInput), 'critical');
+  assert.equal(C.migrationScopeOf(ACTION.desktopInput), 'never');
+  // 租约工具**不过网关**：它只排队，不碰用户的东西；真正危险的是输入
+  assert.equal(C.actionForTool('desktop_lease'), null);
 });
 
 // ---------------------------------------------------------------- 迁移推导

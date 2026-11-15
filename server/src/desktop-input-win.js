@@ -79,7 +79,8 @@
  */
 import { spawnSync } from 'node:child_process';
 import {
-  INPUT_FAIL, planInput, escapeForPsDoubleQuotes, describePlatform as describePurePlatform,
+  INPUT_FAIL, planInput, escapeForPsDoubleQuotes, classifyInputNoise,
+  describePlatform as describePurePlatform,
 } from './desktop-input.js';
 
 /** 单次脚本超时。一次点击不该超过几秒。 */
@@ -509,6 +510,88 @@ Write-Output ("x=" + $p[0] + " y=" + $p[1])
   return { ok: true, x: Number(m[1]), y: Number(m[2]) };
 }
 
+/**
+ * 采样一次「输入噪声」：连续读几遍 `GetLastInputInfo`，看这台机器是不是**一直在产生输入**。
+ *
+ * ## 为什么需要这个
+ *
+ * 本机实测踩到的真实情况：装着一个远程控制工具（GameViewer），它持续合成输入。
+ * 连续四次采样的 idle 分别是 0 / 93 / 0 / 15 ms —— `GetLastInputInfo` 永远报
+ * "刚刚有人在动"。
+ *
+ * 后果：接管检测（`desktop-takeover.js`）在"我们还没注入过"那一支里保守地判
+ * `user_active`，于是**这台机器上第一次输入永远发不出去**，而错误文案说的是
+ * "用户在动" —— 用户本人根本没动，他会以为是自己鼠标碰了一下，然后反复重试。
+ *
+ * 所以探针要能自己说清楚"这里不是用户在手一动，是环境里有东西一直在合成输入"。
+ * 工具层拿到这个结论就能给出正确的下一步（换掉/关闭那个程序，或者由用户明确
+ * 决定要不要"信任这个桌面"—— 那是产品决策，不在这里偷偷放宽）。
+ *
+ * ## 判据
+ *
+ * 连续采样 `samples` 次（默认 5，间隔 120ms），满足两件事才判 `phantom`：
+ *
+ *   · **噪声**：超过一半采样 `idleMs < quietMs`（默认 250）
+ *   · **光标没动**：全程 `GetCursorPos` 读到同一个点
+ *
+ * 第二条让诊断更硬：会重置 `GetLastInputInfo` 的东西不少（远程控制心跳、
+ * 驱动、输入法候选窗），但真正"有人在用鼠标"必定移动光标。光标不动却一直
+ * 报"刚有输入"，就是合成输入，不是人在操作界面。
+ *
+ * 为什么不是"全部"：本机实测是 `15 / 172 / 625 / 250 / 703` —— 前两次明显是
+ * 合成输入，后三次只是采样被系统拖慢了。用 every 会得出"没问题"的错误结论，
+ * 因为它把"采样慢"当成了"没人动"。用人不会以毫秒级精度连续动输入这一点判方向，
+ * 用"多数"抗住偶发的调度抖动。
+ *
+ * @param {object} [o]
+ * @param {number} [o.samples]
+ * @param {number} [o.intervalMs]
+ * @param {number} [o.quietMs]
+ * @returns {{ok:true, phantom:boolean, samples:number[], min:number, max:number}
+ *   | {ok:false, code:string, text:string}}
+ */
+export function sampleInputNoise({ samples = 5, intervalMs = 120, quietMs = 250 } = {}) {
+  if (!isSupported()) {
+    return { ok: false, code: INPUT_FAIL.notPlatform, text: `当前平台（${process.platform}）没有 Windows 输入探针` };
+  }
+  const n = Math.max(2, Math.min(20, Math.trunc(Number(samples) || 5)));
+  const gaps = [];
+  const cursors = [];
+  for (let i = 0; i < n; i += 1) {
+    const r = lastInputAt();
+    if (!r.ok) return r;
+    gaps.push(Math.max(0, Math.round(Number(r.idleMs) || 0)));
+    const c = cursorPosition();
+    if (!c.ok) return c;
+    cursors.push({ x: c.x, y: c.y });
+    if (i < n - 1) sleepMs(intervalMs);
+  }
+  // ★ 光标全程没动 = 这批"输入"没有真的在指东西。
+  //   合成输入的常见来源（远程控制心跳、驱动、输入法候选窗）会重置
+  //   GetLastInputInfo 但不移动光标。这条证据让诊断更硬：
+  //   "有人在动鼠标"和"有东西在合成输入"是两种完全不同的处理方式。
+  const cursorStill = cursors.every((c) => c.x === cursors[0].x && c.y === cursors[0].y);
+  // ★ 判据是"最常见的那一档"而不是 every：只要**一半以上**采样都挤在
+  //   quietMs 以内，就说明有东西在持续合成输入。用 every 太容易被一次
+  //   正常间隔否掉（本机实测 15/172/625/250/703 —— 前两次明显是合成的，
+  //   后三次只是程序忙起来采样变慢，every 会判"没问题"）。
+  // 判据（噪声/光标是否在动）是**纯逻辑**，在 desktop-input.js 里 ——
+  // 平台只负责采样。这样两个平台共用同一套判断，也不会出现
+  // "Windows 判 phantom、macOS 判 moving"这种漂移。
+  const cls = classifyInputNoise({ gaps, cursors, quietMs });
+  return {
+    ok: true,
+    kind: cls.kind,
+    phantom: cls.kind === 'phantom',
+    noisy: cls.noisy,
+    cursorStill: cls.cursorStill,
+    samples: gaps,
+    cursor: cursors[0],
+    min: Math.min(...gaps),
+    max: Math.max(...gaps),
+  };
+}
+
 /** 当前前台窗口标题（审计用：记下"动的是哪个窗口"，不记窗口内容）。 */
 export function foregroundTitle() {
   if (!isSupported()) return { ok: false, code: INPUT_FAIL.notPlatform, text: '当前平台没有 Windows 输入实现' };
@@ -554,5 +637,7 @@ export function describePlatform() {
     move: 'SetCursorPos + GetCursorPos 复核（SendInput 绝对坐标实测偏移，见文件头）',
     buttons: 'SendInput（相对 0 位移，不移动光标）',
     text: '剪贴板 + Ctrl+V，用完还原原剪贴板',
+    knownIssue: '装着持续合成输入的程序（远程控制/驱动）时 GetLastInputInfo 永远报"刚刚有人动"，'
+      + '接管检测会一直让开。用 sampleInputNoise() 能区分这种环境与真人操作。',
   };
 }

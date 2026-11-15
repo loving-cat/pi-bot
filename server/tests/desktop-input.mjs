@@ -39,7 +39,7 @@ const { TAKEOVER } = await import(new URL('../src/desktop-takeover.js', import.m
 const {
   INPUT_ACTIONS, INPUT_FAIL, MAX_CLICKS, MAX_SCROLL_NOTCHES, MAX_TEXT_CHARS, BUTTONS,
   planInput, vkCode, insideScreen, checkPoint, escapeForPsDoubleQuotes, describePlan,
-  describePlatform,
+  describePlatform, classifyInputNoise,
 } = P;
 const { createDesktopInputSession, REFUSE } = S;
 
@@ -211,6 +211,41 @@ test('平台状态表不吹牛：macOS 明确标"未实现"', () => {
   assert.ok(mac.probe.includes('未实现'));
 });
 
+// ============================================================ 纯逻辑：输入噪声
+test('★ 输入噪声三分：安静 / 有东西在合成 / 有人真在动', () => {
+  // 安静：采样间隔正常
+  assert.equal(classifyInputNoise({ gaps: [3000, 3200, 3400, 3600] }).kind, 'quiet');
+  // 合成输入：idle 一直很新，但光标一动不动（本机实测就是这个形态）
+  assert.equal(
+    classifyInputNoise({ gaps: [0, 47, 484, 0, 15], cursors: [{ x: 100, y: 100 }, { x: 100, y: 100 }] }).kind,
+    'phantom',
+  );
+  // 真有人动：idle 很新且光标在变
+  assert.equal(
+    classifyInputNoise({ gaps: [0, 20, 15, 30], cursors: [{ x: 1, y: 2 }, { x: 90, y: 3 }] }).kind,
+    'moving',
+  );
+  // 空输入不炸
+  assert.equal(classifyInputNoise({ gaps: [] }).kind, 'quiet');
+});
+
+test('噪声判据用"多数"而不是"全部"（采样会被系统拖慢）', () => {
+  // 全紧当然算噪声
+  assert.equal(classifyInputNoise({ gaps: [0, 20, 15, 40, 5] }).noisy, true);
+  // 5 个里 3 个紧、2 个被系统拖慢 → 仍然算噪声（every 会漏掉这一整类）
+  assert.equal(classifyInputNoise({ gaps: [15, 172, 190, 625, 703] }).noisy, true);
+  // 只有一个紧的，不算噪声
+  assert.equal(classifyInputNoise({ gaps: [3000, 3100, 3200, 15] }).noisy, false);
+  // 正好一半一半：不过半就不算（250 本身不算"紧"）
+  assert.equal(classifyInputNoise({ gaps: [15, 250, 625, 703] }).noisy, false);
+});
+
+test('只看一次采样时无法判断光标是否在动，保守当作"没动"', () => {
+  const r = classifyInputNoise({ gaps: [5], cursors: [{ x: 1, y: 1 }] });
+  assert.equal(r.cursorStill, true);
+  assert.equal(r.kind, 'phantom');
+});
+
 // ============================================================ 装配层：夹具
 /**
  * 假平台：把"探到的东西"和"发出去的东西"都记下来，断言可以直接看。
@@ -334,8 +369,9 @@ test('★ 用户真的动过手 → 让开并吊销，文案要说清是"交还"
   // 用户在我们注入之后 5s 动了鼠标 —— 远超容差（1.5s），不可能是我们那次动作
   plat.fake.lastInput = { ok: true, lastInputAt: T0 + 5_000, idleMs: 0 };
   const r1 = session.act({ identity, input: { action: 'move', point: { x: 30, y: 30 } } });
-  // 抖动抑制：第一次是"等一下"，第二次才真让开
+  // 抖动抑制：第一次是"等一下"（userActivePending），第二次才真让开
   assert.equal(r1.ok, false);
+  assert.equal(r1.code, REFUSE.userActivePending, '第一次抖动只停这一次，不吊销租约');
   assert.equal(plat.calls.perform.length, 1, '判成用户在场就不该再发');
   const r2 = session.act({ identity, input: { action: 'move', point: { x: 30, y: 30 } } });
   assert.equal(r2.ok, false);
@@ -406,6 +442,33 @@ test('心跳续期要带 epoch；过期后不能再发', () => {
   assert.equal(r.ok, false);
   assert.equal(r.code, DENY.expired);
   assert.equal(plat.calls.perform.length, 0);
+});
+
+test('★ 时间戳对不上 → 只停这一次，不混淆成"用户在动"也不吊销租约', () => {
+  const { session, identity, plat } = withLease();
+  assert.equal(session.act({ identity, input: { action: 'move', point: { x: 10, y: 10 } } }).ok, true);
+  // 探针报的时间比我们那次注入还早、又不够旧：可能是时钟漂移/探针抖动
+  plat.fake.lastInput = { ok: true, lastInputAt: T0 - 500, idleMs: 0 };
+  const r = session.act({ identity, input: { action: 'move', point: { x: 20, y: 20 } } });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, REFUSE.probeUncertain, '看不清要说看不清，别谎报成用户在动');
+  assert.equal(session.lease.status, LEASE.held, '抖动阶段不该吊销租约');
+  assert.equal(plat.calls.perform.length, 1, '看不清就不许发输入');
+});
+
+test('★ 连续命中不会被探针抖动偷走（userActive → 看不清 → userActive）', () => {
+  const { session, identity, plat } = withLease();
+  assert.equal(session.act({ identity, input: { action: 'move', point: { x: 10, y: 10 } } }).ok, true);
+  plat.fake.lastInput = { ok: true, lastInputAt: T0 + 4_000, idleMs: 0 };
+  assert.equal(session.act({ identity, input: { action: 'move', point: { x: 20, y: 20 } } }).code, REFUSE.userActivePending);
+  plat.fake.lastInput = { ok: true, lastInputAt: T0 - 500, idleMs: 0 };
+  assert.equal(session.act({ identity, input: { action: 'move', point: { x: 20, y: 20 } } }).code, REFUSE.probeUncertain);
+  // 第三次仍然算"连续第二次" —— 必须让开。
+  // （用 4s 而不是 1.4s：1.4s 落在 1.5s 容差内，会被正确地判成"我们自己那次动作"）
+  plat.fake.lastInput = { ok: true, lastInputAt: T0 + 4_000, idleMs: 0 };
+  const third = session.act({ identity, input: { action: 'move', point: { x: 20, y: 20 } } });
+  assert.equal(third.code, REFUSE.yielded);
+  assert.equal(session.lease.status, LEASE.revoking);
 });
 
 test('审计只留最近 50 条（不让内存无限长）', () => {
