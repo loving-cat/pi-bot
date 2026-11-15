@@ -160,7 +160,14 @@ export function createGrantGate({
         return n.ok ? Object.freeze({ ...n.grant, usedUses: Number(g.usedUses) || 0 }) : null;
       })
       .filter(Boolean)
-      .filter((g) => g.actions.includes(action))
+      // ★ 这里**不**按动作预筛。
+      //
+      //   预筛会让“为什么不行”变得说不清：规矩变更会撤旧发新，同一个 bot
+      //   手上常同时有一条「已撤销的宽授权」和一条「有效的窄授权」。
+      //   按动作预筛会先扔掉窄的那条（它不含这个动作），只剩已撤销的那条，
+      //   于是用户看到的是「授权已被撤销」——听上去像权限全没了，
+      //   实际只是新的那条不含这个动作。判断“覆不覆盖”只该有一个地方
+      //   （`grantCovers`），预筛等于把判定拆成两处。
       // 同一个任务优先用任务级授权；没指定任务时也接受全局授权
       .filter((g) => !taskId || !g.taskId || g.taskId === taskId)
       .filter((g) => !mode || g.mode === mode);
@@ -243,24 +250,34 @@ export function createGrantGate({
     }
 
     // 多条授权可以互补：任何一条通过就放行
+    /** @type {Array<{grant:object, verdict:object}>} */
     const failures = [];
     for (const grant of picked.list) {
       const verdict = verdictFor(grant, { action, targets: cleanTargets, params, now, policyRevision, generation });
-      if (!verdict.ok) { failures.push(verdict); continue; }
+      if (!verdict.ok) { failures.push({ grant, verdict }); continue; }
       const a = audit({ grantId: grant.id, subject, action, targets: cleanTargets, result: true, risk });
       return { ok: true, grant, audit: a };
     }
 
-    // 全部失败：报第一条最具体的原因（先看"缺动作/缺资源"，再看有效性）
-    const preferred = failures.find((f) => f.code === DENY.actionNotCovered || f.code === DENY.resourceNotCovered)
-      ?? failures.find((f) => f.code === DENY.constraintFailed)
-      ?? failures[0]
-      ?? { ok: false, code: DENY.noGrant, text: '没有可用授权' };
+    // 全部失败：挑一条最说得清的原因。
+    //
+    // 顺序：缺动作/缺资源 → 参数约束 → **活着的授权**给出的原因 → 最早那条。
+    //
+    // ★ 中间那一档是实测出来的必要：规矩变更会撤旧发新，于是同一个 bot
+    //   手上常常同时有一条「已撤销的宽授权」和一条「有效的窄授权」。
+    //   用户问"为什么不能写文件"，报「授权已被撤销」会让人以为权限全丢了，
+    //   实际只是新的那条不含写。所以优先报活着的那条的结论。
+    const live = failures.filter((f) => !f.grant.revokedAt);
+    const preferred = failures.find((f) => f.verdict.code === DENY.actionNotCovered || f.verdict.code === DENY.resourceNotCovered)
+      ?? failures.find((f) => f.verdict.code === DENY.constraintFailed)
+      ?? live[0]
+      ?? failures[0];
+    const preferredVerdict = preferred?.verdict ?? { ok: false, code: DENY.noGrant, text: '没有可用授权' };
     const a = audit({
       subject, action, targets: cleanTargets, result: false,
-      code: preferred.code, detail: preferred.text, risk,
+      code: preferredVerdict.code, detail: preferredVerdict.text, risk,
     });
-    return { ok: false, code: preferred.code, text: preferred.text, audit: a };
+    return { ok: false, code: preferredVerdict.code, text: preferredVerdict.text, audit: a };
   }
 
   /** 这条动作在网关上要不要判（工具名映射）。实现在 action-catalog。 */

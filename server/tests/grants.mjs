@@ -302,6 +302,22 @@ await test('网关：有授权且覆盖 → 放行 + 审计 allow', () => {
   assert.equal(gate.recentAudit().length, 1);
 });
 
+await test('★ 拒绝原因说清楚的是活着的授权，不是已撤销的那条', () => {
+  // 规矩变更会撤旧发新，同一个 bot 手上常常同时有：
+  //   · 一条已撤销的宽授权（旧规矩发的）
+  //   · 一条有效的窄授权（新规矩发的）
+  // 用户问“为什么不能写文件”，报「授权已被撤销」会让人以为权限全丢了，
+  // 实际只是新的那条不含写。所以要优先报活着的那条的结论。
+  const gate = makeGate();
+  gate.add(rootGrant({ id: 'gr_wide', subject: { botId: worker.id }, actions: [ACTION.fileRead, ACTION.fileWrite] }));
+  gate.add(rootGrant({ id: 'gr_narrow', subject: { botId: worker.id }, actions: [ACTION.fileRead] }));
+  gate.revoke('gr_wide', '规矩变了');
+  const out = gate.check({ subject: { botId: worker.id }, action: ACTION.fileWrite });
+  assert.equal(out.ok, false);
+  assert.equal(out.code, DENY.actionNotCovered, `应当是“不包含这个动作”，实际 ${out.code}`);
+  assert.match(out.text, /file\.read/, '要说得清这条授权到底包含什么');
+});
+
 await test('网关：别人的授权不能给这个 bot 用', () => {
   const gate = makeGate();
   gate.add(rootGrant({ subject: { botId: chief.id } }));
