@@ -10,6 +10,7 @@
  * 这里只做翻译与生命周期接线，不含判定、创建、验收规则。
  */
 import { createTaskSupervisor } from './task-supervisor.js';
+import { desktopInputSession } from '../desktop-input-session.js';
 import { createChildTask } from './task-subtasks.js';
 import { planMentionDispatch, leadConfirmVerification } from './task-mentions.js';
 import { createManagedBridges } from './task-bridge.js';
@@ -86,8 +87,32 @@ export function createTaskRuntime({
    * 只在状态真的变化后发一次，按 taskRunId + state + revision 去重。
    */
   const terminalReported = new Set();
+
+  /**
+   * 任务到达终态时回收它占着的桌面租约（规格 §6.3）。
+   *
+   * 三条终态都要收：completed（干完了）、cancelled（用户取消，在 onCancel 里
+   * 更早一步做）、blocked/paused_budget（停下来等，同样不该继续占着桌面）。
+   *
+   * 为什么不能只靠 onCancel：任务自己跑完（completed）时**不经过任何
+   * cancel 入口**。那时如果它还握着租约，桌面就一直被一个已经结束的任务占着，
+   * 后面的任务要等到下次 acquire 才发现主人已经结束 —— 而租约 TTL 是 60 秒。
+   */
+  const releaseDesktopLease = (runId, why) => {
+    if (!runId) return;
+    try {
+      const session = desktopInputSession();
+      if (session?.lease?.taskId === runId) {
+        session.releaseLease({ taskId: runId, reason: why });
+      }
+    } catch { /* 收租约失败不该影响回报 */ }
+  };
+
   const reportTerminal = (run) => {
     if (!run) return;
+    // 取消也在这一层收一次：onCancel 里先收过了，这里是对"别的路径落到
+    // cancelled"（比如父任务级联取消）的兜底，幂等。
+    releaseDesktopLease(run.id, `任务到达终态：${run.state}`);
     // ★ 取消不回报。
     //
     //   cancelTask 会**级联**取消所有子孙任务（task-controls.js 里
@@ -514,8 +539,27 @@ export function createTaskRuntime({
       supervisor.notify(taskRun.id);
       return { ok: true, taskRunId: out.taskRunId ?? taskRun.id, leadBotId: out.leadBotId ?? null };
     },
-    /** 取消某个目标（只影响它和它的子任务）。 */
-    onCancel({ taskRunId, reason }) {
+    /**
+     * 取消某个目标（只影响它和它的子任务）。
+     *
+     * ★ 级联回收桌面租约（规格 §6.3「任务结束、超时、取消…时级联回收
+     *   桌面租约」）。原来这条根本没接：`revokeLease()` 在生产代码里
+     *   零调用，只有模型自己主动调 `desktop_lease release` 才释放。
+     *
+     * 后果很具体：一个被抓着桌面租约的任务被取消之后，租约还挂在它名下，
+     * 别的任务得等到下一次 `acquire` 才发现主人已经死了 —— 而那时
+     * 桌面已经被占住整整一个 TTL（默认 60 秒）。
+     */
+    async onCancel({ taskRunId, reason }) {
+      // 先撤租约再落取消状态：反过来的话，取消成功、撤租约失败，
+      // 就留下一条"任务已取消但还占着桌面"的记录，而且没人会再去收。
+      // 撤租约本身失败不影响取消（它可能本来就没租约），只记一行。
+      try {
+        const session = desktopInputSession();
+        if (session?.lease?.taskId === taskRunId) {
+          session.revokeLease({ reason: `任务已取消：${String(reason ?? '').slice(0, 80)}`, by: 'task' });
+        }
+      } catch { /* 撤租约失败不该把取消也搞挂 */ }
       return supervisor.cancelTask(taskRunId, { reason });
     },
     /** 改目标：升版本，保留成果待重验。 */

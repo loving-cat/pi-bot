@@ -47,6 +47,7 @@ const TESTS = [
   'task-file-claims',
   'capabilities',
   'exec-mode',
+  'reclamation',
   'desktop-lease',
   'desktop-takeover',
   'desktop-input',

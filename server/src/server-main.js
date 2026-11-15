@@ -13,6 +13,8 @@ import { log } from './util.js';
 import { shells } from './shells.js';
 import { createAutomationScheduler } from './automations.js';
 import { createTaskHost } from './bootstrap/task-host.js';
+import { desktopInputSession } from './desktop-input-session.js';
+import { pruneScreenshots } from './desktop-observe.js';
 import { createTaskCommands } from './tasks/task-commands.js';
 import { intakeEnabled } from './coordination/intake-tool.js';
 import { createGrantGate } from './grant-gate.js';
@@ -238,6 +240,37 @@ async function main() {
     process.exit(1);
   });
 
+  /**
+   * 后台清理：两件"有实现但从来没被调用过"的事（规格 §5.2 / §5.5）。
+   *
+   * | 清理 | 不做的后果 |
+   * |---|---|
+   * | 桌面租约 sweep | 持有者进程死了/没心跳，租约一直挂着，别的任务要等到自己 acquire 才发现 —— 那时桌面已经白占一个 TTL |
+   * | 截图 prune | 截图按任务落在 data/shots 下，只增不减；规格 §5.5 要求"保留期" |
+   *
+   * 两道都是 60 秒一次：租约 TTL 就是 60 秒，比它更慢会让"僵住的租约"
+   * 多占一段时间；截图清理对时效不敏感，同一个节拍够用。
+   *
+   * 用 unref 让定时器**不阻止进程退出** —— 否则 SIGINT 之后还要等它一轮。
+   */
+  const housekeeping = setInterval(() => {
+    try {
+      const swept = desktopInputSession().sweepLeases();
+      if (swept?.released) {
+        log(`桌面租约回收：${swept.released.botId ?? '?'}（任务 ${swept.released.taskId ?? '?'}）—— ${swept.released.why ?? ''}`);
+      }
+    } catch (err) {
+      log('回收桌面租约失败：' + (err?.message || err));
+    }
+    try {
+      const pruned = pruneScreenshots({ dataDir: config.dataDir });
+      if (pruned?.removed) log(`清理旧截图：${pruned.removed} 张`);
+    } catch (err) {
+      log('清理旧截图失败：' + (err?.message || err));
+    }
+  }, 60_000);
+  housekeeping.unref?.();
+
   server.listen(config.port, config.host, async () => {
     await banner(pairing, runner);
     // API/WS 就绪后做一次持久恢复；失败如实记录，不阻断旧聊天。
@@ -257,6 +290,7 @@ async function main() {
     log(`${signal} → 收工`);
     pairing.stop();
     scheduler.stop();
+    clearInterval(housekeeping);
     runner.health?.stop();
     shells.stopAll();
     taskHost.dispose();

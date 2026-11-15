@@ -551,6 +551,11 @@ export class Store {
     const device = this.state.devices[token];
     delete this.state.devices[token];
     this.scheduleSave();
+    // ★ 设备撤销**不回收授权**，这是刻意的。
+    //
+    //   授权的绑定对象是 `subject.botId`，不是设备。同一个人可以有多台
+    //   已配对设备，撤掉其中一台不该让 bot 失去权限 —— 那等于"换了手机号
+    //   就要重新授权所有能力"。规格 §6.1 的授权身份里没有设备这一维。
     bus.emit('event', { t: 'device.revoked', id: device?.id ?? null });
     return true;
   }
@@ -695,8 +700,52 @@ export class Store {
         delete this.state.sessions[key];
       }
     }
+    // ★ 级联回收它的授权（规格 §6.3「成员移除…时级联回收子授权」）。
+    //
+    //   原来这里只删房间/会话/沙箱 ACE，**不回收 grant**。后果很具体：
+    //   删掉一个 bot 再把同 id 的建回来（模板重装、导入同名角色），
+    //   它会原样继承旧 bot 的全部授权 —— 那些授权描述的是一次
+    //   已经不存在的主体。用户以为"删干净了"。
+    //
+    //   标 revokedBy='user' 而不是 'policy'：这是用户的删除动作导致
+    //   主体消失，按"用户收回"记，`ensureLegacyGrant` 才不会把它
+    //   自动补回来（那条逻辑只补 policy 撤的）。
+    const revokedGrants = [];
+    /** 下游的子授权：它们是**父链失效**，不是「主体删除」—— 两者原因不同，审计要分得开。 */
+    const orphaned = [];
+    for (const g of (this.state.grants ?? [])) {
+      if (g && g.subject?.botId === id && !g.revokedAt) {
+        g.revokedAt = Date.now();
+        g.revokedReason = '主体已删除';
+        g.revokedBy = 'user';
+        revokedGrants.push(g.id);
+      }
+    }
+    // 下游（它派出去的子授权）一并标父链失效 —— 与 grant-gate 的 revoke 同语义。
+    // ★ 要**两轮分开**：子授权自己也挂在被删主体名下（subject.botId 相同），
+    //   如果只在同一轮里按 parentId 判，先命中的是上面那个分支，
+    //   它们会被记成「主体已删除」。两轮分开之后原因才分得清。
+    if (revokedGrants.length) {
+      for (const g of (this.state.grants ?? [])) {
+        if (g && !g.revokedAt && revokedGrants.includes(g.parentId)) {
+          g.revokedAt = Date.now();
+          g.revokedReason = '父授权因主体删除而失效';
+          g.revokedBy = 'parent';
+          orphaned.push(g.id);
+        } else if (g && revokedGrants.includes(g.parentId) && g.revokedBy === 'user' && g.revokedReason === '主体已删除') {
+          // 同一轮里已经被标成「主体已删除」的子授权，改回「父链失效」——
+          // 它失效的直接原因确实是父授权没了。
+          g.revokedReason = '父授权因主体删除而失效';
+          g.revokedBy = 'parent';
+          orphaned.push(g.id);
+        }
+      }
+    }
     this.scheduleSave();
     bus.emit('event', { t: 'bot.deleted', botId: id });
+    if (revokedGrants.length) {
+      bus.emit('event', { t: 'grants.revoked', botId: id, grantIds: revokedGrants });
+    }
     // ★ Windows 沙箱的收尾：撤销这个实例工作目录上的 ACE，并删掉它的
     //   AppContainer profile。不在这里做的话，用户删掉的 bot 会在
     //   `%LOCALAPPDATA%\Packages` 下留一堆 profile，工作目录上留一堆 ACE。
