@@ -243,8 +243,11 @@ await test('改策略后迁移授权自动重发（否则只读会连读都拒�
   );
   assert.ok(legacy.length >= 1, '应当有一条当前规矩下的迁移授权');
   const fresh = legacy.at(-1);
-  assert.equal(fresh.actions.length, 1, '只读规矩下只该有 fileRead');
-  assert.equal(fresh.actions[0], 'file.read');
+  // 只读规矩下只留“不动手”的动作：读文件 + 看屏幕。
+  //
+  // 桌面观察是只读的（role-tools 的 READONLY_ALLOW 里也放行它），两边口径必须
+  // 一致 —— 否则会出现“工具看得见、一调就被网关拒”。这个断言就是那条约定。
+  assert.deepEqual([...fresh.actions], ['file.read', 'desktop.observe']);
 });
 
 const failed = results.filter((r) => !r.ok);
