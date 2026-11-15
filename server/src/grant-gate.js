@@ -135,6 +135,70 @@ export function createGrantGate({
   }
 
   /**
+   * 挑出「可能有资格覆盖这次动作」的候选授权。
+   *
+   * 只做筛选，不做最终判定 —— 有效性/父链/覆盖那一串在 `verdictFor` 里。
+   * 分两步是为了让 `check` 读起来是"拿候选 → 逐条判 → 汇总失败原因"。
+   *
+   * @returns {{ok:true, list:object[]}|{ok:false, code:string, text:string}}
+   */
+  function candidatesFor({ subject, action, taskId, mode, grantId }) {
+    if (grantId) {
+      const one = lookupRaw(grantId);
+      if (!one) return { ok: false, code: DENY.noGrant, text: `找不到授权 ${grantId}` };
+      if (one.subject.botId !== subject.botId) {
+        return { ok: false, code: DENY.resourceNotCovered, text: '这条授权不属于你' };
+      }
+      return { ok: true, list: [one] };
+    }
+    const list = grants()
+      .filter((g) => g && g.subject?.botId === subject.botId)
+      .map((g) => {
+        const n = normalizeGrant(g);
+        // ★ 用次数是**状态**，不在纯逻辑的规范化里（那边只认记录本身）。
+        //   这里把它挂回去，否则 maxUses 永远是 0 次，额度用完了还能继续用。
+        return n.ok ? Object.freeze({ ...n.grant, usedUses: Number(g.usedUses) || 0 }) : null;
+      })
+      .filter(Boolean)
+      .filter((g) => g.actions.includes(action))
+      // 同一个任务优先用任务级授权；没指定任务时也接受全局授权
+      .filter((g) => !taskId || !g.taskId || g.taskId === taskId)
+      .filter((g) => !mode || g.mode === mode);
+    return { ok: true, list };
+  }
+
+  /**
+   * 判一条授权能不能覆盖这次动作（有效性 → 父链 → 覆盖 → 目标可核）。
+   *
+   * 顺序有意义：先排除失效的（省钱、错误信息也更准），再看范围。
+   */
+  function verdictFor(grant, { action, targets, params, now, policyRevision, generation }) {
+    const valid = checkGrantValidity({ grant, now, policyRevision, generation, usedUses: grant.usedUses ?? 0 });
+    if (!valid.ok) return valid;
+
+    const chain = checkChain({ grant, lookup, now, policyRevision, generation });
+    if (!chain.ok) return chain;
+
+    const covers = grantCovers({ grant, action, targets, params });
+    if (!covers.ok) return covers;
+
+    // ★ 窄范围授权 + 认不出目标 = 拒绝（fail-closed）。
+    //
+    //   规格 §6.1：资源范围是**真边界**，不是装饰。授权写了"只许动 /proj/alpha"，
+    //   而这次动作的目标推不出来（命令里的路径、脚本里的 URL），
+    //   如果当成"没有目标"放行，那范围就等于没写 —— 实测就是这么漏的。
+    //   不是窄范围授权（resources 为空）不受影响，它本来就没限范围。
+    if (!targets.length && grant.resources.length && needsTarget(action)) {
+      return {
+        ok: false,
+        code: DENY.resourceNotCovered,
+        text: `这条授权限定了范围，但「${action}」这次的目标认不出来（入参里没有可核对的资源），无法确认在范围内`,
+      };
+    }
+    return { ok: true };
+  }
+
+  /**
    * 判定一次动作。
    *
    * @param {object} p
@@ -165,67 +229,24 @@ export function createGrantGate({
     const policyRevision = typeof currentPolicyRevision === 'function' ? currentPolicyRevision() : null;
     const generation = typeof currentGeneration === 'function' ? currentGeneration() : null;
 
-    // ---- 1) 候选授权：指定了就只看那一条
-    let candidates;
-    if (grantId) {
-      const one = lookupRaw(grantId);
-      if (!one) {
-        const a = audit({ grantId, subject, action, targets: cleanTargets, result: false, code: DENY.noGrant, detail: `找不到授权 ${grantId}` });
-        return { ok: false, code: DENY.noGrant, text: `找不到授权 ${grantId}`, audit: a };
-      }
-      if (one.subject.botId !== subject.botId) {
-        const a = audit({ grantId, subject, action, targets: cleanTargets, result: false, code: DENY.resourceNotCovered, detail: '授权不属于这个主体' });
-        return { ok: false, code: DENY.resourceNotCovered, text: '这条授权不属于你', audit: a };
-      }
-      candidates = [one];
-    } else {
-      candidates = grants()
-        .filter((g) => g && g.subject?.botId === subject.botId)
-        .map((g) => {
-          const n = normalizeGrant(g);
-          // ★ 用次数是**状态**，不在纯逻辑的规范化里（那边只认记录本身）。
-          //   这里把它挂回去，否则 maxUses 永远是 0 次，额度用完了还能继续用。
-          return n.ok ? Object.freeze({ ...n.grant, usedUses: Number(g.usedUses) || 0 }) : null;
-        })
-        .filter(Boolean)
-        .filter((g) => g.actions.includes(action))
-        // 同一个任务优先用任务级授权；没指定任务时也接受全局授权
-        .filter((g) => !taskId || !g.taskId || g.taskId === taskId)
-        .filter((g) => !mode || g.mode === mode);
+    const picked = candidatesFor({ subject, action, taskId, mode, grantId });
+    if (!picked.ok) {
+      const a = audit({
+        grantId, subject, action, targets: cleanTargets,
+        result: false, code: picked.code, detail: picked.text, risk,
+      });
+      return { ok: false, code: picked.code, text: picked.text, audit: a };
     }
-
-    if (!candidates.length) {
+    if (!picked.list.length) {
       const a = audit({ subject, action, targets: cleanTargets, result: false, code: DENY.noGrant, risk });
       return { ok: false, code: DENY.noGrant, text: `没有覆盖「${action}」的有效授权`, audit: a };
     }
 
-    // ---- 2) 逐条判：任何一条通过即放行（多条授权可以互补）
+    // 多条授权可以互补：任何一条通过就放行
     const failures = [];
-    for (const grant of candidates) {
-      const valid = checkGrantValidity({ grant, now, policyRevision, generation, usedUses: grant.usedUses ?? 0 });
-      if (!valid.ok) { failures.push(valid); continue; }
-
-      const chain = checkChain({ grant, lookup, now, policyRevision, generation });
-      if (!chain.ok) { failures.push(chain); continue; }
-
-      const covers = grantCovers({ grant, action, targets: cleanTargets, params });
-      if (!covers.ok) { failures.push(covers); continue; }
-
-      // ★ 窄范围授权 + 认不出目标 = 拒绝（fail-closed）。
-      //
-      //   规格 §6.1：资源范围是**真边界**，不是装饰。授权写了"只许动 /proj/alpha"，
-      //   而这次动作的目标推不出来（命令里的路径、脚本里的 URL），
-      //   如果当成"没有目标"放行，那范围就等于没写 —— 实测就是这么漏的。
-      //   不是窄范围授权（resources 为空）不受影响，它本来就没限范围。
-      if (!cleanTargets.length && grant.resources.length && needsTarget(action)) {
-        failures.push({
-          ok: false,
-          code: DENY.resourceNotCovered,
-          text: `这条授权限定了范围，但「${action}」这次的目标认不出来（入参里没有可核对的资源），无法确认在范围内`,
-        });
-        continue;
-      }
-
+    for (const grant of picked.list) {
+      const verdict = verdictFor(grant, { action, targets: cleanTargets, params, now, policyRevision, generation });
+      if (!verdict.ok) { failures.push(verdict); continue; }
       const a = audit({ grantId: grant.id, subject, action, targets: cleanTargets, result: true, risk });
       return { ok: true, grant, audit: a };
     }
