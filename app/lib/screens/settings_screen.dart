@@ -126,7 +126,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       4 => const [SitesSection()],
                       // 系统页：谁能动什么。规格 §11「用户始终可以接管、取消、收回授权」——
                       // 看不到有哪些授权，就等于收不回。
-                      5 => const [GrantsSection()],
+                      5 => const [GrantsSection(), GrantAuditSection()],
                       _ => _advancedTab,
                     },
                   ),

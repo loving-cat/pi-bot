@@ -143,6 +143,10 @@ class AppState extends ChangeNotifier {
   /// 那条授权此刻已经被网关按 policy_changed 拒掉了，界面上要标出来。
   String? grantPolicyRevision;
 
+  /// 最近的网关判定记录（谁被放行、谁被拒、为什么）。
+  List<GrantAuditEntry> grantAudit = const [];
+  bool grantAuditLoaded = false;
+
   /// 本机 pi 上已经装好的能力（只读扫描结果）。
   /// 用户在终端里早就装了一堆，这里让他一键导进来，不用手抄。
   LocalCapabilities? localCapabilities;
@@ -1238,6 +1242,23 @@ class AppState extends ChangeNotifier {
       _notify();
     } catch (err) {
       lastError = '授权列表加载失败：$err';
+      _notify();
+    }
+  }
+
+  /// 拉最近的授权判定记录。`deniedOnly=true` 时只看被拒的。
+  Future<void> loadGrantAudit({bool deniedOnly = false, int limit = 50}) async {
+    if (api == null) return;
+    try {
+      final json = await api!.get('/api/grant-audit', query: {
+        'limit': '$limit',
+        if (deniedOnly) 'denied': '1',
+      });
+      grantAudit = grantAuditFromResponse(json);
+      grantAuditLoaded = true;
+      _notify();
+    } catch (err) {
+      lastError = '授权审计加载失败：$err';
       _notify();
     }
   }

@@ -93,4 +93,54 @@ void main() {
       expect(grantsFromResponse(null), isEmpty);
     });
   });
+
+  group('GrantAuditEntry', () {
+    test('放行与拒绝的摘要分得清', () {
+      final ok = GrantAuditEntry.fromJson({
+        'at': 1, 'action': 'file.write', 'result': 'allow',
+        'targets': ['path:/proj/alpha/a.js'], 'risk': 'low',
+      });
+      expect(ok.allowed, isTrue);
+      expect(ok.summary, contains('写文件'));
+      expect(ok.summary, contains('放行'));
+      expect(ok.summary, contains('/proj/alpha/a.js'));
+
+      final denied = GrantAuditEntry.fromJson({
+        'at': 2, 'action': 'git.push', 'result': 'deny',
+        'code': 'no_grant', 'detail': '没有覆盖它的授权', 'risk': 'high',
+      });
+      expect(denied.allowed, isFalse);
+      expect(denied.summary, contains('拒绝'));
+      expect(denied.code, 'no_grant');
+    });
+
+    test('不认识的动作保留原名，不能让新动作整行消失', () {
+      final e = GrantAuditEntry.fromJson({
+        'at': 1, 'action': 'future.action', 'result': 'deny',
+      });
+      expect(e.summary, contains('future.action'));
+    });
+
+    test('没有目标时不画空括号', () {
+      final e = GrantAuditEntry.fromJson({
+        'at': 1, 'action': 'net.send', 'result': 'allow', 'targets': [],
+      });
+      expect(e.summary.contains('（）'), isFalse, reason: e.summary);
+    });
+
+    test('坏数据整条跳过', () {
+      final list = grantAuditFromResponse({
+        'audit': [
+          {'at': 1, 'action': 'file.read', 'result': 'allow'},
+          {'at': 2},
+          'not-a-map',
+        ],
+      });
+      expect(list.map((e) => e.action), ['file.read']);
+    });
+
+    test('整个响应缺失时给空列表', () {
+      expect(grantAuditFromResponse(null), isEmpty);
+    });
+  });
 }

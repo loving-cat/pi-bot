@@ -217,3 +217,180 @@ class _GrantsSectionState extends State<GrantsSection> {
     ),
   );
 }
+
+/// 授权判定记录面板（与 GrantsSection 同页）。
+///
+/// 为什么和「授权列表」分开放：一个回答“现在谁能动什么”，
+/// 一个回答“最近谁动过、被拦了没有”。混在一起时，用户想查
+/// “这活为什么被拒”要在一长串授权里翻。
+class GrantAuditSection extends StatefulWidget {
+  const GrantAuditSection({super.key});
+
+  @override
+  State<GrantAuditSection> createState() => _GrantAuditSectionState();
+}
+
+class _GrantAuditSectionState extends State<GrantAuditSection> {
+  bool _deniedOnly = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      AppScope.of(context).loadGrantAudit();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = L10n.s(context);
+    final state = AppScope.of(context);
+    final rows = state.grantAudit;
+
+    return Container(
+      margin: const EdgeInsets.only(top: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(LucideIcons.scrollText, size: 16, color: PB.textSecondary),
+              const SizedBox(width: 8),
+              Text(
+                s.t('settings.audit.title'),
+                style: TextStyle(
+                  fontSize: PB.fsSm,
+                  fontWeight: FontWeight.w600,
+                  color: PB.textPrimary,
+                ),
+              ),
+              const Spacer(),
+              TextButton.icon(
+                onPressed: () => state.loadGrantAudit(deniedOnly: _deniedOnly),
+                icon: const Icon(LucideIcons.refreshCw, size: 14),
+                label: Text(s.t('common.refresh')),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            s.t('settings.audit.hint'),
+            style: TextStyle(
+              fontSize: PB.fsXxs,
+              height: 1.5,
+              color: PB.textQuaternary,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              _chip(s.t('settings.audit.all'), !_deniedOnly, () {
+                setState(() => _deniedOnly = false);
+                state.loadGrantAudit();
+              }),
+              const SizedBox(width: 8),
+              _chip(s.t('settings.audit.deniedOnly'), _deniedOnly, () {
+                setState(() => _deniedOnly = true);
+                state.loadGrantAudit(deniedOnly: true);
+              }),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (!state.grantAuditLoaded)
+            _line(s.t('settings.audit.loading'))
+          else if (rows.isEmpty)
+            _line(s.t('settings.audit.empty'))
+          else
+            for (final e in rows)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(top: 3),
+                      child: Icon(
+                        e.allowed ? LucideIcons.check : LucideIcons.ban,
+                        size: 13,
+                        color: e.allowed ? PB.success : PB.danger,
+                      ),
+                    ),
+                    const SizedBox(width: 7),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            e.summary,
+                            style: TextStyle(
+                              fontSize: PB.fsXs,
+                              color: PB.textSecondary,
+                            ),
+                          ),
+                          if (!e.allowed && e.detail.isNotEmpty)
+                            Text(
+                              e.detail,
+                              style: TextStyle(
+                                fontSize: PB.fsXxs,
+                                height: 1.4,
+                                color: PB.textQuaternary,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    if (e.risk.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 6),
+                        child: Text(
+                          e.risk,
+                          style: TextStyle(
+                            fontSize: PB.fsXxs,
+                            color: e.risk == 'critical' || e.risk == 'high'
+                                ? PB.warn
+                                : PB.textQuaternary,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+        ],
+      ),
+    );
+  }
+
+  Widget _line(String text) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 12),
+    child: Center(
+      child: Text(
+        text,
+        style: TextStyle(fontSize: PB.fsXs, color: PB.textQuaternary),
+      ),
+    ),
+  );
+
+  Widget _chip(String label, bool selected, VoidCallback onTap) => InkWell(
+    onTap: onTap,
+    borderRadius: BorderRadius.circular(999),
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+      decoration: BoxDecoration(
+        color: selected
+            ? PB.accent.withValues(alpha: 0.14)
+            : Colors.transparent,
+        border: Border.all(
+          color: selected ? PB.accent.withValues(alpha: 0.45) : PB.borderSecondary,
+        ),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: PB.fsXxs,
+          color: selected ? PB.accent : PB.textSecondary,
+        ),
+      ),
+    ),
+  );
+}

@@ -132,3 +132,73 @@ List<GrantView> grantsFromResponse(Map<String, dynamic>? json) {
       .where((g) => g.id.isNotEmpty && g.botId.isNotEmpty)
       .toList();
 }
+
+/// 一条网关判定记录（`GET /api/grant-audit`）。
+///
+/// 规格 §5.5：动作要可审计。服务端一直在记，但之前没有接口读出去 ——
+/// 出问题时“这活为什么被拒”只能翻服务端日志，而日志重启就滚没了。
+class GrantAuditEntry {
+  GrantAuditEntry({
+    required this.at,
+    this.botId = '',
+    this.role = '',
+    this.action = '',
+    this.risk = '',
+    this.result = '',
+    this.code = '',
+    this.detail = '',
+    this.targets = const [],
+    this.grantId,
+  });
+
+  final int at;
+  final String botId;
+  final String role;
+  final String action;
+  final String risk;
+
+  /// `allow` 或 `deny`。
+  final String result;
+
+  /// 拒绝原因码（`no_grant` / `resource_not_covered` …），放行时为空。
+  final String code;
+  final String detail;
+  final List<String> targets;
+  final String? grantId;
+
+  bool get allowed => result == 'allow';
+
+  factory GrantAuditEntry.fromJson(Map<String, dynamic> json) => GrantAuditEntry(
+    at: (json['at'] as num?)?.toInt() ?? 0,
+    botId: json['botId'] as String? ?? '',
+    role: json['role'] as String? ?? '',
+    action: json['action'] as String? ?? '',
+    risk: json['risk'] as String? ?? '',
+    result: json['result'] as String? ?? '',
+    code: json['code'] as String? ?? '',
+    detail: json['detail'] as String? ?? '',
+    targets: ((json['targets'] as List?) ?? const [])
+        .map((t) => '$t')
+        .where((t) => t.isNotEmpty)
+        .toList(),
+    grantId: json['grantId'] as String?,
+  );
+
+  /// 一句话摘要：动作 + 结果 + 目标。
+  String get summary {
+    final label = grantActionLabels[action] ?? action;
+    final verdict = allowed ? '放行' : '拒绝';
+    final scope = targets.isEmpty ? '' : '（${targets.join('、')}）';
+    return '$label · $verdict$scope';
+  }
+}
+
+/// 把 `/api/grant-audit` 的返回读成展示用列表。
+List<GrantAuditEntry> grantAuditFromResponse(Map<String, dynamic>? json) {
+  final list = (json?['audit'] as List?) ?? const [];
+  return list
+      .whereType<Map>()
+      .map((e) => GrantAuditEntry.fromJson(e.cast<String, dynamic>()))
+      .where((e) => e.action.isNotEmpty)
+      .toList();
+}
