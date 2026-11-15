@@ -31,7 +31,8 @@ const C = await import(src('action-catalog.js'));
 const G = await import(src('grants.js'));
 const { ACTION, DENY } = G;
 const { store } = await import(src('store.js'));
-const { createGrantGate, ensureLegacyGrant, TOOL_ACTIONS, migrationActions } = await import(src('grant-gate.js'));
+const { createGrantGate, TOOL_ACTIONS } = await import(src('grant-gate.js'));
+const { ensureLegacyGrant, migrationActions } = await import(src('migration-grants.js'));
 const { reversibilityOf, REVERSIBILITY } = await import(src('confirm.js'));
 
 const results = [];

@@ -15,7 +15,8 @@ import { createAutomationScheduler } from './automations.js';
 import { createTaskHost } from './bootstrap/task-host.js';
 import { createTaskCommands } from './tasks/task-commands.js';
 import { intakeEnabled } from './coordination/intake-tool.js';
-import { createGrantGate, ensureLegacyGrant } from './grant-gate.js';
+import { createGrantGate } from './grant-gate.js';
+import { ensureLegacyGrant } from './migration-grants.js';
 import { bus } from './bus.js';
 
 /**

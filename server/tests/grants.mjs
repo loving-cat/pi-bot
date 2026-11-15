@@ -26,7 +26,8 @@ Object.assign(process.env, {
 
 const src = (f) => pathToFileURL(path.join(import.meta.dirname, '..', 'src', f));
 const G = await import(src('grants.js'));
-const { createGrantGate, ensureLegacyGrant, TOOL_ACTIONS } = await import(src('grant-gate.js'));
+const { createGrantGate, TOOL_ACTIONS } = await import(src('grant-gate.js'));
+const { ensureLegacyGrant } = await import(src('migration-grants.js'));
 const { store } = await import(src('store.js'));
 
 const results = [];

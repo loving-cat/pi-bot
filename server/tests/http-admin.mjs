@@ -30,7 +30,7 @@ globalThis.fetch = () => { throw new Error('测试期间不允许联网'); };
 
 const src = (f) => pathToFileURL(path.join(import.meta.dirname, '..', 'src', f));
 const { planAdminRoute, listAdminRoutes, ADMIN_ROUTE_TABLE } = await import(src('http-admin.js'));
-const { ensureLegacyGrant } = await import(src('grant-gate.js'));
+const { ensureLegacyGrant } = await import(src('migration-grants.js'));
 const { store } = await import(src('store.js'));
 const { createHttpServer } = await import(src('http.js'));
 const { Pairing } = await import(src('pairing.js'));

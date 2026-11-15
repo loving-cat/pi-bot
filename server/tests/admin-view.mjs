@@ -17,7 +17,8 @@ globalThis.fetch = () => { throw new Error('no net'); };
 
 const src = (f) => pathToFileURL(path.join(import.meta.dirname, '..', 'src', f));
 const { store } = await import(src('store.js'));
-const { createGrantGate, ensureLegacyGrant } = await import(src('grant-gate.js'));
+const { createGrantGate } = await import(src('grant-gate.js'));
+const { ensureLegacyGrant } = await import(src('migration-grants.js'));
 const { createHttpServer } = await import(src('http.js'));
 const { Pairing } = await import(src('pairing.js'));
 const { buildConfirmation } = await import(src('confirm.js'));

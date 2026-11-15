@@ -19,7 +19,7 @@ import { capacityError } from './model-capacity.js';
 import { resolveBotModelSelection } from './model-dispatch.js';
 import { store } from './store.js';
 import { policyChange } from './policy-version.js';
-import { ensureLegacyGrant } from './grant-gate.js';
+import { ensureLegacyGrant } from './migration-grants.js';
 import {
   deleteAttachments,
   referencedAttachmentIds,
