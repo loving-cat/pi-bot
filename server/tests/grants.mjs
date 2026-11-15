@@ -149,6 +149,45 @@ await test('动作不覆盖就拒，资源不覆盖就拒', () => {
   assert.ok(grantCovers({ grant: g, action: ACTION.fileWrite, targets: [{ kind: 'path', ref: '/proj/alpha/a.js' }] }).ok);
 });
 
+await test('★ 空 resources = 不限范围：带目标也要放行（回归）', () => {
+  // 这条曾经是 bug：迁移授权写 `resources: []`（界面显示“不限资源”），
+  // 而判定里 `[].some(...)` 恒为 false —— 于是**只要动作能推出目标就被拒**。
+  // 实测后果：主 Bot 能跑 bash，却写不了文件、抓不了网页、看不了 git 仓库。
+  const g = normalizeGrant(rootGrant({
+    resources: [],
+    actions: [ACTION.fileRead, ACTION.fileWrite, ACTION.cmdExec, ACTION.gitRead],
+  })).grant;
+  assert.equal(g.resources.length, 0);
+  for (const [action, target] of [
+    [ACTION.fileWrite, { kind: 'path', ref: '/proj/alpha/a.js' }],
+    [ACTION.fileWrite, { kind: 'path', ref: 'relative/b.js' }],
+    [ACTION.gitRead, { kind: 'path', ref: '.' }],
+  ]) {
+    const out = grantCovers({ grant: g, action, targets: [target] });
+    assert.equal(out.ok, true, `${action} + ${target.ref} 应当放行：${out.code ?? ''} ${out.text ?? ''}`);
+  }
+  // 也不能因为“空数组就跳过”变成“连 host 都给”：这里是设计意图（不限就是全给），
+  // 但必须和下面的窄范围用例形成对照。
+  assert.ok(grantCovers({ grant: g, action: ACTION.fileWrite, targets: [{ kind: 'host', ref: 'x.com' }] }).ok);
+});
+
+await test('★ 有 resources 时仍然逐条核（不能被上一条修宽）', () => {
+  const g = normalizeGrant(rootGrant({ resources: [{ kind: 'path', ref: '/proj/alpha' }] })).grant;
+  assert.ok(grantCovers({ grant: g, action: ACTION.fileWrite, targets: [{ kind: 'path', ref: '/proj/alpha/a.js' }] }).ok);
+  assert.equal(
+    grantCovers({ grant: g, action: ACTION.fileWrite, targets: [{ kind: 'path', ref: '/proj/beta/a.js' }] }).code,
+    DENY.resourceNotCovered,
+  );
+  // 混合目标：一个在范围内、一个不在 → 拒
+  assert.equal(
+    grantCovers({
+      grant: g, action: ACTION.fileWrite,
+      targets: [{ kind: 'path', ref: '/proj/alpha/a.js' }, { kind: 'path', ref: '/proj/beta/b.js' }],
+    }).code,
+    DENY.resourceNotCovered,
+  );
+});
+
 await test('参数约束：deny / allow / maxBytes', () => {
   const g = normalizeGrant(rootGrant({
     constraints: { [ACTION.cmdExec]: { deny: ['rm -rf', 'curl | sh'], maxBytes: 200 } },
@@ -560,6 +599,92 @@ await test('迁移授权也记世代：重启后旧批准不续命', () => {
   assert.equal(verdict.ok, false);
   assert.equal(verdict.code, DENY.generationStale, verdict.text);
 });
+// ---------------------------------------------------------------- 用户收回
+await test('★ 用户收回之后，自动补登记不能再发回来（规格 §11）', () => {
+  store.state.grants = [];
+  const rev = 'p1';
+  const sync = ({ botIds }) => ensureLegacyGrant({
+    store, policy: { dangerous: 'allow' }, policyRevision: rev,
+    botIds, chiefBotId: chief.id, generation: 'g1',
+  });
+  sync({ botIds: [worker.id] });
+  const gate = createGrantGate({
+    store, currentPolicyRevision: () => rev, currentGeneration: () => 'g1',
+    syncGrants: sync, log: () => {},
+  });
+
+  const target = gate.list({ botId: worker.id })[0];
+  assert.ok(target, '先要有一条授权');
+  gate.revoke(target.id, '用户在界面上收回');
+  assert.equal(gate.list({ botId: worker.id }).length, 0, '收回后列表应当是空的');
+
+  // 模型下一次动作会走 check，而 check 会在“完全没有授权”时兜底补登记。
+  // 那一刻如果又把授权发回来，用户点的“收回”就是假的。
+  const after = gate.check({ subject: { botId: worker.id }, action: ACTION.fileWrite });
+  assert.equal(after.ok, false, '收回之后不该还能写文件');
+  assert.ok(
+    [DENY.revoked, DENY.noGrant].includes(after.code),
+    `拒绝原因应当是“已撤销/没有”，实际 ${after.code}`,
+  );
+  assert.equal(gate.list({ botId: worker.id }).length, 0, '不该被自动补回来');
+  const revokedRecords = store.state.grants.filter((g) => g.subject?.botId === worker.id);
+  assert.equal(revokedRecords.length, 1, '表里只该剩那条已撤销的记录');
+  assert.equal(revokedRecords[0].revokedBy, 'user');
+
+  // 补登记本身也要如实报告“这个我压住了”
+  const again = sync({ botIds: [worker.id] });
+  assert.deepEqual(again.created, []);
+  assert.deepEqual(again.keptBack, [worker.id]);
+});
+
+await test('规矩变更仍然能重发（用户收回只压“自动补”，不锁死规矩变更）', () => {
+  store.state.grants = [];
+  const sync = (rev) => ({ botIds }) => ensureLegacyGrant({
+    store, policy: { dangerous: 'allow' }, policyRevision: rev,
+    botIds, chiefBotId: chief.id, generation: 'g1',
+  });
+  sync('p1')({ botIds: [worker.id] });
+  const first = store.state.grants.find((g) => g.subject?.botId === worker.id);
+  assert.ok(first);
+  // 用户收回
+  const gate = createGrantGate({ store, currentPolicyRevision: () => 'p1', currentGeneration: () => 'g1', log: () => {} });
+  gate.revoke(first.id, '用户在界面上收回');
+  // 用户随后又改了规矩 → 这是另一次用户交互，按新规矩重发是正常的
+  const out = sync('p2')({ botIds: [worker.id] });
+  assert.equal(out.created.length, 1, '规矩变更应当重发一条，不受“收回过”影响');
+  const fresh = store.state.grants.filter((g) => g.subject?.botId === worker.id && !g.revokedAt);
+  assert.equal(fresh.length, 1);
+  assert.equal(fresh[0].policyRevision, 'p2');
+});
+
+await test('★ id 里的规矩摘要真的随规矩变（否则新旧同 id，按 id 取用永远失败）', () => {
+  store.state.grants = [];
+  const run = (rev) => ensureLegacyGrant({
+    store, policy: { dangerous: rev === 'p1' ? 'allow' : 'deny' }, policyRevision: rev,
+    botIds: [worker.id], chiefBotId: chief.id, generation: 'g1',
+  });
+  run('p1');
+  const a = store.state.grants.at(-1).id;
+  run('p2');
+  const b = store.state.grants.at(-1).id;
+  assert.notEqual(a, b, `规矩变了 id 必须跟着变：${a} vs ${b}`);
+});
+
+await test('★ 同 id 有多条时取用优先拿活着的那条（老数据兜底）', () => {
+  store.state.grants = [];
+  const base = {
+    id: 'gr_dup', source: SOURCE.legacyPolicy, subject: { botId: chief.id, role: 'main' },
+    actions: [ACTION.fileWrite], resources: [], constraints: {}, risk: 'medium', mode: MODE.host,
+    policyRevision: 'p1', canDelegate: false, maxUses: null, createdAt: Date.now(), expiresAt: null,
+  };
+  store.state.grants.push({ ...base, revokedAt: Date.now(), revokedReason: '旧', revokedBy: 'policy' });
+  store.state.grants.push({ ...base, revokedAt: null });
+  const gate = createGrantGate({ store, currentPolicyRevision: () => 'p1', currentGeneration: () => null, log: () => {} });
+  const got = gate.lookup('gr_dup');
+  assert.ok(got, '应当能取到');
+  assert.equal(got.revokedAt, null, '要拿活着的那条，不是先找到的那条已撤销的');
+});
+
 // ---------------------------------------------------------------- 工具映射
 await test('工具→动作映射覆盖全部动手工具', () => {
   for (const tool of ['bash', 'powershell', 'write', 'edit', 'run_background', 'write_stdin']) {

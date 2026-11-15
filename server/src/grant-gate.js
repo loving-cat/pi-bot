@@ -94,17 +94,25 @@ export function createGrantGate({
     return store.state.grantAudit;
   };
 
-  const lookup = (id) => {
-    const n = lookupRaw(id);
-    return n ? n : null;
-  };
-  /** 取原始授权并规范化（带上持久的使用次数）。 */
+  /**
+   * 按 id 取一条授权。
+   *
+   * ★ 同 id 有多条时，**优先返回活着的那条**。
+   *
+   *   历史数据里真出现过同 id 两条（旧版 id 不随规矩变 + 兜底补登记重复插入）。
+   *   原来的 `find` 只拿第一条，而第一条往往是那条已撤销的 —— 于是
+   *   “按 id 取用”永远失败，用户看到的是“我明明有这条授权”。
+   *   写入侧已经改成不再产生重复（id 带规矩摘要、用户收回的不再补登记），
+   *   但读的一侧也必须对老数据成立。
+   */
   const lookupRaw = (id) => {
-    const raw = grants().find((g) => g.id === id) ?? null;
-    if (!raw) return null;
+    const same = grants().filter((g) => g && g.id === id);
+    if (!same.length) return null;
+    const raw = same.find((g) => !g.revokedAt) ?? same[0];
     const n = normalizeGrant(raw);
     return n.ok ? Object.freeze({ ...n.grant, usedUses: Number(raw.usedUses) || 0 }) : null;
   };
+  const lookup = (id) => lookupRaw(id);
 
   /**
    * 记一条审计。
@@ -302,7 +310,8 @@ export function createGrantGate({
    * 执行前扣会让"执行失败"也吃掉一次额度，用户看到的额度会凭空少。
    */
   function consume(grantId) {
-    const raw = grants().find((g) => g.id === grantId);
+    const raw = grants().filter((g) => g && g.id === grantId).find((g) => !g.revokedAt)
+      ?? grants().find((g) => g && g.id === grantId);
     if (!raw) return null;
     raw.usedUses = (Number(raw.usedUses) || 0) + 1;
     raw.lastUsedAt = Date.now();
@@ -340,13 +349,23 @@ export function createGrantGate({
     return { ok: true, grant: built.grant };
   }
 
-  /** 撤销（级联：下游立刻失效，因为父链里有撤销记录）。 */
-  function revoke(grantId, reason = '') {
-    const raw = grants().find((g) => g.id === grantId);
+  /**
+   * 撤销（级联：下游立刻失效，因为父链里有撤销记录）。
+   *
+   * ★ `by` 决定这条撤销**会不会被自动补登记覆盖**：
+   *   · `user`   —— 用户在界面上收回。**不能再自动发回来**，否则"收回"是假的。
+   *   · `policy` —— 规矩变了所以作废，会按新规矩重发（这是正常的规重发）。
+   *   · `parent` —— 父授权撤销连带。
+   */
+  function revoke(grantId, reason = '', { by = 'user' } = {}) {
+    // 同 id 多条时挑活着的那条（见 lookupRaw 的说明）
+    const raw = grants().filter((g) => g && g.id === grantId).find((g) => !g.revokedAt)
+      ?? grants().find((g) => g && g.id === grantId);
     if (!raw) return { ok: false, code: DENY.noGrant, text: `找不到授权 ${grantId}` };
     if (raw.revokedAt) return { ok: true, alreadyRevoked: true };
     raw.revokedAt = Date.now();
     raw.revokedReason = String(reason).slice(0, 200);
+    raw.revokedBy = ['user', 'policy', 'parent'].includes(by) ? by : 'user';
     try { store.scheduleSave?.(); } catch { /* 见上 */ }
     // 级联：把下游标成"父链失效"，这样即使有人直接按 id 取用也过不去
     const downstream = [];
@@ -354,6 +373,7 @@ export function createGrantGate({
       if (g.parentId === grantId && !g.revokedAt) {
         g.revokedAt = raw.revokedAt;
         g.revokedReason = `父授权 ${grantId} 已撤销`;
+        g.revokedBy = 'parent';
         downstream.push(g.id);
       }
     }

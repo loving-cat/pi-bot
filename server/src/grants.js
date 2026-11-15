@@ -262,6 +262,12 @@ export function normalizeGrant(raw) {
       expiresAt,
       revokedAt: isTime(Number(raw.revokedAt)) ? Number(raw.revokedAt) : null,
       revokedReason: String(raw.revokedReason ?? ''),
+      /**
+       * 谁撤的：`user` = 用户在界面上收回（**不能被自动补登记覆盖**），
+       * `policy` = 规矩变了所以旧授权作废（会被按新规矩重发），
+       * `parent` = 父授权撤销连带。空 = 老数据。
+       */
+      revokedBy: ['user', 'policy', 'parent'].includes(String(raw.revokedBy)) ? String(raw.revokedBy) : '',
     }),
   };
 }
@@ -317,10 +323,20 @@ export function grantCovers({ grant, action, targets = [], params = {} } = {}) {
     return deny(DENY.actionNotCovered, `授权只包含：${grant.actions.join('、') || '（空）'}`);
   }
   const wanted = (Array.isArray(targets) ? targets : []).map(normalizeResource).filter(Boolean);
-  // 有目标就必须逐个被覆盖；没有目标时只要求这条授权在同一 mode 下非空
-  for (const t of wanted) {
-    const hit = grant.resources.some((r) => resourceCovers(r, t));
-    if (!hit) return deny(DENY.resourceNotCovered, `${t.kind}:${t.ref}`);
+  // ★ 空 resources = **不限范围**，直接跳过目标判定。
+  //
+  //   原来这里没这个分支：`[].some(...)` 恒为 false，于是“不限范围”的授权
+  //   （迁移授权就是这么写的，界面也显示“(不限资源)”）**只要这次动作能推出目标就一律被拒**。
+  //   实测后果：主 Bot 能跑 bash，却写不了文件、抓不了网页、看不了 git 仓库 ——
+  //   而它自己看不出原因，于是改用 `echo > file` 绕过。
+  //
+  //   为什么不能靠“调用方不传 targets”来避开：targets 是 policy-hook 从入参
+  //   推出来的，write 带 path、web_fetch 带 url，一定会有值。
+  if (grant.resources.length) {
+    for (const t of wanted) {
+      const hit = grant.resources.some((r) => resourceCovers(r, t));
+      if (!hit) return deny(DENY.resourceNotCovered, `${t.kind}:${t.ref}`);
+    }
   }
   const constraint = grant.constraints?.[action];
   if (constraint && typeof constraint === 'object') {
