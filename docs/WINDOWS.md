@@ -185,6 +185,58 @@ PowerShell（`-STA`）读 `[Windows.Forms.Clipboard]::GetImage()`，存成临时
   `shortcutModifier` / `shortcutLabel`），不要写死 ⌘。
 - 输入法组词期间的回车不当作"发送"（`ime_guard.dart`），中文/日文/韩文输入法都要过这一层。
 
+### 桌面输入（`desktop_input` / `desktop_lease`）
+
+规格 §5.2 / §5.4 的平台实现。判定全在纯逻辑层（`desktop-lease.js` /
+`desktop-takeover.js` / `desktop-input.js`），这里只有 Win32 调用。
+
+**实机验证（2026-11-15，Windows 11 / 2560x1440 / 125% 缩放）**
+
+| 项目 | 结果 | 怎么验的 |
+|---|---|---|
+| DPI 感知 | ✅ 声明后取到 2560x1440 | 同一进程先后读 `SystemInformation.VirtualScreen`：未声明 2048x1152，声明 2560x1440 |
+| 移动到位 | ✅ 与目标逐像素一致 | `SetCursorPos` 后用 `GetCursorPos` 复核；多次采样含 3~26px 抖动，靠容差+重试收敛 |
+| 左键点击位置 | ✅ 靶子窗口记录的 `MouseDown` 坐标与目标一致 | `scripts/probes/desktop-input-click-target.ps1` |
+| 中文/emoji/`` ` ``/`$`/双引号粘贴 | ✅ 逐字相符 | 靶子 TextBox 每 1s 落盘，`scripts/probes/desktop-input-paste-target.ps1` |
+| 原剪贴板还原 | ✅ 粘贴后读回仍是原内容 | 同上脚本，前后各读一次剪贴板 |
+| 屏幕外坐标 | ✅ 拒绝（不夹到边缘） | 传 `(99999, 400)`，返回 `out_of_screen` |
+| 拖拽 | ✅ 明确拒绝 | 传 `action: drag`，返回"没做完之前不半截上线" |
+| 锁屏 / 断开会话 | ⚠ 静态实现，未实测 | `OpenInputDesktop` 打不开 → `no_session` 并自动吊销租约 |
+| 多屏 | ⚠ 未实测 | 屏幕矩形来自 `SM_XVIRTUALSCREEN` 一族，天然支持负坐标 |
+
+**两个必须记住的坑**
+
+1. **不声明 DPI 感知就是整屏偏移。** 鼠标 API 用物理像素，没声明感知的进程
+   拿到的是被系统缩小的逻辑坐标（本机 2048 而物理 2560）。声明失败时**不发输入**
+   （返回 `not_dpi_aware`），因为它没有任何可信的坐标基准。
+   `desktop-observe.js` 原来也漏了这一步，已一并修掉 —— 否则"输入移到 A、截图看 B"。
+
+2. **`SendInput` 的绝对坐标在本机会偏。** 实测发 `2^16/2` 想点到 (1280,720)，
+   光标落在 (1611,1114)；加 `MOUSEEVENTF_VIRTUALDESK` 也没用。`SetCursorPos`
+   精确。所以：**移动用 `SetCursorPos`，按键/滚轮用 `SendInput`（不吃坐标）**。
+   移动之后必须 `GetCursorPos` 复核，没到位绝不点击。
+
+**当前机器的环境噪声（会让人误以为是 bug）**
+
+这台机器装着远程控制工具（`GameViewer`），它持续合成输入：连续四次采到
+`GetLastInputInfo` 的 idle 是 `0 / 93 / 0 / 15 ms`。结果接管检测（规格 §5.2
+要求的"检测到用户真实输入时暂停"）永远判"用户在动"，第一次输入永远发不出去，
+而错误文案说的是"用户在动" —— 用户本人根本没动。
+
+现在这一点是**显式诊断**而不是静默失败：`desktop_lease` 的 `status` 会连续采样
+idle 与光标位置，分成三类说出来：
+
+| 采样形态 | 结论 | 给出的下一步 |
+|---|---|---|
+| idle 多数很新 + 光标不动 | 有东西在**合成**输入 | 换掉/关掉那个程序（远程控制类最常见） |
+| idle 多数很新 + 光标在动 | **真有人在用这台电脑** | 不动手（可能是远程控制连进来了） |
+| idle 正常 | 安静 | 正常干活 |
+
+判据是纯逻辑（`classifyInputNoise`），Windows 只负责采样 —— macOS 接上时
+共用同一套判断，不会出现"Windows 严、macOS 松"。
+
+---
+
 ---
 
 ## 验证状态（2026-11-11，Windows 11 x64，v1.3.14）
@@ -193,7 +245,7 @@ PowerShell（`-STA`）读 `[Windows.Forms.Clipboard]::GetImage()`，存成临时
 
 | 项目 | 结果 |
 |---|---|
-| `node server/tests/all.mjs` | 85/85 文件通过 |
+| `node server/tests/all.mjs` | 111/111 文件通过（2026-11-15 更新） |
 | `node scripts/tests/all.mjs` | 32/32 通过 |
 | `pack-windows-test.ps1` | 27 项命令桩检查通过 |
 | `pack-windows-setup-test.ps1` | 错误分支 + 假包真编译 通过 |
