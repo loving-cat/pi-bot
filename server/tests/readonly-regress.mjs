@@ -179,7 +179,19 @@ await test('放行名单是唯一来源：过滤自定义工具和内置工具�
   const roleSrc = fs.readFileSync(new URL('../src/role-tools.js', import.meta.url), 'utf8');
   assert.equal(hookSrc.includes('const MUTATING_TOOLS'), false, 'policy-hook 不应再维护一份名单');
   assert.equal(hookSrc.includes('READONLY_ALLOW'), false, '放行名单不应复制到 policy-hook');
-  assert.equal((roleSrc.match(/export const READONLY_ALLOW/g) ?? []).length, 1);
+  // ★ 放行名单的唯一来源现在是 capabilities.js 的 TOOL_SPECS（声明式）。
+  //   role-tools 只转发，不允许再手写第二份 —— 判据是"整个 src 里只有一处
+  //   真正定义它"。
+  const capSrc = fs.readFileSync(new URL('../src/capabilities.js', import.meta.url), 'utf8');
+  const defines = [
+    ...(capSrc.match(/export const READONLY_ALLOW/g) ?? []),
+    ...(roleSrc.match(/export const READONLY_ALLOW/g) ?? []),
+  ];
+  assert.equal(defines.length, 1, '放行名单只允许定义一处（capabilities.js）');
+  assert.ok(capSrc.includes('export const READONLY_ALLOW'), '定义应当在 capabilities.js');
+  assert.equal((roleSrc.match(/export const READONLY_ALLOW/g) ?? []).length, 0, 'role-tools 只转发不定义');
+  // 声明点：TOOL_SPECS 里每个 readonly:true 的工具
+  assert.ok(capSrc.includes('readonly: true'), '声明式名单在 TOOL_SPECS 里');
   assert.ok(READONLY_ALLOW.includes('read') && !READONLY_ALLOW.includes('run_background'));
   assert.ok(!READONLY_ALLOW.includes('write_stdin'));
 });

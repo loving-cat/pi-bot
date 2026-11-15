@@ -54,6 +54,11 @@ jobs:
         working-directory: server
         # 仓库里没有 package-lock.json（有意不入库），所以用 install 而不是 ci
         run: npm install --omit=dev --no-audit --no-fund
+      - name: Capability manifest drift check
+        working-directory: server
+        # 加能力只该改 src/capabilities.js。派生层里再出现手写工具名就红 ——
+        # 这条护栏防的是"结构慢慢长回去"，那种回归不会报错，只会静默出错。
+        run: node scripts/check-capability-drift.mjs
       - name: Run server unit tests
         working-directory: server
         timeout-minutes: 15

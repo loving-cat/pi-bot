@@ -22,67 +22,26 @@
  * 幂等很重要：`ensureLegacyGrant` 会被反复调用（启动、新建 bot 后、
  * 规矩变更后、网关判前兜底），必须已经存在就不重复建。
  */
+import { createHash } from 'node:crypto';
 import {
   ACTION, MODE, RISK, SOURCE, normalizeGrant,
 } from './grants.js';
-import { createHash } from 'node:crypto';
-import { GATED_ACTIONS, actionsForTools } from './action-catalog.js';
-// role-tools 是叶子模块（内部不 import 任何东西），引用它不会成环。
-// 只读档“允许哪些工具”的唯一来源在它那里，迁移授权的动作清单从这里推导。
-import { READONLY_ALLOW } from './role-tools.js';
+import {
+  CHIEF_ONLY_ACTIONS, MIGRATION_WITHHELD, deriveMigrationActions,
+} from './capabilities.js';
 
 /**
- * 迁移授权应该覆盖哪些动作 —— 「网关上线之前，政策已经允许的全部动作」。
+ * 迁移授权该覆盖哪些动作 —— **实现在 `capabilities.js`**。
  *
- * 这是本项目里唯一允许“推导而不是手写”的授权范围，因为它是**兼容层**：
- * 目的不是新增权限，而是让网关上线不改变现有行为（规格 §11「隔离旧规则与
- * 新策略版本」）。推导的好处是它不会比政策窄 —— 手写清单实测漏过三次：
- * `desktop.observe`、`git.push`、`mcp.add` 都是“工具在、网关却没发授权”，
- * 而且全静默：工具看着在那里，一调就报没有权限。
- *
- * 两个档位的区别就是 policy 本来的区别：
- *   · 只读（`dangerous: 'deny'`）→ 只发“只读放行名单里的工具”所对应的动作 + 读文件
- *   · 其他档位 → 所有有工具的动作（拿掉 `MIGRATION_WITHHELD`）
- *
- * 放宽方向靠什么拦：真正危险的动作仍然要过各自的二次门 ——
- * MCP 与改防线走 `SECURITY_CONFIG_TOOLS` 逐次审批，push 走手机确认。
- * 迁移授权只回答“有没有资格走这条路”，不回答“这一步要不要人点”。
- *
- * @param {object} p
- * @param {boolean} [p.readonly] 当前是不是只读模式
- * @param {boolean} [p.chief] 是不是主 Bot（桌面观察只给它）
- * @returns {string[]}
+ * 这里只转发：动作清单从能力清单推导，不再手写第二份。
+ * 加能力请改 `capabilities.js` 里 `ACTIONS[action].migration`。
  */
 export function migrationActions({ readonly = false, chief = false } = {}) {
-  const base = readonly
-    // 读工具（read/ls/grep/find）本身不过网关，所以 file.read 要单独加上；
-    // 其余的按“只读放行名单里的工具”推导，不再手写第二份清单。
-    ? [ACTION.fileRead, ...actionsForTools(READONLY_ALLOW)]
-    : [ACTION.fileRead, ...GATED_ACTIONS];
-  const withheld = chief ? MIGRATION_WITHHELD : [...MIGRATION_WITHHELD, ...CHIEF_ONLY_ACTIONS];
-  return [...new Set(base.filter((a) => !withheld.includes(a)))];
+  return deriveMigrationActions({ readonly, chief });
 }
 
-/**
- * 只给主 Bot 的动作。
- *
- *   · `desktop.observe` —— 看得到用户整个屏幕。role-tools 的两个桌面工具
- *     本来就在 `CHIEF_ONLY_TOOLS` 里，这里再收一道是为了让**授权记录自己**
- *     说得清：审计里不该出现“某个 project 模式的 bot 有一条看屏幕授权”。
- *   · `git.push` —— 规格 §7.1 的 G2 是“集成动作”。负责人对自己的项目有
- *     本地提交权，但把东西推出本机是主 Bot 的活（而它自己还要过手机确认）。
- */
-export const CHIEF_ONLY_ACTIONS = Object.freeze([ACTION.desktopObserve, ACTION.gitPush]);
-
-/**
- * 拆权时必须默认“不给”的动作（不是“忘了要”，是**故意**扣着）。
- *
- *   · `desktop.input`：桌面输入层还没建（P0-3b），先把格子留出来 ——
- *     等接上时只能是用户新建授权，不能从迁移授权自动继承。
- *   · `git.destructive`：force push / reset --hard / 删分支那类，
- *     规格 §7.1 的 G3，本来就要逐次确认，不该被迁移授权一括。
- */
-export const MIGRATION_WITHHELD = Object.freeze([ACTION.desktopInput, ACTION.gitDestructive]);
+/** 派生转发：故意不继承的动作 / 只给主 Bot 的动作。 */
+export { MIGRATION_WITHHELD, CHIEF_ONLY_ACTIONS };
 
 /**
  * 迁移兼容：把升级前那份全局 policy 记成一条根授权。

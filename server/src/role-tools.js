@@ -1,66 +1,28 @@
 /** 角色能力判定、工具白名单与会话配置签名，不读取持久化状态。 */
 
 /**
- * 只读模式（policy.dangerous === 'deny'）唯一的放行名单。
- * 不在这里的调用一律拒绝：改文件、跑命令、改配置、后台进程、MCP 与扩展工具。
+ * 本文件的所有工具名单都是 **派生**，事实来源在 `capabilities.js`。
+ *
+ * 改造前这里有四份手写清单（只读放行 / 会动手 / 组织类 / 主 Bot 专属），
+ * 加上 action-catalog 的三份、migration-grants 的两份，一个能力要在 7 处登记。
+ * 漏一处不会报错，只会静默出错 —— 这一周实测踩到 4 次。
+ *
+ * 现在这里只做转发和判定逻辑。**加工具请去 `capabilities.js` 的 TOOL_SPECS**。
  */
-export const READONLY_ALLOW = [
-  'read', 'ls', 'grep', 'find',
-  'extract_file', 'web_search', 'web_fetch', 'read_shell',
-  'list_bots', 'list_departments', 'read_department', 'message_bot', 'reply_bot',
-  'list_sites', 'query_site',
-  'list_models', 'list_skills', 'list_department_templates', 'list_local_capabilities',
-  // Git 读操作（status/diff/log/show/branches）是只读的，只读模式放行；
-  // git_add / git_commit 会改仓库，不在名单里（只读模式下会被拒）。
-  'git_status', 'git_diff', 'git_log', 'git_show', 'git_branches',
-  // 桌面观察是**只读**的（看得到、改不了），只读模式也放行。
-  // 但它在网关里仍然要过一次授权（desktop.observe），两层都要过。
-  'desktop_observe', 'desktop_screenshot',
-  'ask_user', 'dispatch_to_department', 'assign_member_task',
-  // 受管阶段报告：只登记模型声明，不碰文件/命令，只读模式也可用
-  'task_report', 'task_expert_review',
-];
+import {
+  READONLY_ALLOW, MUTATING_TOOLS, COORDINATION_TOOLS, CHIEF_ONLY_TOOLS,
+  LEAD_EXTRA_BUILTINS, OPAQUE_SCRIPT_TOOLS, SECURITY_CONFIG_TOOLS,
+} from './capabilities.js';
+
+export {
+  READONLY_ALLOW, MUTATING_TOOLS, COORDINATION_TOOLS, CHIEF_ONLY_TOOLS,
+  LEAD_EXTRA_BUILTINS, OPAQUE_SCRIPT_TOOLS, SECURITY_CONFIG_TOOLS,
+};
+
 const READONLY_ALLOW_SET = new Set(READONLY_ALLOW);
+const COORDINATION_SET = new Set(COORDINATION_TOOLS);
+const CHIEF_ONLY_SET = new Set(CHIEF_ONLY_TOOLS);
 
-/** 需要点批准的「会动手」工具（ask）。只读模式不看这份名单。 */
-export const MUTATING_TOOLS = [
-  'write', 'edit', 'bash', 'powershell',
-  'run_background', 'write_stdin', 'kill_shell',
-  'ego_browser',
-  // git_add 只改索引、git_commit 改历史，都是"动了东西"，ask 档要批准。
-  // git 读操作不在此列（它们不改任何状态）。
-  'git_add', 'git_commit',
-];
-
-/**
- * 改「安全配置本身」的工具：加 MCP 服务、把 MCP 挂到 bot、改策略、
- * 改 hook / 白名单 / 凭据。
- *
- * ★ 和 MUTATING_TOOLS 的区别 —— 这份名单是**无条件**审批：
- *
- *   MUTATING_TOOLS（写文件、跑命令）只在 dangerous=ask 档弹审批，
- *   allow 档放行；而且"本任务授权"（scope=task 的 grant 窗口）能覆盖它。
- *   这没问题：用户已经明确选了这个档位。
- *
- *   但改安全配置不是"做活"，是**改防线本身**：
- *     · 模型能自行 add_mcp_server 一个带任意 command 的本地服务；
- *     · 再 update_bot 把它挂到任意 bot；
- *     · 那之后这个 MCP 的工具就成了它的新执行入口。
- *   这条链上每一步都不该让模型自己走完 —— 不论 allow 还是 ask，
- *   也不论用户之前批准过多少次任务。必须逐次由用户点批准。
- */
-export const SECURITY_CONFIG_TOOLS = [
-  // MCP 库 / 挂载
-  'add_mcp_server', 'update_mcp_server', 'delete_mcp_server',
-  'import_local_capabilities', 'import_local_mcp',
-  // 策略与规矩
-  'set_policy', 'set_department_policy', 'set_room_policy',
-  // hook / 命令规则
-  'add_hook', 'update_hook', 'delete_hook',
-  'set_command_rules', 'set_deny_commands', 'set_allow_commands',
-  // 凭据 / 授权
-  'set_secret', 'delete_secret', 'set_mcp_credential',
-];
 const SECURITY_CONFIG_SET = new Set(SECURITY_CONFIG_TOOLS);
 
 /**
@@ -78,33 +40,21 @@ export function isSecurityConfigCall(tool, input = null) {
   return false;
 }
 
-/** 不透明脚本无法静态核验内部命令，存在命令限制时不开放此执行入口。 */
+/**
+ * 不透明脚本无法静态核验内部命令，存在命令限制时不开放此执行入口。
+ *
+ * ★ 工具名从能力清单读（`OPAQUE_SCRIPT_TOOLS`），不在这里写死 ——
+ *   否则以后再加一个"跑脚本"的工具，这条规则就悄悄漏了。
+ */
 export function opaqueScriptBlockReason(policy, tool) {
-  if (tool !== 'ego_browser') return null;
+  if (!OPAQUE_SCRIPT_TOOLS.includes(tool)) return null;
   return policy?.denyCommands?.length || policy?.allowCommands?.length
     ? '当前命令规则不允许执行无法逐条核验的浏览器脚本。'
     : null;
 }
 
-const COORDINATION_TOOLS = new Set([
-  'list_bots', 'list_departments', 'read_department', 'message_bot', 'reply_bot',
-  'task_report', 'task_plan', 'assign_member_task', 'task_expert_review',
-  // ★ 负责人对自己的项目有 git 权限（用户 2026-11-14 的产品要求）。
-  //   只到"本地提交"这一层：push/merge 是 G2，要用户确认。
-  'git_status', 'git_diff', 'git_log', 'git_show', 'git_branches', 'git_add', 'git_commit',
-  // push 也能调，但它自己会要求确认票据（见 git-ops 的 requiresConfirmation）。
-  // 放在这里的意思是"角色上允许走这条路"，不是"允许直接推"。
-  'git_push',
-]);
 
-/**
- * 负责人总是拿得到的只读内置工具。
- *
- * 这几个是"看一眼就知道在干什么"的基础能力（读文件、列目录、搜文本），
- * 不该因为环境变量里忘了写就失去。执行工具不在这份名单里 ——
- * 那些必须是用户明配置的。
- */
-const LEAD_EXTRA_BUILTINS = new Set(['read', 'ls', 'grep', 'find']);
+const LEAD_EXTRA_SET = new Set(LEAD_EXTRA_BUILTINS);
 
 export function isReadonlyPolicy(policy) {
   return policy?.dangerous === 'deny';
@@ -167,11 +117,11 @@ export function toolsForPolicy(baseTools = [], policy = {}) {
  *   那是配置该干的事，不是代码里静默覆盖。
  */
 export function leadToolAllowed(name, leadTools = []) {
-  if (COORDINATION_TOOLS.has(name)) return true;
+  if (COORDINATION_SET.has(name)) return true;
   // 负责人自己的通道：配置里列了就给（含执行工具）
   if (leadTools.includes(name)) return true;
   // 配置里没列，但它是内置只读工具（默认就有，不依赖配置）
-  return LEAD_EXTRA_BUILTINS.has(name);
+  return LEAD_EXTRA_SET.has(name);
 }
 
 /** 按角色选择内置工具，再应用统一行为策略。 */
@@ -185,14 +135,6 @@ export function toolsForRole({
 }
 
 /** 负责人先按角色过滤；只读模式再按同一份放行名单收掉写工具。 */
-/**
- * 只有主 Bot 能用的工具（规格 §5.3：普通桌面输入默认仅主 Bot 使用）。
- *
- * 观察虽然只读，但**看得到用户整个屏幕**——那本身就是敏感能力。
- * 所以它跟输入一样只给主 Bot；负责人/成员要看某个窗口的内容，
- * 走文件/网页那条线，或者请主 Bot 转述。
- */
-const CHIEF_ONLY_TOOLS = new Set(['desktop_observe', 'desktop_screenshot']);
 
 export function customToolsForRole(tools, { room, bot, policy = {} } = {}) {
   // ★ 负责人不再额外收窄自定义工具。
@@ -202,7 +144,7 @@ export function customToolsForRole(tools, { room, bot, policy = {} } = {}) {
   //   PI_BOT_LEAD_TOOLS，负责人也永远拿不到。能力边界现在只由两处决定：
   //   工具集本身（按配置/角色算出来的那一份）和只读策略。
   const chief = bot?.role === 'main';
-  const list = tools.filter((tool) => chief || !CHIEF_ONLY_TOOLS.has(tool.name));
+  const list = tools.filter((tool) => chief || !CHIEF_ONLY_SET.has(tool.name));
   return isReadonlyPolicy(policy)
     ? list.filter((tool) => readonlyToolAllowed(tool.name)) : list;
 }
