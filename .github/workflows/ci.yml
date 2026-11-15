@@ -59,6 +59,11 @@ jobs:
         # 加能力只该改 src/capabilities.js。派生层里再出现手写工具名就红 ——
         # 这条护栏防的是"结构慢慢长回去"，那种回归不会报错，只会静默出错。
         run: node scripts/check-capability-drift.mjs
+      - name: Permission layer consistency check
+        working-directory: server
+        # 六项一致性：只读漂移 / allow 档覆盖 / 新主体 / 审计完整 /
+        # 窄范围 fail-closed / 空范围不限。这一周的四次静默事故都在这六项里。
+        run: node scripts/check-consistency.mjs
       - name: Run server unit tests
         working-directory: server
         timeout-minutes: 15
