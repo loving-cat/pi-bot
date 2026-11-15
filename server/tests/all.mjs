@@ -42,6 +42,7 @@ const TESTS = [
   'task-file-claims',
   'capabilities',
   'desktop-lease',
+  'desktop-takeover',
   'action-catalog',
   'template-grants',
   'grants',
