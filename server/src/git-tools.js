@@ -31,6 +31,7 @@ import {
   describePushTarget, verifyPushLanded,
 } from './git-ops.js';
 import { buildConfirmation, checkConfirmation, describeConfirmation } from './confirm.js';
+import { isLeadOfRoom } from './role-tools.js';
 
 const ok = (text, details = {}) => ({ content: [{ type: 'text', text }], details });
 const fail = (text, details = {}) => ({ content: [{ type: 'text', text }], details, isError: true });
@@ -81,15 +82,32 @@ function describeStatus(parsed) {
  */
 export function buildGitTools({ runner, store, roomId, botId }) {
   /**
+   * 这个 bot 在这件事上的角色（规格 §7.1 的 G2/G3 角色门）。
+   *
+   * `main` = 主 Bot；`lead` = 当前群的负责人；其余一律 `member`。
+   *
+   * ★ 这个值**从 store 查**，不读模型自述的字符串 —— 模型说自己是主 Bot
+   *   不代表它是。而且这个角色是建工具集时算一次的：工具集跟着 bot 走，
+   *   换个角色会重建工具集。
+   */
+  const actorRole = (() => {
+    const me = store?.getBot?.(botId) ?? null;
+    if (me?.role === 'main') return 'main';
+    const room = roomId ? store?.getRoom?.(roomId) ?? null : null;
+    if (isLeadOfRoom(room, botId)) return 'lead';
+    return 'member';
+  })();
+
+  /**
    * 统一入口：跑一次 git，失败就说清原因。
    * @returns {{ok:true, res:object, repo:string}|{ok:false, text:string}}
    */
-  function run({ repoDir, op, params }) {
+  function run({ repoDir, op, params, confirmation = null }) {
     const repo = resolveRepo(repoDir);
     if (!repo) {
       return { ok: false, text: `只能在你的工作目录里操作仓库（${config.workspace}）。指定的路径在目录之外。` };
     }
-    const res = runGit({ repoDir: repo, op, params });
+    const res = runGit({ repoDir: repo, op, params, confirmation, actor: { role: actorRole } });
     if (res.refused) return { ok: false, text: res.error };
     // ★ 默认仓库是工作目录本身，而工作目录通常不是仓库（里面才是）。
     //   直接抛 "不在任何 git 仓库里" 会让人以为是权限问题，所以补一句怎么用。
@@ -449,6 +467,145 @@ export function buildGitTools({ runner, store, roomId, botId }) {
         return ok(lines.join('\n'), { ticket: saved.id, display: described.display });
       },
     }),
+
+    // ---------------- G2/G3：合并 / 变基 / 重置 / 清理（只给主 Bot 与负责人） ----------------
+    //
+    // ★ 为什么四个操作共用一个工具：它们的流程完全一样（算目标 → 要确认 →
+    //   带票执行），拆成四个只是把同一段确认逻辑抄四遍。真正区分它们的是
+    //   `op` 和参数模板（都在 git-ops 的表里，不在这里手写 argv）。
+    //
+    // ★ 角色门在 runGit 里，也在这里：不是负责人就**连这个工具都不给**。
+    //   两层都要有 —— 藏工具挡不住内部直接调 runGit。
+    ...(actorRole === 'main' || actorRole === 'lead' ? [defineTool({
+      name: 'git_destructive',
+      label: '★ 改共享分支 / 丢代码的 Git 操作',
+      description:
+        '合并、变基、重置、清理 —— 这四个会改共享分支或丢代码，所以：\n'
+        + '· **必须先在手机上确认**（本机点批准不算数）；\n'
+        + '· 只给主 Bot 和负责人，执行 Bot 拿不到这个工具。\n'
+        + '\n'
+        + 'op 的取值与它能做什么：\n'
+        + '· merge：把 ref 合进当前分支（--no-edit，不自动开编辑器）\n'
+        + '· rebase：把当前分支变基到 ref 上（会改写历史）\n'
+        + '· reset：把 HEAD 挪到 ref；**只支持 --soft 和 --mixed**，不提供 --hard\n'
+        + '· clean：默认只**列出**会删什么（-nd）；真要删必须显式 apply=true\n'
+        + '\n'
+        + '第一次调用（不带 ticket）只会生成确认请求并说清它到底会做什么；'
+        + '批准后带 ticket 再调一次才真的执行。',
+      parameters: Type.Object({
+        op: Type.Union([
+          Type.Literal('merge'), Type.Literal('rebase'),
+          Type.Literal('reset'), Type.Literal('clean'),
+        ], { description: 'merge / rebase / reset / clean' }),
+        repo: Type.Optional(Type.String({ description: '仓库路径（默认工作目录）' })),
+        ref: Type.Optional(Type.String({ description: 'merge/rebase/reset 的目标引用，例如 origin/main 或 HEAD~1' })),
+        mode: Type.Optional(Type.Union([
+          Type.Literal('soft'), Type.Literal('mixed'),
+        ], { description: 'reset 的模式（只有这两个；不支持 hard）' })),
+        apply: Type.Optional(Type.Boolean({ description: 'clean 时是否真的删（默认只列出会删什么）' })),
+        ticket: Type.Optional(Type.String({ description: '上一次调用生成的确认票据 id' })),
+      }),
+      execute: async (_toolCallId, { op, repo, ref, mode, apply, ticket }) => {
+        const key = String(op ?? '');
+        if (!GIT_OPERATIONS[key]?.roles) {
+          return fail(`不支持的操作「${key}」。可用：merge / rebase / reset / clean`);
+        }
+        const target = resolveRepo(repo);
+        if (!target) return fail(`只能在你的工作目录里操作仓库（${config.workspace}）。`);
+
+        // 目标摘要：**这五项一起构成"用户到底在批什么"**
+        const describeTarget = () => ({
+          repo: path.relative(config.workspace, target) || '.',
+          op: key,
+          ref: String(ref ?? (key === 'reset' ? 'HEAD' : '')).trim(),
+          mode: key === 'reset' ? (['soft', 'mixed'].includes(String(mode)) ? String(mode) : 'mixed') : null,
+          apply: key === 'clean' ? apply === true : null,
+        });
+        const summaryOf = (t) => {
+          if (t.op === 'merge') return `把 ${t.ref || '?'} 合并进当前分支`;
+          if (t.op === 'rebase') return `把当前分支变基到 ${t.ref || '?'}`;
+          if (t.op === 'reset') return `把 HEAD 重置到 ${t.ref}（--${t.mode}）`;
+          return t.apply ? '删掉未跟踪的文件/目录（clean -fd）' : '先看看 clean 会删掉什么（不真删）';
+        };
+
+        // ---- 带票执行 ----
+        if (ticket) {
+          const existing = store.getConfirmation(String(ticket));
+          if (!existing) return fail(`找不到确认票据 ${ticket}。先不带 ticket 调一次，生成确认请求。`);
+          // ★ 重算目标：不能拿确认里存的那份自我比对（否则参数改了也照样放行）
+          const nowTarget = describeTarget();
+          const verdict = checkConfirmation({
+            confirmation: existing,
+            target: nowTarget,
+            policyRevision: store.policyVersion(),
+          });
+          if (!verdict.ok) {
+            return fail(`这次 ${key} 不能执行：${verdict.text}（${verdict.code}）`);
+          }
+          const res = run({
+            repoDir: target, op: key, confirmation: existing,
+            params: { ref: nowTarget.ref, mode: nowTarget.mode, apply: nowTarget.apply },
+          });
+          if (!res.ok) return fail(res.text);
+          store.consumeConfirmation(existing.id);
+          log(`🛡 ${key} 已执行（确认来自 ${existing.decidedByDeviceName || existing.channel}）`);
+          return ok(
+            `${key} 执行完了：${summaryOf(nowTarget)}\n${(res.res.stdout || '').trim().slice(0, 1500) || '(没有输出)'}`,
+            { op: key, target: nowTarget },
+          );
+        }
+
+        // ---- 不带票：生成确认请求 ----
+        // clean 不 apply 时**不删东西**，不必惊动用户
+        if (key === 'clean' && apply !== true) {
+          const res = run({ repoDir: target, op: 'clean', params: {} });
+          if (!res.ok) return fail(res.text);
+          return ok(
+            `先看看 clean 会删什么（没有真删）：\n${(res.res.stdout || '').trim() || '(没有要删的)'}\n`
+            + '真要删就带 apply=true 再调一次 —— 那一步会请用户在手机上确认。',
+          );
+        }
+
+        const nowTarget = describeTarget();
+        const summary = summaryOf(nowTarget);
+        const confirmation = {
+          ...buildConfirmation({
+            id: `cf_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+            action: 'git.destructive',
+            target: nowTarget,
+            summary,
+            requestedBy: botId,
+            roomId,
+            policyRevision: store.policyVersion(),
+          }),
+          targetJson: JSON.stringify(nowTarget),
+        };
+        const saved = store.requestConfirmation(confirmation);
+        store.appendMessage({
+          roomId,
+          authorType: 'bot',
+          authorId: botId,
+          authorName: store.getBot(botId)?.name ?? '',
+          authorEmoji: store.getBot(botId)?.emoji ?? null,
+          kind: 'confirmation',
+          text: `${store.getBot(botId)?.name ?? '它'} 想改共享分支 / 丢代码，等你在手机上确认：${summary}`,
+          status: 'done',
+          meta: { confirmationId: saved.id, action: 'git.destructive' },
+        });
+        log(`🛡 ${store.getBot(botId)?.name ?? botId} 请求 ${key} 确认：${summary}`);
+
+        return ok(
+          [
+            `要做的（还没做）：${summary}`,
+            `仓库：${nowTarget.repo}${nowTarget.ref ? `   引用：${nowTarget.ref}` : ''}`,
+            '',
+            '已经在会话里发了确认卡片。**这一步必须在手机上点批准**——本机桌面上的批准不算数。',
+            `批准后带 ticket=${saved.id} 再调一次 git_destructive 才会真的执行。`,
+          ].join('\n'),
+          { ticket: saved.id, target: nowTarget },
+        );
+      },
+    })] : []),
   ];
 }
 

@@ -119,6 +119,51 @@ export const GIT_OPERATIONS = Object.freeze({
    *   · 不给 `--force` / `--force-with-lease`（那是 G3，表里没有）
    *   · 不给 `--all` / `--tags` / `--mirror`（一次推一堆引用没法确认"推了什么"）
    */
+  /**
+   * G2/G3：会改共享分支或丢代码的四个操作。
+   *
+   * ★ 参数全部**固定成模板**，不接自由 argv。理由和 push 一样：
+   *   确认票据绑的是"用户到底在批什么"，参数一旦自由，那张票描述的对象
+   *   模型可以自己改（用户批了"合并到 main"，执行时变成"reset --hard"）。
+   *
+   * ★ `roles: ['main','lead']` —— 产品决定：这四个只给主 Bot 和负责人。
+   *   执行 Bot（member）连工具都拿不到，拿到了也会被 runGit 挡下。
+   */
+  merge: {
+    needs: 'git.destructive',
+    mutates: true,
+    requiresConfirmation: true,
+    roles: Object.freeze(['main', 'lead']),
+    args: (p) => ['merge', '--no-edit', String(p.ref ?? '')].filter(Boolean),
+  },
+  rebase: {
+    needs: 'git.destructive',
+    mutates: true,
+    requiresConfirmation: true,
+    roles: Object.freeze(['main', 'lead']),
+    args: (p) => ['rebase', String(p.ref ?? '')].filter(Boolean),
+  },
+  reset: {
+    needs: 'git.destructive',
+    mutates: true,
+    requiresConfirmation: true,
+    roles: Object.freeze(['main', 'lead']),
+    // 只接受 --soft / --mixed；`--hard` 会丢工作区改动，表里根本不提供。
+    // 调用方传了别的值也在这里**夹回去**，不给"参数拼错的自由"。
+    args: (p) => {
+      const mode = ['soft', 'mixed'].includes(String(p.mode)) ? String(p.mode) : 'mixed';
+      return ['reset', `--${mode}`, String(p.ref ?? 'HEAD')];
+    },
+  },
+  clean: {
+    needs: 'git.destructive',
+    mutates: true,
+    requiresConfirmation: true,
+    roles: Object.freeze(['main', 'lead']),
+    // 永远先 -n（只说会删什么），真删要显式 apply。
+    args: (p) => (p.apply === true ? ['clean', '-fd'] : ['clean', '-nd']),
+  },
+
   push: {
     needs: 'git.push',
     mutates: true,
@@ -133,16 +178,14 @@ export const GIT_OPERATIONS = Object.freeze({
 
 /** 明确拒绝的操作 —— 不是"忘了实现"，是刻意不给。 */
 export const REFUSED_OPERATIONS = Object.freeze({
-  // push 现在**是**可用的（见 GIT_OPERATIONS.push），但必须先过确认。
-  // 这几个仍然不给 —— 它们是 G3，改动比 push 更难收拾：
-  merge: 'merge 改共享分支，属于 G2/G3：要具体确认（现在不提供）。',
-  rebase: 'rebase 改写历史，属于 G2/G3：要确认（现在不提供）。',
-  reset: 'reset 可能丢工作区改动，属于 G3：需要用户确认，这里不提供。',
-  clean: 'clean 会删未跟踪文件，属于 G3：需要用户确认，这里不提供。',
-  'push --force': 'force push 属于 G3：要确认，这里不提供。'
-    + '（普通 push 可用，但要手机确认；force 连那条路都不给。）',
-  'remote set-url': '改远端属于 G3：要确认，这里不提供。',
-  hooks: '改 hooks 属于 G3：那是在改"提交时会执行什么"，需要用户确认。',
+  // push / merge / rebase / reset / clean 都可用了，但**都要确认**，
+  // 而且后四个只给主 Bot 与负责人（见 GIT_OPERATIONS 里的 roles）。
+  //
+  // 下面这几个仍然不给，理由各不相同、都不是"忘了实现"：
+  'push --force': 'force push 属于 G3：它会覆盖别人的提交，且本地无法核对远端被推掉了什么。'
+    + '要改远端历史，只能用普通 push + 明确的分支操作，不提供这一步。',
+  'remote set-url': '改远端等于改"代码去哪儿"：需要用户确认，而这里没有一条能绑住目的地的确认。',
+  hooks: '改 hooks 属于 G3：那是在改"提交时会执行什么"，等于改执行链本身。',
 });
 
 /**
@@ -349,6 +392,8 @@ export function runGit({
   repoDir, op, params = {}, gitFile = null, timeoutMs = DEFAULT_TIMEOUT_MS,
   /** 确认票据：只有 requiresConfirmation 的操作需要它。 */
   confirmation = null,
+  /** 发起者角色（`{role: 'main'|'lead'|'member'}`）—— 角色门要用。 */
+  actor = null,
 } = {}) {
   const key = String(op ?? '');
   if (REFUSED_OPERATIONS[key]) {
@@ -370,6 +415,22 @@ export function runGit({
   //   票据的校验（目标摘要、通道、过期、一次一用）在 confirm.js 里，
   //   这里只确认"你带了票据且它自称已批准" —— 真正的校验由调用方
   //   在更外层做完（它知道当前策略版本）。
+  // ★ 角色门：有些操作只给主 Bot 与负责人（规格 §7.1 的 G2/G3）。
+  //
+  //   为什么不只靠工具层藏工具：藏起来的工具挡不住"直接调 runGit"的内部调用，
+  //   而"能执行这条路"应该只有一条。这里的判定也不信自称的角色字符串 ——
+  //   调用方给的是它从 store 查出来的实际 role。
+  if (Array.isArray(spec.roles) && spec.roles.length) {
+    const role = String(actor?.role ?? '');
+    if (!spec.roles.includes(role)) {
+      return {
+        ok: false, op: key, refused: true,
+        error: `${key} 只给主 Bot 与负责人（当前角色：${role || '未知'}）。`
+          + '执行 Bot 不能改写共享分支或丢代码 —— 需要的话请负责人来做。',
+      };
+    }
+  }
+
   if (spec.requiresConfirmation) {
     if (!confirmation) {
       return {

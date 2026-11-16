@@ -291,14 +291,28 @@ await test('hooks 拦下提交时，退出码非 0 且明确报错', () => {
 });
 
 // ---------------------------------------------------------------- 白名单
-await test('★ reset / clean / merge / rebase 明确拒绝（不是悄悄失败）', () => {
+await test('★ merge / rebase / reset / clean：没有确认票据就拒，而且角色不对也拒', () => {
   for (const op of ['merge', 'rebase', 'reset', 'clean']) {
-    const r = runGit({ repoDir: repo, op });
-    assert.equal(r.ok, false, op + ' 应当被拒');
+    // ① 没票据 → 拒（和 push 同一条路：先确认再执行）
+    const r = runGit({ repoDir: repo, op, params: { ref: 'HEAD', apply: true }, actor: { role: 'main' } });
+    assert.equal(r.ok, false, op + ' 没有票据应当被拒');
     assert.equal(r.refused, true, op + ' 应当标成 refused');
-    assert.ok(r.error && r.error.length > 10, op + ' 要说清为什么不给');
+    assert.match(r.error, /确认/, op + ' 要说明"必须先确认"');
   }
-  assert.ok(Object.keys(REFUSED_OPERATIONS).length >= 4);
+  // ② 执行 Bot 连票据都不给用（角色门在 runGit 里，不只靠藏工具）
+  const member = runGit({
+    repoDir: repo, op: 'reset', params: { ref: 'HEAD' },
+    confirmation: { decision: 'approved' }, actor: { role: 'member' },
+  });
+  assert.equal(member.ok, false);
+  assert.match(member.error, /只给主 Bot 与负责人/);
+  // ③ 负责人可以（票据伪造由外层 checkConfirmation 负责，这里只验角色门）
+  const lead = runGit({
+    repoDir: repo, op: 'reset', params: { ref: 'HEAD' },
+    confirmation: { decision: 'approved' }, actor: { role: 'lead' },
+  });
+  assert.notEqual(lead.refused === true && /只给主 Bot/.test(lead.error ?? ''), true);
+  assert.ok(Object.keys(REFUSED_OPERATIONS).length >= 1, '还剩几个仍然不给的');
 });
 
 await test('★ push 可以用，但没有确认票据就拒（不可绕过）', () => {
@@ -333,13 +347,22 @@ await test('未知操作也说清可用列表', () => {
   assert.match(r.error, /status/);
 });
 
-await test('白名单：push 在，但标了 requiresConfirmation；reset/clean 不在', () => {
-  assert.ok(Object.keys(GIT_OPERATIONS).includes('push'), 'push 现在可用');
+await test('白名单：五个会改共享分支/丢代码的都标了 requiresConfirmation 与角色门', () => {
   assert.equal(GIT_OPERATIONS.push.requiresConfirmation, true, 'push 必须有确认');
   assert.equal(GIT_OPERATIONS.commit.requiresConfirmation, undefined, '本地提交不需要确认');
-  for (const bad of ['reset', 'clean', 'merge', 'rebase']) {
-    assert.ok(!Object.keys(GIT_OPERATIONS).includes(bad), bad + ' 不该在白名单里');
+  for (const op of ['merge', 'rebase', 'reset', 'clean']) {
+    const spec = GIT_OPERATIONS[op];
+    assert.ok(spec, op + ' 现在应当可用');
+    assert.equal(spec.requiresConfirmation, true, op + ' 必须有确认');
+    assert.equal(spec.needs, 'git.destructive', op + ' 走 git.destructive 授权（迁移授权永不给）');
+    assert.deepEqual([...spec.roles].sort(), ['lead', 'main'], op + ' 只给主 Bot 与负责人');
   }
+  // reset 只提供 soft/mixed：参数模板会把别的值夹回去
+  assert.deepEqual(GIT_OPERATIONS.reset.args({ ref: 'HEAD~1', mode: 'hard' }), ['reset', '--mixed', 'HEAD~1']);
+  assert.deepEqual(GIT_OPERATIONS.clean.args({}), ['clean', '-nd'], '默认只说会删什么');
+  assert.deepEqual(GIT_OPERATIONS.clean.args({ apply: true }), ['clean', '-fd']);
+  // force push 仍然不给
+  assert.ok(REFUSED_OPERATIONS['push --force']);
 });
 
 await test('每个读操作都标了 mutates: false', () => {

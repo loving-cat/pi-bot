@@ -220,6 +220,18 @@ export const TOOL_SPECS = Object.freeze({
   // ---------------- git.push（动作本身只给主 Bot，见 ACTIONS 的 migration）
   git_push: { action: ACTION.gitPush, coordination: true, target: { kind: 'path', fields: ['repo'] } },
 
+  // ---------------- git.destructive（G2/G3：合并 / 变基 / 重置 / 清理）
+  //
+  // ★ 一个工具覆盖四个操作，因为流程完全一样（算目标 → 手机确认 → 带票执行）。
+  //   角色门（只给主 Bot 与负责人）在 git-ops 的 `roles` 与 git-tools 里，
+  //   这里只声明"它产生哪个动作"。
+  git_destructive: {
+    action: ACTION.gitDestructive,
+    mutating: true,
+    coordination: true,
+    target: { kind: 'path', fields: ['repo'] },
+  },
+
   // ---------------- desktop.observe
   desktop_observe: { action: ACTION.desktopObserve, readonly: true, chiefOnly: true },
   desktop_screenshot: { action: ACTION.desktopObserve, readonly: true, chiefOnly: true },
