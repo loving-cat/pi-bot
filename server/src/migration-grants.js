@@ -166,10 +166,16 @@ export function ensureLegacyGrant({ store, policy, policyRevision, botIds = [], 
       risk: RISK.medium,
       mode: isChief ? MODE.host : MODE.project,
       policyRevision: policyRevision ? String(policyRevision) : null,
-      // 实例世代：记下“这条授权是哪个进程发的”。重启后网关拿新世代一比就作废
-      // （规格 §6.3 后台任务不得续接旧权限）。签发时不写、校验时却比，
-      // 会让重启后的旧授权被当成合法——两边都得有值。
-      generation: generation ? String(generation) : null,
+      // ★ 迁移授权**不绑世代**（2026-11-16 修正）。
+      //
+      //   它描述的是"升级前那份规矩允许什么"，是长期事实，与哪个进程无关。
+      //   以前这里写了世代，而 `existing` 分支又不会刷新它 ——
+      //   于是每次重启，**所有 bot 的迁移授权同时失效**，
+      //   用户看到"授权属于旧世代"，实际上一条都没被收回。
+      //
+      //   §6.3 的"重启不续命"针对的是任务级授权（带 taskId 的那些），
+      //   由 `grant-gate.add` 单独盖世代。
+      generation: null,
       // ★ 不能再转授：迁移来的授权只是“保持升级前的行为”，不是新增的授权能力。
       canDelegate: false,
       maxUses: null,

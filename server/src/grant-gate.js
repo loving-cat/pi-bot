@@ -299,6 +299,11 @@ export function createGrantGate({
    * 保留这个方法名是为了不动 policy-hook 那条调用链；
    * 认法（读哪个字段）不再散在这里，加工具时改一处就够。
    */
+  /** 当前实例世代（只读，给界面对账用：任务级授权跨重启就失效）。 */
+  function currentGenerationId() {
+    return typeof currentGeneration === 'function' ? (currentGeneration() ?? null) : (currentGeneration ?? null);
+  }
+
   function targetsForTool(toolName, input = {}) {
     return catalogTargetsForTool(toolName, input);
   }
@@ -324,16 +329,23 @@ export function createGrantGate({
    * 模型与其他 Bot 只能通过 `derive()` 派生子集。
    */
   function add(spec) {
-    // ★ 调用方没写世代时，按**当前世代**落盘。
+    // ★ **只有任务级授权才盖世代**（2026-11-16 修正）。
     //
-    //   规格 §6.3：后台任务不得续接旧权限，重启后旧授权作废。
-    //   但这条得两边都写才有意义：如果签发时不写、校验时又拿着世代去比，
-    //   结果是“刚连出来的授权永远是空的”。这里不写就填现状，
-    //   让每条新授权都带上“它属于哪个进程”。
+    //   规格 §6.3 要防的是"上个进程批准的后台任务，重启后继续跑"——
+    //   那说的是**任务级**授权（带 `taskId`）。
+    //
+    //   以前这里给**所有**新授权都盖上当前世代，后果是：用户批过的长期授权
+    //   （项目授权、首启页那条、迁移授权）每重启一次就全部 `generation_stale`。
+    //   用户看到的原话是"授权属于旧世代" —— 而他明明批过、也没收回。
+    //
+    //   现在的规则：
+    //   · 带 `taskId` 的（这次任务临时给的）→ 盖世代，重启即失效（符合 §6.3）；
+    //   · 其余（用户/规矩立的长期授权）→ **不盖**，活到你撤销或到期为止。
     const stamp = typeof currentGeneration === 'function' ? currentGeneration() : currentGeneration;
+    const taskScoped = Boolean(spec?.taskId);
     const built = normalizeGrant({
       ...spec,
-      generation: spec?.generation === undefined ? stamp ?? null : spec.generation,
+      generation: spec?.generation === undefined ? (taskScoped ? stamp ?? null : null) : spec.generation,
       id: spec?.id ?? `gr_${randomUUID().replace(/-/g, '').slice(0, 20)}`,
       createdAt: spec?.createdAt ?? Date.now(),
     });
@@ -465,6 +477,7 @@ export function createGrantGate({
   return {
     check: checkAndCatchUp,
     consume, add, revoke, list, recentAudit, actionForTool, targetsForTool, lookup,
+    currentGeneration: currentGenerationId,
     ensureForBots, start, setSyncGrants,
   };
 }

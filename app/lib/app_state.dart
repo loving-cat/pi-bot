@@ -140,6 +140,9 @@ class AppState extends ChangeNotifier {
   List<GrantView> grants = const [];
   bool grantsLoaded = false;
 
+  /// 服务端当前实例世代（任务级授权绑它；跨重启就失效）。
+  String? grantGeneration;
+
   /// 服务端当前规矩版本。授权记录里的 policyRevision 和它对不上，
   /// 那条授权此刻已经被网关按 policy_changed 拒掉了，界面上要标出来。
   String? grantPolicyRevision;
@@ -1355,6 +1358,7 @@ class AppState extends ChangeNotifier {
       final json = await api!.get('/api/grants');
       grants = grantsFromResponse(json);
       grantPolicyRevision = json['policyRevision'] as String?;
+      grantGeneration = json['generation'] as String?;
       grantsLoaded = true;
       _notify();
     } catch (err) {

@@ -142,6 +142,7 @@ const TESTS = [
   'grant-reconcile',
   'delegated-delivery',
   'preferences',
+  'grant-generation',
 ];
 
 let failed = 0;

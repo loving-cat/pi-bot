@@ -693,6 +693,10 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
           grants: gate.list({ botId: botId || null }),
           // 顺带给出"当前规矩版本"，界面能看出哪些授权是基于旧规矩的
           policyRevision: store.policyVersion(),
+          // ★ 当前实例世代：任务级授权（带 taskId）绑了它，重启后就失效。
+          //   界面要能标出来 —— 否则用户看到"授权开着"却一直被拒
+          //   （2026-11-16 实际发生过）。
+          generation: gate.currentGeneration?.() ?? null,
         });
       }
 

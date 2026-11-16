@@ -47,6 +47,7 @@ class GrantView {
     this.resourceRefs = const [],
     this.mode = '',
     this.policyRevision,
+    this.generation,
     this.expiresAt,
     this.maxUses,
     this.usedUses = 0,
@@ -65,6 +66,13 @@ class GrantView {
 
   /// 这条授权是基于哪一版规矩批的。和当前版本不一致时它已经不管用了。
   final String? policyRevision;
+
+  /// 这条授权绑在哪个进程实例上 —— **只有任务级授权才有值**。
+  ///
+  /// 规格 §6.3：上个进程给任务的批准，重启后不该续命。所以任务级授权带世代，
+  /// 而用户/规矩立的长期授权**不带**（它们不该因为重启失效 ——
+  /// 2026-11-16 修过一个 bug：以前所有授权都带，重启一次全灭）。
+  final String? generation;
   final int? expiresAt;
   final int? maxUses;
   final int usedUses;
@@ -86,6 +94,7 @@ class GrantView {
         .toList(),
     mode: json['mode'] as String? ?? '',
     policyRevision: json['policyRevision'] as String?,
+    generation: json['generation'] as String?,
     expiresAt: (json['expiresAt'] as num?)?.toInt(),
     maxUses: (json['maxUses'] as num?)?.toInt(),
     usedUses: (json['usedUses'] as num?)?.toInt() ?? 0,
@@ -99,6 +108,17 @@ class GrantView {
   bool staleForPolicy(String? currentRevision) {
     final mine = policyRevision;
     final now = currentRevision;
+    if (mine == null || mine.isEmpty || now == null || now.isEmpty) return false;
+    return mine != now;
+  }
+
+  /// 这条授权是不是**本实例不可用**（任务级授权跨重启就失效）。
+  ///
+  /// 只比"两边都非空"：长期授权不带世代，拿 null 去比会把它全标成不可用，
+  /// 反而制造噪音（和 `staleForPolicy` 同一个口径）。
+  bool staleForGeneration(String? currentGeneration) {
+    final mine = generation;
+    final now = currentGeneration;
     if (mine == null || mine.isEmpty || now == null || now.isEmpty) return false;
     return mine != now;
   }

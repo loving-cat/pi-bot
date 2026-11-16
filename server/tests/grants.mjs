@@ -575,7 +575,12 @@ await test('新 bot 不会“存在但没有任何授权”（运行期补登记
   gate.check({ subject: { botId: newborn.id }, action: ACTION.fileRead });
   assert.equal(store.state.grants.filter((g) => g.subject?.botId === newborn.id).length, 1);
 });
-await test('新授权落盘时带上当前世代（否则重启后旧批准永远不会作废）', () => {
+// ★ 2026-11-16 修正：世代号只属于**任务级**授权。
+//
+//   原来给所有新授权都盖当前世代，后果是用户批过的长期授权每重启一次
+//   就全部 generation_stale（用户看到的原话："授权属于旧世代"）。
+//   §6.3 要防的是"上个进程批准的后台任务继续跑"，那说的是带 taskId 的那些。
+await test('★ 长期授权（无 taskId）不盖世代 —— 重启后不能失效', () => {
   store.state.grants = [];
   const gate = createGrantGate({ store, currentPolicyRevision: () => 'p1', currentGeneration: () => 'gen-new' });
   const out = gate.add({
@@ -587,22 +592,46 @@ await test('新授权落盘时带上当前世代（否则重启后旧批准永�
   });
   assert.equal(out.ok, true, JSON.stringify(out));
   const saved = store.state.grants.find((g) => g.id === out.grant.id);
-  assert.equal(saved.generation, 'gen-new', '签发时不写世代，校验时又拿着世代去比 —— 结果就是永不生效/永不过期');
+  assert.equal(saved.generation, null, '长期授权不该绑世代（否则下次重启又是同一个坑）');
   assert.equal(gate.check({ subject: { botId: chief.id }, action: ACTION.fileRead }).ok, true);
+
+  // 换一个进程世代（等价于重启）→ 仍然放行
+  const gate2 = createGrantGate({ store, currentPolicyRevision: () => 'p1', currentGeneration: () => 'gen-next' });
+  assert.equal(gate2.check({ subject: { botId: chief.id }, action: ACTION.fileRead }).ok, true,
+    '用户批过、没收回的长期授权，重启之后仍然有效');
 });
-await test('迁移授权也记世代：重启后旧批准不续命', () => {
+
+await test('★ 任务级授权（带 taskId）盖世代 —— 重启后作废（§6.3 原意）', () => {
+  store.state.grants = [];
+  const gate = createGrantGate({ store, currentPolicyRevision: () => 'p1', currentGeneration: () => 'gen-new' });
+  const out = gate.add({
+    source: 'user',
+    subject: { botId: chief.id, role: 'main' },
+    taskId: 'tr_1',
+    actions: [ACTION.fileRead],
+    resources: [],
+    mode: 'host',
+  });
+  assert.equal(out.ok, true, JSON.stringify(out));
+  const saved = store.state.grants.find((g) => g.id === out.grant.id);
+  assert.equal(saved.generation, 'gen-new', '任务级的必须绑进程');
+  const gate2 = createGrantGate({ store, currentPolicyRevision: () => 'p1', currentGeneration: () => 'gen-next' });
+  const verdict = gate2.check({ subject: { botId: chief.id }, action: ACTION.fileRead });
+  assert.equal(verdict.ok, false, '上个进程给这个任务的批准，重启后不该续命');
+  assert.equal(verdict.code, DENY.generationStale);
+});
+await test('★ 迁移授权也不绑世代（它是长期事实，不是某个进程的批准）', () => {
   store.state.grants = [];
   const mk = (gen) => ensureLegacyGrant({
     store, policy: { dangerous: 'allow' }, policyRevision: 'p1',
     botIds: [chief.id], chiefBotId: chief.id, generation: gen,
   });
   mk('gen-A');
-  assert.equal(store.state.grants[0].generation, 'gen-A');
-  // 换一个进程世代：旧授权还在盘上，但它属于上一个进程
+  assert.equal(store.state.grants[0].generation, null, '迁移授权绑世代 = 每次重启全员失去权限');
+  // 换一个进程世代（等价于重启）：仍然放行
   const gate = createGrantGate({ store, currentPolicyRevision: () => 'p1', currentGeneration: () => 'gen-B' });
   const verdict = gate.check({ subject: { botId: chief.id }, action: ACTION.fileRead });
-  assert.equal(verdict.ok, false);
-  assert.equal(verdict.code, DENY.generationStale, verdict.text);
+  assert.equal(verdict.ok, true, `重启后迁移授权仍然有效：${verdict.text ?? ''}`);
 });
 // ---------------------------------------------------------------- 用户收回
 await test('★ 用户收回之后，自动补登记不能再发回来（规格 §11）', () => {

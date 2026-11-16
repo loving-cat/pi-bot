@@ -18,6 +18,7 @@ import { pruneScreenshots } from './desktop-observe.js';
 import { sweepIdleIslands, isSupported as islandSupported } from './desktop-island-win.js';
 import { pruneLoginSnapshots } from './island-login.js';
 import { applyReconcile } from './grant-reconcile.js';
+import { applyRestamp } from './grant-generation.js';
 import { createTaskCommands } from './tasks/task-commands.js';
 import { intakeEnabled } from './coordination/intake-tool.js';
 import { createGrantGate } from './grant-gate.js';
@@ -152,6 +153,20 @@ async function main() {
     bus,
   });
   runner.grantGate.start();
+
+  // ★ 规格 §6.3：世代号要防的是"上个进程批准的后台动作继续跑"，
+  //   不是"用户给的长期授权重启就没了"。
+  //
+  //   实测的坑：`ensureLegacyGrant` 看到同名同规矩的迁移授权还在，就走
+  //   `existing` 分支 —— 不重发、也不刷新世代；而用户给的长期授权盖的是
+  //   上一条进程的世代。于是**重启一次，所有长期授权全部 `generation_stale`**，
+  //   用户会看到"我的联网授权属于旧世代"。这里把站得住的那些续到本代，
+  //   任务级（带 taskId）的照旧让它过期。
+  try {
+    applyRestamp({ store, generation: SERVER_GENERATION, log });
+  } catch (err) {
+    log('授权世代续期失败：' + (err?.message ?? err));
+  }
 
   // ★ 规格 §6.3「级联回收」：启动时把"手里的授权"和"现在的事实"对一遍。
   //
