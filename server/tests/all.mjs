@@ -143,6 +143,7 @@ const TESTS = [
   'delegated-delivery',
   'preferences',
   'grant-generation',
+  'headless-browser',
 ];
 
 let failed = 0;

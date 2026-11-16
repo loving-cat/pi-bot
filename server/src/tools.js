@@ -30,6 +30,7 @@ import {
 import { describePlan, MAX_CLICKS } from './desktop-input.js';
 import { buildIslandTools } from './desktop-island-tools.js';
 import { buildGrantRequestTools } from './grant-request-tools.js';
+import { buildResearchBrowserTools } from './research-browser-tools.js';
 import { mirrorDelegatedResult } from './delegated-delivery.js';
 import { verdictForTool, commitStdin, resetStdin } from './shell-policy.js';
 import { readonlyBlockReason, opaqueScriptBlockReason, isLeadOfRoom } from './role-tools.js';
@@ -515,6 +516,10 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
     //
     // 主 Bot 与**部门负责人**可以发起；批准只能在手机上点。
     // 为什么不让成员申请：他不知道也不在乎"给谁、多久"，用户更难判断。
+    // ---------------- 后台浏览器（调研专用，不占用户屏幕） ----------------
+    //
+    // 补的是"要登录态 + 要 JS + 用户不用看"这一档 —— 之前只有 ego（会弹窗）。
+    ...buildResearchBrowserTools({ botId, roomId }),
     ...buildGrantRequestTools({
       store,
       botId,

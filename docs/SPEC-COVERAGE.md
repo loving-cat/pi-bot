@@ -35,7 +35,8 @@
 
 | 条款 | 状态 | 实际 / 差距 | 怎么核的 |
 |---|---|---|---|
-| 一条判据：要不要用户用眼睛看 → 前台 ego / 后台岛 | ✅ | 写进 `system-prompt.js`（所有 bot）+ `ego_browser` 工具描述第一段 | `tests/unit.mjs` 提示词用例 |
+| 一条判据：要不要用户用眼睛看 → 前台 ego / 后台 browser_research | ✅ 新档位 | 写进 `system-prompt.js`（所有 bot）+ `ego_browser` 工具描述第一段 | `tests/unit.mjs` 提示词用例 |
+| 后台浏览器（调研不占屏）：岛里真窗口 + CDP，或 headless | ✅ 新增 |
 | ego 三条硬约束（不进全屏 / 强制退全屏 / 可接手） | ✅ | 前两条在提示词；**退全屏由服务端强制**（`ego-browser.js` 的 `buildFullscreenCleanupScript`，脚本跑完自动执行） | `tests/ego-browser.mjs`（含"每步 try/catch、不 handOff"） |
 | 用户习惯（preferences）：记录判据 / supersede / 注入 ≤5 | ✅ | `preferences.js`（纯逻辑）+ `store.preferences/addPreference/retirePreference` + 复盘里抽取 + 提示词注入（strong ≤5） | `tests/preferences.mjs` 16 项 |
 

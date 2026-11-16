@@ -283,6 +283,10 @@ export const TOOL_SPECS = Object.freeze({
   //   ego_browser 会动手（点按钮、填表、提交），web_fetch/search 只读。
   //   把它们混成一个标志，只读档就会要么放行浏览器脚本、要么禁掉查资料。
   ego_browser: { action: ACTION.netFetch, mutating: true },
+  // ★ 后台浏览器（调研）：同样是"访问网络"，同在 mutating 一档。
+  //   区别只在**用户看不看得见**：ego 在用户屏幕上，这个在另一张桌面上。
+  //   它挂的是用户浏览器配置的副本，所以"能读登录页"这件事和 ego 同级。
+  browser_research: { action: ACTION.netFetch, mutating: true },
   web_fetch: { action: ACTION.netFetch, readonly: true, target: { kind: 'host', fields: ['url'] } },
   web_search: { action: ACTION.netFetch, readonly: true },
 
