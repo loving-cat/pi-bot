@@ -129,6 +129,7 @@ const TESTS = [
   'context-overhead',
   'onboarding',
   'onboarding-route',
+  'desktop-island',
 ];
 
 let failed = 0;
