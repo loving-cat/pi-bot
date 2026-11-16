@@ -1075,7 +1075,9 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
         const dir = cwd ? insideWorkspace(cwd) : config.workspace;
         if (!dir) return fail('工作目录必须在工作区里');
 
-        const started = shells.start({ roomId, botId, command, cwd: dir });
+        // 记上 taskId：任务结束/取消时按它回收（否则只能靠模型自己记得 kill）
+        const bgTaskId = runner.currentTaskContext?.(roomId, botId)?.taskRunId ?? null;
+        const started = shells.start({ roomId, botId, taskId: bgTaskId, command, cwd: dir });
         if (started.error) return fail(started.error);
 
         const first = await shells.read(started.id, { waitMs: 1200 });

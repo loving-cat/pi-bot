@@ -135,6 +135,32 @@ await test('截尾不会切断 UTF-8 多字节字符', () => {
 });
 
 reg.stopAll();
+
+await test('★ 按任务回收后台进程（任务结束不该留 dev server）', async () => {
+  const reg = new ShellRegistry();
+  const a = reg.start({ roomId: 'r1', botId: 'b1', taskId: 'tr_1', command: script('t1.js', 'setInterval(()=>{},500);'), cwd: process.cwd() });
+  const b = reg.start({ roomId: 'r1', botId: 'b1', taskId: 'tr_1', command: script('t2.js', 'setInterval(()=>{},500);'), cwd: process.cwd() });
+  const other = reg.start({ roomId: 'r1', botId: 'b1', taskId: 'tr_2', command: script('t3.js', 'setInterval(()=>{},500);'), cwd: process.cwd() });
+  await new Promise((r) => setTimeout(r, 300));
+
+  const r = reg.killByTask('tr_1', { reason: '测试' });
+  assert.equal(r.killed.length, 2, '同一个任务的两个进程都要收');
+  assert.ok(r.killed.includes(a.id) && r.killed.includes(b.id));
+  const left = reg.list().map((x) => x.id);
+  assert.ok(left.includes(other.id), '不同任务的进程不能收');
+  reg.kill(other.id);
+});
+
+await test('没有 taskId 的进程不会被任何任务收掉（手工起的就手工关）', async () => {
+  const reg = new ShellRegistry();
+  const manual = reg.start({ roomId: 'r1', botId: 'b1', command: script('m.js', 'setInterval(()=>{},500);'), cwd: process.cwd() });
+  await new Promise((r) => setTimeout(r, 300));
+  const r = reg.killByTask('tr_x');
+  assert.equal(r.killed.length, 0);
+  assert.ok(reg.list().some((x) => x.id === manual.id));
+  reg.kill(manual.id);
+});
+
 try {
   fs.rmSync(tmp, { recursive: true, force: true });
 } catch (_) {}

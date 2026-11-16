@@ -13,6 +13,7 @@ import { createTaskSupervisor } from './task-supervisor.js';
 import { desktopInputSession } from '../desktop-input-session.js';
 import { store } from '../store.js';
 import { reclaimTaskGrants } from './task-grant-reclaim.js';
+import { shells } from '../shells.js';
 import { createChildTask } from './task-subtasks.js';
 import { planMentionDispatch, leadConfirmVerification } from './task-mentions.js';
 import { createManagedBridges } from './task-bridge.js';
@@ -126,6 +127,17 @@ export function createTaskRuntime({
       reclaimTaskGrants({ store, taskId: run.id, log });
     } catch (err) {
       log(`回收临时授权失败（任务 ${run.id}）：${err?.message ?? err}`);
+    }
+
+    // ★ 规格 §6.3：后台执行也要随任务一起收。
+    //
+    //   以前是"靠模型自己记得 kill_shell" —— 那等于没回收：任务取消了，
+    //   dev server 还在跑，端口还占着，用户下次启动就撞端口。
+    try {
+      const r = shells.killByTask?.(run.id, { reason: `任务到达终态：${run.state}` });
+      if (r?.killed?.length) log(`🧹 任务 ${run.id} 的 ${r.killed.length} 个后台进程已回收`);
+    } catch (err) {
+      log(`回收后台进程失败（任务 ${run.id}）：${err?.message ?? err}`);
     }
     // ★ 取消不回报。
     //

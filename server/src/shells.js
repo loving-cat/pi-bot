@@ -112,7 +112,7 @@ export class ShellRegistry {
    * 启动一个后台命令。
    * @returns {{id:string, pid:number|null, error?:string}}
    */
-  start({ roomId, botId, command, cwd, env = null }) {
+  start({ roomId, botId, taskId = null, command, cwd, env = null }) {
     if (this.shells.size >= this.maxShells) {
       return { id: null, pid: null, error: `后台进程已达上限（${this.maxShells} 个），先结束不用的` };
     }
@@ -209,6 +209,9 @@ export class ShellRegistry {
       command: text,
       roomId,
       botId,
+      // ★ 属于哪个任务：任务被取消/结束时按它收掉（规格 §6.3 "后台执行"
+      //   以前是靠模型自己记得 kill_shell —— 那等于没回收）。
+      taskId: taskId ? String(taskId) : null,
       cwd,
       child,
       pid: child.pid ?? null,
@@ -316,6 +319,33 @@ export class ShellRegistry {
     } catch (err) {
       return { ok: false, error: String(err?.message || err) };
     }
+  }
+
+  /**
+   * 收掉某个任务起的全部后台进程。
+   *
+   * 为什么要成组收：`run_background` 起的进程不属于"某个工具调用"，
+   * 而属于**那次任务**。任务被取消/结束时，它们还在跑（跑 dev server、
+   * 跑 watch）—— 以前只能靠模型自己记得 `kill_shell`，等于没回收。
+   *
+   * @returns {{killed:string[], failed:string[]}}
+   */
+  killByTask(taskId, { reason = '任务结束' } = {}) {
+    const id = String(taskId ?? '');
+    const killed = [];
+    const failed = [];
+    if (!id) return { killed, failed };
+    for (const entry of [...this.shells.values()]) {
+      if (entry.taskId !== id) continue;
+      try {
+        this.kill(entry.id);
+        killed.push(entry.id);
+      } catch {
+        failed.push(entry.id);
+      }
+    }
+    if (killed.length) log(`🧹 回收任务 ${id} 的后台进程 ${killed.length} 个（${reason}）`);
+    return { killed, failed };
   }
 
   kill(id) {
