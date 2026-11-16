@@ -18,6 +18,7 @@ import 'scope.dart';
 import 'screens/pair_screen.dart';
 import 'platform.dart';
 import 'widgets/desktop_window_frame.dart';
+import 'widgets/window_escape_guard.dart';
 import 'widgets/window_resize_overlay.dart';
 import 'window_chrome.dart';
 import 'screens/home_shell.dart';
@@ -433,7 +434,15 @@ class _PiBotThemedApplicationState extends State<PiBotThemedApplication> {
     //   回弹只在不该出现的地方关：聊天列表外的滚动区见
     //   NoScrollbarBehavior 的说明。
     // 各分栏占满窗口高度，角落窗口按钮独立叠加。
-    builder: (context, child) => AvatarLife.watchPointer(
+    builder: (context, child) => WindowEscapeGuard(
+      // ★ 无边框窗口的逃生口（规格 spec-intent-and-habits-v1.md §2 第 3 条）。
+      //   Esc 关最上面一层；Ctrl/⌘+Shift+Q 退应用。
+      //   界面坏掉时这是唯一还通的路 —— 所以它挂在最外层，不依赖任何业务状态。
+      canPop: widget.navigatorKey.currentState?.canPop() ?? false,
+      paneOpen: AppScope.of(context).browser.open,
+      onPop: () => widget.navigatorKey.currentState?.maybePop(),
+      onClosePane: () => AppScope.of(context).closeBrowserPane(),
+      child: AvatarLife.watchPointer(
       child: DesktopWindowFrame(
         // ★ 整个内容树跟着明暗模式重建。
         //
@@ -467,6 +476,7 @@ class _PiBotThemedApplicationState extends State<PiBotThemedApplication> {
           ],
           ),
         ),
+      ),
       ),
     ),
     home: const _Root(),
