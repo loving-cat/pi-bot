@@ -73,7 +73,7 @@
 | §6.1 撤销状态 | ✅ | `revokedAt` / `revokedBy`（user/policy/parent 三态） | 同上 |
 | §6.1 子授权只能收窄 | ✅ | `deriveGrant` 逐项比；**执行 Bot 默认不能转授**（`canDelegate` 强制 false） | 同上 |
 | §6.2 分能力规则（文件/命令/GUI/Git/网络/凭据） | 🟨 | 五类都接网关了；**GUI 那一行的「删除、发送、付款、提权仍需确认」没实现**（桌面输入不走 `confirm.js`） | 读 `capabilities.js` + `confirm.js` |
-| §6.3 级联回收（七触发点） | 🟨 六条已接通 | 已接：父链撤销、策略变更、任务取消撤租约、三终态兜底释放、删 bot 回收授权、截图保留期、**任务终态回收临时授权**（`a9ba2ca`）、**任务终态回收后台进程**（`2ea879f`）。**还差**：解绑工具不回收该工具授权、项目变更不重校 | `tests/reclamation.mjs`、`task-grant-reclaim.mjs` 9 项、`shells.mjs` 12 项 |
+| §6.3 级联回收（七触发点） | ✅ | 已接：父链撤销、策略变更、任务取消撤租约、三终态兜底释放、删 bot 回收授权、截图保留期、任务终态回收临时授权与后台进程、**角色降级回收 host 授权**、**启动对账收孤儿/错配**（`grant-reconcile.js`） | `tests/reclamation.mjs`、`task-grant-reclaim.mjs` 9 项、`grant-reconcile.mjs` 14 项 |
 | §6.3 后台任务记录主体和资源世代，不能通过 `write_stdin` 续接越过撤销 | ✅ | `write_stdin` 走同一套策略；`tests/shell-bypass-regress.mjs` 守着 | 该测试文件 |
 
 ---

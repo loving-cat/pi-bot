@@ -638,6 +638,7 @@ export class Store {
   updateBot(id, patch = {}) {
     const bot = this.state.bots[id];
     if (!bot) return null;
+    const prev = { ...bot };
     const next = { ...bot };
     if (patch.name !== undefined) next.name = String(patch.name).slice(0, 40);
     if (patch.emoji !== undefined) next.emoji = String(patch.emoji).slice(0, 8);
@@ -673,6 +674,31 @@ export class Store {
       }
     }
     this.scheduleSave();
+    // ★ 规格 §13.1「职责变化…必须经过重新授权」。
+    //
+    //   最具体的一条：**主 Bot 被降成普通成员**之后，它手上那条 `host` 模式
+    //   授权（"可信宿主模式"）就成了错配 —— host 只属于主 Bot（§8.1）。
+    //   不撤的话，面板上写着"它能动整台电脑"，而它已经不是那个角色了。
+    //
+    //   只在角色**真的变了**才做：改个名字/头像不该触发权限回收。
+    if (prev.role === 'main' && next.role !== 'main') {
+      const revokedHost = [];
+      for (const g of (this.state.grants ?? [])) {
+        if (!g || g.revokedAt) continue;
+        if (g.subject?.botId !== id) continue;
+        if (g.mode !== 'host') continue;
+        g.revokedAt = Date.now();
+        g.revokedBy = 'system';
+        g.revokedReason = '角色变更：不再是主 Bot，host 模式授权随之作废';
+        revokedHost.push(g.id);
+      }
+      if (revokedHost.length) {
+        this.scheduleSave();
+        bus.emit('event', { t: 'grants.revoked', botId: id, grantIds: revokedHost });
+        log(`🔒 ${next.name ?? id} 不再是主 Bot，回收 host 授权 ${revokedHost.length} 条`);
+      }
+    }
+
     bus.emit('event', { t: 'bot.updated', bot: next });
     return next;
   }

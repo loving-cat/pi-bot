@@ -17,6 +17,7 @@ import { desktopInputSession } from './desktop-input-session.js';
 import { pruneScreenshots } from './desktop-observe.js';
 import { sweepIdleIslands, isSupported as islandSupported } from './desktop-island-win.js';
 import { pruneLoginSnapshots } from './island-login.js';
+import { applyReconcile } from './grant-reconcile.js';
 import { createTaskCommands } from './tasks/task-commands.js';
 import { intakeEnabled } from './coordination/intake-tool.js';
 import { createGrantGate } from './grant-gate.js';
@@ -151,6 +152,17 @@ async function main() {
     bus,
   });
   runner.grantGate.start();
+
+  // ★ 规格 §6.3「级联回收」：启动时把"手里的授权"和"现在的事实"对一遍。
+  //
+  //   为什么不放在每次 check 里：那是热路径，而这类错配（角色降级、孤儿主体）
+  //   是**低频事实变化**，启动时核一次就够。核的是"错配"，不是"猜用户想留什么"。
+  try {
+    applyReconcile({ store, workspace: config.workspace, log });
+  } catch (err) {
+    // 对账失败不能挡住启动：网关在没有任何授权时是 fail-closed 的
+    log('授权对账失败：' + (err?.message ?? err));
+  }
   // http.js 里的“规矩改了重发迁移授权”也要带同一个世代（否则新发出来的
   // 授权一校验就被 generation_stale ——签发与校验得不到同一个值）。
   runner.grantGeneration = () => SERVER_GENERATION;

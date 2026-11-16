@@ -139,6 +139,7 @@ const TESTS = [
   'task-grant-reclaim',
   'repo-lock',
   'grant-request',
+  'grant-reconcile',
 ];
 
 let failed = 0;
