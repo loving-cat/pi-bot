@@ -80,7 +80,11 @@
 | `grant-gate.js` | 授权网关：候选→有效性→父链→覆盖→审计；迁移授权与运行期补登记 |
 | `confirm.js` | 不可撤销动作的确认：通道分级（本机 vs 手机）、目标摘要绑定、有效期 |
 | `http-admin.js` | HTTP 管理门的分级表：defense/data/probe，nonce 与审计 |
-| `desktop-observe.js` | 桌面**观察**（列窗口/截指定窗口）；输入层属 P0-3b，未做 |
+| `desktop-observe.js` | 桌面**观察**（列窗口/截指定窗口） |
+| `desktop-input*.js` | 桌面**输入**（`SendInput`，T2 共享桌面）：租约、接管检测、DPI、坐标校验 |
+| `desktop-island.js` | 独立桌面（§5.6 T1）**纯逻辑**：档位选择、启动白名单、窗口消息计划、截帧判定 |
+| `desktop-island-win.js` | 独立桌面的 Windows 实现：每岛一个常驻 island server（按行 JSON） |
+| `desktop-island-tools.js` | 三个主控专属工具：`desktop_island_launch` / `_observe` / `_input` |
 | `git-ops.js` / `git-tools.js` | Git 适配器：G0 读 / G1 本地提交 / G2 push（要手机确认）；G3 明确拒绝 |
 | `dm.js` | 私聊开场文案、回执条件与结果、来源和调度关联的保存 |
 | `progress-senders.js` / `progress-migration.js` | 根据明确消息或调度关联规划来源补齐，再应用迁移；不通过正文猜测派活人 |
