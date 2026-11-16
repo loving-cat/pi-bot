@@ -16,6 +16,7 @@ import { createTaskHost } from './bootstrap/task-host.js';
 import { desktopInputSession } from './desktop-input-session.js';
 import { pruneScreenshots } from './desktop-observe.js';
 import { sweepIdleIslands, isSupported as islandSupported } from './desktop-island-win.js';
+import { pruneLoginSnapshots } from './island-login.js';
 import { createTaskCommands } from './tasks/task-commands.js';
 import { intakeEnabled } from './coordination/intake-tool.js';
 import { createGrantGate } from './grant-gate.js';
@@ -268,6 +269,14 @@ async function main() {
       if (pruned?.removed) log(`清理旧截图：${pruned.removed} 张`);
     } catch (err) {
       log('清理旧截图失败：' + (err?.message || err));
+    }
+    // 登录态快照过期就清：那是**可用的登录凭据**，不能长期躺在数据目录里
+    // （规格 §5.6 T1 的"共享登录态"必须配一条保留期，否则就是把凭据复制了一份永久留着）。
+    try {
+      const pruned = pruneLoginSnapshots({ dataDir: config.dataDir });
+      if (pruned?.removed) log(`清理过期登录态快照：${pruned.removed} 份`);
+    } catch (err) {
+      log('清理登录态快照失败：' + (err?.message || err));
     }
     // 独立桌面（规格 §5.6 T1）：没有操作就自己收摊。
     //

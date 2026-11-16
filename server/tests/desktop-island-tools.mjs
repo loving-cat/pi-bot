@@ -61,12 +61,15 @@ try {
     }
   });
 
-  await test('★ 不在白名单的应用被拒，而且提示要能指导下一步', async () => {
+  await test('★ 三个命令解释器被拒，而且提示要说清"为什么"和"该走哪条路"', async () => {
+    // 产品决定：其它程序都能起（按 cmd.exec 的权限走），只有"会把参数当命令串
+    // 解释"的那三个不行 —— 它们能把"一项一个参数"绕成一段命令。
     const r = await call('desktop_island_launch', { app: 'cmd.exe' });
     assert.equal(r.isError, true);
     const t = textOf(r);
     assert.match(t, /没启动/);
-    assert.match(t, /可放行的应用/, '要告诉模型有哪些能用，否则它会反复重试');
+    assert.match(t, /不能起/, '要告诉模型这个工具不走命令串');
+    assert.match(t, /bash|powershell 工具/, '要给出替代路径，否则它会反复重试');
   });
 
   await test('★ 拼命令串被拒，且点名"要一项一项给"', async () => {

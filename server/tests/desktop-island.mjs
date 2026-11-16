@@ -19,7 +19,7 @@ import { pathToFileURL } from 'node:url';
 
 const src = (f) => pathToFileURL(path.join(import.meta.dirname, '..', 'src', f));
 const {
-  TIER, ISLAND_FAIL, ISLAND_APPS, ISLAND_LIMITS, MAX_TEXT_CHARS,
+  TIER, ISLAND_FAIL, ISLAND_KNOWN_GUI, ISLAND_DENY, ISLAND_LIMITS, MAX_TEXT_CHARS,
   chooseTier, planIslandLaunch, planIslandMessages, pointToLParam,
   captureVerdict, describeTier,
 } = await import(src('desktop-island.js'));
@@ -91,12 +91,28 @@ test('白名单里的应用可以用，命令行保留完整路径', () => {
   assert.equal(r.commandLine, '"C:\\Windows\\System32\\notepad.exe"');
 });
 
-test('★ 不在白名单里就拒（解释器、任意程序）', () => {
-  for (const exe of ['cmd.exe', 'powershell.exe', 'C:\\tmp\\evil.exe', 'bash.exe']) {
+test('★ 什么程序都能起（按 cmd.exec 的权限走），但三个命令解释器不行', () => {
+  // 产品决定：不再用硬白名单 —— 用户要的是"跑我要的东西"，而每加一个
+  // 应用都要改代码的白名单，最后等于没有白名单。
+  for (const exe of ['C:\\tmp\\mytool.exe', 'C:\\Program Files\\Foo\\app.exe', 'mspaint.exe']) {
+    assert.equal(planIslandLaunch({ exe }).ok, true, `${exe} 应该能起`);
+  }
+  // 这三个会把**参数当命令串解释**，绕掉"一项一个参数"的检查
+  for (const exe of ['cmd.exe', 'powershell.exe', 'wscript.exe']) {
     const r = planIslandLaunch({ exe });
     assert.equal(r.ok, false, `${exe} 不该被放行`);
     assert.equal(r.code, ISLAND_FAIL.appNotAllowed);
   }
+});
+
+test('不认识"有没有窗口"的程序照常能起，但要附带一句提示', () => {
+  const r = planIslandLaunch({ exe: 'C:\\tmp\\mytool.exe' });
+  assert.equal(r.ok, true);
+  assert.equal(r.knownGui, false);
+  assert.match(r.note, /没有窗口/);
+  const known = planIslandLaunch({ exe: 'notepad.exe' });
+  assert.equal(known.knownGui, true);
+  assert.equal(known.note, null);
 });
 
 test('★ 路径穿越拒掉（..\\..\\Windows\\notepad.exe 不行）', () => {
@@ -130,19 +146,19 @@ test('单个参数过长拒掉', () => {
   assert.equal(r.ok, false);
 });
 
-test('白名单本身是干净的小写 basename，且不含解释器', () => {
-  assert.ok(ISLAND_APPS.length >= 5);
-  for (const app of ISLAND_APPS) {
+test('"已知有窗口"那张表是干净的小写 basename（它只影响提示，不限制启动）', () => {
+  assert.ok(ISLAND_KNOWN_GUI.length >= 5);
+  for (const app of ISLAND_KNOWN_GUI) {
     assert.equal(app, app.toLowerCase(), `${app} 应该是小写`);
     assert.ok(app.endsWith('.exe'));
-    assert.ok(!/^(cmd|powershell|pwsh|bash|sh|wscript|cscript)\.exe$/.test(app));
   }
-  // 记事本/写字板必须在（探针与集成测试都靠它们）
-  assert.ok(ISLAND_APPS.includes('notepad.exe'));
-  assert.ok(ISLAND_APPS.includes('write.exe'));
-  // ★ explorer.exe 不能在里面：它能用 shell:/root, 这类参数拉起任意东西，
-  //   放进来等于白名单形同虚设（典型 LOLBin）。
-  assert.ok(!ISLAND_APPS.includes('explorer.exe'), 'explorer.exe 是个万能启动器，不能放进白名单');
+  assert.ok(ISLAND_KNOWN_GUI.includes('notepad.exe'));
+  assert.ok(ISLAND_KNOWN_GUI.includes('write.exe'));
+  // 拒绝表只放"会把参数当命令串"的，不放"危险但正常"的程序
+  assert.deepEqual(Object.keys(ISLAND_DENY).sort(), ['cmd.exe', 'powershell.exe', 'wscript.exe']);
+  for (const [k, v] of Object.entries(ISLAND_DENY)) {
+    assert.ok(v.length > 8, `${k} 的拒绝理由要写清楚（否则以后有人会随手删掉）`);
+  }
 });
 
 // ---------------------------------------------------------------- 消息计划

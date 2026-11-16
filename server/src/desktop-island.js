@@ -62,29 +62,48 @@ export const ISLAND_FAIL = Object.freeze({
 });
 
 /**
- * 允许在岛上启动的可执行体（只写 basename，小写）。
+ * 「已知有窗口」的常见应用（只写 basename，小写）。
  *
- * ★ 为什么是白名单而不是黑名单：
- *   这个工具的能力**就是"以当前用户身份起一个进程"** —— 和 `cmd.exec` 同级。
- *   写黑名单等于放弃，因为绕过方式无穷；写白名单则"加一个应用"必须改代码、
- *   过一次评审、过一遍测试。列表里放的是"有 GUI、且我们真的需要操作它"的东西。
+ * ★ 这**不是**白名单 —— 它是"猜这个程序有没有窗口"的参考表。
  *
- * ★ 为什么浏览器在里面：岛上的浏览器是**不带用户登录态**的干净实例 ——
- *   需要登录态的抓取走 ego-browser（用户自己的 profile），不需要的两条都行。
+ *   原来这里是硬白名单，理由是"起程序=执行命令"。但产品上站不住：
+ *   用户真正要的是"在隐藏桌面上跑任何我要的东西"，而白名单每加一个应用
+ *   都要改代码、过评审 —— 最后所有人都在改代码，等于没有白名单。
+ *
+ *   现在的边界换成了**更实在的三条**：
+ *     1. 授权上它按 `cmd.exec` 算（和 bash 同一档，不多给一分）；
+ *     2. 参数不许拼成命令串（不交给 shell 解释，见 SHELL_META）；
+ *     3. 路径不许穿越（不许 `..`）。
+ *
+ *   换句话说：**能起什么，由授权决定；怎么起，由这里决定。**
+ *   这张表只影响一句提示（"这个程序可能没有窗口，控制台程序在岛上看不到窗"）。
  */
-export const ISLAND_APPS = Object.freeze([
+export const ISLAND_KNOWN_GUI = Object.freeze([
   'notepad.exe',
   'write.exe',      // WordPad：最稳的 GDI 靶子
   'mspaint.exe',
   'calc.exe',
   'charmap.exe',
-  // ★ 刻意**没有** explorer.exe：它能用 `shell:` / `/root,` 这类参数把任意东西
-  //   拉起来，等于把白名单整个绕过去（典型的 LOLBin）。要开文件夹窗口的需
-  //   求，用一个专门的、参数受约束的工具去做，而不是放一个万能启动器进来。
+  'explorer.exe',
   'chrome.exe',
   'msedge.exe',
   'firefox.exe',
+  'code.exe',
+  'winword.exe',
+  'excel.exe',
 ]);
+
+/**
+ * 仍然**不接受**的几个：它们不是"跑一个程序"，而是"绕过参数的检查"。
+ *
+ * 只列三个，且都有明确理由 —— 不是怕它们危险（授权上它们和 bash 同档），
+ * 而是它们能把"一项一个参数"变成一段命令串，绕掉上面的第 2 条。
+ */
+export const ISLAND_DENY = Object.freeze({
+  'cmd.exe': '它会把 /c 后面的整串当命令解释 —— 等于把参数检查绕掉',
+  'powershell.exe': '同上（-Command 后面可以塞任意脚本）',
+  'wscript.exe': '它会去执行 .vbs/.js 文件，参数就是一段代码',
+});
 
 /**
  * 参数里绝对不许出现的东西。
@@ -158,17 +177,19 @@ export function chooseTier({
 export function planIslandLaunch({ exe = '', args = [] } = {}) {
   const raw = String(exe ?? '').trim();
   if (!raw) return { ok: false, code: ISLAND_FAIL.appNotAllowed, text: '没给可执行文件' };
-  // 只认 basename：允许 `C:\Windows\System32\notepad.exe`，拒绝 `..\..\evil.exe`
+  // 只认 basename 做判定，但命令行保留调用方给的完整路径
   const base = raw.replace(/\\/g, '/').split('/').pop().toLowerCase();
-  if (!ISLAND_APPS.includes(base)) {
+  if (raw.includes('..')) {
+    return { ok: false, code: ISLAND_FAIL.appNotAllowed, text: '路径里不许出现 ..（不许穿越目录）' };
+  }
+  if (ISLAND_DENY[base]) {
     return {
       ok: false,
       code: ISLAND_FAIL.appNotAllowed,
-      text: `「${base}」不在独立桌面的放行名单里（要加得改代码并过评审）`,
+      text: `「${base}」不能这样起：${ISLAND_DENY[base]}。`
+        + '要跑命令请用 bash/powershell 工具（那条有命令规则兜着）；'
+        + '这里的定位是“跑一个 GUI 程序”。',
     };
-  }
-  if (raw.includes('..')) {
-    return { ok: false, code: ISLAND_FAIL.appNotAllowed, text: '路径里不许出现 ..' };
   }
   const list = Array.isArray(args) ? args : [];
   const clean = [];
@@ -186,10 +207,16 @@ export function planIslandLaunch({ exe = '', args = [] } = {}) {
   }
   // 引号只用来包住含空格的参数；这里不做 shell 转义，只做最朴素的包裹。
   const quoted = clean.map((s) => (/\s/.test(s) ? `"${s.replace(/"/g, '')}"` : s));
+  const knownGui = ISLAND_KNOWN_GUI.includes(base);
   return {
     ok: true,
     exe: raw,
+    base,
     commandLine: [`"${raw}"`, ...quoted].join(' '),
+    knownGui,
+    // 控制台程序在岛上**没有窗口**（conhost 归系统管，实测枚举不到），
+    // 提前说一句，省得调用方等半天“窗口怎么还不出来”。
+    note: knownGui ? null : '这个程序可能没有窗口；控制台程序在独立桌面上看不到窗口，建议改走命令工具。',
   };
 }
 

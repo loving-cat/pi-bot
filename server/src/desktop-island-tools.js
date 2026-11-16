@@ -22,7 +22,10 @@ import fs from 'node:fs';
 import { config } from './config.js';
 import { screenshotPath } from './desktop-observe.js';
 import {
-  ISLAND_FAIL, ISLAND_APPS, TIER, describeTier,
+  planLoginSnapshot, copyLoginSnapshot, islandBrowserArgs, BROWSER_APPS,
+} from './island-login.js';
+import {
+  ISLAND_FAIL, ISLAND_KNOWN_GUI, ISLAND_DENY, TIER, describeTier,
   planIslandLaunch, planIslandMessages, chooseTier,
 } from './desktop-island.js';
 import {
@@ -140,24 +143,60 @@ export function buildIslandTools({ botId } = {}) {
         + '· 它记不住什么 —— 应用进程一退，那张桌面也就没了；\n'
         + '· 它**不是沙箱**：里面的程序仍以你的身份读写同一份文件、走同一张网卡。\n'
         + '\n'
-        + `只能启动这些应用：${ISLAND_APPS.join(' / ')}。`
-        + '参数按"一个参数一项"给，不要拼命令串（含 & | > ; $ 之类的会被拒）。',
+        + '什么程序都能起（按 cmd.exec 的权限走），只有三个例外：'
+        + `${Object.keys(ISLAND_DENY).join(' / ')} —— 它们会把参数当命令串解释。`
+        + '参数按"一个参数一项"给，不要拼命令串（含 & | > ; $ 之类的会被拒）。\n'
+        + '★ 浏览器会自动带上你的登录态（见 shareLogin）：它复制一份你的浏览器配置到岛上，'
+        + '所以打开的网站是已登录的。代价是：那是一份**快照**，不会和正在用的浏览器同步；'
+        + '不想共享就传 shareLogin=false。',
       parameters: Type.Object({
-        app: Type.String({ description: `可执行文件名，例如 notepad.exe（限：${ISLAND_APPS.slice(0, 4).join(', ')} …）` }),
+        app: Type.String({ description: '可执行文件（完整路径或能通过 PATH 找到的名字），例如 notepad.exe 或 C:/Program Files/Foo/app.exe' }),
         args: Type.Optional(Type.Array(Type.String(), { description: '参数数组，一项一个，不要拼成命令串' })),
         island: Type.Optional(Type.String({ description: '岛的名字（默认共用一个；要并行跑两个就各给一个名字）' })),
+        shareLogin: Type.Optional(Type.Boolean({
+          description: '浏览器要不要带你的登录态（默认 true：复制一份浏览器配置到岛上，只读快照，不同步）',
+        })),
       }),
-      execute: async (_id, { app, args, island }) => {
+      execute: async (_id, { app, args, island, shareLogin }) => {
         const g = guardTier();
         if (g.error) return g.error;
         const name = islandName(island);
-        const plan = planIslandLaunch({ exe: app, args: args ?? [] });
+
+        // ---- 登录态共享（规格 §5.6 的可用性那一半）----
+        //
+        // 默认开：用户要的是"帮我干这件事"，不是"再登一次"。
+        // 但只对浏览器生效，而且只是**复制一份快照** —— 不同步，不碰正在用的那份。
+        let loginNote = '';
+        let loginSnapshot = null;
+        let launchArgs = args ?? [];
+        if (BROWSER_APPS[String(app ?? '').toLowerCase()] && shareLogin !== false) {
+          const snap = planLoginSnapshot({ app, dataDir: config.dataDir });
+          if (!snap.ok) {
+            loginNote = `\n（登录态没共享：${snap.text}）`;
+          } else {
+            const copied = copyLoginSnapshot({
+              sourceRoot: snap.sourceRoot,
+              destRoot: snap.destRoot,
+              entries: snap.entries,
+            });
+            if (copied.ok) {
+              launchArgs = islandBrowserArgs({ app, userDataDir: snap.destRoot, extra: launchArgs });
+              loginSnapshot = { browser: snap.browser, copied: copied.copied, skipped: copied.skipped };
+              loginNote = `\n（已带上登录态：复制了 ${copied.copied} 份浏览器配置到岛上。`
+                + '那是**快照**，在岛上登录/退出不会同步回本机；要干净实例就传 shareLogin=false。）';
+            } else {
+              loginNote = '\n（登录态没共享成功：配置目录读不出来，这次用干净实例启动）';
+            }
+          }
+        }
+
+        const plan = planIslandLaunch({ exe: app, args: launchArgs });
         if (!plan.ok) {
           return fail(
             `没启动：${plan.text}\n`
             + (plan.code === ISLAND_FAIL.shellMetachar
               ? '这个工具不接命令串 —— 要给参数就一项一项放在 args 里。'
-              : `可放行的应用：${ISLAND_APPS.join(', ')}`),
+              : `不能起：${Object.entries(ISLAND_DENY).map(([k, v]) => `${k}（${v}）`).join('；')}`),
             { code: plan.code },
           );
         }
@@ -169,9 +208,10 @@ export function buildIslandTools({ botId } = {}) {
         return ok(
           `${head(TIER.island)}已在岛上启动：${plan.exe}（pid ${r.pid}，岛名 ${name}）\n`
           + `岛现在的窗口（${visible.length} 个）：\n${describeWindows(windows) || '（还没出来，稍等再看）'}\n`
+          + loginNote
           + '\n下一步：desktop_island_observe 看清楚画面，再用 desktop_island_input 点/打字。\n'
           + `收尾记得 desktop_island_input 传 action=close（岛上的进程是真实进程）。`,
-          { island: name, pid: r.pid, windows: windows.length },
+          { island: name, pid: r.pid, windows: windows.length, loginSnapshot },
         );
       },
     }),
