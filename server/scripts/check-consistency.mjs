@@ -172,7 +172,29 @@ console.log('\n[7] 执行模式（§8）：host 授权不能在 project 会话�
   } else ok('policy-hook 调用网关时带了 mode');
 }
 
+// ---------------- 8. pubspec.lock 不许带镜像地址 ----------------
+//
+// 本地打包时会为了速度把 PUB_HOSTED_URL 指到 pub.flutter-io.cn，而 `flutter pub get`
+// **会把镜像地址写进 pubspec.lock**。一旦跟着提交上去，CI 用官方源就
+// `Unable to satisfy pubspec.yaml using pubspec.lock` —— 三平台 app 任务全红，
+// 而错误信息只说"锁文件不满足"，看不出是镜像 URL 造成的。
+// 这件事已经发生过两次（2026-10 一次、2026-11 发版一次），所以放进 CI 检查。
+{
+  const lockPath = path.join(ROOT, '..', 'app', 'pubspec.lock');
+  const MIRRORS = ['pub.flutter-io.cn', 'pub-mirrors', 'storage.flutter-io.cn'];
+  if (!fs.existsSync(lockPath)) {
+    fail('找不到 app/pubspec.lock');
+  } else {
+    const lock = fs.readFileSync(lockPath, 'utf8');
+    const hit = MIRRORS.filter((m) => lock.includes(m));
+    if (hit.length) {
+      fail(`★ app/pubspec.lock 里有镜像地址（${hit.join(', ')}）—— CI 的 --enforce-lockfile 会红；`
+        + '请 `git checkout <上一个干净提交> -- app/pubspec.lock`，不要提交镜像版锁文件');
+    } else ok('pubspec.lock 用的是官方源（没有镜像地址）');
+  }
+}
+
 clearTimeout(store.saveTimer);
 fs.rmSync(fixture, { recursive: true, force: true });
-console.log(problems ? `\n✗ ${problems} 处不一致` : '\n✓ 七项一致性检查全部通过');
+console.log(problems ? `\n✗ ${problems} 处不一致` : '\n✓ 八项一致性检查全部通过');
 process.exit(problems ? 1 : 0);
