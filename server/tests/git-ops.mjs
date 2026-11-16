@@ -75,6 +75,18 @@ raw(['init', '-q', '-b', 'main']);
 //   否则测的不是"适配器能不能提交"，而是"这台机器有没有全局 git 身份"。
 raw(['config', 'user.name', 'pi-bot-test']);
 raw(['config', 'user.email', 'test@local']);
+// ★ 仓库级 hooksPath：隔离本机的全局 `core.hooksPath`。
+//
+//   有些开发机（和一部分企业镜像）会在 ~/.gitconfig 里设
+//   `core.hooksPath = ~/.githooks`，那时 git **完全不看** 仓库内的
+//   .git/hooks —— 下面两条测试（hooks 照常执行 / hooks 拦下提交）
+//   就会假失败：代码没传 --no-verify，是机器的全局配置把仓库 hook 顶掉了。
+//
+//   这里显式指回本仓库的 hooks 目录，测的才是"适配器有没有偷偷加
+//   --no-verify"，而不是"这台机器有没有设全局 hooksPath"。
+const repoHooks = path.join(repo, '.git', 'hooks');
+fs.mkdirSync(repoHooks, { recursive: true });
+raw(['config', 'core.hooksPath', repoHooks]);
 fs.writeFileSync(path.join(repo, 'a.txt'), 'one\n');
 raw(['add', '-A']);
 raw(['commit', '-q', '-m', 'init']);
@@ -304,6 +316,39 @@ await test('hooks 拦下提交时，退出码非 0 且明确报错', () => {
   fs.unlinkSync(path.join(repo, 'd.txt'));
 });
 
+await test('★ 列 hooks 时尊重 core.hooksPath（不然审计报的是假目录）', () => {
+  // ★ 真实场景：用户把 hooks 集中在 ~/.githooks（本机就是这样），
+  //   或者仓库里设了 core.hooksPath。这时 git **完全不看** .git/hooks，
+  //   而审计如果还读 .git/hooks，就会把"没跑过的 hook"报成跑过了 ——
+  //   规格 §7.1 要的是"事后能查到真实发生了什么"。
+  const custom = path.join(root, 'custom-hooks');
+  fs.mkdirSync(custom, { recursive: true });
+  fs.writeFileSync(path.join(custom, 'pre-commit'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+
+  // 前面的用例把 hook 删掉了，这里自己放一个再验（不依赖执行顺序）
+  const defaultHooks = path.join(repo, '.git', 'hooks');
+  fs.mkdirSync(defaultHooks, { recursive: true });
+  fs.writeFileSync(path.join(defaultHooks, 'pre-commit'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  const before = listActiveHooks({ repoDir: repo });
+  assert.ok(before.includes('pre-commit'), '默认应能看到仓库 .git/hooks 里的 hook');
+
+  raw(['config', 'core.hooksPath', custom]);
+  try {
+    const after = listActiveHooks({ repoDir: repo });
+    assert.ok(after.includes('pre-commit'), '应看到 hooksPath 目录里的 hook');
+    // 换到只有 commit-msg 的目录，确认真的换了目录而不是两边都读
+    fs.writeFileSync(path.join(custom, 'commit-msg'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    const after2 = listActiveHooks({ repoDir: repo });
+    assert.ok(after2.includes('commit-msg'), 'hooksPath 目录里的新 hook 应立刻生效');
+  } finally {
+    // 恢复成仓库自己的 hooks 目录，后面的测试还要用
+    raw(['config', 'core.hooksPath', path.join(repo, '.git', 'hooks')]);
+    fs.rmSync(custom, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------- 白名单
+
 // ---------------------------------------------------------------- 白名单
 await test('★ merge / rebase / reset / clean：没有确认票据就拒，而且角色不对也拒', () => {
   for (const op of ['merge', 'rebase', 'reset', 'clean']) {
@@ -442,5 +487,12 @@ for (const r of results) {
 }
 console.log(`${results.length - failed.length}/${results.length} 通过`);
 
-fs.rmSync(root, { recursive: true, force: true });
+// 收尾要重试：有些机器上跑着后台 git 工具（本机是 ~/.git-ai 的守护进程），
+// 它们会在 commit 之后异步往 .git 里写东西 —— 正好撞上递归删除，
+// rm 报 ENOTEMPTY。测试本身全过，不该因为收尾竞态让整轮变红。
+try {
+  fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+} catch {
+  // 实在删不掉就算了：临时目录，系统会回收
+}
 process.exit(failed.length ? 1 : 0);

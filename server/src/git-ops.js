@@ -43,6 +43,7 @@
  * PATHEXT / .cmd shim / 参数转义），并把解析到的可执行路径与版本记下来。
  */
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { config } from './config.js';
@@ -491,9 +492,14 @@ export function runGit({
 
   // ★ 固定几个会"改行为"的配置，不信任仓库里写的东西。
   //   这几条是**命令行层**的 -c，优先级高于仓库/全局配置，
-  //   所以即使仓库里写了 core.hooksPath / diff.external 也压不过我们。
-  //   注意：hooks 本身没法用 -c 关掉（那是文件不是配置），
-  //   所以 commit 时它会跑 —— 见文件头注释里的取舍。
+  //   所以即使仓库里写了 diff.external 也压不过我们。
+  //
+  //   ⚠ 但 hooks **不在**这个保护范围内：core.hooksPath 就是一条配置，
+  //   它把 hook 目录整个换掉（很多人写在 ~/.gitconfig 里集中管理）。
+  //   我们不加 --no-verify，所以 git 该跑哪个目录就跑哪个目录 ——
+  //   这是对的（用户的配置归用户）。但**审计必须照实报**，
+  //   所以 listActiveHooks 会去问 git 真实的 hooksPath，而不是想当然
+  //   读 .git/hooks。见 resolveHooksDir 的注释。
   const configGuards = [
     '-c', 'core.pager=cat',      // 分页器可能是个程序，而且会挂住管道
     '-c', 'core.quotepath=false', // 中文文件名不要转成 \344\275\240
@@ -636,6 +642,43 @@ export function currentHead({ repoDir, gitFile = null } = {}) {
 }
 
 /**
+ * 这个仓库**实际**会用哪个目录的 hooks。
+ *
+ * ★ 默认是 `$GIT_DIR/hooks`，但 `core.hooksPath` 一设就换成它 —— 而
+ *   `core.hooksPath` 常常写在**用户的 ~/.gitconfig** 里（很多人用它把
+ *   hooks 集中到 ~/.githooks）。本机就是这种配置。
+ *
+ *   不加这一步的后果：审计把 ".git/hooks 里有哪些 hook" 当成
+ *   "这次提交跑了哪些 hook" 报给用户 —— 而实际一个都没跑。规格 §7.1
+ *   要的是"让用户事后能查到真实发生了什么"，报错目录等于没报。
+ *
+ *   注意 `GIT_CONFIG_NOSYSTEM` 只屏蔽系统级（/etc/gitconfig），
+ *   用户全局的 ~/.gitconfig 照样生效，所以这条必须照 git 的真实解析来。
+ *
+ * 相对路径按 git 的规则解析：相对**工作树根**（githooks(5) 的 DESCRIPTION）。
+ */
+function resolveHooksDir(layout) {
+  const fallback = path.join(layout.commonDir, 'hooks');
+  const git = locateGit();
+  if (!git.ok) return fallback;
+  const res = spawnSync(git.file, ['config', '--get', 'core.hooksPath'], {
+    cwd: layout.root,
+    encoding: 'utf8',
+    timeout: 10_000,
+    windowsHide: true,
+    // 与 runGit 保持同一视野：提交时怎么解析，这里就怎么解析
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1' },
+  });
+  const value = String(res.stdout ?? '').trim();
+  if (res.status !== 0 || !value) return fallback;
+  // ~ 开头：git 自己会展开，但我们这边要自己来
+  const expanded = value === '~' || value.startsWith('~/')
+    ? path.join(os.homedir(), value.slice(1))
+    : value;
+  return path.isAbsolute(expanded) ? expanded : path.resolve(layout.root, expanded);
+}
+
+/**
  * 这个仓库里有哪些 hooks 会在 commit 时跑（供审计用）。
  *
  * 为什么要记它：规格 §7.1「不得静默关闭项目要求后声称提交流程正常」。
@@ -644,7 +687,7 @@ export function currentHead({ repoDir, gitFile = null } = {}) {
 export function listActiveHooks({ repoDir, gitFile = null } = {}) {
   const layout = resolveRepoLayout(repoDir);
   if (!layout.ok) return [];
-  const dir = path.join(layout.commonDir, 'hooks');
+  const dir = resolveHooksDir(layout);
   let names = [];
   try { names = fs.readdirSync(dir); } catch { return []; }
   return names
