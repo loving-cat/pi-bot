@@ -29,8 +29,9 @@ import {
 } from './desktop-input-session.js';
 import { describePlan, MAX_CLICKS } from './desktop-input.js';
 import { buildIslandTools } from './desktop-island-tools.js';
+import { buildGrantRequestTools } from './grant-request-tools.js';
 import { verdictForTool, commitStdin, resetStdin } from './shell-policy.js';
-import { readonlyBlockReason, opaqueScriptBlockReason } from './role-tools.js';
+import { readonlyBlockReason, opaqueScriptBlockReason, isLeadOfRoom } from './role-tools.js';
 import { log, now, isBusyError, planDispatchRetry } from './util.js';
 import { CODING_BASELINE_TITLE, CODING_BASELINE_HOWTO, isCodingRole } from './coding-baseline.js';
 import { scanLocalCapabilities } from './local-capabilities.js';
@@ -505,6 +506,18 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
     //   在同一个部门里协作，一张桌子轮流用比每人开一张更省资源，也更符合
     //   "一个部门就一个人操作电脑桌面"。同岛内由 island server 的管道串行。
     ...buildIslandTools({ botId, roomId }),
+    // ---------------- 向用户申请一次权限（规格 §6.1） ----------------
+    //
+    // 主 Bot 与**部门负责人**可以发起；批准只能在手机上点。
+    // 为什么不让成员申请：他不知道也不在乎"给谁、多久"，用户更难判断。
+    ...buildGrantRequestTools({
+      store,
+      botId,
+      roomId,
+      role: isMain
+        ? 'main'
+        : (isLeadOfRoom(store.getRoom(roomId), botId) ? 'lead' : 'member'),
+    }),
     // ---------------- 桌面输入（主 Bot 专属，认件 + 接管检测都必须过） ----------------
     //
     // 规格 §5.2/§5.3：普通桌面输入默认只给主 Bot，且必须持有桌面租约。

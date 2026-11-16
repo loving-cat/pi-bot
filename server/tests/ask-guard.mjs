@@ -107,6 +107,9 @@ await test('主控少这一个工具，其余工具不受影响', async () => {
   const mainOnlyAdded = new Set([
     // 看用户真实屏幕 / 动用户鼠标的那一组（独立桌面不在这里：每个 bot 都能开）
     'desktop_observe', 'desktop_screenshot', 'desktop_lease', 'desktop_input',
+    // 向用户申请权限：主控与**部门负责人**都有；这个用例的房间没有负责人，
+    // 所以它在这里只出现在"主控"那一侧（这不是"主控专属"，见 grant-request-tools）
+    'request_permission',
   ]);
   assert.deepEqual(
     withMain.slice().sort(),

@@ -270,6 +270,14 @@ export const TOOL_SPECS = Object.freeze({
   desktop_island_launch: { action: ACTION.cmdExec, mutating: true },
   desktop_island_input: { action: ACTION.desktopInput, mutating: true },
 
+  // ---------------- 向用户申请权限
+  //
+  // 不过网关（`action: null`）：**申请权限这件事本身不需要权限**，
+  // 否则就成了"要权限得先有权限"。它只产出一张要用户在手机上点的卡片。
+  //
+  // 标 readonly：只读模式下也留着它 —— 那是从只读里走出来的唯一一条路。
+  request_permission: { action: null, readonly: true },
+
   // ---------------- net.fetch
   // ★ 这三个必须分开标：
   //   ego_browser 会动手（点按钮、填表、提交），web_fetch/search 只读。

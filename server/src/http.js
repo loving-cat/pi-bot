@@ -21,6 +21,7 @@ import { store } from './store.js';
 import { policyChange } from './policy-version.js';
 import { ensureLegacyGrant } from './migration-grants.js';
 import { normalizeGrant } from './grants.js';
+import { planGrantsFromRequest } from './grant-request.js';
 import {
   deleteAttachments,
   referencedAttachmentIds,
@@ -892,6 +893,50 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
           `🛡 ${approved ? '批准' : '拒绝'}：${describeConfirmation(c)}` +
             `（通道 ${clientChannel}${device?.name ? '，' + device.name : ''}）`,
         );
+
+        // ★ 授权申请（grant.request）批准之后，**在这里**以用户的名义建授权。
+        //
+        //   为什么不放在 store.decideConfirmation 里：那里拿不到网关（gate.add
+        //   要它），也拿不到当前规矩版本。放在路由里，批准的路径只有一条：
+        //   手机点名批准 → 这里建 grant → 下一次动作就能过。
+        //
+        //   为什么是"用户的名义"：`source: SOURCE.user`，`sourceRef` 写着
+        //   "用户在批准卡片上同意（手机名）"。这不是模型自己在扩权。
+        if (approved && c.action === 'grant.request') {
+          const gate = runner.grantGate;
+          if (!gate) return fail(res, 503, 'NO_GATE', '网关未启用，先别发授权');
+          let req = null;
+          try {
+            req = JSON.parse(c.targetJson ?? '{}');
+          } catch { req = null; }
+          if (!req || !Array.isArray(req.actions) || !Array.isArray(req.bots)) {
+            return fail(res, 400, 'BAD_GRANT_REQUEST', '这条申请的原文坏了，没有建任何授权');
+          }
+          const specs = planGrantsFromRequest({
+            request: req,
+            approvedBy: { deviceName: device?.name ?? c.decidedByDeviceName ?? '', channel: clientChannel },
+            policyRevision: store.policyVersion(),
+          });
+          const created = [];
+          for (const spec of specs) {
+            const bad = normalizeGrant({ ...spec, id: `pre_${spec.subject.botId}` });
+            if (!bad.ok) return fail(res, 400, 'BAD_GRANT', bad.text);
+          }
+          for (const spec of specs) {
+            const r = gate.add(spec);
+            if (!r.ok) {
+              // 半个状态要回退（和首启页那条一样）
+              for (const id of created) gate.revoke(id, '授权申请未完成，回退');
+              return fail(res, 500, 'GRANT_FAILED', `建授权失败（已回退）：${r.text}`);
+            }
+            created.push(r.grant.id);
+          }
+          store.consumeConfirmation(c.id);   // 一次一用
+          log(`🔑 授权申请已批准：${created.length} 条（${(req.actions ?? []).join(',')}）`);
+          bus.emit('event', { t: 'grants.issued', grantIds: created });
+          return send(res, 200, { confirmation: c, granted: created });
+        }
+
         bus.emit('event', { t: 'confirmation.updated', confirmation: c });
         return send(res, 200, { confirmation: c });
       }

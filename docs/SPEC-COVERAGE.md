@@ -65,6 +65,7 @@
 | §6.1 任务 / 资源范围 / 动作集合 | ✅ | `taskId` / `resources[]` / `actions[]` | 同上 |
 | §6.1 参数约束 | ✅ | `checkConstraints` 支持 deny / allow / maxBytes 三种；`tests/grants.mjs:191` 有专门用例 | 读 `grants.js:362-388` + `tests/grants.mjs:191` |
 | §6.1 风险等级 | ✅ | 从 `capabilities.js` 派生（`riskOf`） | `tests/capabilities.mjs` |
+| §6.1 授权根只能来自已认证用户交互（Bot 申请 → 用户手机批准） | ✅ 新增 | `grant-request.js`（纯逻辑）+ `request_permission` 工具（主 Bot / 部门负责人可发起）+ 确认卡（`action: 'grant.request'`，动作目录里没有它 → 默认按不可撤销算 → **必须手机通道**，本机点批准不算数）。批准后在 `POST /api/confirmations/:id/decide` 里以 `source: 'user'` 建授权，一条 bot 一条、绑规矩版本、到期失效 | `tests/grant-request.mjs` 14 项（含 HTTP 接线那条） |
 | §6.1 **执行模式** | ✅ `406fb89` | `exec-mode.js` 判档 → `session-factory` 算一次 → `policy-hook` 的 `mode` 参数传进网关；一致性检查第 7 项静态守着这一根线 | `check-consistency.mjs` 第 7 项 |
 | §6.1 有效期 / 策略修订号 / 使用次数 / 可否子授权 | ✅ | `expiresAt` / `policyRevision` / `maxUses` / `canDelegate` | `tests/grants.mjs` |
 | §6.1 撤销状态 | ✅ | `revokedAt` / `revokedBy`（user/policy/parent 三态） | 同上 |
