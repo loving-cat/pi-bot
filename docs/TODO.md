@@ -50,12 +50,14 @@
 | 项 | 状态 | 阻塞谁 | 下一步最小动作 |
 |---|---|---|---|
 | 独立桌面（§5.6 T1） | ✅ `12bf259` `2db401a` | 只对经典 Win32 应用可靠；macOS 无等价 API | 把「T2 共享桌面」也接上 §5.2 的确认环节；补 `targetWindow` 复核（同一窗口在两帧之间被换掉） |
-| worktree 授权图（登记公共元数据并限制） | ⬜ | §7.3；解析已做（`gitdir/commondir/realpath`） | 先写"哪些路径必须属于授权域"的纯判定 + 测试 |
-| **§13.2 首次授权流程** | 🟨 `04bb8df` `808a6a7` `0fc8c97` `e413d62` `946f622` | 5 步里四步到位：`onboarding.js` 纯逻辑 + `GET /api/onboarding`（桌面权限真探）+ `POST /api/onboarding/apply`（defense + nonce，真的建授权根）+ App 首启页 | 第⑤步的**跑完自动收割**：`planWrapUp` 已算好，缺任务终态钩子（现在 `cascadeImplemented: false`）。另外正文还是服务端中文整句，英文界面要本地化得先返回 `id` |
-| **§14 第三方组件许可证清单** | ✅ `docs/LICENSES.md` | 200 个组件，199 宽松、1 需复核（`duck` 只写 "BSD"） | 每月或换依赖后跑一次 `node scripts/check-licenses.mjs`（GPL/AGPL/未声明一律红）；`duck` 那条人看一眼要不要换 |
-| `scripts/check-spec-progress.mjs` / `check-style.mjs` | ⬜ | 收束 spec 的 W1 承诺过，没做 | 前者校验台账里的 commit 真在 `git log`；后者校验 §1 三条机器可判断的风格约定 |
+| worktree 授权图（登记公共元数据并限制） | ✅ `8910ddb` `6974fc3` | 信任域判定 + 公共目录写锁都接了 | — |
+| **§13.2 首次授权流程** | 🟨 五步全通 `a9ba2ca` | 第⑤步的自动收割已接（任务终态按 taskId 收临时授权，项目级不碰） | 只剩**正文英文文案**：要本地化得先让服务端返回 `id` 而不是整句 |
+| **§14 第三方组件许可证清单** | ✅ `5edbde2` `docs/LICENSES.md` | 200 个组件：199 宽松、1 需复核（`duck` 只写 "BSD"） | 每月或换依赖后跑 `node scripts/check-licenses.mjs`；打包清单（安装器实际带了哪些）还没核 |
+| `scripts/check-spec-progress.mjs` | ✅ `5edbde2` | 核台账引用的 commit 与文件是否真在（一次抓到 4 行过期状态） | `check-style.mjs` 还没做 |
 | §12 验收矩阵 14 行（Win + macOS） | 🟨 P0 已逐行标证据，实机项仍缺 | §17 交付结论；矩阵在 `docs/acceptance-matrix.md` | 补实机的六项：手机强确认、实机 push、锁屏、多屏、用户接管端到端、macOS 全列 |
 | 验收矩阵单独成档 | ✅ `docs/acceptance-matrix.md` | — | 每行带静态/实机标记，`实机 ✗` 要写交还条件 |
+| 合成输入源识别（远程控制软件挡住鼠标） | ✅ `9967d82` | 光标没动就是合成输入；用户可在设置里开「信任合成输入」 | — |
+| 岛上的登录态共享（浏览器） | ✅ `bdcaf98` | 复制一份配置快照，7 天自动清；不同步、可 `shareLogin=false` 关掉 | 打包清单核对 |
 | 审计检索与恢复体验 | ⬜ | P2 | 判定接口已有（`/api/grant-audit`），缺按条件筛 + 恢复 |
 | 公平排队 / 任务优先级 | ⬜ | P2 | — |
 | 截图增量 / 输出分页 / 证据外置 | ⬜ | P2 | — |

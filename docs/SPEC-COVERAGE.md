@@ -39,13 +39,13 @@
 | §5.2 同一桌面只有一个输入租约 | ✅ | `desktop-lease.js` 24 项测试 | `tests/desktop-lease.mjs` |
 | §5.2 租约属于任务，不属于进程 | ✅ | `acquire()` 必填 `taskId` + `botId` | 同上 |
 | §5.2 租约到期 / 心跳 / 世代号 | ✅ | TTL 60s、心跳 20s、epoch 每次转让 +1 | 同上 |
-| §5.2 每次输入前检查取消状态、会话、目标窗口 | 🟨 | 取消/会话/租约都查了；**「目标窗口」没查** —— 记录前台窗口标题只用于审计，不校验"还是同一个窗口" | `desktop-input-session.js:242`（只有 `foreground: sent.foreground`，没有 `targetWindow` 比对） |
+| §5.2 每次输入前检查取消状态、会话、目标窗口 | ✅ `9967d82` | 调用方传 `expectWindow`，执行前核对前台窗口标题；发完之后再核一次，变了返回 `targetKept=false` 并明确警告 | `tests/desktop-input.mjs`（target_changed / targetKept 三项） |
 | §5.2 高风险动作「观察—确认—重新校验目标—执行—核对结果」 | 🟨 | 有观察、有规划校验、有光标复核；**缺"重新校验目标窗口"** 和"确认"这一段（桌面输入不走 `confirm.js`） | 同上 |
 | §5.2 用户接管立即吊销并丢弃未执行输入 | ✅ | `watch()` → `revoke()`；抖动抑制 2 次 | `tests/desktop-takeover.mjs` 21 项 |
 | §5.2 按键释放 / 拖拽中断 / 超时恢复纳入验收 | 🟨 | 拖拽**刻意不做**（明确拒绝）；按键释放有（down/up 成对发）；超时恢复：`server-main` 的 60 秒 housekeeping 调 `sweepLeases()`（已接，`202f0d7`）。**差的只剩拖拽的验收用例** | `tests/reclamation.mjs` + `grep sweepLeases server-main.js` |
 | §5.4 多屏/缩放：坐标与显示器绑定 | 🟨 | 屏幕矩形每次重探，屏幕外坐标拒绝；**但坐标本身不带"哪个显示器/哪次布局"的标记**，两次动作之间布局变了不会被发现 | `desktop-input.js` `planInput` |
 | §5.4 锁屏/断开：暂停输入并释放租约 | ✅ | `OpenInputDesktop` 失败 → `no_session` + 自动 revoke | `tests/desktop-input.mjs` |
-| §5.5 审计记录授权引用、发起者、实际执行角色、目标摘要、结果 | 🟨 | 授权审计有（§5.5 全套）；**桌面输入的审计只记动作摘要 + 前台窗口标题**，不记授权引用 | `desktop-input-session.js` 的 `pushAudit` |
+| §5.5 审计记录授权引用、发起者、实际执行角色、目标摘要、结果 | ✅ `9967d82` | `policy-hook` 把放行的那条 grantId 记进 `grant-context`（5 分钟过期、动作必须对得上），桌面执行时读出来落审计；记不出就不记，不猜 | `tests/grant-context.mjs` 6 项 + `desktop-input.mjs` 的审计用例 |
 | §5.5 截图最小化取景 / 保留期 | ✅ | 默认只截目标窗口；`server-main` 的 60 秒 housekeeping 调 `pruneScreenshots()` | `tests/reclamation.mjs` |
 | **§5.6 三档 GUI 执行（T0 程序化 / T1 独立桌面 / T2 共享）** | 🟨 新增 | `desktop-island.js`（纯逻辑）+ `desktop-island-win.js`（每岛一个常驻 island server）+ 三个主控专属工具。实测：岛上的窗口用户看不到、两边光标各归各、岛上发 `SendInput` 被拒（err=5）、跨桌面取帧与 `PostMessage`/`WM_CHAR` 驱动全通。**差距**：只对经典 Win32 应用可靠；macOS 无等价 API（如实报 `not_platform`）；同桌面那档（T2）仍没接「确认」环节（见上两行） | `tests/desktop-island.mjs` 28 项、`tests/desktop-island-win.mjs` 9 项、`tests/desktop-island-tools.mjs` 8 项；`docs/WINDOWS-HIDDEN-DESKTOP.md` |
 | §5.6-1 截到黑帧必须报失败 | ✅ | `captureVerdict()`：`darkRatio > 0.98` 或尺寸过小 → `blank_frame`，并**删掉那张图**（留着迟早被当证据） | 同上；实测确实出现过一次全黑 |
@@ -69,7 +69,7 @@
 | §6.1 撤销状态 | ✅ | `revokedAt` / `revokedBy`（user/policy/parent 三态） | 同上 |
 | §6.1 子授权只能收窄 | ✅ | `deriveGrant` 逐项比；**执行 Bot 默认不能转授**（`canDelegate` 强制 false） | 同上 |
 | §6.2 分能力规则（文件/命令/GUI/Git/网络/凭据） | 🟨 | 五类都接网关了；**GUI 那一行的「删除、发送、付款、提权仍需确认」没实现**（桌面输入不走 `confirm.js`） | 读 `capabilities.js` + `confirm.js` |
-| §6.3 级联回收（七触发点） | 🟨 五条已接通 | 已接：父链撤销、策略变更、**任务取消撤租约**（`task-runtime.js:560`）、**三终态兜底释放**、**删 bot 回收授权**（`store.deleteBot`）、**截图保留期**（`pruneScreenshots`，`202f0d7`）。**还差**：解绑工具不回收该工具授权、项目变更不重校、后台进程靠手动 `kill_shell` | `tests/reclamation.mjs` 11 项 |
+| §6.3 级联回收（七触发点） | 🟨 六条已接通 | 已接：父链撤销、策略变更、任务取消撤租约、三终态兜底释放、删 bot 回收授权、截图保留期、**任务终态回收临时授权**（`a9ba2ca`）、**任务终态回收后台进程**（`2ea879f`）。**还差**：解绑工具不回收该工具授权、项目变更不重校 | `tests/reclamation.mjs`、`task-grant-reclaim.mjs` 9 项、`shells.mjs` 12 项 |
 | §6.3 后台任务记录主体和资源世代，不能通过 `write_stdin` 续接越过撤销 | ✅ | `write_stdin` 走同一套策略；`tests/shell-bypass-regress.mjs` 守着 | 该测试文件 |
 
 ---
@@ -85,8 +85,8 @@
 | §7.2 三种工作区（同树/worktree/独立 clone） | 🟨 | 同树 ✅（`worktree` 字段能认）；**独立 clone 没有独立入口**（靠用户自己 clone 到别的路径）；**同一工作树的写租约没有** | grep `worktree` in git-tools |
 | §7.3 解析 `.git` 指针 / gitdir / commondir | ✅ | `resolveRepoLayout` 三种情况都处理，含 Windows 正反斜杠归一化 | `git-ops.js:228-290` |
 | §7.3 objects alternates | ✅ | `readAlternates()` 登记绝对/相对路径，挂进 `resolveRepoLayout()` 返回 | `tests/git-ops.mjs` 3 项 |
-| §7.3 所有目标必须属于授予的信任域，否则拒绝并提出授权差异 | ⬜ | 登记了 gitdir/commondir，**没有"必须属于授权域"的判定** | 读 `resolveRepoLayout` 返回后无校验 |
-| §7.3 同一公共目录的 Git 写入按公共目录标识协调 | ⬜ | 没有 | grep |
+| §7.3 所有目标必须属于授予的信任域，否则拒绝并提出授权差异 | ✅ `8910ddb` | `repo-trust.js`：repo/gitdir/commondir/alternates 逐条核对，越界就整体拒绝并点名是哪一条；判定放在 `runGit` 里（所有 git 操作的共同入口） | `tests/repo-trust.mjs` 11 项 |
+| §7.3 同一公共目录的 Git 写入按公共目录标识协调 | ✅ `6974fc3` | `repo-lock.js`：按 commonDir 归一化加写锁，只锁 mutates 的操作，同任务重入放行，拿不到就拒绝（不排队）；三种返回路径都放锁 | `tests/repo-lock.mjs` 10 项 |
 | §7.3 尊重原生锁，禁止见锁就删 | ✅ | 遇到 `index.lock` 只翻译成一句人话并**明确禁止用户手动删锁**（`git-ops.js:452`）；我们自己从不删锁 | 读 `git-ops.js:452-455` |
 | §7.3 worktree 删除/移动/清理必须明确确认 | ⛔ | 那些操作在 G3 里，没有入口 | — |
 | §14.3 Git 兼容性证据（PowerShell git.exe / Git Bash / macOS 分列） | ⬜ | 只走 `spawnCommand` 统一路径；**没有"三种方式分别验证"的记录** | grep `powershell.*git` |
@@ -165,7 +165,7 @@
 | 截图增量 / 输出分页 / 证据外置 | ⬜（截图清理甚至没接上） |
 | 模板权限差异预览 | ⬜ |
 | 审计检索与恢复体验 | 🟨 `/api/grant-audit` 只有"列表 + 只看被拒"，没有条件筛选/恢复 |
-| 内置组件宽松许可证准入 + 依赖与打包清单核对 | ⬜ 仓库只有根 `LICENSE`，**没有第三方组件清单** |
+| 内置组件宽松许可证准入 + 依赖与打包清单核对 | 🟨 `5edbde2` | 清单有了；打包清单（安装器里实际带了哪些）还没核对 | `docs/LICENSES.md` |
 
 ---
 
@@ -182,15 +182,15 @@
 | 模板不得签发授权 | ✅ `tests/template-grants.mjs` 4 项 |
 | 覆盖值不得突破有效授权上限 | ✅ `checkOverrideBounds` |
 | 冲突需明示 | ✅ `diffOnUpgrade` 出 `conflicts[]` |
-| **§13.2 首次授权流程 5 步** | 🟨 五步里四步到位、一步只讲不做。`server/src/onboarding.js`（纯逻辑，55 项测试）+ `GET /api/onboarding` + `POST /api/onboarding/apply`（defense 档 + policy nonce + 审计）+ App 首启页 `widgets/permission_setup_gate.dart`（12 项组件测试）。逐条：①全机视野 / 真实系统权限（探针**真探**，失败按实际结果报）✅ ②项目 + 普通 Git 范围（选完**真的建授权根**，动作清单不手写）✅ ③任务级最小权限：只讲清楚，**分配留在派活时** —— 首启页做下拉框会把 `host` 摆上桌 🟨 ④有效权限 / 逐次确认 / 硬隔离边界汇总（`perCallConfirm` 把"不受 policy 影响"的两条单列）✅ ⑤收尾：`planWrapUp` 就位，但**自动收割未接线**（`cascadeImplemented: false`，界面会如实说"还要你手动收回"）🟨 |
+| **§13.2 首次授权流程 5 步** | 🟨 五步里四步到位、一步只讲不做。`server/src/onboarding.js`（纯逻辑，55 项测试）+ `GET /api/onboarding` + `POST /api/onboarding/apply`（defense 档 + policy nonce + 审计）+ App 首启页 `widgets/permission_setup_gate.dart`（12 项组件测试）。逐条：①全机视野 / 真实系统权限（探针**真探**，失败按实际结果报）✅ ②项目 + 普通 Git 范围（选完**真的建授权根**，动作清单不手写）✅ ③任务级最小权限：只讲清楚，**分配留在派活时** —— 首启页做下拉框会把 `host` 摆上桌 🟨 ④有效权限 / 逐次确认 / 硬隔离边界汇总（`perCallConfirm` 把"不受 policy 影响"的两条单列）✅ ⑤收尾：任务终态按 `taskId` 回收临时授权（`revokedBy: 'task'`，项目级一条不碰），`planWrapUp.cascadeImplemented` 已翻成 true ✅ |
 
 ## 十、§14 工具链与许可证
 
 | 条款 | 状态 |
 |---|---|
 | 优先系统原生接口 | ✅ Windows 走 Win32；macOS 文档要求走原生 |
-| 第三方封装须查源码/依赖/产物/许可证 | ⬜ 没做 |
-| 内置组件许可证准入 + 传递依赖核对 + 打包清单 | ⬜ 没做 |
+| 第三方封装须查源码/依赖/产物/许可证 | ✅ `5edbde2` | `scripts/check-licenses.mjs` 从真的装了什么生成 `docs/LICENSES.md`（200 个组件）；GPL/AGPL/未声明一律红 | 跑一次脚本 |
+| 内置组件许可证准入 + 传递依赖核对 + 打包清单 | 🟨 `5edbde2` | 许可证清单有了（含传递依赖）；**打包清单**（哪些真正随包发出去）还没单独列 | `docs/LICENSES.md` |
 | 调用用户已有工具不因准入规则被禁 | ✅（`spawnCommand` 走 PATH） |
 | 引入替代 Git 库需核实功能/许可/传递依赖 | ⛔ 没引入，也不打算 |
 
@@ -201,7 +201,7 @@
 | Win/mac 宿主代理、截图/输入权限、多屏、接管的 API 与兼容矩阵 | 🟨 Win 已实测大部分；macOS 空壳 |
 | 各能力适配器不可绕过的调用链证据 | 🟨 有（`check-consistency.mjs` 六项 + 能力漂移检查） |
 | linked worktree 精细授权与并发锁可行性 | ⬜ 没验证 |
-| 第三方内置封装来源/许可/传递依赖 | ⬜ 没做 |
+| 第三方内置封装来源/许可/传递依赖 | ✅ `5edbde2` | 见 `docs/LICENSES.md`（按法律含义判 OR/AND 复合表达式） | 同上 |
 | 历史代码按本稿重新验收 | 🟨 部分（本轮补了很多，但 `docs/PERMISSIONS-INVENTORY.md` 进度表仍停在旧版） |
 
 ---
