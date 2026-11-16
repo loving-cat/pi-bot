@@ -50,7 +50,7 @@
 | 项 | 状态 | 阻塞谁 | 下一步最小动作 |
 |---|---|---|---|
 | worktree 授权图（登记公共元数据并限制） | ⬜ | §7.3；解析已做（`gitdir/commondir/realpath`） | 先写"哪些路径必须属于授权域"的纯判定 + 测试 |
-| **§13.2 首次授权流程** | ⬜ | §13.2 五步一步都没做；现在权限散在设置页，没有"首次使用向导" | 先定形态（一页说明 + 项目选择 + 硬隔离边界），再做状态机 |
+| **§13.2 首次授权流程** | 🟨 `04bb8df` `808a6a7` `0fc8c97` `e413d62` `946f622` | 5 步里四步到位：`onboarding.js` 纯逻辑 + `GET /api/onboarding`（桌面权限真探）+ `POST /api/onboarding/apply`（defense + nonce，真的建授权根）+ App 首启页 | 第⑤步的**跑完自动收割**：`planWrapUp` 已算好，缺任务终态钩子（现在 `cascadeImplemented: false`）。另外正文还是服务端中文整句，英文界面要本地化得先返回 `id` |
 | **§14 第三方组件许可证清单** | ⬜ | §14.2；仓库只有根 `LICENSE` | `npm ls --all` 导出 + 许可证列，写进 `docs/LICENSES.md` |
 | `scripts/check-spec-progress.mjs` / `check-style.mjs` | ⬜ | 收束 spec 的 W1 承诺过，没做 | 前者校验台账里的 commit 真在 `git log`；后者校验 §1 三条机器可判断的风格约定 |
 | §12 验收矩阵 14 行（Win + macOS） | 🟨 P0 已逐行标证据，实机项仍缺 | §17 交付结论；矩阵在 `docs/acceptance-matrix.md` | 补实机的六项：手机强确认、实机 push、锁屏、多屏、用户接管端到端、macOS 全列 |
