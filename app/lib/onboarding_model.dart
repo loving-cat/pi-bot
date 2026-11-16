@@ -158,6 +158,7 @@ class OnboardingStep {
 class OnboardingPlan {
   const OnboardingPlan({
     required this.firstRun,
+    this.legacyGrants = 0,
     required this.steps,
     required this.perCallConfirm,
     required this.canDo,
@@ -168,6 +169,14 @@ class OnboardingPlan {
   });
 
   final bool firstRun;
+
+  /// 升级前遗留的迁移授权条数。
+  ///
+  /// ★ 它和 [firstRun] 是两个方向的事：迁移授权存在 ≠ 用户走过首启流程
+  ///   （服务端每次启动都会补发，见 `migration-grants.js`）。
+  ///   界面要把它们分开说：那些授权范围 = 旧规矩，**不会**因为这次选择而自动收窄。
+  final int legacyGrants;
+
   final List<OnboardingStep> steps;
 
   /// 要逐次确认的条目**标题**（服务端已经把"不受 policy 影响"的那几条分开列好了）
@@ -281,6 +290,7 @@ class OnboardingPlan {
         json['boundaries'] is Map ? (json['boundaries'] as Map).cast<String, dynamic>() : const <String, dynamic>{};
     return OnboardingPlan(
       firstRun: json['firstRun'] != false,
+      legacyGrants: json['legacyGrants'] is int ? json['legacyGrants'] as int : 0,
       steps: (json['steps'] is List)
           ? (json['steps'] as List)
               .whereType<Map>()

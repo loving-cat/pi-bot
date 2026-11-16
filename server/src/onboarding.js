@@ -154,7 +154,32 @@ export function desktopStatusOf(probe = null) {
   return { observe: DESKTOP_STATE.denied, input: DESKTOP_STATE.denied, detail, code: code || null };
 }
 
-/** 临时授权的判据：带任务、带期限、带次数 —— 三者任一就是"跑完该收的"。 */
+/**
+ * 哪些授权来源算“用户真的走过这一步”。
+ *
+ * ★ 为什么不能拿“有没有任何授权”当首次判据：
+ *
+ *   `server-main.js` 每次启动都会调 `ensureLegacyGrant()`，给每个 bot 发一条
+ *   `source: 'legacy-policy'` 的迁移授权（范围 = 当前 policy 已允许的）。
+ *   所以**任何一台真机器上一启动就有授权** —— 按“没有授权”判首次，
+ *   这页永远不会出现，而它长得跟正常工作一模一样（只是不弹），
+ *   排查时得翻到启动日志里那一行“已建立迁移授权”才看得出来。
+ *
+ *   迁移授权是“升级前你就批准过的口径”的**记账**，不是用户走过 §13.2。
+ *   所以首次只能按**人类来源**判：`user` / `saved-rule`。
+ */
+const HUMAN_SOURCES = new Set(['user', 'saved-rule']);
+
+/**
+ * 这一步/这条授权是“规格 §13.2 之前就存在”的那种。
+ *
+ * 界面上要把它和“你这次选的”分开说：它的范围等于旧 policy，
+ * 可能比你现在想要的大 —— 而它不会因为新授权的存在而自动收窄。
+ */
+export function isLegacyGrant(grant) {
+  return grant?.source === 'legacy-policy';
+}
+
 function isTemporary(grant) {
   return Boolean(grant.taskId) || grant.expiresAt != null || grant.maxUses != null;
 }
@@ -291,9 +316,12 @@ export function planFirstRun({
   const main = botList.find(isMain) ?? null;
   const executors = botList.filter((b) => !isMain(b));
 
-  // 一条有效授权都没有 ⇒ 首次（真实"首次"，不靠一个可能没写进去的标记位）。
-  // ★ 勾选状态的持久化（`state.onboarding`）随界面一起进，不在这层猜。
-  const firstRun = grantList.length === 0;
+  // 用户当下想要的最小范围
+  const humanRoots = grantList.filter((g) => HUMAN_SOURCES.has(String(g.source ?? '')));
+  const legacyCount = grantList.filter(isLegacyGrant).length;
+  // 真的“首次” = 还没有任何一条人能点出来的授权根。
+  // 迁移授权不算 —— 它是旧规矩的记账（见 HUMAN_SOURCES 上面那段）。
+  const firstRun = humanRoots.length === 0;
 
   const boundaries = describeBoundaries({ mode: MODE.project, platform, desktop });
 
@@ -348,8 +376,7 @@ export function planFirstRun({
       id: STEP.visibility,
       kind: 'tell',
       title: '这台机器上，它能看到什么',
-      lines: visibilityLines,
-    },
+      lines: visibilityLines,    },
     {
       id: STEP.project,
       kind: 'choose',
@@ -357,6 +384,10 @@ export function planFirstRun({
       lines: [
         '选一个负责人项目：它的边界是这份授权能碰到的最大范围',
         '普通 Git 动作单独选一档；选多宽都不影响下面四类另批',
+        // 迁移授权必须单独说：它不会因为新授权存在而自动收窄。
+        ...(legacyCount > 0
+          ? [`你现在手上还有 ${legacyCount} 条升级前的迁移授权（范围 = 当时那份规矩），这次选完不会自动把它收窄，要你自己收回`]
+          : []),
       ],
       options: {
         projects: projectList.map((p) => ({
@@ -442,6 +473,8 @@ export function planFirstRun({
 
   return {
     firstRun,
+    // 有多少条“旧规矩”的迁移授权。界面要把它和新选的区分开说。
+    legacyGrants: legacyCount,
     steps,
     perCallConfirm: perCallConfirmItems({ policy, mcpServerCount }),
     boundaries,

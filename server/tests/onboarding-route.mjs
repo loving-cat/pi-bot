@@ -192,8 +192,7 @@ await test('★ 非主 Bot 拿着 host 授权 → 页面上点名（规格 §13.
   store.state.grants.pop();
 });
 
-await test('非主 Bot 拿着桌面键鼠授权 → 页面上点名', async () => {
-  (store.state.grants ?? (store.state.grants = [])).push({
+await test('非主 Bot 拿着桌面键鼠授权 → 页面上点名', async () => {  (store.state.grants ?? (store.state.grants = [])).push({
     id: 'g-desktop-on-sub',
     source: 'user',
     subject: { botId: coder.id, role: 'member' },
@@ -204,6 +203,25 @@ await test('非主 Bot 拿着桌面键鼠授权 → 页面上点名', async () =
   });
   const r = await req('/api/onboarding');
   assert.match(r.json.warnings.map((w) => w.text).join(' | '), /桌面键鼠授权/);
+  store.state.grants.pop();
+});
+
+// ---------------------------------------------------------------- 迁移授权的坑
+await test('★ 启动时发的迁移授权不算“用户配过了”（否则首启页永远不弹）', async () => {
+  const list = store.state.grants ?? (store.state.grants = []);
+  list.push({
+    id: 'g-legacy-onb',
+    source: 'legacy-policy',
+    subject: { botId: main.id, role: 'main' },
+    actions: [ACTION.fileRead],
+    resources: [],
+    mode: MODE.host,
+    createdAt: Date.now(),
+  });
+  const r = await req('/api/onboarding');
+  assert.equal(r.json.firstRun, true, '迁移授权不是用户走过 §13.2');
+  assert.equal(r.json.legacyGrants, 1);
+  assert.match(r.json.steps[1].lines.join(' | '), /迁移授权/);
   store.state.grants.pop();
 });
 

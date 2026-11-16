@@ -240,4 +240,24 @@ void main() {
       expect(plan.stateOf(), OnboardingPageState.blocked);
     });
   });
+
+  group('迁移授权', () {
+    test('★ 迁移授权不算“已经配过”（它不改变 firstRun）', () {
+      // 服务端每次启动都会补发迁移授权；拿它当“配过了”会让首启页永远不弹
+      final plan = OnboardingPlan.fromJson({
+        'firstRun': true,
+        'legacyGrants': 3,
+        'startable': true,
+        'steps': <Map<String, dynamic>>[],
+      });
+      expect(plan.firstRun, isTrue);
+      expect(plan.legacyGrants, 3);
+    });
+
+    test('legacyGrants 缺字段或脏数据就是 0', () {
+      expect(OnboardingPlan.fromJson(const {}).legacyGrants, 0);
+      expect(OnboardingPlan.fromJson(const {'legacyGrants': '3'}).legacyGrants, 0);
+      expect(OnboardingPlan.empty.legacyGrants, 0);
+    });
+  });
 }

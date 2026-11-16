@@ -96,6 +96,36 @@ test('首次判定：一条未撤销授权都没有才算首次', () => {
   assert.equal(baseRun({ grants: [grant({ revokedAt: NOW - 1, revokedBy: 'user' })] }).firstRun, true);
 });
 
+test('★ 迁移授权不算“配过了”（否则首启页永远不会弹）', () => {
+  // server-main.js 每次启动都会发 legacy-policy 的迁移授权；按“有没有授权”
+  // 判首次，等于这页永远不出现 —— 而且没有任何报错。
+  const legacy = grant({ id: 'g-legacy', source: 'legacy-policy' });
+  const plan = baseRun({ grants: [legacy] });
+  assert.equal(plan.firstRun, true, '迁移授权不是用户走过 §13.2');
+  assert.equal(plan.legacyGrants, 1);
+
+  // 而且要在第 2 步就说清“它不会自动收窄”
+  const step2 = plan.steps.find((s) => s.id === STEP.project);
+  assert.match(step2.lines.join(' | '), /迁移授权/);
+  assert.match(step2.lines.join(' | '), /要你自己收回/);
+});
+
+test('已保存的窄范围规则也算用户配过了', () => {
+  assert.equal(baseRun({ grants: [grant({ source: 'saved-rule' })] }).firstRun, false);
+});
+
+test('legacyGrants 计数只数迁移授权', () => {
+  const plan = baseRun({
+    grants: [
+      grant({ id: 'g-l1', source: 'legacy-policy' }),
+      grant({ id: 'g-l2', source: 'legacy-policy' }),
+      grant({ id: 'g-u1', source: 'user' }),
+    ],
+  });
+  assert.equal(plan.legacyGrants, 2);
+  assert.equal(plan.firstRun, false);
+});
+
 // ---------------------------------------------------------------- 第 2 步的边界
 test('四类"另需批准"是死数：Git 范围选到最宽也不减少（规格 §13.2-2）', () => {
   const ids = SEPARATE_APPROVAL.map((s) => s.id).sort();
