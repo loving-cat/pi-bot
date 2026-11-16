@@ -11,6 +11,8 @@
  */
 import { createTaskSupervisor } from './task-supervisor.js';
 import { desktopInputSession } from '../desktop-input-session.js';
+import { store } from '../store.js';
+import { reclaimTaskGrants } from './task-grant-reclaim.js';
 import { createChildTask } from './task-subtasks.js';
 import { planMentionDispatch, leadConfirmVerification } from './task-mentions.js';
 import { createManagedBridges } from './task-bridge.js';
@@ -113,6 +115,18 @@ export function createTaskRuntime({
     // 取消也在这一层收一次：onCancel 里先收过了，这里是对"别的路径落到
     // cancelled"（比如父任务级联取消）的兜底，幂等。
     releaseDesktopLease(run.id, `任务到达终态：${run.state}`);
+
+    // ★ 规格 §13.2 第⑤步：跑完就**级联回收临时权限**。
+    //
+    //   以前只收了桌面租约；派活时发的那几条临时授权（`taskId` 绑定的）
+    //   会一直挂在那里 —— 用户在授权面板里看到一堆"任务早就结束了"的授权，
+    //   而且它们仍然有效。这里按 taskId 收，**项目级授权一条都不碰**
+    //   （判定在 task-grant-reclaim.js，纯逻辑、有测试）。
+    try {
+      reclaimTaskGrants({ store, taskId: run.id, log });
+    } catch (err) {
+      log(`回收临时授权失败（任务 ${run.id}）：${err?.message ?? err}`);
+    }
     // ★ 取消不回报。
     //
     //   cancelTask 会**级联**取消所有子孙任务（task-controls.js 里

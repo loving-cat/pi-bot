@@ -794,11 +794,14 @@ export function planWrapUp({
     refused,
     deniedKeep,
     /**
-     * 自动收割是否已接线。没接的时候界面要按"请你手动点回收"来说，
-     * 不能说着"已自动回收"其实什么都没做。
+     * 自动收割是否已接线。
+     *
+     * ★ 现在是 `true`：任务到达终态时 `tasks/task-grant-reclaim.js` 会按
+     *   `taskId` 把这次任务的临时授权收掉（`revokedBy: 'task'`），
+     *   项目级授权一条都不碰。界面上因此可以说"已经自动收了"。
      */
-    cascadeImplemented: false,
-    note: '临时授权该在这里回收；在收尾钩子接上之前，界面上要如实说"还要你手动收回"',
+    cascadeImplemented: true,
+    note: '临时授权在任务到达终态时自动回收；上面 `revokeNow` 是这一刻还没收的那些',
   };
 }
 

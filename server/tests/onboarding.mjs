@@ -447,10 +447,11 @@ test('收尾：用户勾了"保留"但那条不能留 → 给出为什么', () =
   assert.match(w.deniedKeep[0].text, /不能保留/);
 });
 
-test('★ 自动收割没接线就如实写 false，不能假称"已自动回收"', () => {
+test('★ 自动收割已接线，如实写 true（别再说"还要你手动收"）', () => {
   const w = planWrapUp({ now: NOW });
-  assert.equal(w.cascadeImplemented, false);
-  assert.match(w.note, /手动/);
+  assert.equal(w.cascadeImplemented, true, '任务终态会按 taskId 收掉临时授权');
+  assert.match(w.note, /自动回收/);
+  assert.ok(!/手动/.test(w.note), '接上了就别再说手动');
 });
 
 test('收尾：已撤销/过期的授权不进任何一栏', () => {

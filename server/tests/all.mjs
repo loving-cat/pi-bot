@@ -136,6 +136,7 @@ const TESTS = [
   'desktop-settings-route',
   'island-login',
   'repo-trust',
+  'task-grant-reclaim',
 ];
 
 let failed = 0;
