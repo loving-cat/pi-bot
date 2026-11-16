@@ -67,6 +67,8 @@ import { routeConnections } from './connections-http.js';
 import { publicMcpCredentials } from './mcp-credentials.js';
 import { probeLogin } from './site-probe.js';
 import { createSiteRuntime } from './site-runtime.js';
+import { planFirstRun, desktopStatusOf } from './onboarding.js';
+import { desktopInputPlatform } from './desktop-input-session.js';
 import { publicSite } from './sites.js';
 import { UploadSessions } from './upload-sessions.js';
 import { loadHooks, saveHooks, validateHook } from './hooks.js';
@@ -107,6 +109,35 @@ function send(res, status, body) {
     'x-content-type-options': 'nosniff',
   });
   res.end(payload);
+}
+
+/**
+ * 桌面输入探针的结果缓存（规格 §13.2-1 要的是**实际**系统权限）。
+ *
+ * 为什么需要缓存：Windows 的探针会起一次 PowerShell（取屏幕信息 + 会话），
+ * 真去跑一次要几百毫秒。页面重开、多窗口同时拉一次就会连着起一串进程。
+ *
+ * 为什么只缓 60 秒：用户刚在系统里改了权限（或刚锁屏/解锁）就应该能看到
+ * 变化。缓太久会让“实际结果”变成“上次的结果”——那和第 4 步要求的
+ * “按实际结果报”正好相反。
+ */
+const DESKTOP_PROBE_TTL = 60_000;
+let desktopProbeCache = { at: 0, value: null };
+
+function desktopProbe() {
+  const now = Date.now();
+  if (desktopProbeCache.value && now - desktopProbeCache.at < DESKTOP_PROBE_TTL) {
+    return desktopProbeCache.value;
+  }
+  let value;
+  try {
+    value = desktopInputPlatform().probeEnvironment();
+  } catch (err) {
+    // 探针自己炸了也是“实际结果”的一部分：按失败报，不当成可用。
+    value = { ok: false, code: 'call_failed', text: `探针抛异常：${err?.message ?? err}` };
+  }
+  desktopProbeCache = { at: now, value };
+  return value;
 }
 
 async function readBody(req, limit = 1024 * 1024) {
@@ -644,6 +675,35 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
           // 顺带给出"当前规矩版本"，界面能看出哪些授权是基于旧规矩的
           policyRevision: store.policyVersion(),
         });
+      }
+
+      // ---------- 首次授权页（规格 §13.2）----------
+      //
+      // 只读：算“该说什么、该让用户选什么”，**不创建任何授权**。
+      // 所以不要 nonce、不写管理审计（和 /api/grants 同一档）。
+      //
+      // ★ 桌面权限是真探一次的（`desktopProbe()`），不拿“平台支持表”顶上：
+      //   规格 §13.2-1 / -4 要的是**实际**权限与失败原因。探针失败就报失败，
+      //   不自动换成更宽的模式——那个判断在 `onboarding.js` 里，不在路由里。
+      //
+      // `projects` 现在只有一个候选（服务端的工作目录）：仓库里还没有“项目列表”
+      // 这个东西，凭空造一个会让用户选到不存在的路径。多项目等真有了再加。
+      if (pathname === '/api/onboarding' && req.method === 'GET') {
+        return send(res, 200, planFirstRun({
+          policy: store.policy(),
+          bots: store.listBots(),
+          projects: [
+            {
+              id: 'workspace',
+              label: path.basename(config.workspace) || 'workspace',
+              path: config.workspace,
+            },
+          ],
+          grants: store.state.grants ?? [],
+          desktop: desktopStatusOf(desktopProbe()),
+          mcpServerCount: store.mcpLibrary().length,
+          platform: process.platform,
+        }));
       }
 
       const grantRevokeMatch = pathname.match(/^\/api\/grants\/([^/]+)\/revoke$/);

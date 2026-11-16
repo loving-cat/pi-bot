@@ -128,6 +128,7 @@ const TESTS = [
   'compact-threshold',
   'context-overhead',
   'onboarding',
+  'onboarding-route',
 ];
 
 let failed = 0;

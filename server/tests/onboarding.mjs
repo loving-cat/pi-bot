@@ -28,6 +28,7 @@ const {
   planFirstRun,
   perCallConfirmItems,
   describeBoundaries,
+  desktopStatusOf,
   summarizeEffectivePermissions,
   retentionRefusal,
   planWrapUp,
@@ -411,6 +412,43 @@ test('推荐值是"最小可用"：项目 = 第一个可选项目，Git = 本地
   assert.equal(rec.gitScope, GIT_SCOPE.commit);
   assert.ok(!plan.steps.find((s) => s.id === STEP.project).options.gitScopes
     .find((s) => s.id === rec.gitScope).actions.includes(ACTION.gitPush));
+});
+
+// ---------------------------------------------------------------- 探针 → 状态
+
+test('探针成功 → granted；没探过 → unknown（不乐观推定）', () => {
+  assert.deepEqual(desktopStatusOf({ ok: true, screen: { width: 2560, height: 1440 } }), {
+    observe: DESKTOP_STATE.granted,
+    input: DESKTOP_STATE.granted,
+    detail: null,
+  });
+  assert.equal(desktopStatusOf(null).input, DESKTOP_STATE.unknown);
+  assert.equal(desktopStatusOf(undefined).observe, DESKTOP_STATE.unknown);
+});
+
+test('★ "平台没实现" 和 "系统拒绝" 必须分开报', () => {
+  const np = desktopStatusOf({ ok: false, code: 'not_platform', text: 'macOS 的桌面输入还没实现' });
+  assert.equal(np.input, DESKTOP_STATE.notPlatform);
+  assert.match(np.detail, /还没实现/);
+
+  const denied = desktopStatusOf({ ok: false, code: 'not_dpi_aware', text: '声明不了 DPI 感知' });
+  assert.equal(denied.input, DESKTOP_STATE.denied);
+  assert.equal(denied.code, 'not_dpi_aware');
+
+  // 两者在页面上不能说成同一句话
+  const lineOf = (st) => baseRun({ desktop: st }).steps[0].lines.find((l) => l.startsWith('桌面键鼠'));
+  assert.match(lineOf(np), /这个平台还没实现/);
+  assert.match(lineOf(denied), /系统拒绝了授权/);
+  assert.notEqual(lineOf(np), lineOf(denied));
+});
+
+test('探针失败（拿不到会话/调用挂了）按 denied 报，并进边界文案', () => {
+  for (const code of ['no_session', 'call_failed', 'probe_unavailable']) {
+    const st = desktopStatusOf({ ok: false, code, text: `${code} 了` });
+    assert.equal(st.input, DESKTOP_STATE.denied);
+    const plan = baseRun({ desktop: st });
+    assert.match(plan.boundaries.cannot.join(' | '), /不会自动改用更宽的模式顶上/);
+  }
 });
 
 // ---------------------------------------------------------------- 结果

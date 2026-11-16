@@ -33,6 +33,7 @@
  *   · 不做 i18n：文案是中文，和仓库其他模块一致；App 侧只做归类与排版。
  */
 import { ACTION as A, DENY, MODE, normalizeGrant, checkGrantValidity, describeGrant } from './grants.js';
+import { INPUT_FAIL } from './desktop-input.js';
 import { MUTATING_TOOLS, SECURITY_CONFIG_TOOLS } from './capabilities.js';
 import { describeExecutionMode } from './exec-mode.js';
 
@@ -122,6 +123,36 @@ const DESKTOP_STATE_TEXT = Object.freeze({
   [DESKTOP_STATE.notPlatform]: '这个平台还没实现',
   [DESKTOP_STATE.unknown]: '还不知道（没探测过）',
 });
+
+/**
+ * 一次平台探针的结果 → 首启页要报的"实际系统权限"。
+ *
+ * 三种结果必须分开，因为它们对应三种完全不同的处置：
+ *
+ * | 探针 | 状态 | 界面要说的话 |
+ * |---|---|---|
+ * | ok | granted | 可用 |
+ * | `not_platform` | not-platform | 这个平台还没实现（**不是**"系统拒绝了你"） |
+ * | 其它失败（没法声明 DPI 感知 / 没有可操作会话 / 探针本身挂了） | denied | 按实际结果报，不换成更宽的模式 |
+ *
+ * ★ 没探过（`probe == null`）就给 `unknown`，**不乐观推定成可用**：
+ *   "应该能用"和"实际能用"在桌面输入这里是两件事，猜错的方向是
+ *   让用户以为它敢动他的鼠标。
+ */
+export function desktopStatusOf(probe = null) {
+  if (!probe || typeof probe !== 'object') {
+    return { observe: DESKTOP_STATE.unknown, input: DESKTOP_STATE.unknown, detail: null };
+  }
+  if (probe.ok === true) {
+    return { observe: DESKTOP_STATE.granted, input: DESKTOP_STATE.granted, detail: null };
+  }
+  const code = String(probe.code ?? '');
+  const detail = probe.text ? String(probe.text) : null;
+  if (code === INPUT_FAIL.notPlatform) {
+    return { observe: DESKTOP_STATE.notPlatform, input: DESKTOP_STATE.notPlatform, detail };
+  }
+  return { observe: DESKTOP_STATE.denied, input: DESKTOP_STATE.denied, detail, code: code || null };
+}
 
 /** 临时授权的判据：带任务、带期限、带次数 —— 三者任一就是"跑完该收的"。 */
 function isTemporary(grant) {
