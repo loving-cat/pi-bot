@@ -43,8 +43,8 @@ jobs:
         #   · Linux   —— bwrap 与 XDG 那套。
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           # 用支持的最低版本，别拿新版掩盖兼容问题
           node-version: '22'
@@ -85,7 +85,7 @@ jobs:
     name: native launcher (windows)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # The Windows sandbox launcher (native/pibot-sandbox) is Rust. It is not
       # required to build the app, but if the crate stops compiling we would
       # only find out on a release machine, and a missing launcher silently
@@ -109,7 +109,7 @@ jobs:
       matrix:
         os: [windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.47.7'
@@ -119,7 +119,7 @@ jobs:
         if: runner.os == 'Windows'
       # App 的集成用例（local_server_token_test 等）会真起服务端子进程，要有服务端依赖。
       # 不装的话那些用例会自己跳过，等于没测。
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: npm
