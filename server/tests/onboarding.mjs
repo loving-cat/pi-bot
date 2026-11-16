@@ -116,6 +116,21 @@ test('已保存的窄范围规则也算用户配过了', () => {
   assert.equal(baseRun({ grants: [grant({ source: 'saved-rule' })] }).firstRun, false);
 });
 
+test('★ 人类来源但**已过期**的授权不算配过（否则过期后再也不会引导）', () => {
+  const plan = baseRun({ grants: [grant({ id: 'g-exp', expiresAt: NOW - 1 })] });
+  assert.equal(plan.firstRun, true, '“你还配着”只能指现在还有效的那条');
+});
+
+test('★ 已过期的迁移授权也不进 legacyGrants 计数（界面上说了也在白说）', () => {
+  const plan = baseRun({
+    grants: [
+      grant({ id: 'g-live', source: 'legacy-policy' }),
+      grant({ id: 'g-dead', source: 'legacy-policy', expiresAt: NOW - 1 }),
+    ],
+  });
+  assert.equal(plan.legacyGrants, 1);
+});
+
 test('legacyGrants 计数只数迁移授权', () => {
   const plan = baseRun({
     grants: [

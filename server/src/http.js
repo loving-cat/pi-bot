@@ -759,7 +759,12 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         for (const spec of plan.grants) {
           const r = gate.add(spec);
           if (!r.ok) {
-            return fail(res, 500, 'GRANT_FAILED', `授权建立失败：${r.text}`);
+            // ★ 退回已经建好的那几条。
+            //
+            //   半个状态比失败更坏：用户重试一次，面板上就会多出一批
+            //   连他自己也分不清的授权（哪条是上一轮的？）。
+            for (const id of created) gate.revoke(id, '首启授权未完成，回退');
+            return fail(res, 500, 'GRANT_FAILED', `授权建立失败（已回退）：${r.text}`);
           }
           created.push(r.grant.id);
         }

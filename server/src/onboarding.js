@@ -309,6 +309,7 @@ export function planFirstRun({
   desktop = {},
   mcpServerCount = 0,
   platform = process.platform,
+  now = Date.now(),
 } = {}) {
   const botList = (Array.isArray(bots) ? bots : []).filter((b) => b && b.id);
   const projectList = (Array.isArray(projects) ? projects : []).filter((p) => p && (p.path || p.id));
@@ -317,8 +318,17 @@ export function planFirstRun({
   const executors = botList.filter((b) => !isMain(b));
 
   // 用户当下想要的最小范围
-  const humanRoots = grantList.filter((g) => HUMAN_SOURCES.has(String(g.source ?? '')));
-  const legacyCount = grantList.filter(isLegacyGrant).length;
+  // 过期的不算“你还配着”：用户当初给的那条已经失效了，而这页永远不弹
+  // 就等于“授权过期后没有任何重新引导”—— 那种情况下界面上只会表现为
+  // 一堆莫名其妙的拒绝。
+  const stillValid = (g) => {
+    const exp = g?.expiresAt;
+    return exp == null || Number(exp) > now;
+  };
+  const humanRoots = grantList.filter(
+    (g) => HUMAN_SOURCES.has(String(g.source ?? '')) && stillValid(g),
+  );
+  const legacyCount = grantList.filter((g) => isLegacyGrant(g) && stillValid(g)).length;
   // 真的“首次” = 还没有任何一条人能点出来的授权根。
   // 迁移授权不算 —— 它是旧规矩的记账（见 HUMAN_SOURCES 上面那段）。
   const firstRun = humanRoots.length === 0;
@@ -617,6 +627,11 @@ const PROJECT_ACTIONS = Object.freeze([A.fileRead, A.fileWrite]);
  * | 不会给桌面键鼠 | 规格 §13.2-3：普通桌面键鼠权限**不随角色继承** |
  * | 不会给 `cmd.exec` | 窄范围授权对它一律 fail-closed（见 `PROJECT_ACTIONS`） |
  * | 不会顺手改/收旧授权 | 收窄只能是用户对具体那一条的操作；顺手收等于静默改变现有行为 |
+ *
+ * ★ 不写 `policyRevision`（不绑规矩版本）：绑了的话用户只要改一改危险动作
+ *   档位，这条项目授权就会 `policy_changed` 失效，而它跟档位没关系
+ *   （范围是范围，档位是档位）。档位本身的收紧由 `policy-hook` 的工具集负责，
+ *   不靠这条授权兜。
  *
  * @returns {{ok:true, grants:object[], project:object, actions:string[], notes:string[]}
  *   | {ok:false, code:string, text:string}}

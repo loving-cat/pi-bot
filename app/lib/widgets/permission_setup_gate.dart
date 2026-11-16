@@ -394,8 +394,16 @@ class _PermissionSetupViewState extends State<PermissionSetupView> {
 }
 
 /// 主界面用的门：把首启页挡在 `HomeShell` 前面。
-class PermissionSetupGate extends StatelessWidget {
+class PermissionSetupGate extends StatefulWidget {
   const PermissionSetupGate({super.key});
+
+  @override
+  State<PermissionSetupGate> createState() => _PermissionSetupGateState();
+}
+
+class _PermissionSetupGateState extends State<PermissionSetupGate> {
+  bool _busy = false;
+  String? _error;
 
   @override
   Widget build(BuildContext context) {
@@ -405,14 +413,27 @@ class PermissionSetupGate extends StatelessWidget {
       backgroundColor: PB.bgApp,
       body: PermissionSetupView(
         plan: plan,
+        busy: _busy,
+        errorText: _error,
         initialProjectId: state.onboardingSavedProjectId,
         initialGitScope: state.onboardingSavedGitScope,
         onDismiss: state.dismissOnboarding,
         onApply: (projectId, gitScope) async {
+          setState(() {
+            _busy = true;
+            _error = null;
+          });
           final err = await state.applyOnboarding(
             projectId: projectId,
             gitScope: gitScope,
           );
+          if (!mounted) return;
+          setState(() {
+            _busy = false;
+            _error = err;
+          });
+          // 成功才走：失败时留在这一页并把错误显示出来，
+          // 直接关掉会让用户以为"点了没反应"。
           if (err == null) state.dismissOnboarding();
         },
       ),

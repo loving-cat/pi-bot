@@ -270,4 +270,20 @@ void main() {
     expect(find.text('保存改动'), findsOneWidget);
     expect(find.text('开始'), findsNothing);
   });
+
+  testWidgets('★ 提交失败要把错误显示出来（否则看起来像"点了没反应"）', (tester) async {
+    await pumpPage(
+      tester,
+      MaterialApp(
+        home: Scaffold(
+          body: PermissionSetupView(
+            plan: OnboardingPlan.fromJson(planJson()),
+            errorText: '授权建立失败：网关未启用',
+            onApply: (p, g) async {},
+          ),
+        ),
+      ),
+    );
+    expect(find.textContaining('网关未启用'), findsOneWidget);
+  });
 }
