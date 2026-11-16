@@ -168,7 +168,7 @@ async function fetchJson(url, { timeout = 1000 } = {}) {
  * @param {string} p.dataDir 服务器数据目录（快照落这里）
  * @returns {Promise<{ok:true, session:object} | {ok:false, code:string, text:string}>}
  */
-export async function openHeadless({ key, app = 'chrome.exe', shareLogin = true, dataDir, platform = process.platform } = {}) {
+export async function openHeadless({ key, app = 'chrome.exe', shareLogin = true, dataDir, platform = process.platform, attempt = 0 } = {}) {
   const id = String(key ?? '').trim();
   if (!id) return { ok: false, code: 'no_key', text: '需要一个会话键（按 bot 分）' };
   const existing = sessions.get(id);
@@ -199,7 +199,8 @@ export async function openHeadless({ key, app = 'chrome.exe', shareLogin = true,
   }
 
   const port = await freePort();
-  const child = spawn(found.file, headlessArgs({ port, userDataDir: profileDir }), {
+  const args = headlessArgs({ port, userDataDir: profileDir });
+  const child = spawn(found.file, args, {
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
     detached: false,
@@ -239,10 +240,18 @@ export async function openHeadless({ key, app = 'chrome.exe', shareLogin = true,
     session.closed = true;
     sessions.delete(id);
     try { child.kill(); } catch { /* 已经退了 */ }
+    // ★ 起不来先重试一次：CI 上见过 Chrome 偶发吐
+    //   `Could not parse server address`，换一次端口就好。生产上撞上同样的
+    //   偶发，整轮调研会话就废了 —— 重试比报错便宜得多。
+    if (!attempt) {
+      return openHeadless({ key, app, shareLogin, dataDir, platform, attempt: 1 });
+    }
     return {
       ok: false,
       code: 'not_ready',
-      text: `无头浏览器没起来（${stderr.slice(-300) || '端口没响应'}）`,
+      text: `无头浏览器没起来（${found.file}）
+参数：${args.join(' ')}
+输出：${stderr.slice(-400) || '端口没响应'}`,
     };
   }
 
