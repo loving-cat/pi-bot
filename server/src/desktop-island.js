@@ -78,7 +78,9 @@ export const ISLAND_APPS = Object.freeze([
   'mspaint.exe',
   'calc.exe',
   'charmap.exe',
-  'explorer.exe',   // 只用来开文件夹窗口，不做 shell 导航
+  // ★ 刻意**没有** explorer.exe：它能用 `shell:` / `/root,` 这类参数把任意东西
+  //   拉起来，等于把白名单整个绕过去（典型的 LOLBin）。要开文件夹窗口的需
+  //   求，用一个专门的、参数受约束的工具去做，而不是放一个万能启动器进来。
   'chrome.exe',
   'msedge.exe',
   'firefox.exe',

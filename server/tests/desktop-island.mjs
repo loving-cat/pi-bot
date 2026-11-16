@@ -140,6 +140,9 @@ test('白名单本身是干净的小写 basename，且不含解释器', () => {
   // 记事本/写字板必须在（探针与集成测试都靠它们）
   assert.ok(ISLAND_APPS.includes('notepad.exe'));
   assert.ok(ISLAND_APPS.includes('write.exe'));
+  // ★ explorer.exe 不能在里面：它能用 shell:/root, 这类参数拉起任意东西，
+  //   放进来等于白名单形同虚设（典型 LOLBin）。
+  assert.ok(!ISLAND_APPS.includes('explorer.exe'), 'explorer.exe 是个万能启动器，不能放进白名单');
 });
 
 // ---------------------------------------------------------------- 消息计划

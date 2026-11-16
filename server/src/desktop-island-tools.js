@@ -22,11 +22,11 @@ import fs from 'node:fs';
 import { config } from './config.js';
 import { screenshotPath } from './desktop-observe.js';
 import {
-  ISLAND_FAIL, ISLAND_APPS, ISLAND_LIMITS, TIER, describeTier,
+  ISLAND_FAIL, ISLAND_APPS, TIER, describeTier,
   planIslandLaunch, planIslandMessages, chooseTier,
 } from './desktop-island.js';
 import {
-  isSupported, islandExists, launchOnIsland, killProcess, listIslandWindows,
+  isSupported, islandExists, launchOnIsland, listIslandWindows,
   listIslandChildren, captureIslandWindow, postIslandMessages, readIslandText, closeIsland,
 } from './desktop-island-win.js';
 
@@ -374,4 +374,3 @@ export function buildIslandTools({ botId } = {}) {
   ];
 }
 
-export { ISLAND_LIMITS, killProcess };
