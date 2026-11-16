@@ -1,9 +1,8 @@
 # 明天从哪继续（交接便条）
 
-> 写于 2026-11-16 凌晨。HEAD = `946f622`，main 已推送，工作区干净。
-> **server 121/121 个测试文件全绿**（`onboarding` 55 项、`onboarding-route` 15 项新增），
-> **app 775 项全绿**（`onboarding_model` 23 项、`permission_setup_gate` 12 项新增），
-> 七项一致性检查 + 能力清单 + 敏感信息扫描全过。
+> 写于 2026-11-16 上午。**server 124/124 个测试文件全绿**、app 776 项全绿、
+> 七项一致性检查 + 能力清单（16 动作 / 54 工具）+ 敏感信息扫描全过。
+> main 已推送，工作区干净。
 >
 > 这份便条只回答一件事：**下次打开这个仓库，先干什么。**
 > 完整账目在 `docs/SPEC-COVERAGE.md`（逐条对着规格核实过）和 `docs/TODO.md`。
@@ -12,8 +11,9 @@
 
 ## 一句话
 
-规格里那个"整节一步都没做"的 P0 —— **§13.2 首次授权流程 —— 现在做到 4/5 步**，
-剩下的是**收尾那一半**（跑完自动回收临时授权）。
+昨晚把 §13.2 首次授权流程做到 4/5 步；今天上午补了**§5.6 三档 GUI 执行**并把
+**独立桌面（T1）从探测做到了工具层** —— 现在 agent 能在一个用户看不见的桌面上
+开应用、截图、点按钮、打字，**完全不碰用户的鼠标**。
 
 ---
 
@@ -21,59 +21,42 @@
 
 | # | 做什么 | 为什么是它 | 大概 |
 |---|---|---|---|
-| **1** | **§13.2 第⑤步：跑完的自动收割** | `planWrapUp` 已经把"该收哪几条、哪几条能留、哪几条勾了也不能留"都算出来了，但没人调它 —— `cascadeImplemented: false`。缺的是任务终态的钩子（TaskRun 的 `reportTerminal` 附近） | 半天 |
-| 2 | §13.2 正文的 **英文文案** | 现在展示的句子由服务端返回整句中文，英文界面下也是中文。要改得让 `onboarding.js` 返回 `id`（或结构化字段），App 侧自己组句 | 半天 |
-| 3 | §7.3 worktree 信任域判定 | 登记全了（gitdir/commondir/alternates），就差"必须属于授权域否则拒绝" | 2 小时 |
-| 4 | §6.3 剩余回收点 | 解绑工具不回收该工具授权 / 项目变更不重校 / 后台执行靠手动 kill | 2 小时 |
-| 5 | macOS 桌面输入 | 空壳 + 481 行文档都就位了，只缺 Mac 实机 | 需实机 |
-| 6 | TaskRun 继续补测 | 准入三模式 → 请求回执 → 产出验收，之后才能开 `PI_BOT_TASK_INTAKE` | 1 天+ |
+| **1** | **T2 共享桌面补上 §5.2 的确认环节** | 现在 `desktop_input` 能直接点，缺"观察—确认—重新校验目标—执行—核对"里的"确认"和"重新校验目标窗口"两段（`SPEC-COVERAGE` §5.2 两行标 🟨）。岛上的活已经不需要它了，但真需要动用户桌面时它是唯一的闸 | 半天 |
+| 2 | §13.2 第⑤步：跑完自动回收 | `planWrapUp` 已算好该收哪几条，缺任务终态钩子（`cascadeImplemented: false`） | 半天 |
+| 3 | §13.2 正文英文文案 | 步骤正文由服务端返回整句中文；本地化得先改成返回 `id` | 半天 |
+| 4 | §7.3 worktree 信任域判定 | 登记全了（gitdir/commondir/alternates），差"必须属于授权域否则拒绝" | 2 小时 |
+| 5 | §6.3 剩余回收点 | 解绑工具不回收 / 项目变更不重校 / 后台执行靠手动 kill | 2 小时 |
+| 6 | macOS 桌面：要么 VM 路线，要么继续如实 `not_platform` | 没有 `CreateDesktop` 等价 API；已如实报，别为了"一致"偷偷降级到动用户鼠标 | 需实机 |
+| 7 | TaskRun 继续补测 | 准入三模式 → 请求回执 → 产出验收，之后才能开 `PI_BOT_TASK_INTAKE` | 1 天+ |
 
 ---
 
-## 今晚做完的（供回忆）
+## 今天上午做完的（§5.6 独立桌面，5 个提交）
 
-**5 个提交**，一条线：把 §13.2 从"一个字都没有"做到"能看、能选、能生效"。
+| commit | 内容 |
+|---|---|
+| `c11ff4d` | 规格 §5.6（三档、五条硬要求）+ `docs/WINDOWS-HIDDEN-DESKTOP.md` + 可重跑探针（`server/tests/fixtures/island/`） |
+| `9efe4ce` | `desktop-island.js` 纯逻辑 28 项：档位选择不静默降级、启动白名单、窗口消息计划、截帧判定 |
+| `12bf259` | `desktop-island-win.js` + 端到端接线测试 9 项（真起岛、真取帧、真点、岛上 SendInput 被拒） |
+| `2db401a` | 三个主控专属工具 + 工具层测试 8 项（收尾杀 pid、不留守孤儿） |
+| 本次 | 空闲岛自动收（housekeeping）+ 台账同步 |
 
-1. `04bb8df` **纯逻辑**：`server/src/onboarding.js`
-   - 四类"另需批准"写成死数（选最宽 Git 范围也不减少），测试守着
-   - 执行 Bot 的模式**不给选** —— 理由见下面那个坑
-   - `perCallConfirm` 把"不受 policy 影响"的两条（改安全配置 / 外部 MCP）单列
-   - `retentionRefusal`：对外发送、凭据、非项目资源一律不能"保留"
-2. `808a6a7` **接线**：`GET /api/onboarding`。桌面权限**真探**（60 秒缓存），
-   `not_platform` 与"系统拒绝"分开报，探针自己炸了算 denied 而不是可用。
-3. `0fc8c97` **修一个真有病的**：首次判据原来按"有没有未撤销授权"，
-   而服务端每次启动都会补发迁移授权 → 首启页在任何真机器上**永远不会弹**。
-   改成只认人类来源（`user` / `saved-rule`）。
-4. `e413d62` **真的能建授权**：`POST /api/onboarding/apply`（defense 档 + policy nonce + 审计）。
-   动作清单不手写、不含 `cmd.exec`、重新选择会先撤销上一批。
-5. `946f622` **界面**：`widgets/permission_setup_gate.dart`，一页四步，
-   模型引导之后拦一屏。三条条件全中才弹。
+## 这轮踩到的坑（都写进了代码注释，值得记住）
 
-## 三个今晚踩到的东西（值得记住）
-
-1. **"按有没有授权判首次"是错的**。这套系统里授权有六种来源，其中
-   `legacy-policy` 是启动时自动补的。判"用户走没走过"只能看人类来源。
-   见到"应该弹的东西不弹"，先查**有没有别的东西替它满足了条件**。
-2. **别把做不了选择的事做成下拉框**。§13.2-3 是"派活时分配任务级权限"，
-   塞进首启页就会把 `host` 摆到执行 Bot 面前（迟早有人选上）；
-   而选了 `isolated` 却没真给沙箱，bot 会变成"存在但什么都干不了"。
-   所以那一步改成**告知**，界面不提供这个选择。
-3. **窄范围授权 + `cmd.exec` = 一张废卡**。命令的目标认不出来，
-   网关对"限定了范围却认不出目标"是 fail-closed（`resourceNotCovered`）。
-   所以项目授权里不含 `cmd.exec`，跑命令仍由迁移授权覆盖 —— 页面上要这么说，别装作给了。
-
----
-
-## 一个没解决的产品问题（现在挂着）
-
-首启页建的是**项目范围**的授权，但主 Bot 手上那条 `legacy-policy` 迁移授权
-范围是"当时那份规矩允许的一切"，**不会因为新授权存在而自动收窄**。
-页面上已经如实说了（"要你自己在授权面板里收"），但没有引导式的一键收窄。
-
-真要做，方向是：`POST /api/onboarding/apply` 里加一个显式参数
-（例如 `retireLegacy: true`，默认 false），把那些 bot 的迁移授权按
-`revokedBy: 'user'` 撤掉。**不能默认开** —— 那等于静默改变现有行为，
-而且撤掉之后 `cmd.exec` 就没人覆盖了（见上面第 3 点），bot 会当场干不了活。
+1. **desktop 对象靠"最后一个打开的句柄"活着。** 每次调用起一个 powershell、
+   用完关句柄 → 岛在第一次调用结束时就没了（第二次 `ERROR_FILE_NOT_FOUND`）。
+   解法：每个岛一个常驻 island server，一直握着句柄。
+2. **C#/P-Invoke 的三个静默失败**：`CreateDesktopW` 的 `lpDevice` 必须是 `IntPtr`（传 string → err 87）；
+   `CreateProcessW` 的 `lpApplicationName` 必须是真 NULL（PowerShell 的 `$null` 变 `""` → err 123）；
+   `SendMessageText/Get` 不写 `EntryPoint` 会在**调用时**抛 `EntryPointNotFoundException`。
+3. **回包必须带回请求 id**，否则每个操作都超时，而服务端看起来一切正常。
+4. **不设 `[Console]::OutputEncoding`** 就是系统代码页（GBK），中文回包变乱码。
+5. **`IntPtr.Zero` 传给 `EnumChildWindows` 会去枚举调用者自己的桌面**（第一次跑测试时
+   它把用户桌面几百个窗口全返了回来）。
+6. **同一个应用取帧会偶尔全黑**（记事本实测 1 次 1.000 / 6 次 0.025）。
+   所以 `captureVerdict` 把 >98% 暗判失败，并把那张 PNG 删掉。
+7. **别从用户桌面测 `SendInput`** —— 那本身就是 T2 行为，会真的挪动用户的鼠标
+   （早期探针把光标挪到了 77,66）。隔离只能在岛上测。
 
 ---
 
@@ -81,27 +64,24 @@
 
 ```bash
 cd server
-node tests/all.mjs                     # 必须 121/121
+node tests/all.mjs                     # 必须 124/124（Windows 上含真起岛的 17 项）
 node scripts/check-consistency.mjs     # 必须「七项一致性检查全部通过」
 node scripts/check-capability-drift.mjs
 cd ../app
-flutter test                           # 必须 775 全绿
+flutter test                           # 必须 776 全绿
 flutter analyze                        # 必须 No issues
 cd .. && node scripts/check-secrets.mjs
 ```
 
 三条纪律：
 
-1. **commit message 里别写本机绝对路径或他人路径样例** ——
-   check-secrets 会扫提交元数据，而且强推之后 `--push` 模式会扫整条历史
+1. **commit 作者/邮箱用仓库配置的那个 noreply**（别用 `-c user.email=` 覆盖）——
+   `secret scan` 的 `--push` 模式会扫提交元数据；强推会让它改扫整条历史。
 2. 用脚本生成 JS 代码时注意 `\r?\n` 这类转义会被再解释一次 → 用 `RegExp` 构造函数
 3. 每完成一块立即 commit + push，全绿才算完
 
 ## 还有那个已知挡路问题
 
-本机装着 **GameViewer 远程控制**，它持续合成输入 ——
-`GetLastInputInfo` 永远报"刚刚有人动"，于是接管检测永远让开，
-`desktop_input` 第一次永远发不出去，而文案说的是"用户在动"（用户会以为是自己碰的）。
-
-现在 `desktop_lease status` 会点名说出来。要真正解决得二选一：
-关掉 GameViewer，或者你决定"信任这台桌面"（那是产品决策，我没偷偷放宽）。
+本机装着 **GameViewer 远程控制**，它持续合成输入 → `GetLastInputInfo` 永远报
+"刚刚有人动"，于是接管检测永远让开，`desktop_input` 第一次永远发不出去。
+**独立桌面（今天做的这套）不受它影响** —— 那条路根本不用系统输入。

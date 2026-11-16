@@ -15,6 +15,7 @@ import { createAutomationScheduler } from './automations.js';
 import { createTaskHost } from './bootstrap/task-host.js';
 import { desktopInputSession } from './desktop-input-session.js';
 import { pruneScreenshots } from './desktop-observe.js';
+import { sweepIdleIslands, isSupported as islandSupported } from './desktop-island-win.js';
 import { createTaskCommands } from './tasks/task-commands.js';
 import { intakeEnabled } from './coordination/intake-tool.js';
 import { createGrantGate } from './grant-gate.js';
@@ -267,6 +268,21 @@ async function main() {
       if (pruned?.removed) log(`清理旧截图：${pruned.removed} 张`);
     } catch (err) {
       log('清理旧截图失败：' + (err?.message || err));
+    }
+    // 独立桌面（规格 §5.6 T1）：没有操作就自己收摊。
+    //
+    // 岛上的应用是**用户身份下的真实进程**，空转一晚上等于在用户机器上
+    // 挂着一堆没人看的窗口与一个常驻 powershell。这里按"空闲 10 分钟"收。
+    if (islandSupported()) {
+      // setInterval 的回调不能 await；用 promise 链，失败只记日志 ——
+      // 收摊失败不该影响别的 housekeeping。
+      sweepIdleIslands()
+        .then((idle) => {
+          if (idle?.closed?.length) {
+            log(`回收空闲独立桌面：${idle.closed.map((c) => `${c.name}（空闲 ${Math.round(c.idleFor / 1000)}s）`).join('、')}`);
+          }
+        })
+        .catch((err) => log('回收空闲独立桌面失败：' + (err?.message || err)));
     }
   }, 60_000);
   housekeeping.unref?.();

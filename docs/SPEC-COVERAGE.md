@@ -47,6 +47,10 @@
 | §5.4 锁屏/断开：暂停输入并释放租约 | ✅ | `OpenInputDesktop` 失败 → `no_session` + 自动 revoke | `tests/desktop-input.mjs` |
 | §5.5 审计记录授权引用、发起者、实际执行角色、目标摘要、结果 | 🟨 | 授权审计有（§5.5 全套）；**桌面输入的审计只记动作摘要 + 前台窗口标题**，不记授权引用 | `desktop-input-session.js` 的 `pushAudit` |
 | §5.5 截图最小化取景 / 保留期 | ✅ | 默认只截目标窗口；`server-main` 的 60 秒 housekeeping 调 `pruneScreenshots()` | `tests/reclamation.mjs` |
+| **§5.6 三档 GUI 执行（T0 程序化 / T1 独立桌面 / T2 共享）** | 🟨 新增 | `desktop-island.js`（纯逻辑）+ `desktop-island-win.js`（每岛一个常驻 island server）+ 三个主控专属工具。实测：岛上的窗口用户看不到、两边光标各归各、岛上发 `SendInput` 被拒（err=5）、跨桌面取帧与 `PostMessage`/`WM_CHAR` 驱动全通。**差距**：只对经典 Win32 应用可靠；macOS 无等价 API（如实报 `not_platform`）；同桌面那档（T2）仍没接「确认」环节（见上两行） | `tests/desktop-island.mjs` 28 项、`tests/desktop-island-win.mjs` 9 项、`tests/desktop-island-tools.mjs` 8 项；`docs/WINDOWS-HIDDEN-DESKTOP.md` |
+| §5.6-1 截到黑帧必须报失败 | ✅ | `captureVerdict()`：`darkRatio > 0.98` 或尺寸过小 → `blank_frame`，并**删掉那张图**（留着迟早被当证据） | 同上；实测确实出现过一次全黑 |
+| §5.6-2 island 不是安全边界 | ✅ 已声明 | 规格、工具说明、`ISLAND_LIMITS` 三处都写了；授权判定没因它放宽一条 | grep `ISLAND_LIMITS` |
+| §5.6-4 起应用等于执行命令 | ✅ | `desktop_island_launch` → `cmd.exec`，且只允许 `ISLAND_APPS` 里的可执行体、参数不得含 shell 元字符 | `tests/desktop-island.mjs`、`tests/capabilities.mjs` |
 
 ---
 

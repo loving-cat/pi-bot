@@ -49,6 +49,7 @@
 
 | 项 | 状态 | 阻塞谁 | 下一步最小动作 |
 |---|---|---|---|
+| 独立桌面（§5.6 T1） | ✅ `12bf259` `2db401a` | 只对经典 Win32 应用可靠；macOS 无等价 API | 把「T2 共享桌面」也接上 §5.2 的确认环节；补 `targetWindow` 复核（同一窗口在两帧之间被换掉） |
 | worktree 授权图（登记公共元数据并限制） | ⬜ | §7.3；解析已做（`gitdir/commondir/realpath`） | 先写"哪些路径必须属于授权域"的纯判定 + 测试 |
 | **§13.2 首次授权流程** | 🟨 `04bb8df` `808a6a7` `0fc8c97` `e413d62` `946f622` | 5 步里四步到位：`onboarding.js` 纯逻辑 + `GET /api/onboarding`（桌面权限真探）+ `POST /api/onboarding/apply`（defense + nonce，真的建授权根）+ App 首启页 | 第⑤步的**跑完自动收割**：`planWrapUp` 已算好，缺任务终态钩子（现在 `cascadeImplemented: false`）。另外正文还是服务端中文整句，英文界面要本地化得先返回 `id` |
 | **§14 第三方组件许可证清单** | ⬜ | §14.2；仓库只有根 `LICENSE` | `npm ls --all` 导出 + 许可证列，写进 `docs/LICENSES.md` |
