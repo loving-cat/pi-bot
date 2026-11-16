@@ -40,7 +40,7 @@
 | §5.2 租约属于任务，不属于进程 | ✅ | `acquire()` 必填 `taskId` + `botId` | 同上 |
 | §5.2 租约到期 / 心跳 / 世代号 | ✅ | TTL 60s、心跳 20s、epoch 每次转让 +1 | 同上 |
 | §5.2 每次输入前检查取消状态、会话、目标窗口 | ✅ `9967d82` | 调用方传 `expectWindow`，执行前核对前台窗口标题；发完之后再核一次，变了返回 `targetKept=false` 并明确警告 | `tests/desktop-input.mjs`（target_changed / targetKept 三项） |
-| §5.2 高风险动作「观察—确认—重新校验目标—执行—核对结果」 | 🟨 | 有观察、有规划校验、有光标复核；**缺"重新校验目标窗口"** 和"确认"这一段（桌面输入不走 `confirm.js`） | 同上 |
+| §5.2 高风险动作「观察—确认—重新校验目标—执行—核对结果」 | 🟨 | 观察 ✅、重新校验目标 ✅（`expectWindow` + 发后 `targetKept`）、核对结果 ✅（光标复核）；**只缺"确认"** —— 桌面输入不走 `confirm.js`，现在靠租约当同意 | `tests/desktop-input.mjs` |
 | §5.2 用户接管立即吊销并丢弃未执行输入 | ✅ | `watch()` → `revoke()`；抖动抑制 2 次 | `tests/desktop-takeover.mjs` 21 项 |
 | §5.2 按键释放 / 拖拽中断 / 超时恢复纳入验收 | 🟨 | 拖拽**刻意不做**（明确拒绝）；按键释放有（down/up 成对发）；超时恢复：`server-main` 的 60 秒 housekeeping 调 `sweepLeases()`（已接，`202f0d7`）。**差的只剩拖拽的验收用例** | `tests/reclamation.mjs` + `grep sweepLeases server-main.js` |
 | §5.4 多屏/缩放：坐标与显示器绑定 | 🟨 | 屏幕矩形每次重探，屏幕外坐标拒绝；**但坐标本身不带"哪个显示器/哪次布局"的标记**，两次动作之间布局变了不会被发现 | `desktop-input.js` `planInput` |
@@ -182,7 +182,7 @@
 | 模板不得签发授权 | ✅ `tests/template-grants.mjs` 4 项 |
 | 覆盖值不得突破有效授权上限 | ✅ `checkOverrideBounds` |
 | 冲突需明示 | ✅ `diffOnUpgrade` 出 `conflicts[]` |
-| **§13.2 首次授权流程 5 步** | 🟨 五步里四步到位、一步只讲不做。`server/src/onboarding.js`（纯逻辑，55 项测试）+ `GET /api/onboarding` + `POST /api/onboarding/apply`（defense 档 + policy nonce + 审计）+ App 首启页 `widgets/permission_setup_gate.dart`（12 项组件测试）。逐条：①全机视野 / 真实系统权限（探针**真探**，失败按实际结果报）✅ ②项目 + 普通 Git 范围（选完**真的建授权根**，动作清单不手写）✅ ③任务级最小权限：只讲清楚，**分配留在派活时** —— 首启页做下拉框会把 `host` 摆上桌 🟨 ④有效权限 / 逐次确认 / 硬隔离边界汇总（`perCallConfirm` 把"不受 policy 影响"的两条单列）✅ ⑤收尾：任务终态按 `taskId` 回收临时授权（`revokedBy: 'task'`，项目级一条不碰），`planWrapUp.cascadeImplemented` 已翻成 true ✅ |
+| **§13.2 首次授权流程 5 步** | 🟨 五步全通（第⑤步已闭环 `a9ba2ca`）。`server/src/onboarding.js`（纯逻辑，55 项测试）+ `GET /api/onboarding` + `POST /api/onboarding/apply`（defense 档 + policy nonce + 审计）+ App 首启页 `widgets/permission_setup_gate.dart`（12 项组件测试）。逐条：①全机视野 / 真实系统权限（探针**真探**，失败按实际结果报）✅ ②项目 + 普通 Git 范围（选完**真的建授权根**，动作清单不手写）✅ ③任务级最小权限：只讲清楚，**分配留在派活时** —— 首启页做下拉框会把 `host` 摆上桌 🟨 ④有效权限 / 逐次确认 / 硬隔离边界汇总（`perCallConfirm` 把"不受 policy 影响"的两条单列）✅ ⑤收尾：任务终态按 `taskId` 回收临时授权（`revokedBy: 'task'`，项目级一条不碰），`planWrapUp.cascadeImplemented` 已翻成 true ✅ |
 
 ## 十、§14 工具链与许可证
 
@@ -200,7 +200,7 @@
 |---|---|
 | Win/mac 宿主代理、截图/输入权限、多屏、接管的 API 与兼容矩阵 | 🟨 Win 已实测大部分；macOS 空壳 |
 | 各能力适配器不可绕过的调用链证据 | 🟨 有（`check-consistency.mjs` 六项 + 能力漂移检查） |
-| linked worktree 精细授权与并发锁可行性 | ⬜ 没验证 |
+| linked worktree 精细授权与并发锁可行性 | 🟨 `6974fc3` | 写锁按 commonDir 协调已验证（10 项测试）；**精细到文件级的授权**还没做 |
 | 第三方内置封装来源/许可/传递依赖 | ✅ `5edbde2` | 见 `docs/LICENSES.md`（按法律含义判 OR/AND 复合表达式） | 同上 |
 | 历史代码按本稿重新验收 | 🟨 部分（本轮补了很多，但 `docs/PERMISSIONS-INVENTORY.md` 进度表仍停在旧版） |
 
