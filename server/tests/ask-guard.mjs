@@ -105,9 +105,8 @@ await test('主控少这一个工具，其余工具不受影响', async () => {
   // 顺手把别的工具也漏给了/漏掉了"。
   const mainOnlyExcluded = new Set(['ask_user', 'ego_browser']);
   const mainOnlyAdded = new Set([
+    // 看用户真实屏幕 / 动用户鼠标的那一组（独立桌面不在这里：每个 bot 都能开）
     'desktop_observe', 'desktop_screenshot', 'desktop_lease', 'desktop_input',
-    // 独立桌面（规格 §5.6 T1）同样是主控独有
-    'desktop_island_observe', 'desktop_island_launch', 'desktop_island_input',
   ]);
   assert.deepEqual(
     withMain.slice().sort(),

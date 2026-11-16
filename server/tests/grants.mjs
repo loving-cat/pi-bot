@@ -520,7 +520,7 @@ await test('迁移兼容：只读 policy 给读 + 桌面观察，不给写和命
     assert.ok(actions.includes(mapped.action), `策略放行 ${tool}，迁移授权却没有 ${mapped.action}`);
   }
 });
-await test('迁移兼容：主 Bot 拿到桌面观察与 push，其他 Bot 拿不到', () => {
+await test('迁移兼容：桌面观察每个 Bot 都有；push 只给主 Bot，输入谁都不给', () => {
   store.state.grants = [];
   const gate = createGrantGate({ store, currentPolicyRevision: () => 'p1', currentGeneration: () => 'g1' });
   ensureLegacyGrant({
@@ -529,12 +529,17 @@ await test('迁移兼容：主 Bot 拿到桌面观察与 push，其他 Bot 拿�
   });
   const asChief = { botId: chief.id, role: 'main' };
   const asWorker = { botId: worker.id };
-  for (const tool of ['desktop_observe', 'desktop_screenshot']) {
+  // ★ desktop.observe 现在两边的 Bot 都有：独立桌面（§5.6 T1）人人可开，
+  //   "看自己那张岛"用的是同一个动作。用户真实屏幕仍由工具级 chiefOnly 挡住。
+  for (const tool of ['desktop_observe', 'desktop_screenshot', 'desktop_island_observe']) {
     const mapped = gate.actionForTool(tool);
     assert.equal(mapped.action, ACTION.desktopObserve);
     assert.equal(gate.check({ subject: asChief, action: mapped.action }).ok, true, `${tool} 不能让主 Bot 一上线就坏`);
-    assert.equal(gate.check({ subject: asWorker, action: mapped.action }).ok, false, `${tool} 不该给普通 Bot`);
+    assert.equal(gate.check({ subject: asWorker, action: mapped.action }).ok, true, `${tool} 现在对每个 Bot 开放`);
   }
+  // 但**动鼠标**谁都不从迁移继承（migration: 'never'），必须用户显式建授权
+  assert.equal(gate.check({ subject: asWorker, action: ACTION.desktopInput }).ok, false);
+  assert.equal(gate.check({ subject: asChief, action: ACTION.desktopInput }).ok, false);
   // push：放行的是“允许发起”，真正推之前还有手机确认（confirm.js）
   assert.equal(gate.check({ subject: asChief, action: ACTION.gitPush }).ok, true);
   assert.equal(gate.check({ subject: asWorker, action: ACTION.gitPush }).ok, false);

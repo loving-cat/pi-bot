@@ -126,26 +126,25 @@ await test('★ 同一动作下的工具可以有不同的只读/改状态标记
 });
 
 await test('★ 主 Bot 专属：工具级和动作级是两件事', () => {
-  // 工具级：桌面那一组（成员不该看屏幕，也不该动鼠标）
+  // 工具级：**看用户真实屏幕 / 动用户鼠标**那一组只给主 Bot。
   // desktop_lease 不过网关（它只排队不碰东西），但仍然是主 Bot 专属。
-  // 独立桌面三件（规格 §5.6 T1）同样是主 Bot 专属：它们能在用户会话里
-  // 起进程、并操作一个真实窗口 —— 给成员等于把 §5.3 那条边界绕掉。
+  //
+  // ★ 独立桌面三件（§5.6 T1）**不在这个列表里**：2026-11-16 产品决定
+  //   "一台电脑人机合作，一个部门一张岛"，所以每个 Bot 都能开自己部门那张。
+  //   风险面没变宽 —— 岛碰不到用户的鼠标与焦点，而 T2 那两个工具仍然只有主 Bot 有。
   assert.deepEqual(
     [...C.CHIEF_ONLY_TOOLS].sort(),
-    [
-      'desktop_input',
-      'desktop_island_input',
-      'desktop_island_launch',
-      'desktop_island_observe',
-      'desktop_lease',
-      'desktop_observe',
-      'desktop_screenshot',
-    ],
+    ['desktop_input', 'desktop_lease', 'desktop_observe', 'desktop_screenshot'],
   );
+  for (const t of ['desktop_island_observe', 'desktop_island_launch', 'desktop_island_input']) {
+    assert.ok(!C.CHIEF_ONLY_TOOLS.includes(t), `${t} 现在对每个 Bot 开放`);
+  }
   // 动作级：桌面观察 + push（迁移授权只给主 Bot）
   // desktop.input 属于 migration:'never'（谁都不给），比分给主 Bot 更严，
   // 所以它出现在 MIGRATION_WITHHELD 而不是这里 —— 这两个列表语义不同。
-  assert.deepEqual([...C.CHIEF_ONLY_ACTIONS].sort(), ['desktop.observe', 'git.push']);
+  // desktop.observe 现在是 'all'（每个 bot 都要能看自己那张岛）；
+  // 只给主 Bot 的只剩 git.push。desktop.input 仍是 'never'（谁都不从迁移继承）。
+  assert.deepEqual([...C.CHIEF_ONLY_ACTIONS].sort(), ['git.push']);
   // git_push 在动作级但不在工具级：负责人也能调，但迁移授权不给它
   assert.equal(C.CHIEF_ONLY_TOOLS.includes('git_push'), false);
   assert.equal(C.CHIEF_ONLY_ACTIONS.includes('git.push'), true);

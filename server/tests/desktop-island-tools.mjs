@@ -46,10 +46,12 @@ if (!env.ok || env.session !== true) {
 }
 
 const { buildIslandTools, defaultIslandName } = await import(src('desktop-island-tools.js'));
-// 默认岛名按 botId 分（全双工：每个 bot 一张自己的桌子）
+// 默认岛名按**部门**分（一个部门一张桌子）；没有部门就按 bot 分。
+// 这里故意给一个 roomId，顺便验证"同部门的两个 bot 会落到同一张岛"。
 const BOT_ID = 'b_test_island';
-const island = defaultIslandName(BOT_ID);
-const tools = buildIslandTools({ botId: BOT_ID });
+const ROOM_ID = 'rm_dept_test';
+const island = defaultIslandName({ botId: BOT_ID, roomId: ROOM_ID });
+const tools = buildIslandTools({ botId: BOT_ID, roomId: ROOM_ID });
 const byName = new Map(tools.map((t) => [t.name, t]));
 const call = (name, params) => byName.get(name).execute('call-1', params);
 const textOf = (r) => (r.content ?? []).map((c) => c.text ?? '').join('\n');
@@ -80,12 +82,23 @@ try {
     assert.match(textOf(r), /不接命令串/);
   });
 
-  await test('★ 不同的 bot 默认不共用一张岛（否则又变回抢窗口）', () => {
-    assert.notEqual(defaultIslandName('bot_a'), defaultIslandName('bot_b'));
-    assert.equal(defaultIslandName('bot_a'), 'island-bot_a');
-    assert.equal(defaultIslandName(''), 'island-default');
+  await test('★ 一个部门一张岛：同部门两个 bot 同一张，不同部门各一张', () => {
+    // 产品决定："尽可能一个部门就一个人操作电脑桌面"
+    assert.equal(
+      defaultIslandName({ botId: 'bot_a', roomId: 'rm_1' }),
+      defaultIslandName({ botId: 'bot_b', roomId: 'rm_1' }),
+      '同部门共用一张桌子（他们本来就一起干活，轮流用）',
+    );
+    assert.notEqual(
+      defaultIslandName({ botId: 'bot_a', roomId: 'rm_1' }),
+      defaultIslandName({ botId: 'bot_a', roomId: 'rm_2' }),
+      '不同部门不能互相看到对方的窗口',
+    );
+    // 没有部门（私聊）时按 bot 分
+    assert.equal(defaultIslandName({ botId: 'bot_a' }), 'island-bot_a');
+    assert.equal(defaultIslandName({}), 'island-default');
     // 名字里的怪字符要洗掉（否则 CreateDesktop 会拿到一个非法名字）
-    assert.equal(defaultIslandName('a/b:c d'), 'island-a_b_c_d');
+    assert.equal(defaultIslandName({ roomId: 'a/b:c d' }), 'island-dept-a_b_c_d');
   });
 
   await test('启动一个真实应用 → 岛上有窗口', async () => {

@@ -243,8 +243,14 @@ await test('迁移授权：故意扣着的两类不继承', () => {
   // 主 Bot 专属的两项
   assert.ok(chiefActions.includes(ACTION.desktopObserve));
   assert.ok(chiefActions.includes(ACTION.gitPush));
-  assert.ok(!workerActions.includes(ACTION.desktopObserve), '看屏幕只给主 Bot');
+  // ★ 2026-11-16 改动：desktop.observe 从 'chief' 变成 'all' ——
+  //   独立桌面（§5.6 T1）对每个 Bot 开放，"看自己那张岛"用的是同一个动作。
+  //   用户真实屏幕（T2）仍然由工具级 chiefOnly 挡住。
+  assert.ok(workerActions.includes(ACTION.desktopObserve), '看自己那张岛要给每个 Bot');
   assert.ok(!workerActions.includes(ACTION.gitPush), '推远端是 G2，属主 Bot');
+  // 真正扣着不给的是这两个（migration: 'never'）
+  assert.ok(!workerActions.includes(ACTION.desktopInput), '操作屏幕不从迁移继承');
+  assert.ok(!workerActions.includes(ACTION.gitDestructive), '破坏性 Git 不从迁移继承');
 });
 // ---------------------------------------------------------------- 工具映射兼容
 await test('TOOL_ACTIONS 与目录同源（兼容导出不会漂移）', () => {

@@ -122,7 +122,13 @@ export const ACTIONS = Object.freeze({
   [ACTION.desktopObserve]: {
     // 观察只读，但看得到整个屏幕 —— 风险是隐私面，不是破坏面
     label: '看屏幕',
-    risk: RISK.medium, irreversible: false, needsTarget: false, migration: 'chief',
+    risk: RISK.medium, irreversible: false, needsTarget: false,
+    // ★ 2026-11-16 从 'chief' 改成 'all'：独立桌面（§5.6 T1）对每个 Bot 开放，
+    //   而"看自己那张岛"用的是同一个动作。每个 bot 都该能看见自己在干什么。
+    //
+    //   风险面变了吗？**没有变宽到用户桌面**：T2 的 `desktop_observe`（看用户
+    //   真实屏幕）仍然是工具级的 chiefOnly，成员拿不到那个工具。
+    migration: 'all',
   },
   [ACTION.desktopInput]: {
     // 输入等于把当前登录身份交出去。输入层（P0-3b）还没建，
@@ -242,7 +248,10 @@ export const TOOL_SPECS = Object.freeze({
   desktop_lease: { action: null, readonly: true, chiefOnly: true },
   // 输入动作不可撤销（点错了就是点了），迁移授权永不给（migration: 'never'），
   // 且只给主 Bot —— 三件事全部从 ACTIONS[desktop.input] 派生，这里不重复写。
-  desktop_input: { action: ACTION.desktopInput, chiefOnly: true },
+  // ★ 加 mutating：`ask` 档本来对"会动手的工具"逐次审批，而桌面输入以前
+  //   没有这个标记 —— 于是最危险的那个工具在 ask 档下反而完全不过审批。
+  //   现在它和其它会动手的工具一致（真正的高危判据仍是 L2 那一层，见 §5.2）。
+  desktop_input: { action: ACTION.desktopInput, mutating: true, chiefOnly: true },
 
   // ---------------- 独立桌面（规格 §5.6 的 T1 档）
   //
@@ -254,9 +263,12 @@ export const TOOL_SPECS = Object.freeze({
   // ★ 三个都不走桌面租约：独立桌面的输入在 OS 层面就到不了用户的桌面（实测
   //   SendInput 被拒 err=5），不存在"抢用户鼠标"的互斥对象。同一个岛内的串行
   //   由 island server 自己的管道保证（见 desktop-island-win.js）。
-  desktop_island_observe: { action: ACTION.desktopObserve, readonly: true, chiefOnly: true },
-  desktop_island_launch: { action: ACTION.cmdExec, mutating: true, chiefOnly: true },
-  desktop_island_input: { action: ACTION.desktopInput, chiefOnly: true },
+  // ★ 不再 chiefOnly：一台电脑人机合作，一个部门一张岛，谁都能用自己那张。
+  //   权限仍然按动作走（看=observe、起程序=cmd.exec、点/打字=desktop.input），
+  //   所以"能不能动手"还是由授权决定，不是由工具在不在手里决定。
+  desktop_island_observe: { action: ACTION.desktopObserve, readonly: true },
+  desktop_island_launch: { action: ACTION.cmdExec, mutating: true },
+  desktop_island_input: { action: ACTION.desktopInput, mutating: true },
 
   // ---------------- net.fetch
   // ★ 这三个必须分开标：

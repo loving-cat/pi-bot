@@ -34,18 +34,25 @@ import {
 } from './desktop-island-win.js';
 
 /**
- * 默认岛名（每个 bot 一张，不共用）。
+ * 默认岛名：**一个部门一张**（没有部门时按 bot 分）。
  *
- * ★ 这是"全双工"的关键一步：用户在这台机器上正常干活，bot 在**自己的**
- *   那张桌面上干活。如果所有 bot 共用一张岛，两个任务就会在同一张桌子上
- *   抢窗口 —— 那又变回"抢一个光标"的老问题了，只是换了个地方。
+ * 产品决定（2026-11-16）：「一台电脑人机合作，尽可能一个部门就一个人操作
+ * 电脑桌面」。所以：
  *
- *   按 botId 分：同一个 bot 的多个任务共享一张桌子（它本来就是同一个人），
- *   不同 bot 各有一张。要更细就显式传 island（比如带上 taskId）。
+ *   · 同一个部门的几个 Bot 共用一张岛 —— 他们本来就是一起干活的一伙人，
+ *     轮流用一张桌子比每人开一张省资源，也符合"一个部门一个人操作"；
+ *   · 不同部门各一张 —— 部门之间不该互相看到对方的窗口；
+ *   · 同岛内由 island server 的管道**串行**（一次一个操作），
+ *     所以"一个部门就一个人在用"是天然成立的，不需要额外的锁。
+ *
+ * 要更细就显式传 island（比如按任务分）。
  */
-export function defaultIslandName(botId) {
-  const id = String(botId ?? '').trim().replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 24);
-  return id ? `island-${id}` : 'island-default';
+export function defaultIslandName({ botId = '', roomId = '' } = {}) {
+  const clean = (v) => String(v ?? '').trim().replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 24);
+  const room = clean(roomId);
+  if (room) return `island-dept-${room}`;
+  const bot = clean(botId);
+  return bot ? `island-${bot}` : 'island-default';
 }
 
 const ok = (text, details = {}) => ({ content: [{ type: 'text', text }], details });
@@ -67,8 +74,8 @@ function rememberPid(island, pid) {
   launchedPids.set(island, list);
 }
 
-function islandName(raw, botId) {
-  return String(raw ?? '').trim() || defaultIslandName(botId);
+function islandName(raw, botId, roomId) {
+  return String(raw ?? '').trim() || defaultIslandName({ botId, roomId });
 }
 
 /** 等窗口出现（首帧多久全看机器心情，别写固定 sleep）。 */
@@ -140,7 +147,7 @@ function guardTier({ authorized = true } = {}) {
  * @param {string} p.botId 记日志/文件名用
  * @param {object} [p.runner] 预留（将来要拿任务上下文）
  */
-export function buildIslandTools({ botId } = {}) {
+export function buildIslandTools({ botId, roomId = '' } = {}) {
   return [
     defineTool({
       name: 'desktop_island_launch',
@@ -172,7 +179,7 @@ export function buildIslandTools({ botId } = {}) {
       execute: async (_id, { app, args, island, shareLogin }) => {
         const g = guardTier();
         if (g.error) return g.error;
-        const name = islandName(island, botId);
+        const name = islandName(island, botId, roomId);
 
         // ---- 登录态共享（规格 §5.6 的可用性那一半）----
         //
@@ -247,7 +254,7 @@ export function buildIslandTools({ botId } = {}) {
       execute: async (_id, { island, window, capture }) => {
         const g = guardTier();
         if (g.error) return g.error;
-        const name = islandName(island, botId);
+        const name = islandName(island, botId, roomId);
         if (!islandExists({ name }).exists) {
           return fail(`岛上什么都没有（还没起应用，或者进程已经退了）。先用 desktop_island_launch 起一个。`);
         }
@@ -335,7 +342,7 @@ export function buildIslandTools({ botId } = {}) {
       execute: async (_id, { action, island, window, control, x, y, text }) => {
         const g = guardTier();
         if (g.error) return g.error;
-        const name = islandName(island, botId);
+        const name = islandName(island, botId, roomId);
 
         if (action === 'close') {
           const pids = launchedPids.get(name) ?? [];
