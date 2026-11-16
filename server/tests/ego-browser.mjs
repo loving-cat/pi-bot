@@ -64,5 +64,8 @@ test('★ 收尾脚本必须退出全屏，而且每一步都不能把整段搞�
   // 收尾失败不能吞掉主结果：每个 claim / 每页 / 每个 evaluate 都要有 try
   const tries = (script.match(/try\s*\{/g) ?? []).length;
   assert.ok(tries >= 3, `每一步都要 try/catch，实际 ${tries} 处`);
-  assert.ok(!/handOff/.test(script), '收尾不该抢用户的控制权');
+  // ★ 反过来：收尾**必须**交还控制权，否则用户面对的是一块不能点的页面
+  //   （ego 界面上的 "Agent is in control" + "Take over"）。
+  assert.ok(script.includes('handOff'), '收尾必须把控制权交还用户');
+  assert.ok(/ownership !== 'agent'/.test(script), '已经是用户的空间不许抢');
 });

@@ -70,10 +70,19 @@ export async function locateEgoBrowser() {
  */
 export function buildFullscreenCleanupScript() {
   return `
+// 收尾：① 退出全屏 ② **把控制权交还给用户**。
+//
+// ② 是最容易被忘的一步：ego 会把空间标成 "Agent is in control"，
+// 用户看到的是一整块不能点的页面 + 一个 "Take over" 按钮 ——
+// 体验上等于"它占着我的浏览器"。
+//
+// 只处理 ownership === 'agent' 的空间：已经是用户的（'user' / 'agentDelegatedToUser'）
+// 一个都不碰 —— 抢回来再交还等于让用户闪一下。
 const spaces = await listTaskSpaces();
 for (const s of spaces || []) {
+  if (s.ownership !== 'agent') continue;
   try {
-    const task = await claimTaskSpace(s.id);
+    const task = await taskSpace(s.id);
     const pages = await task.pages();
     for (const p of pages || []) {
       try {
@@ -88,9 +97,10 @@ for (const s of spaces || []) {
         });
       } catch (e) { /* 单个页面失败不影响其它 */ }
     }
+    try { await task.handOff(); } catch (e) { /* 交还失败也不影响主结果 */ }
   } catch (e) { /* 这个空间拿不到就跳过 */ }
 }
-console.log('cleanup: fullscreen released');
+console.log('cleanup: fullscreen released, control handed back');
 `;
 }
 
