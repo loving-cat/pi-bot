@@ -130,6 +130,7 @@ const TESTS = [
   'onboarding',
   'onboarding-route',
   'desktop-island',
+  'desktop-island-win',
 ];
 
 let failed = 0;
