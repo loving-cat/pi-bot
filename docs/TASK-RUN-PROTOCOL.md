@@ -183,3 +183,14 @@ appliedCommands 与命令回执同键：requesterId + commandId + fingerprint �
 ## 启用边界
 
 PI_BOT_TASK_INTAKE 默认关闭；批次 07 已在真实 server-main 装配一个 TaskRuntime 并执行 recover；关闭态按下方“生产启动与受控启用”处理。
+
+## 当前状态（v1.4.1）
+
+- 引擎代码在位（约 2900 行，其中 `task-supervisor` 1564 行），**默认关闭**（`PI_BOT_TASK_INTAKE`）。
+- 关闭的原因不是功能不能用，而是**开启前的三道门还没过**：
+  1. 核心路径测试（命令重放幂等 / 预算耗尽 / 撤销不丢 / 终态必达）；
+  2. 端到端（用户加任务 → 真派出去执行，`task-intake-e2e.mjs` 用假模型替身）；
+  3. 任务看板能显示活数据（否则四列全空，用户会以为坏了）。
+- 缺口清单见 `docs/taskrun-gaps.md`；跟踪项在 GitHub Issue「TaskRun 引擎：开启前的三条门」。
+- 关闭态下用户看到的是：任务板能增删改，但"引擎执行"那一层不产出活数据 ——
+  这是**如实的状态**，不是"已完成但没数据"。

@@ -116,3 +116,28 @@
 - 不做"自动猜用户想要前台还是后台"的黑箱评分 —— 判据就是一句话，可复核；
 - 不让偏好变成授权（偏好永远不能放宽权限，只能影响**怎么用**已授的权）；
 - 不在这一版做 per-bot 偏好（先证明人的偏好有用）。
+
+## 6. 实现状态（v1.4.1）
+
+§1~§3 的核心已落地。下表只记"在哪、怎么自己验"，不记过程。
+
+| 规格 | 落在哪 | 怎么验 |
+|---|---|---|
+| §1 一条判据（要不要用户用眼睛看） | `server/src/system-prompt.js` 的「【先分清：给用户看，还是你自己查】」 | `buildAppendSystemPrompt()` 输出里搜「先分清」 |
+| §1 后台那一档（要 JS + 要登录态，但用户不用看） | `server/src/research-browser-tools.js` + `server/src/headless-browser.js` + `server/src/cdp-client.js` | `server/tests/headless-browser.mjs`（真起浏览器、跑 JS、截图、岛模式） |
+| §1 只读抓取仍用 `web_fetch` | `server/src/tools.js` | 工具清单里有 `web_fetch` 与 `browser_research` 两档 |
+| §2 前台三条硬约束 | `server/src/system-prompt.js` + `server/src/ego-browser.js` 的 `buildFullscreenCleanupScript()` | `server/tests/ego-browser.mjs`：收尾必须 `handOff`、且不碰 `ownership !== 'agent'` 的空间 |
+| §2 服务端兜底退全屏 | 同上 | 同上 |
+| §3 偏好（话题去重、strong/weak、注入 ≤5） | `server/src/preferences.js` + `store.preferences()` | `server/tests/preferences.mjs` |
+| §3 从对话里提取偏好 | `server/src/lesson-reflect.js`（`parsePreferenceOutput`） | 同上 + `lesson-reflect` 测试 |
+| 「简单的事自己做，别派」 | `server/src/system-prompt.js` | 输出里搜「简单的事自己做」 |
+
+### 有意留白 / 已知边界
+
+- **岛的窗口消息驱动只对经典 Win32 可靠**：Chromium 自绘，`PostMessage` 点不到 DOM 元素。
+  所以"后台浏览器"走 **CDP**（`--remote-debugging-port`），不走窗口消息；岛上的是有头真浏览器，
+  窗口在用户看不见的桌面上。
+- **无头会被一部分站点识别**（Cloudflare 之类）。默认 `mode: 'island'`（Windows），
+  非 Windows 自动降级为无头。
+- **非 Windows 没有岛**：`desktop_island_*` 明确拒绝并说明原因，不静默降级成"动用户鼠标"。
+- **`mode: 'headless'` 不会同步登录态回本机**：快照是复制品，在后台浏览器里登录/退出不影响用户的浏览器。

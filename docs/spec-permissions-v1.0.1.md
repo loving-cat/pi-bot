@@ -360,3 +360,42 @@ DS 关于 NUL 的归因仍属待核实线索，不作为“无法实现 Git”�
 ## 18. v1.0.1 安全复核修订
 
 依据安全评审员本轮复核，§5.3 明确代办默认受原发起任务与实际执行者授权交集约束，扩大承接需真实用户目标依据、新任务/授权关联及必要的新增批准；§12 增加越界代办被拒与用户授权后合法跨项目成功的成对验收。此次只修订设计，不代表安全验收或平台实测通过。
+
+## 19. 实现状态（v1.4.1）
+
+§1~§18 的主体已实现并通过测试；下表给"落在哪、怎么自己验"。**未实现项单列在末尾**，
+不混进"已完成"，也不因单元测试通过就当作实机验收通过。
+
+| 规格 | 落在哪 | 怎么验 |
+|---|---|---|
+| §2 授权模型、父链、撤销 | `server/src/grants.js`、`server/src/grant-gate.js` | `server/tests/grants.mjs`、`grant-gate.mjs` |
+| §4 能力清单单一来源 | `server/src/capabilities.js` | `node server/scripts/check-capability-drift.mjs`（16 个动作 / 工具数） |
+| §5.2 桌面输入租约状态机 | `server/src/desktop-lease.js` | `server/tests/desktop-lease.mjs` |
+| §5.6 岛（独立桌面） | `server/src/desktop-island.js`、`desktop-island-win.js`、`desktop-island-tools.js` | `server/tests/desktop-island*.mjs`（真机夹具在 `server/tests/fixtures/island/`） |
+| §6.1 授权根只来自真实交互 | `server/src/grant-request.js`（申请）+ `POST /api/confirmations/:id/decide`（批准建授权） | `server/tests/grant-request.mjs`：主 Bot 不能自己发授权，只能递申请 |
+| §6.1 负责人转呈 | `server/src/grant-request-tools.js` | 同上（lead 的申请落到用户↔主 Bot 私聊） |
+| §7.3 信任域 | `server/src/repo-trust.js`、`server/src/repo-lock.js` | `server/tests/repo-trust.mjs`、`repo-lock.mjs` |
+| §8 执行模式（host / project） | `server/src/exec-mode.js` + `policy-hook.js` 传 `mode` | `node server/scripts/check-consistency.mjs` 第 7 项 |
+| §9.1 桌面审批档位 | `server/src/confirm.js`（`channelSufficesFor({minChannel, allowLocal})`）、`store.desktopSettings()` | `server/tests/confirm.mjs`、App 面板 `app/lib/widgets/desktop_approval_section.dart` |
+| §11 迁移与自动补登记 | `server/src/grant-reconcile.js`、`task-grant-reclaim.js` | `server/tests/grant-reconcile.mjs` |
+| §13.2 首次授权流程 | `server/src/onboarding.js` + `GET/POST /api/onboarding[/apply]` | `server/tests/onboarding.mjs`（58 项）、`app/test/onboarding_model_test.dart` |
+| §14 许可证边界 | `scripts/check-licenses.mjs` → `docs/LICENSES.md` | `node scripts/check-licenses.mjs` |
+
+### 世代（generation）的语义 —— 一次修正
+
+**长期授权不绑世代**。世代表达的是"这一次开机/这个实例"，只对**任务级临时授权**有意义
+（任务结束、取消、实例重启就作废 —— 卡死重启等于一次强制重置）。
+历史 bug 是把世代也打在了长期授权上，导致重启一次全灭；现在启动时 `applyRestamp`
+会清掉历史遗留的世代标记。判定依据：`grant-gate.add` 只在有 `taskId` 时盖世代戳，
+`ensureLegacyGrant` 写 `generation: null`。
+
+### 未实现 / 未实机验收（不并入上面的表）
+
+| 项 | 状态 | 在哪跟踪 |
+|---|---|---|
+| 桌面输入 macOS 实现 | 空壳，六个函数留槽位，13 项测试守"不许谎报成功" | GitHub Issue「桌面输入：macOS 实现（W2d）」 |
+| 锁屏 / 断开会话后的桌面输入 | 静态实现已有（`OpenInputDesktop` 失败 → 交还并吊销），无实机证据 | Issue「实机验证：锁屏 / 断开会话后的桌面输入」 |
+| 多屏 / 混合缩放 | 屏坐标用虚拟屏 API（支持负坐标），未接多屏实测 | Issue「实机验证：多屏 / 混合缩放」 |
+| 拖拽 | 刻意未做（要持续持租约 + 中断恢复，§5.2 要求纳入验收） | Issue「桌面输入：拖拽支持」 |
+| 岛在 macOS | 无 `CreateDesktop` 等价 API，明确拒绝 | `docs/MACOS.md`「v1.4.1 起在 Mac 上的行为」 |
+| 越界代办被拒 / 授权后跨项目成功（§12 成对验收） | 设计已定，实机验收未做 | `docs/acceptance-matrix.md` |
