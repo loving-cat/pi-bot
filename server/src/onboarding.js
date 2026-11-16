@@ -71,8 +71,22 @@ const GIT_SCOPE_LABEL = Object.freeze({
   [GIT_SCOPE.none]: '不用 Git',
   [GIT_SCOPE.read]: '只读仓库（git.read）',
   [GIT_SCOPE.commit]: '读 + 本地提交（不碰远端）',
-  [GIT_SCOPE.push]: '读 + 本地提交 + 推远端（远端另需批准）',
+  // ★ 这一档**不在首启页提供**（见 LEGACY 说明：规格 §13.2-2 把远端列为“另需批准”）。
+  //   留着文案是给诊断/将来“另批”流程用的，不是可选项。
+  [GIT_SCOPE.push]: '读 + 本地提交 + 推远端（远端只能在另一处单独批）',
 });
+
+/**
+ * 首启页**真正能选**的 Git 档位。
+ *
+ * ★ 为什么 `push` 不在里面：
+ *
+ *   规格 §13.2-2 原文把远端列为“另需批准”。而首启页是一张**一次性笼统授权**，
+ *   它给出的 `git.push` 会覆盖项目范围内所有推送 —— 那和“另需批准”是矛盾的。
+ *   留着这一档，用户看到“远端另需批准”就会安心选上，实际却真的拿到了推送权。
+ *   这是**放宽**方向，不能靠文案圆。
+ */
+const OFFERED_GIT_SCOPES = Object.freeze([GIT_SCOPE.none, GIT_SCOPE.read, GIT_SCOPE.commit]);
 
 /**
  * 不论 Git 范围选多宽，都**另需批准**的四件事（规格 §13.2-2 原文四类）。
@@ -351,7 +365,7 @@ export function planFirstRun({
   ];
 
   // ---------------------------------------------------------------- 第 2 步
-  const gitScopes = Object.values(GIT_SCOPE).map((id) => ({
+  const gitScopes = OFFERED_GIT_SCOPES.map((id) => ({
     id,
     label: GIT_SCOPE_LABEL[id],
     actions: [...GIT_SCOPE_ACTIONS[id]],
@@ -394,7 +408,7 @@ export function planFirstRun({
       title: '负责人项目与普通 Git 动作范围',
       lines: [
         '选一个负责人项目：它的边界是这份授权能碰到的最大范围',
-        '普通 Git 动作单独选一档；选多宽都不影响下面四类另批',
+        '普通 Git 动作单独选一档；推远端不在这里给 —— 它属上面那四条“另需批准”',
         // 迁移授权必须单独说：它不会因为新授权存在而自动收窄。
         ...(legacyCount > 0
           ? [`你现在手上还有 ${legacyCount} 条升级前的迁移授权（范围 = 当时那份规矩），这次选完不会自动把它收窄，要你自己收回`]
@@ -598,6 +612,8 @@ export function retentionRefusal(grant) {
 export const APPLY_FAIL = Object.freeze({
   unknownProject: 'unknown_project',
   badGitScope: 'bad_git_scope',
+  /** 首启页不发放远端权限（即使请求里硬写了 `push`） */
+  remoteNeedsApproval: 'remote_needs_separate_approval',
   noBots: 'no_bots',
 });
 
@@ -646,6 +662,15 @@ export function planFirstRunGrants({
   const scope = String(gitScope);
   if (!Object.values(GIT_SCOPE).includes(scope)) {
     return { ok: false, code: APPLY_FAIL.badGitScope, text: `未知的 Git 范围：${scope}` };
+  }
+  // ★ 就算客户端绕过界面直接提交 `push`，这里也要拒。
+  //   界面不给选不等于服务端不给发：请求是客户端拼的。
+  if (scope === GIT_SCOPE.push) {
+    return {
+      ok: false,
+      code: APPLY_FAIL.remoteNeedsApproval,
+      text: '推远端要在它自己的那次确认里批，不能由首启页一次性发放（规格 §13.2-2）',
+    };
   }
   const wanted = String(projectId ?? '');
   const project = (Array.isArray(projects) ? projects : []).find(

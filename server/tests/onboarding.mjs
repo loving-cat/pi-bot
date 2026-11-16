@@ -150,12 +150,13 @@ test('四类"另需批准"是死数：Git 范围选到最宽也不减少（规�
 
   const plan = baseRun();
   const step2 = plan.steps.find((s) => s.id === STEP.project);
-  const widest = step2.options.gitScopes.find((s) => s.id === GIT_SCOPE.push);
-  assert.ok(widest, 'push 应该作为一个可选档位出现');
-  // 选最宽的一档，第 2 步列出的另批项仍然是四条
+  // ★ 推送不能出现在可选项里：选了就真拿到 git.push，跟“另需批准”直接矛盾。
+  assert.ok(
+    !step2.options.gitScopes.some((s) => s.id === GIT_SCOPE.push),
+    'push 不能作为首启页的一个档位',
+  );
   assert.equal(step2.separateApproval.length, 4);
 
-  // 而且 push 本身也在"另需批准"里 —— 它不是"选了就能推"
   const remote = step2.separateApproval.find((s) => s.id === 'remote');
   assert.ok(remote.actions.includes(ACTION.gitPush));
 });
@@ -167,10 +168,11 @@ test('Git 范围的动作是递减的：none ⊂ read ⊂ commit ⊂ push', () =
   const isSubset = (a, b) => a.every((x) => b.includes(x));
   assert.ok(isSubset(byId.get('none'), byId.get('read')));
   assert.ok(isSubset(byId.get('read'), byId.get('commit')));
-  assert.ok(isSubset(byId.get('commit'), byId.get('push')));
-  assert.ok(byId.get('push').includes(ACTION.gitPush));
+  // 供选的最宽一档就是 commit —— 再宽就得另批
+  assert.equal(byId.size, 3);
   assert.ok(!byId.get('commit').includes(ACTION.gitPush), '★ 本地提交不能顺带拿到推远端');
 });
+
 
 // ---------------------------------------------------------------- 第 3 步：host 不可选
 test('★ 执行 Bot 的执行模式不在首启页选（任务级的东西不能在这里定）', () => {
@@ -562,6 +564,12 @@ test('★ 不给执行 Bot 发 host 模式；主 Bot 就是 host（否则那张�
   for (const g of out.grants) {
     if (g.subject.role !== 'main') assert.notEqual(g.mode, MODE.host);
   }
+});
+
+test('★ 客户端硬写 push 也会被拒（界面不给选 ≠ 服务端不给发）', () => {
+  const out = applyBase({ gitScope: GIT_SCOPE.push });
+  assert.equal(out.ok, false);
+  assert.equal(out.code, APPLY_FAIL.remoteNeedsApproval);
 });
 
 test('Git 选 none 就只给读写，不带任何 git 动作', () => {
