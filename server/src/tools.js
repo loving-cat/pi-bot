@@ -28,6 +28,7 @@ import {
   desktopInputSession, desktopInputPlatform, REFUSE,
 } from './desktop-input-session.js';
 import { describePlan, MAX_CLICKS } from './desktop-input.js';
+import { buildIslandTools } from './desktop-island-tools.js';
 import { verdictForTool, commitStdin, resetStdin } from './shell-policy.js';
 import { readonlyBlockReason, opaqueScriptBlockReason } from './role-tools.js';
 import { log, now, isBusyError, planDispatchRetry } from './util.js';
@@ -494,6 +495,8 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
         };
       },
     })] : []),
+    // ---------------- 独立桌面（规格 §5.6 T1；不需要桌面租约，见模块注释） ----------------
+    ...(isMain ? buildIslandTools({ botId }) : []),
     // ---------------- 桌面输入（主 Bot 专属，认件 + 接管检测都必须过） ----------------
     //
     // 规格 §5.2/§5.3：普通桌面输入默认只给主 Bot，且必须持有桌面租约。

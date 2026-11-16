@@ -126,11 +126,21 @@ await test('★ 同一动作下的工具可以有不同的只读/改状态标记
 });
 
 await test('★ 主 Bot 专属：工具级和动作级是两件事', () => {
-  // 工具级：桌面三件（成员不该看屏幕，也不该动鼠标）
+  // 工具级：桌面那一组（成员不该看屏幕，也不该动鼠标）
   // desktop_lease 不过网关（它只排队不碰东西），但仍然是主 Bot 专属。
+  // 独立桌面三件（规格 §5.6 T1）同样是主 Bot 专属：它们能在用户会话里
+  // 起进程、并操作一个真实窗口 —— 给成员等于把 §5.3 那条边界绕掉。
   assert.deepEqual(
     [...C.CHIEF_ONLY_TOOLS].sort(),
-    ['desktop_input', 'desktop_lease', 'desktop_observe', 'desktop_screenshot'],
+    [
+      'desktop_input',
+      'desktop_island_input',
+      'desktop_island_launch',
+      'desktop_island_observe',
+      'desktop_lease',
+      'desktop_observe',
+      'desktop_screenshot',
+    ],
   );
   // 动作级：桌面观察 + push（迁移授权只给主 Bot）
   // desktop.input 属于 migration:'never'（谁都不给），比分给主 Bot 更严，
@@ -146,6 +156,10 @@ await test('★ 主 Bot 专属：工具级和动作级是两件事', () => {
   assert.equal(C.migrationScopeOf(ACTION.desktopInput), 'never');
   // 租约工具**不过网关**：它只排队，不碰用户的东西；真正危险的是输入
   assert.equal(C.actionForTool('desktop_lease'), null);
+  // 独立桌面的三件各占不同风险档：看=只读、起进程=执行命令、点/打字=不可撤销
+  assert.equal(C.actionForTool('desktop_island_observe').action, ACTION.desktopObserve);
+  assert.equal(C.actionForTool('desktop_island_launch').action, ACTION.cmdExec);
+  assert.equal(C.actionForTool('desktop_island_input').action, ACTION.desktopInput);
 });
 
 // ---------------------------------------------------------------- 迁移推导

@@ -232,6 +232,20 @@ export const TOOL_SPECS = Object.freeze({
   // 且只给主 Bot —— 三件事全部从 ACTIONS[desktop.input] 派生，这里不重复写。
   desktop_input: { action: ACTION.desktopInput, chiefOnly: true },
 
+  // ---------------- 独立桌面（规格 §5.6 的 T1 档）
+  //
+  // 三个工具分开放，因为它们的风险不同档：
+  //   · 看/截     —— 与 desktop_observe 同档（只读，但看得到整个应用）
+  //   · 起应用   —— 就是"执行命令"，按 cmd.exec 算（比 cmd.exec 窄：只能起放行名单里的）
+  //   · 点/打字   —— 不可撤销，风险从 ACTIONS[desktop.input] 派生
+  //
+  // ★ 三个都不走桌面租约：独立桌面的输入在 OS 层面就到不了用户的桌面（实测
+  //   SendInput 被拒 err=5），不存在"抢用户鼠标"的互斥对象。同一个岛内的串行
+  //   由 island server 自己的管道保证（见 desktop-island-win.js）。
+  desktop_island_observe: { action: ACTION.desktopObserve, readonly: true, chiefOnly: true },
+  desktop_island_launch: { action: ACTION.cmdExec, mutating: true, chiefOnly: true },
+  desktop_island_input: { action: ACTION.desktopInput, chiefOnly: true },
+
   // ---------------- net.fetch
   // ★ 这三个必须分开标：
   //   ego_browser 会动手（点按钮、填表、提交），web_fetch/search 只读。

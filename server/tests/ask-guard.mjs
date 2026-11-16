@@ -104,7 +104,11 @@ await test('主控少这一个工具，其余工具不受影响', async () => {
   // 除此之外两边应当完全一致 —— 这条断言防的是"给主控加工具时
   // 顺手把别的工具也漏给了/漏掉了"。
   const mainOnlyExcluded = new Set(['ask_user', 'ego_browser']);
-  const mainOnlyAdded = new Set(['desktop_observe', 'desktop_screenshot', 'desktop_lease', 'desktop_input']);
+  const mainOnlyAdded = new Set([
+    'desktop_observe', 'desktop_screenshot', 'desktop_lease', 'desktop_input',
+    // 独立桌面（规格 §5.6 T1）同样是主控独有
+    'desktop_island_observe', 'desktop_island_launch', 'desktop_island_input',
+  ]);
   assert.deepEqual(
     withMain.slice().sort(),
     [
