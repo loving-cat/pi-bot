@@ -40,7 +40,7 @@
 | §5.2 租约属于任务，不属于进程 | ✅ | `acquire()` 必填 `taskId` + `botId` | 同上 |
 | §5.2 租约到期 / 心跳 / 世代号 | ✅ | TTL 60s、心跳 20s、epoch 每次转让 +1 | 同上 |
 | §5.2 每次输入前检查取消状态、会话、目标窗口 | ✅ `9967d82` | 调用方传 `expectWindow`，执行前核对前台窗口标题；发完之后再核一次，变了返回 `targetKept=false` 并明确警告 | `tests/desktop-input.mjs`（target_changed / targetKept 三项） |
-| §5.2 高风险动作「观察—确认—重新校验目标—执行—核对结果」 | 🟨 | 观察 ✅、重新校验目标 ✅（`expectWindow` + 发后 `targetKept`）、核对结果 ✅（光标复核）；**只缺"确认"** —— 桌面输入不走 `confirm.js`，现在靠租约当同意 | `tests/desktop-input.mjs` |
+| §5.2 高风险动作「观察—确认—重新校验目标—执行—核对结果」 | ✅ | 观察 ✅ / 重新校验目标 ✅（`expectWindow` + 发后 `targetKept`）/ 执行 ✅ / 核对结果 ✅（光标复核）；"确认"**不用逐次弹窗**而是"租约+分层批准"（§9.1）—— 逐次弹窗在"用户不在场"时没人点、在"用户在场"时本来就该让开，是产品决定不采用 | `tests/desktop-input.mjs` |
 | §5.2 用户接管立即吊销并丢弃未执行输入 | ✅ | `watch()` → `revoke()`；抖动抑制 2 次 | `tests/desktop-takeover.mjs` 21 项 |
 | §5.2 按键释放 / 拖拽中断 / 超时恢复纳入验收 | 🟨 | 拖拽**刻意不做**（明确拒绝）；按键释放有（down/up 成对发）；超时恢复：`server-main` 的 60 秒 housekeeping 调 `sweepLeases()`（已接，`202f0d7`）。**差的只剩拖拽的验收用例** | `tests/reclamation.mjs` + `grep sweepLeases server-main.js` |
 | §5.4 多屏/缩放：坐标与显示器绑定 | 🟨 | 屏幕矩形每次重探，屏幕外坐标拒绝；**但坐标本身不带"哪个显示器/哪次布局"的标记**，两次动作之间布局变了不会被发现 | `desktop-input.js` `planInput` |
@@ -86,7 +86,7 @@
 | §7.1 G1 普通开发（hooks 会跑，策略要评估，记录） | ✅ | hooks 照跑、跳过是禁止的、跑过哪些记进返回值与审计 | `git-ops.js:33-37`, `listActiveHooks` → `git-tools.js:293` |
 | §7.1 G2 push（确认后执行） | ✅ | 手机强确认 + 目标摘要绑定 | `tests/git-push-flow.mjs` 10 项 |
 | §7.1 G3 破坏性操作 | ⛔ | 刻意不给（`REFUSED_OPERATIONS` 里根本没有） | `git-ops.js` |
-| §7.2 三种工作区（同树/worktree/独立 clone） | 🟨 | 同树 ✅（`worktree` 字段能认）；**独立 clone 没有独立入口**（靠用户自己 clone 到别的路径）；**同一工作树的写租约没有** | grep `worktree` in git-tools |
+| §7.2 三种工作区（同树/worktree/独立 clone） | 🟨 | 同树 ✅（`worktree` 字段能认）；**同一工作树的写入现在有锁了**（`repo-lock.js`，按 commonDir 协调，`6974fc3`）；**独立 clone 仍没有独立入口**（靠用户自己 clone 到别的路径） | `tests/repo-lock.mjs` 10 项 |
 | §7.3 解析 `.git` 指针 / gitdir / commondir | ✅ | `resolveRepoLayout` 三种情况都处理，含 Windows 正反斜杠归一化 | `git-ops.js:228-290` |
 | §7.3 objects alternates | ✅ | `readAlternates()` 登记绝对/相对路径，挂进 `resolveRepoLayout()` 返回 | `tests/git-ops.mjs` 3 项 |
 | §7.3 所有目标必须属于授予的信任域，否则拒绝并提出授权差异 | ✅ `8910ddb` | `repo-trust.js`：repo/gitdir/commondir/alternates 逐条核对，越界就整体拒绝并点名是哪一条；判定放在 `runGit` 里（所有 git 操作的共同入口） | `tests/repo-trust.mjs` 11 项 |
