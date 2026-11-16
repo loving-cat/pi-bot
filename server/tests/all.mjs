@@ -127,6 +127,7 @@ const TESTS = [
   'skills-compaction-reset',
   'compact-threshold',
   'context-overhead',
+  'onboarding',
 ];
 
 let failed = 0;
