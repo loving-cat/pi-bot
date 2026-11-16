@@ -132,6 +132,8 @@ const TESTS = [
   'desktop-island',
   'desktop-island-win',
   'desktop-island-tools',
+  'grant-context',
+  'desktop-settings-route',
 ];
 
 let failed = 0;

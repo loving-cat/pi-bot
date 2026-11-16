@@ -6,6 +6,7 @@
  *   · 规则从 store 实时读取 —— 改规矩后新建的会话立即生效；
  *   · 拒绝时写一条审计记录，并把原因回给模型（模型据此换做法，不会卡死）。
  */
+import { noteGrant } from './grant-context.js';
 import crypto from 'node:crypto';
 import { store } from './store.js';
 import { verdictForTool } from './shell-policy.js';
@@ -195,6 +196,17 @@ export function createPolicyExtension({
               //   一条 isolated 授权在 host 会话里也能过。
               mode: mode || null,
             });
+            if (verdict.ok) {
+              // ★ 记下"这次是凭哪一条授权放行的"（规格 §5.5 的「授权引用」）。
+              //   判定在这里、审计在下游，中间隔着一次工具调用 —— 没有参数能把
+              //   grantId 传下去，所以用 grant-context 这一层极小的传递。
+              //   它**不是授权**，只是刚才那次判定的结果（5 分钟过期）。
+              noteGrant({
+                botId: subject.botId,
+                grantId: verdict.grant?.id ?? null,
+                action: mapped.action,
+              });
+            }
             if (!verdict.ok) {
               log(
                 `⛔ ${currentBot?.name ?? bot?.id ?? 'bot'} 的动作被授权网关拒绝（${verdict.code}）` +

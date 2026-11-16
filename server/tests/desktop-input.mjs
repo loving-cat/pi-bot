@@ -265,6 +265,11 @@ function makeFakePlatform(over = {}) {
       probeEnvironment: () => { calls.env += 1; return fake.env; },
       probeLastInput: () => { calls.probe += 1; return fake.lastInput; },
       perform: (plan) => { calls.perform.push(plan); return fake.perform(plan); },
+      // 下面四个默认"探不到"：老用例的行为因此完全不变。
+      sampleNoise: () => fake.noise ?? { ok: false },
+      cursorPosition: () => fake.cursor ?? { ok: false },
+      foregroundTitle: () => (fake.foreground ? { ok: true, title: fake.foreground } : { ok: false }),
+      trustPhantomInput: () => fake.trust === true,
     },
     fake,
   };
@@ -484,6 +489,146 @@ test('describe() 同时给出租约与接管两句话（界面/日志能一眼�
   const d = session.describe();
   assert.match(d, /桌面/);
   assert.match(d, /接管检测/);
+});
+
+// ============================================================ 合成输入源（§5.2 误报）
+//
+// 本机实测：远程控制软件会不停刷新"最后输入时间"但从不移动光标。
+// 只看时间 → "用户一直在动" → 这个 bot 永远动不了鼠标。
+// 判据必须加一条"光标动过没有"，而且**只有采样判定为合成输入源**才算数。
+
+function withPhantom({ trust = false, cursorMoves = false } = {}) {
+  const plat = makeFakePlatform({
+    noise: { ok: true, kind: 'phantom', cursorStill: true, noisy: true, samples: [0, 47, 484, 0, 15] },
+    cursor: { ok: true, x: 100, y: 100 },
+    trust,
+  });
+  // 每一步"时间都很新" —— 就是那台远程控制软件的样子
+  plat.fake.lastInput = { ok: true, lastInputAt: T0 - 5, idleMs: 5 };
+  let n = 0;
+  plat.deps.cursorPosition = () => {
+    n += 1;
+    const x = cursorMoves ? 100 + n * 10 : 100;
+    return { ok: true, x, y: 100 };
+  };
+  return { plat, ...withLease(plat) };
+}
+
+test('★ 有东西在合成输入 + 用户开了"信任" → 照常干活，并记一笔 phantom', () => {
+  const { session, identity, plat } = withPhantom({ trust: true });
+  const r = session.act({ identity, input: { action: 'move', point: { x: 10, y: 10 } } });
+  assert.equal(r.ok, true, r.text);
+  assert.equal(plat.calls.perform.length, 1, '开了信任就该真的发出去');
+  const kinds = session.recentAudit().map((a) => a.kind);
+  assert.ok(kinds.includes('phantom'), '审计里要能看出"这次是按信任配置硬干的"');
+});
+
+test('★ 有东西在合成输入 + 没开信任 → 让开，并把原因说清楚', () => {
+  const { session, identity, plat } = withPhantom({ trust: false });
+  // 连点两次：watch 有 2 次抖动抑制（第一次只会"等一下"）
+  const first = session.act({ identity, input: { action: 'move', point: { x: 10, y: 10 } } });
+  assert.equal(first.code, REFUSE.userActivePending, '第一次应当只是等一下，不是故障');
+  const r = session.act({ identity, input: { action: 'move', point: { x: 10, y: 10 } } });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, REFUSE.yielded);
+  assert.equal(plat.calls.perform.length, 0, '没开信任就不能发');
+  assert.match(r.text, /动过手|动过输入/, '文案要说明为什么让开');
+});
+
+test('★ 光标在动（真有人）时，"信任合成输入"也救不了它 —— 照样让开', () => {
+  const { session, identity } = withPhantom({ trust: true, cursorMoves: true });
+  session.act({ identity, input: { action: 'move', point: { x: 10, y: 10 } } });
+  const r = session.act({ identity, input: { action: 'move', point: { x: 10, y: 10 } } });
+  assert.equal(r.ok, false, '光标一直在动 = 真的有人在用');
+  assert.equal(r.code, REFUSE.yielded);
+});
+
+test('★ 没采到噪声样本时，不许凭"光标没动"就放行', () => {
+  // sampleNoise 不可用 → syntheticSource 必须为假，哪怕用户开了信任
+  const plat = makeFakePlatform({
+    cursor: { ok: true, x: 42, y: 42 },
+    trust: true,
+    lastInput: { ok: true, lastInputAt: T0 - 5, idleMs: 5 },
+  });
+  const { session, identity } = withLease(plat);
+  session.act({ identity, input: { action: 'move', point: { x: 10, y: 10 } } });
+  const r = session.act({ identity, input: { action: 'move', point: { x: 10, y: 10 } } });
+  assert.equal(r.ok, false, '没有样本就只能保守让开');
+  assert.equal(r.code, REFUSE.yielded);
+  assert.equal(plat.calls.perform.length, 0);
+});
+
+test('租约申请时采样：phantom → inputEnvironment().syntheticSource = true', () => {
+  const { session } = withPhantom({ trust: false });
+  const env = session.inputEnvironment();
+  assert.equal(env.syntheticSource, true);
+  assert.equal(env.noise.kind, 'phantom');
+});
+
+// ============================================================ 重新校验目标窗口（§5.2）
+test('★ expectWindow 对不上 → 拒绝，而且一次平台发送都没发生', () => {
+  const plat = makeFakePlatform({ foreground: 'Chrome' });
+  const { session, identity } = withLease(plat);
+  const r = session.act({
+    identity,
+    input: { action: 'move', point: { x: 10, y: 10 }, expectWindow: 'Notepad' },
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, REFUSE.targetChanged);
+  assert.match(r.text, /Chrome/);
+  assert.equal(plat.calls.perform.length, 0, '目标不对就不许点');
+});
+
+test('expectWindow 对上了 → 正常发，且返回 targetKept', () => {
+  const plat = makeFakePlatform({ foreground: 'Untitled - Notepad' });
+  const { session, identity } = withLease(plat);
+  const r = session.act({
+    identity,
+    input: { action: 'move', point: { x: 10, y: 10 }, expectWindow: 'notepad' },
+  });
+  assert.equal(r.ok, true, r.text);
+  assert.equal(r.targetKept, true);
+  assert.equal(session.recentAudit().at(-1).expectWindow, 'notepad');
+});
+
+test('发完之后窗口变了 → targetKept=false（消息已发出，只能如实报）', () => {
+  const plat = makeFakePlatform({ foreground: 'Notepad' });
+  const { session, identity } = withLease(plat);
+  plat.fake.perform = () => {
+    plat.fake.foreground = 'Save As';
+    return { ok: true, at: { x: 10, y: 10 }, foreground: 'Save As' };
+  };
+  const r = session.act({
+    identity,
+    input: { action: 'click', point: { x: 10, y: 10 }, expectWindow: 'Notepad' },
+  });
+  assert.equal(r.ok, true, '已经发出去了，不能报失败');
+  assert.equal(r.targetKept, false, '但要老实说"目标已经变了"');
+  assert.equal(session.recentAudit().at(-1).targetKept, false);
+});
+
+// ============================================================ 审计带授权引用（§5.5）
+test('★ 审计里记"凭哪一条授权"（从 grant-context 取，动作要对得上、5 分钟过期）', async () => {
+  const G = await import(new URL('../src/grant-context.js', import.meta.url));
+  G.resetGrantContext();
+  const plat = makeFakePlatform();
+  const { session, identity } = withLease(plat);
+  G.noteGrant({ botId: identity.botId, grantId: 'gr_desktop_1', action: 'desktop.input', now: T0 });
+  session.act({ identity, input: { action: 'move', point: { x: 10, y: 10 } } });
+  assert.equal(session.recentAudit().at(-1).grantId, 'gr_desktop_1');
+
+  // 动作对不上就不记（不能把"点屏幕"记成"凭 push 的授权干的"）
+  G.resetGrantContext();
+  G.noteGrant({ botId: identity.botId, grantId: 'gr_git_1', action: 'git.push', now: T0 });
+  session.act({ identity, input: { action: 'move', point: { x: 11, y: 10 } } });
+  assert.equal(session.recentAudit().at(-1).grantId, null);
+
+  // 过期也不算
+  G.resetGrantContext();
+  G.noteGrant({ botId: identity.botId, grantId: 'gr_old', action: 'desktop.input', now: T0 - 10 * 60_000 });
+  session.act({ identity, input: { action: 'move', point: { x: 12, y: 10 } } });
+  assert.equal(session.recentAudit().at(-1).grantId, null);
+  G.resetGrantContext();
 });
 
 const failed = results.filter((r) => !r.ok);

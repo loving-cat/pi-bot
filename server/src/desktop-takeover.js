@@ -48,6 +48,14 @@ export const TAKEOVER = Object.freeze({
   quiet: 'quiet',
   /** 探针不可用 / 返回垃圾 —— **保守当成"可能有用户"** */
   unknown: 'unknown',
+  /**
+   * 有"刚动过"的信号，但**光标没动** —— 几乎肯定是别的程序在合成输入。
+   *
+   * 实测来源：远程控制软件（GameViewer / UU 之类）靠不断重置
+   * `GetLastInputInfo` 保活，从不移动光标。只判"有没有新输入"会得出
+   * "用户一直在动"，于是这个 bot 永远动不了鼠标。
+   */
+  phantom: 'phantom_input',
 });
 
 /** 你（调用方）该怎么做。 */
@@ -113,7 +121,25 @@ export function noteInjection(state, { now = Date.now() } = {}) {
  * @param {number} [p.activeWindowMs] 多久之内算"还在动"
  * @returns {{verdict:string, action:string, reason:string}}
  */
-export function classify({ state, lastInputAt, now = Date.now(), toleranceMs = DEFAULT_TOLERANCE_MS, activeWindowMs = DEFAULT_ACTIVE_WINDOW_MS } = {}) {
+export function classify({
+  state,
+  lastInputAt,
+  now = Date.now(),
+  toleranceMs = DEFAULT_TOLERANCE_MS,
+  activeWindowMs = DEFAULT_ACTIVE_WINDOW_MS,
+  /**
+   * 光标在这段时间里动过没有。
+   * `null` = 不知道（没采过样）—— 那就**照旧保守让开**，不能假设是合成输入。
+   */
+  cursorStill = null,
+  /**
+   * 这台桌面是否已被判定为"有程序在持续合成输入"（租约申请时采一次）。
+   * 只有它为真，`cursorStill` 才有资格把 `userActive` 降级成 `phantom`。
+   */
+  syntheticSource = false,
+} = {}) {
+  const phantomish = syntheticSource === true && cursorStill === true;
+  const phantomVerdict = (reason) => verdict(TAKEOVER.phantom, ACTION.proceed, reason);
   const verdict = (v, action, reason) => ({ verdict: v, action, reason });
 
   // ---- 探针不可用：**保守**当成"可能有人在"，绝不假设"没人动"
@@ -141,6 +167,11 @@ export function classify({ state, lastInputAt, now = Date.now(), toleranceMs = D
     if (idleFor >= Math.max(0, activeWindowMs)) {
       return verdict(TAKEOVER.quiet, ACTION.proceed, `已经 ${Math.round(idleFor / 1000)}s 没人动输入`);
     }
+    if (phantomish) {
+      return phantomVerdict(
+        '这台桌面上有程序在持续合成输入（光标没动过），不是用户在操作 —— 按"有合成输入源"处理',
+      );
+    }
     return verdict(
       TAKEOVER.userActive,
       ACTION.yieldToUser,
@@ -153,6 +184,11 @@ export function classify({ state, lastInputAt, now = Date.now(), toleranceMs = D
   //   为什么要留容差：注入本身有延迟（SendInput 返回 → 系统记账），
   //   容差内的差值视为同一次动作。
   if (last > mine + Math.max(0, toleranceMs)) {
+    if (phantomish) {
+      return phantomVerdict(
+        '输入时间一直在刷新，但光标从没动过 —— 判定为合成输入源（远程控制软件心跳之类），不是用户接管',
+      );
+    }
     return verdict(
       TAKEOVER.userActive,
       ACTION.yieldToUser,
@@ -194,8 +230,17 @@ export function classify({ state, lastInputAt, now = Date.now(), toleranceMs = D
  *
  * @returns {{verdict:string, action:string, reason:string, strikes:number}}
  */
-export function watch({ state, lastInputAt, now = Date.now(), toleranceMs = DEFAULT_TOLERANCE_MS, activeWindowMs = DEFAULT_ACTIVE_WINDOW_MS, strikesToYield = 2 } = {}) {
-  const raw = classify({ state, lastInputAt, now, toleranceMs, activeWindowMs });
+export function watch({
+  state,
+  lastInputAt,
+  now = Date.now(),
+  toleranceMs = DEFAULT_TOLERANCE_MS,
+  activeWindowMs = DEFAULT_ACTIVE_WINDOW_MS,
+  strikesToYield = 2,
+  cursorStill = null,
+  syntheticSource = false,
+} = {}) {
+  const raw = classify({ state, lastInputAt, now, toleranceMs, activeWindowMs, cursorStill, syntheticSource });
 
   // ★ 只对 `userActive` 做抖动抑制，但 `unknown` 也不清零计数。
   //

@@ -618,6 +618,11 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
           key: Type.Optional(Type.String({ description: 'key 动作的键名（enter/tab/esc/f5…）' })),
           keys: Type.Optional(Type.Array(Type.String(), { description: 'keyCombo 的键名数组，如 ["ctrl","v"]' })),
           text: Type.Optional(Type.String({ description: 'type_text 要输入的文字（走剪贴板粘贴）' })),
+          expectWindow: Type.Optional(Type.String({
+            description: '你打算操作的那个窗口的标题片段。执行前会核对一次前台窗口，'
+              + '对不上就**不发这次输入**（规格 §5.2「重新校验目标」）。'
+              + '强烈建议每次都带上：用户切了窗口之后，旧坐标打中的是别的东西。',
+          })),
         }),
         execute: async (_toolCallId, input) => {
           const session = desktopInputSession();
@@ -637,6 +642,7 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
               key: input.key,
               keyCombo: input.keys,
               text: input.text,
+              expectWindow: input.expectWindow,
             },
           });
           if (!r.ok) {
@@ -646,20 +652,39 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
             const stopped = [
               REFUSE.yielded, REFUSE.userActivePending,
               REFUSE.noSession, REFUSE.noLease, REFUSE.notHolder,
+              // 目标窗口变了不是故障：世界变了，重新观察再决定
+              REFUSE.targetChanged,
             ];
-            // ★ 这几种是"正常停下"（用户在动 / 锁屏 / 没租约），不是故障：
+            // ★ 这几种是"正常停下"（用户在动 / 锁屏 / 没租约 / 目标变了），不是故障：
             //   用 isError 会让模型以为工具坏了然后重试，而这几种最不该重试。
             if (stopped.includes(r.code)) {
-              return ok(`${r.text}（${r.code}）`, { code: r.code, stopped: true });
+              // ★ 如果是"有程序在持续合成输入"挡住的，把开关说出来。
+              //   用户看到"它明明有权限却不动鼠标"，唯一的线索就是这句。
+              let extra = '';
+              try {
+                const env = session.inputEnvironment?.();
+                if (env?.syntheticSource && !env.trustPhantomInput) {
+                  extra = '\n（这台机器上有程序一直在合成"有人在动鼠标"的信号，比如远程控制软件。'
+                    + '如果你希望它无视这个信号继续操作，在设置里打开「信任合成输入」。）';
+                }
+              } catch { /* 诊断拿不到就不说 */ }
+              return ok(`${r.text}（${r.code}）${extra}`, { code: r.code, stopped: true });
             }
             return fail(`${r.text}（${r.code}）`, { code: r.code });
           }
           const where = r.at ? `到 (${r.at.x},${r.at.y})` : '';
           const fg = r.foreground ? `（当前窗口：${r.foreground}）` : '';
-          return ok(`${describePlan(r.plan)}${where}${fg}`, {
+          // ★ 目标变了要单独说：动作已经发出去了，撤回不了，但模型必须知道
+          //   "这一次可能打在了别的地方"，别把它当成功继续往下点。
+          const warn = r.targetKept === false
+            ? '\n⚠ 动作发完之后前台窗口变了（不是你说的那个），这次可能打在了别处 —— '
+              + '先 desktop_observe 看一眼再决定，不要接着按旧坐标点。'
+            : '';
+          return ok(`${describePlan(r.plan)}${where}${fg}${warn}`, {
             at: r.at,
             action: r.plan.action,
             screen: r.screen,
+            targetKept: r.targetKept !== false,
           });
         },
       }),

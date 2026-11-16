@@ -254,6 +254,53 @@ test('真正安静下来才清零（quiet 之后重新从 1 数）', () => {
   assert.equal(s.consecutiveUserActive, 0);
 });
 
+// ---------------------------------------------------------------- 合成输入源（§5.2）
+//
+// 实测：远程控制软件会不停刷新"最后输入时间"，但从不移动光标。
+// 只看时间 → "用户一直在动" → bot 永远动不了鼠标。
+// 所以要多一个"光标动过没有"，**而且要有采样证明这台桌面真有合成输入源**。
+
+test('★ 有输入信号 + 光标没动 + 已判定有合成输入源 → phantom，可以继续', () => {
+  const state = createWatchState();
+  const r = watch({
+    state,
+    lastInputAt: T0 - 5, // 永远"刚刚"
+    now: T0,
+    cursorStill: true,
+    syntheticSource: true,
+  });
+  assert.equal(r.verdict, TAKEOVER.phantom);
+  assert.equal(r.action, ACTION.proceed);
+});
+
+test('★ 知道是合成输入源，但光标在动 → 那是真人，必须让开', () => {
+  const state = createWatchState();
+  const a = watch({ state, lastInputAt: T0 - 5, now: T0, cursorStill: false, syntheticSource: true });
+  const b = watch({ state, lastInputAt: T0 - 5, now: T0, cursorStill: false, syntheticSource: true });
+  assert.equal(b.verdict, TAKEOVER.userActive);
+  assert.equal(b.action, ACTION.yieldToUser);
+  assert.notEqual(a.verdict, TAKEOVER.phantom);
+});
+
+test('★ 没判定"有合成输入源"时，光凭"光标没动"不许放行', () => {
+  const state = createWatchState();
+  const r = watch({ state, lastInputAt: T0 - 5, now: T0, cursorStill: true, syntheticSource: false });
+  assert.notEqual(r.verdict, TAKEOVER.phantom, '样本没证明之前只能保守');
+});
+
+test('★ 不知道光标动没动（没采样）→ 不许猜成合成输入', () => {
+  const state = createWatchState();
+  const r = watch({ state, lastInputAt: T0 - 5, now: T0, cursorStill: null, syntheticSource: true });
+  assert.notEqual(r.verdict, TAKEOVER.phantom);
+});
+
+test('phantom 不计入抖动抑制的 strike（它是"可以继续"，不是"用户在动"）', () => {
+  const state = createWatchState();
+  watch({ state, lastInputAt: T0 - 5, now: T0, cursorStill: true, syntheticSource: true });
+  assert.equal(state.consecutiveUserActive, 0);
+  assert.equal(state.lastVerdict, TAKEOVER.phantom);
+});
+
 const failed = results.filter((r) => !r.ok);
 for (const r of results) {
   console.log(`${r.ok ? '✓' : '✗'} ${r.name}${r.ok ? '' : ' —— ' + r.err}`);

@@ -790,6 +790,45 @@ export class Store {
     return { name: this.userName() };
   }
 
+  // ---------- 桌面设置（规格 §5.2 / §5.6） ----------
+
+  /**
+   * 这台桌面上"要不要信任合成输入"。
+   *
+   * ## 为什么需要这个开关
+   *
+   * 有些程序（远程控制 / 串流 / 自动化工具）会**持续往系统里塞"有人动了鼠标"**，
+   * 它们靠这个保活，却从不移动光标。于是"用户是不是正在用"这个问题永远是"是"，
+   * 这个 bot 就永远动不了鼠标 —— 而用户完全不知道是自己装的软件挡的。
+   *
+   * 判定本身在 `desktop-takeover.js`（有输入信号 + 光标没动 = 合成输入）。
+   * 这里只存"用户允许我们无视它继续干"这个决定。
+   *
+   * ## 默认关，而且是**用户显式开**
+   *
+   * 打开它意味着：真有人在动鼠标、但恰好没让光标移动时（比如只敲键盘），
+   * 我们会误判成合成输入继续操作。这个代价必须由用户自己选。
+   */
+  desktopSettings() {
+    const raw = this.state.desktop ?? {};
+    return {
+      trustPhantomInput: raw.trustPhantomInput === true,
+    };
+  }
+
+  setDesktopSettings(patch = {}) {
+    const prev = this.desktopSettings();
+    const next = {
+      trustPhantomInput: patch.trustPhantomInput === undefined
+        ? prev.trustPhantomInput
+        : patch.trustPhantomInput === true,
+    };
+    this.state.desktop = next;
+    this.scheduleSave();
+    bus.emit('event', { t: 'desktop.settings', settings: next });
+    return next;
+  }
+
   // ---------- 首次授权流程（规格 §13.2） ----------
 
   /**

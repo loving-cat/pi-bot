@@ -38,6 +38,8 @@ import {
   createWatchState, watch, noteInjection, describeWatch, ACTION as WATCH_ACTION,
 } from './desktop-takeover.js';
 import { planInput, describePlan, INPUT_FAIL } from './desktop-input.js';
+import { currentGrantOf } from './grant-context.js';
+import { store } from './store.js';
 
 /** 一次输入为什么没发出去。供工具层翻成人话。 */
 export const REFUSE = Object.freeze({
@@ -70,6 +72,13 @@ export const REFUSE = Object.freeze({
    * 说成"用户在动"会让它以为是自己被接管了，实际可能只是探针抖了一下。
    */
   probeUncertain: 'probe_uncertain',
+  /**
+   * 目标窗口和我们商量的那个不是同一个（规格 §5.2「重新校验目标」）。
+   *
+   * 为什么会变：用户切了窗口、弹了对话框、或者上一次点击把界面推进到下一页。
+   * 这时候还按旧坐标点，点中的是**别的东西** —— 而且不会报错。
+   */
+  targetChanged: 'target_changed',
 });
 
 /**
@@ -90,12 +99,36 @@ export function createDesktopInputSession({
   probeEnvironment = () => ({ ok: false, code: REFUSE.notPlatform, text: '没有平台环境探针' }),
   probeLastInput = () => ({ ok: false, code: REFUSE.probeUnavailable, text: '没有输入探针' }),
   perform = () => ({ ok: false, code: REFUSE.notPlatform, text: '没有平台发送实现' }),
+  /** 光标位置探针（判"合成输入"要用：有输入信号但光标不动）。 */
+  cursorPosition = () => ({ ok: false }),
+  /** 输入噪声采样：一次采多次，区分「真人在动」和「有程序在合成输入」。 */
+  sampleNoise = () => ({ ok: false }),
+  /** 前台窗口标题（`重新校验目标` 要用）。 */
+  foregroundTitle = () => ({ ok: false }),
+  /**
+   * 这台桌面是否"信任合成输入"（用户可以开的开关）。
+   *
+   * 开：识别出合成输入源就照常干活（远程控制软件常驻时只能这样）。
+   * 关（默认）：识别出来也**让开**，但把话说清楚 —— 用户才知道有个开关可开。
+   */
+  trustPhantomInput = () => false,
   log = () => {},
 } = {}) {
   const lease = createLeaseState({ desktopId });
   const watchState = createWatchState({ desktopId });
   /** 最近一次动作的审计摘要（不含输入内容） */
   const recent = [];
+
+  /**
+   * 这张桌面上有没有"一直在合成输入"的东西（远程控制软件心跳之类）。
+   *
+   * 申请租约时采一次样就够：这个属性由那台软件决定，不会中途变。
+   * 采样的成本不低（要多采几次才分得清人和心跳），所以不能每次输入都采。
+   */
+  let syntheticSource = false;
+  let noiseDetail = null;
+  /** 上一次看到的光标位置（判"这期间光标动过没有"）。 */
+  let lastCursor = null;
 
   const pushAudit = (row) => {
     recent.push({ at: now(), ...row });
@@ -117,9 +150,29 @@ export function createDesktopInputSession({
     acquireLease({ taskId, botId, generation = null, ttlMs } = {}) {
       const r = acquire(lease, { taskId, botId, generation, now: now(), ...(ttlMs ? { ttlMs } : {}) });
       if (r.ok) {
-        pushAudit({ kind: 'lease_acquire', taskId, botId, epoch: r.epoch, renewed: r.renewed === true });
+        // ★ 拿到租约时采一次样，判"这台桌面有没有合成输入源"。
+        //   为什么在这里：这个属性由那台软件决定，租约期内不会变；
+        //   而采样本身要采好几次（分得清心跳和真人），不能每次点击都采。
+        try {
+          const noise = sampleNoise();
+          if (noise?.ok) {
+            syntheticSource = noise.kind === 'phantom';
+            noiseDetail = { kind: noise.kind, samples: noise.samples ?? null, cursorStill: noise.cursorStill === true };
+          }
+        } catch { /* 采样失败就当没有合成输入源：保守方向是让开，不是硬干 */ }
+        const cur = cursorPosition();
+        lastCursor = cur?.ok ? { x: Number(cur.x), y: Number(cur.y) } : null;
+        pushAudit({
+          kind: 'lease_acquire', taskId, botId, epoch: r.epoch, renewed: r.renewed === true,
+          syntheticSource, noise: noiseDetail,
+        });
       }
       return r;
+    },
+
+    /** 诊断用：租约申请时那次采样的结论。 */
+    inputEnvironment() {
+      return { syntheticSource, noise: noiseDetail, trustPhantomInput: trustPhantomInput() === true };
     },
 
     /** 心跳续期。必须带 epoch。 */
@@ -195,9 +248,32 @@ export function createDesktopInputSession({
       }
 
       // ④ 用户接管检测：**探针不可用也当"用户在"**（fail-closed）
+      //
+      // ★ 这里多一步"光标动过没有"：远程控制软件会不停刷新"最后输入时间"
+      //   但从不移动光标。只看时间会把它的心跳当成"用户一直在动"，
+      //   于是这个 bot 永远动不了鼠标（实测就在这台机器上）。
       const probe = probeLastInput();
       const lastInputAt = probe.ok ? Number(probe.lastInputAt) : null;
-      const verdict = watch({ state: watchState, lastInputAt, now: t });
+      const cur = cursorPosition();
+      const cursorStill = (cur?.ok && lastCursor)
+        ? (Number(cur.x) === lastCursor.x && Number(cur.y) === lastCursor.y)
+        : null;
+      if (cur?.ok) lastCursor = { x: Number(cur.x), y: Number(cur.y) };
+
+      const trust = trustPhantomInput() === true;
+      const verdict = watch({
+        state: watchState,
+        lastInputAt,
+        now: t,
+        cursorStill,
+        // 只有"租约申请时判定有合成输入源"且"用户开了信任"，才允许把
+        // userActive 降级成 phantom 并继续干。
+        syntheticSource: syntheticSource && trust,
+      });
+      if (verdict.verdict === 'phantom_input') {
+        // 继续，但记一笔：审计里要能看出"这次是按信任配置硬干的"
+        pushAudit({ kind: 'phantom', code: 'synthetic_input', taskId, botId, why: verdict.reason });
+      }
       if (verdict.action === WATCH_ACTION.yieldToUser) {
         revoke(lease, { reason: verdict.reason, by: 'user', now: t });
         pushAudit({ kind: 'revoke', code: REFUSE.yielded, taskId, botId, why: verdict.verdict });
@@ -213,6 +289,26 @@ export function createDesktopInputSession({
         const code = verdict.verdict === 'user_active' ? REFUSE.userActivePending : REFUSE.probeUncertain;
         pushAudit({ kind: 'wait', code, taskId, botId, why: verdict.verdict });
         return { ok: false, code, text: verdict.reason };
+      }
+
+      // ④.5 重新校验目标窗口（规格 §5.2「重新校验目标—执行」）
+      //
+      // ★ 必须在"规划"之前：用户切了窗口/弹了对话框之后，旧坐标打中的是
+      //   别的东西，而且不会报错。调用方用 expectWindow（标题片段）声明"我打算
+      //   操作的是哪个窗口"，这里对不上就直接拒绝，不去猜。
+      const expectWindow = String(input?.expectWindow ?? '').trim();
+      let foregroundBefore = '';
+      if (typeof foregroundTitle === 'function') {
+        const fg = foregroundTitle();
+        foregroundBefore = fg?.ok ? String(fg.title ?? '') : '';
+        if (expectWindow && !foregroundBefore.toLowerCase().includes(expectWindow.toLowerCase())) {
+          pushAudit({ kind: 'refuse', code: REFUSE.targetChanged, taskId, botId, expectWindow, foregroundBefore });
+          return {
+            ok: false,
+            code: REFUSE.targetChanged,
+            text: `前台窗口是「${foregroundBefore || '(空)'}」，不是你说的「${expectWindow}」—— 没发这次输入。先重新观察再决定。`,
+          };
+        }
       }
 
       // ⑤ 规划 + 坐标校验（纯函数，一个平台调用都没有）
@@ -231,6 +327,17 @@ export function createDesktopInputSession({
 
       // ⑦ ★ 必须记一笔"我们刚注入过" —— 否则下一次检测会把自己的输入当成用户接管
       noteInjection(watchState, { now: now() });
+
+      // ⑧ 发完之后再看一眼前台窗口：变了就明确告诉上层（消息已经发出去了，
+      //    撤回不了，所以这条不是"拒绝"而是"结果存疑"）。
+      let foregroundAfter = sent.foreground ?? '';
+      let targetKept = true;
+      if (expectWindow && typeof foregroundTitle === 'function') {
+        const fg = foregroundTitle();
+        foregroundAfter = fg?.ok ? String(fg.title ?? '') : foregroundAfter;
+        targetKept = !foregroundAfter || foregroundAfter.toLowerCase().includes(expectWindow.toLowerCase());
+      }
+
       pushAudit({
         kind: 'inject',
         taskId,
@@ -240,13 +347,24 @@ export function createDesktopInputSession({
         // 只记摘要，不记输入的文字原文（规格 §5.5：审计不带秘密）
         summary: describePlan(planned.plan),
         foreground: sent.foreground ?? '',
+        // ★ 规格 §5.5 要求审计能回答"凭哪一条授权干的"。
+        //   调用方给了就用给的；没给就从 `grant-context` 取"刚才放行的那条"
+        //   （5 分钟过期，动作必须对得上）—— 它是判定的回音，**不是**授权来源。
+        grantId: identity.grantId
+          ?? currentGrantOf({ botId, action: 'desktop.input', now: t })?.grantId
+          ?? null,
+        expectWindow: expectWindow || null,
+        targetKept,
+        syntheticSource,
       });
       return {
         ok: true,
         at: sent.at ?? null,
         plan: planned.plan,
         screen: env.screen,
-        foreground: sent.foreground ?? '',
+        foreground: foregroundAfter,
+        expectWindow: expectWindow || null,
+        targetKept,
       };
     },
 
@@ -280,6 +398,8 @@ function platformForCurrentOS() {
     probeLastInput: chosen.lastInputAt,
     perform: chosen.perform,
     sampleNoise: chosen.sampleInputNoise,
+    cursorPosition: chosen.cursorPosition,
+    foregroundTitle: chosen.foregroundTitle,
   };
 }
 
@@ -319,6 +439,11 @@ export function desktopInputSession(deps) {
       probeEnvironment: (...a) => platform.probeEnvironment(...a),
       probeLastInput: (...a) => platform.probeLastInput(...a),
       perform: (...a) => platform.perform(...a),
+      sampleNoise: (...a) => platform.sampleNoise(...a),
+      cursorPosition: (...a) => platform.cursorPosition(...a),
+      foregroundTitle: (...a) => platform.foregroundTitle(...a),
+      // 用户在设置里显式打开"信任合成输入"之后，才允许无视远程控制软件的心跳
+      trustPhantomInput: () => store.desktopSettings().trustPhantomInput === true,
     });
   }
   return singleton;

@@ -695,6 +695,27 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         });
       }
 
+      // ---------- 桌面设置（规格 §5.2 / §5.6） ----------
+      //
+      // GET 只读（看设置 + 看这台桌面的输入环境诊断），不要 nonce。
+      // PATCH 是**放宽**，过管理门（defense + policy nonce + 审计）。
+      //
+      // 为什么要把诊断一起给出去：用户遇到"它明明有权限却不动鼠标"时，
+      // 唯一能解释这件事的就是这段诊断（有东西在合成输入 / 探针不可用）。
+      if (pathname === '/api/desktop-settings' && req.method === 'GET') {
+        let environment = null;
+        try {
+          environment = desktopInputSession().inputEnvironment?.() ?? null;
+        } catch { /* 探针没装配时就是 null，不影响读设置 */ }
+        return send(res, 200, { settings: store.desktopSettings(), environment });
+      }
+      if (pathname === '/api/desktop-settings' && req.method === 'PATCH') {
+        const body = await readBody(req);
+        const next = store.setDesktopSettings(body ?? {});
+        log(`🖱 桌面设置已更新：信任合成输入=${next.trustPhantomInput ? '开' : '关'}`);
+        return send(res, 200, { settings: next });
+      }
+
       // ---------- 首次授权页（规格 §13.2）----------
       //
       // 只读：算“该说什么、该让用户选什么”，**不创建任何授权**。

@@ -40,6 +40,9 @@ export const ADMIN_ROUTE_TABLE = Object.freeze([
   // ---- defense：改防线本身 ----
   { method: 'PATCH', path: '/api/policy', level: 'defense', action: 'policy.change', nonce: 'policy', label: '改部门规矩' },
   { method: 'PUT', path: '/api/hooks', level: 'defense', action: 'policy.change', nonce: 'hooks', label: '改工具钩子' },
+  // 桌面设置里有个"信任合成输入源"的开关：开了等于允许 bot 在
+  // "有人在动鼠标"的信号下继续操作。这是**放宽**，所以要 nonce + 审计。
+  { method: 'PATCH', path: '/api/desktop-settings', level: 'defense', action: 'policy.change', nonce: 'policy', label: '改桌面设置（信任合成输入）' },
   // 首启页的“开始”会**建授权根** —— 等于改防线本身：
   // 冒充者拿到本机 token 就能自己给自己发权限。要 nonce，也计审计。
   { method: 'POST', path: '/api/onboarding/apply', level: 'defense', action: 'policy.change', nonce: 'policy', label: '首次授权：建立项目授权' },
@@ -148,4 +151,5 @@ export const ADMIN_VIEW_ROUTES = Object.freeze([
   '/api/grant-audit',
   '/api/admin-actions',
   '/api/onboarding',
+  '/api/desktop-settings',
 ]);
