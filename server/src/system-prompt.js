@@ -22,10 +22,22 @@ import { REPLY_FORMAT } from './reply-format.js';
  */
 export function buildAppendSystemPrompt(
   bot = {},
-  { userName = '', policy = null, mcpLines = '', modelLines = '' } = {},
+  {
+    userName = '', policy = null, mcpLines = '', modelLines = '',
+    /**
+     * 用户的习惯（`preferences.js` 的 `preferencesPromptLines()` 产物）。
+     *
+     * 只放 strong + 最多 5 条 —— 多了会污染 prompt，还白烧 token
+     * （规格 `spec-intent-and-habits-v1.md` §3.3）。
+     */
+    preferenceLines = [],
+  } = {},
 ) {
   const skills = Array.isArray(bot.skills) ? bot.skills.filter((s) => s?.title) : [];
   return [
+    // ★ 用户的习惯排在最前面（紧跟人设）：它是"这个人要你怎么做"，
+    //   比后面所有通用规矩都优先 —— 和它冲突时以它为准。
+    ...(Array.isArray(preferenceLines) ? preferenceLines : []),
     ...(bot.persona ? [effectiveModelPersona(bot)] : []),
     ...(bot.role === 'main' && modelLines ? [modelLines] : []),
     // ★ 你是谁 / 用户是谁。
@@ -67,6 +79,24 @@ export function buildAppendSystemPrompt(
         : '3. 如果那件事**必须**在用户眼前那个窗口里做，你自己做不了 —— 告诉负责人/主 Bot，'
           + '由它在用户明确同意下用同桌面操作，不要试图绕过这个限制。\n')
       + '岛用完记得 desktop_island_input 传 action=close，那是真实进程。',
+    // ★ 意图分档（规格 `docs/spec-intent-and-habits-v1.md`，P0）。
+    //
+    //   旧规格 §5.6 按**能力**分了三档（程序化 / 岛 / 同桌面），但没说
+    //   "什么时候该用哪一档"。结果是一次真实故障：bot 用用户那只浏览器
+    //   去"验证播放"，点了视频中心触发全屏，交还控制权后用户面对一个
+    //   满屏黑底、没有标题栏、拖不动的窗口。
+    //
+    //   判据只留一条，因为它可复核：**这个结果要不要用户用眼睛看？**
+    '【先分清：给用户看，还是你自己查】\n'
+      + '判据只有一句：**这个结果要不要用户用眼睛看？**\n'
+      + '· 要 → 用 ego_browser（用户眼前那只浏览器），并且是**前台**。三条硬约束：'
+      + '① 不许进全屏（不请求全屏、不点视频中心/播放器的全屏按钮）；'
+      + '② 结束前必须退出全屏（服务端也会兜一道，但你不能指望它）；'
+      + '③ 交还时必须停在"用户能接手"的状态：普通窗口、能拖、按 Esc 能退。\n'
+      + '· 不要 → 用**岛**（desktop_island_launch 在自己那张桌面上开）或 web_fetch。'
+      + '别动用户的浏览器，别把窗口弹到他脸上。\n'
+      + '注意：**"用户要看结果" ≠ "用户要看那个浏览器窗口"**。'
+      + '能给一张截图、一段结论，就别弹窗口 —— 弹窗口是最后手段。',
     '【关于文件】用户发的附件会被放进工作目录的 _inbox/<本会话目录>/ 下（具体路径每轮都会直接告诉你，不用自己找）；读文档正文用 extract_file；',
     '你生成的图表/导出的表格，用 send_image 发出来用户才看得到（工作目录里新生成的图片也会自动带上）。',
     // 文件访问指引仅使用当前任务明确关联的材料。

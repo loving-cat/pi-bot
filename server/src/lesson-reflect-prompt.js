@@ -6,6 +6,7 @@
  */
 
 import { LESSON_LIMITS, lessonRejectReason } from './lessons.js';
+import { preferencesFromReflect } from './preferences.js';
 
 /** 这一轮最多喂多少字（按尾部截断，最近的话最要紧） */
 export const REFLECT_MAX_CHARS = 6000;
@@ -34,13 +35,23 @@ quote 必须是那条消息里真实出现过的文字。最多 2 条。
 判断线索：用户说"应该……才对 / 不是这样 / 我要的是 / 别……"，或者同一条要求说了第二遍，
 都算纠正；bot 随后答应了什么，就是下次该直接做的事（这条通常就是一条经验）。
 
+另外单独看一眼：**用户有没有在表达"这个人的习惯"**（不是这次任务的具体要求）。
+如果有，写进 preferences（最多 2 条，可以没有）：
+- 只收三种：用户**纠正**你（"别用我的浏览器"）、用户**明确表达**（"以后都用 ego"）、
+  或同一种做法在本段里出现**三次以上**；
+- 每条给一个 topic（同一件事用同一个 topic，例如 browser-choice / report-format），
+  这样以后新的偏好能覆盖旧的，不会两条打架；
+- strength：纠正/明确表达填 strong；重复观察填 weak（weak 不会自动生效）；
+- 不写：这次任务的具体要求（"这次用 Firefox"）、事实（"我的账号是 x"）。
+
 没有合格的经验时，只输出一行：NO_ENTRY
 
 只输出 JSON，不要解释、不要 markdown 代码块。示例（只示意格式，不要照抄内容）：
 {"lessons":[{"cue":"给部门配班子、加人时","lesson":"先按功能模块拆 owner，不要让一个人兼两个模块","verdict":"helped","evidence":[{"msgId":"m1","quote":"每个功能模块都有专人负责"}]}]}
 
-格式：
-{"lessons":[{"cue":"什么情况下用得上（情境的形状，不是这次的事实）","lesson":"下次具体怎么做（一句能执行、能检查的话）","verdict":"helped|hurt|no_effect|confounded","evidence":[{"msgId":"m_xxx","quote":"原话"}]}]}`;
+格式（preferences 可以为空数组）：
+{"lessons":[{"cue":"什么情况下用得上（情境的形状，不是这次的事实）","lesson":"下次具体怎么做（一句能执行、能检查的话）","verdict":"helped|hurt|no_effect|confounded","evidence":[{"msgId":"m_xxx","quote":"原话"}]}],
+"preferences":[{"topic":"browser-choice","text":"看视频时用 ego 打开并放在前台，不要全屏","strength":"strong","origin":"correction","evidence":"别用我的浏览器"}]}`;
 
 /**
  * 把一轮消息拼成复盘输入。纯函数，便于单测。
@@ -147,4 +158,34 @@ export function parseReflectOutput(text = '', { ids = new Set(), byId = new Map(
     if (out.length >= REFLECT_MAX_LESSONS) break;
   }
   return out;
+}
+
+/**
+ * 从同一段复盘输出里取出**用户习惯**（规格 `spec-intent-and-habits-v1.md` §3.2）。
+ *
+ * 为什么不复用 `parseReflectOutput`：那个函数只认 `lessons`，而且会顺手做
+ * 证据校验（msgId 必须存在、quote 必须出现在那条消息里）。偏好要的是
+ * **同一段话里看不到的上下文**（"这个人的习惯"），证据只作审计，
+ * 不做"必须能在这一轮找到"的硬约束 —— 用户可能在上一轮说过。
+ *
+ * 所以这里只做：解析 → 交给 `preferences.js` 规范化 → 过滤没证据的推断。
+ *
+ * @param {string} text 模型的原始输出
+ * @param {number} [now]
+ * @returns {Array} 规范化后的偏好候选（可能为空）
+ */
+export function parsePreferenceOutput(text = '', now = Date.now()) {
+  const raw = String(text ?? '').trim();
+  if (!raw || /^NO_ENTRY/i.test(raw)) return [];
+  const unfenced = raw.replace(/^```[a-z]*\s*/i, '').replace(/```\s*$/i, '');
+  const start = unfenced.indexOf('{');
+  const end = unfenced.lastIndexOf('}');
+  if (start < 0 || end <= start) return [];
+  let parsed;
+  try {
+    parsed = JSON.parse(unfenced.slice(start, end + 1));
+  } catch {
+    return [];
+  }
+  return preferencesFromReflect(parsed, now);
 }

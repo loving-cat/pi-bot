@@ -22,6 +22,7 @@ import {
 
 import { config, resourceOptions } from './config.js';
 import { store } from './store.js';
+import { preferencesPromptLines } from './preferences.js';
 import { isDelegatingLead, isRoomLead, isReadonlyPolicy, toolsForRole, customToolsForRole, roleConfigurationKey } from './role-tools.js';
 import { executionModeOf } from './exec-mode.js';
 import { applyCompactionBudget, withCapacity } from './context-budget.js';
@@ -289,6 +290,8 @@ export function createSessionBuilder({
       },
       appendSystemPrompt: buildAppendSystemPrompt(bot, {
         userName: store.userName(),
+        // ★ 用户的习惯（规格 spec-intent-and-habits-v1.md §3）：只放 strong、最多 5 条。
+        preferenceLines: preferencesPromptLines(store.preferences()),
         // 部门规矩跟着会话走：工具集和提示都是建会话时定的，规矩变了会作废重建
         policy,
         // MCP 清单只给主控：它要知道有哪些能力可以派给成员。

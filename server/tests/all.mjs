@@ -140,6 +140,8 @@ const TESTS = [
   'repo-lock',
   'grant-request',
   'grant-reconcile',
+  'delegated-delivery',
+  'preferences',
 ];
 
 let failed = 0;

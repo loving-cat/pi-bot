@@ -30,6 +30,7 @@ import {
 import { describePlan, MAX_CLICKS } from './desktop-input.js';
 import { buildIslandTools } from './desktop-island-tools.js';
 import { buildGrantRequestTools } from './grant-request-tools.js';
+import { mirrorDelegatedResult } from './delegated-delivery.js';
 import { verdictForTool, commitStdin, resetStdin } from './shell-policy.js';
 import { readonlyBlockReason, opaqueScriptBlockReason, isLeadOfRoom } from './role-tools.js';
 import { log, now, isBusyError, planDispatchRetry } from './util.js';
@@ -358,7 +359,11 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
       name: 'ego_browser',
       label: '★ 用 ego 浏览器',
       description:
-        '用用户自己的 ego 浏览器操作网页：打开页面、点击、填表、复用登录态、截图、抓数据。' +
+        '★ **它会在用户眼前的屏幕上动** —— 只用于"用户要看"的事（打开网页/视频给他看、'
+        + '演示、要他用登录态操作）。**你自己查东西用岛（desktop_island_*）或 web_fetch**，不要用这个。\n'
+        + '三条硬约束：① 不许进全屏；② 结束前退出全屏；③ 交还时必须是普通窗口、能拖、按 Esc 能退。\n'
+        + '\n'
+        + '用用户自己的 ego 浏览器操作网页：打开页面、点击、填表、复用登录态、截图、抓数据。' +
         '适合这些活：需要真实浏览器渲染（SPA、要执行 JS）、需要用用户已登录的账号、' +
         '需要点击/填表/多步操作。只是读一篇文章用 web_fetch 就够了，不必开浏览器。' +
         '用法是写一段脚本交给我执行（不是 Playwright）。',
@@ -812,6 +817,9 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
         let result = null;
         let waitedMs = 0;
         let lastWhy = '';
+        // ★ 本次执行的起点：交付物只认这个时间点之后的消息，
+        //   免得把上一轮留下的旧答复又搬一遍。
+        const startedAt = Date.now();
         for (let attempt = 1; attempt <= 3; attempt++) {
           result = await runner.runBotOnce({
             roomId: dm.id,
@@ -854,40 +862,30 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
           );
         }
 
-        // ★ 在来源房间留一条可点击的引用记录。
-        //   没有这一步，用户只看到"我发了"，永远不知道它把活派给了谁、
-        //   对方回了什么。在来源房间原地浮一个小气泡最直观。
-        if (roomId && roomId !== dm.id) {
-          const me = store.getBot(botId);
-          const recent = store.listMessages(roomId, { limit: 1 });
-          const last = recent[recent.length - 1];
-          const plan = planRefBubble({
-            last,
-            botId,
-            targetBotId: target.id,
-            dmRoomId: dm.id,
-            count: (store.listMessages(dm.id) || []).length,
-          });
-          if (plan.mode === 'merge') {
-            // 同一个 bot 连着私信了好几个 → 合并成一个气泡（"已发送给 A 和 B"）
-            store.updateMessage(roomId, last.id, { refs: plan.refs });
-          } else {
-            store.appendMessage({
-              roomId,
-              authorType: 'bot',
-              authorId: botId,
-              authorName: me?.name ?? '',
-              authorEmoji: me?.emoji ?? null,
-              kind: 'ref',
-              refs: [plan.ref],
-              text: '',
-              status: 'done',
-              meta: { via: 'message_bot' },
-            });
-          }
-        }
+        // ★ 交付物落到**派活房间**（产品决定 2026-11-16）。
+        //
+        //   以前是"在来源房间留一个小气泡，点进去看成员私聊"。结果是同一件事
+        //   用户看两遍，而且成员私聊那边没有上下文（那里没有用户说的话）。
+        //
+        //   现在：把"它说了什么 + 它发的文件"搬到你正在看的这个房间，
+        //   作者是干活的那个人；成员那边那一份标成 internal（还在，但不推给你）。
+        const mirrored = mirrorDelegatedResult({
+          store,
+          callerRoomId: roomId,
+          workerRoomId: dm.id,
+          worker: target,
+          callerId: botId,
+          since: startedAt,
+          finalText: result.text,
+        });
 
-        return ok(`【${target.name} 的回复】\n${result.text}`, { botId: target.id, ms: result.ms });
+        return ok(`【${target.name} 的回复】\n${result.text}`, {
+          botId: target.id,
+          ms: result.ms,
+          deliveredRoomId: roomId,
+          delivered: mirrored.messageId,
+          attachments: mirrored.attachments,
+        });
       },
     }),
 

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { locateEgoBrowser, runEgoScript, EGO_USAGE_GUIDE } from '../src/ego-browser.js';
+import { locateEgoBrowser, runEgoScript, EGO_USAGE_GUIDE, buildFullscreenCleanupScript } from '../src/ego-browser.js';
 
 test('能定位到 ego-browser CLI', async () => {
   const cli = await locateEgoBrowser();
@@ -55,4 +55,14 @@ test('用法说明写清了它不是 Playwright', () => {
   assert.match(EGO_USAGE_GUIDE, /taskSpace/);
   assert.match(EGO_USAGE_GUIDE, /page.evaluate/);
   assert.match(EGO_USAGE_GUIDE, /locator/);
+});
+
+test('★ 收尾脚本必须退出全屏，而且每一步都不能把整段搞挂', () => {
+  const script = buildFullscreenCleanupScript();
+  assert.ok(script.includes('exitFullscreen'), '要真的调用 exitFullscreen');
+  assert.ok(script.includes('listTaskSpaces'), '要遍历所有任务空间');
+  // 收尾失败不能吞掉主结果：每个 claim / 每页 / 每个 evaluate 都要有 try
+  const tries = (script.match(/try\s*\{/g) ?? []).length;
+  assert.ok(tries >= 3, `每一步都要 try/catch，实际 ${tries} 处`);
+  assert.ok(!/handOff/.test(script), '收尾不该抢用户的控制权');
 });

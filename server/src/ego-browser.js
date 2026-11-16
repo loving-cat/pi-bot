@@ -54,15 +54,66 @@ export async function locateEgoBrowser() {
  * 脚本写到临时文件再喂给 stdin —— 不用 -e 传参：脚本里必然有中文和引号，
  * 走命令行参数会被 shell 与平台转义规则搞坏（ego 自己的文档也这么建议）。
  */
-export async function runEgoScript({ script, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+/**
+ * 收尾脚本：把每个 TaskSpace 的页面从全屏里拉出来。
+ *
+ * ## 为什么这件事必须由**服务端**做
+ *
+ * 规格 `docs/spec-intent-and-habits-v1.md` §2 第 2 条：交还控制权之前必须退出全屏。
+ * 靠模型自觉是不行的 —— 实测就发生过：bot 点视频中心触发全屏，`handOff()` 之后
+ * 用户面对一个满屏黑底、没有标题栏、拖不动的窗口。
+ *
+ * ## 为什么每步都 try/catch
+ *
+ * 收尾失败**不能把主脚本的结果吞掉**：页面可能已经被用户关了、TaskSpace 被占用、
+ * 或者浏览器正在退出。这些都不该让"刚才那次操作成功"变成失败。
+ */
+export function buildFullscreenCleanupScript() {
+  return `
+const spaces = await listTaskSpaces();
+for (const s of spaces || []) {
+  try {
+    const task = await claimTaskSpace(s.id);
+    const pages = await task.pages();
+    for (const p of pages || []) {
+      try {
+        await p.evaluate(() => {
+          try {
+            if (document.fullscreenElement) document.exitFullscreen();
+            // 有些播放器用"网页全屏"（改样式而不是 Fullscreen API），一起复位
+            if (document.body && document.body.style && document.body.style.overflow === 'hidden') {
+              document.body.style.overflow = '';
+            }
+          } catch (e) { /* 页面可能正在卸载 */ }
+        });
+      } catch (e) { /* 单个页面失败不影响其它 */ }
+    }
+  } catch (e) { /* 这个空间拿不到就跳过 */ }
+}
+console.log('cleanup: fullscreen released');
+`;
+}
+
+export async function runEgoScript({
+  script,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  /**
+   * 跑完之后是否**强制退出全屏**（默认开）。
+   *
+   * 关掉只有一个正当理由：调用方自己已经做过了。默认开是因为
+   * "忘了做"的代价是用户拿到一个退不出去的窗口。
+   */
+  cleanup = true,
+} = {}) {
   const text = String(script ?? '').trim();
   if (!text) return { ok: false, output: '', error: '脚本是空的' };
 
   const cli = await locateEgoBrowser();
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pi-ego-'));
 
-  try {
-    return await new Promise((resolve) => {
+  /** 跑一次脚本，收输出（内部用；主脚本和收尾脚本各跑一次）。 */
+  const execOnce = (body, ms) =>
+    new Promise((resolve) => {
       let stdout = '';
       let stderr = '';
       let settled = false;
@@ -89,9 +140,9 @@ export async function runEgoScript({ script, timeoutMs = DEFAULT_TIMEOUT_MS } = 
         finish({
           ok: false,
           output: stdout,
-          error: '脚本超过 ' + Math.round(timeoutMs / 1000) + ' 秒没结束，已终止',
+          error: '脚本超过 ' + Math.round(ms / 1000) + ' 秒没结束，已终止',
         });
-      }, timeoutMs);
+      }, ms);
 
       child.stdout.on('data', (d) => {
         stdout += d.toString();
@@ -134,8 +185,19 @@ export async function runEgoScript({ script, timeoutMs = DEFAULT_TIMEOUT_MS } = 
         });
       });
 
-      child.stdin.end(text);
+      child.stdin.end(body);
     });
+
+  try {
+    const main = await execOnce(text, timeoutMs);
+    // ★ 收尾：把页面从全屏里拉出来（规格 §2 第 2 条）。
+    //   失败不影响主结果 —— 页面可能已经被用户关了，那也该算成功。
+    if (cleanup) {
+      try {
+        await execOnce(buildFullscreenCleanupScript(), Math.min(timeoutMs, 20_000));
+      } catch { /* 收尾失败不吞主结果 */ }
+    }
+    return main;
   } finally {
     try {
       await fs.rm(dir, { recursive: true, force: true });

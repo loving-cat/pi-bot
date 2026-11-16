@@ -17,6 +17,7 @@ import { config } from './config.js';
 import { bus } from './bus.js';
 import { newId, now, readJson, writeJsonAtomic, insertionPoint, log } from './util.js';
 import { normalizeRules } from './shell-policy.js';
+import * as preferencesDomain from './preferences.js';
 import { sanitizeMemoryText } from './memory-sanitize.js';
 import { TaskRunStore } from './tasks/task-run-store.js';
 import { channelSuffices, channelSufficesFor } from './confirm.js';
@@ -814,6 +815,45 @@ export class Store {
 
   userSummary() {
     return { name: this.userName() };
+  }
+
+  // ---------- 用户习惯（规格 `spec-intent-and-habits-v1.md` §3） ----------
+
+  /** 全部偏好（含被覆盖/被删的 —— 审计要看得到"曾经这么想"）。 */
+  preferences() {
+    return Array.isArray(this.state.preferences) ? this.state.preferences.map((p) => ({ ...p })) : [];
+  }
+
+  /**
+   * 记一条偏好。
+   *
+   * ★ 偏好**直接生效**（不像经验要手工启用）：说错了代价小 ——
+   *   最多是"下次按这个来"，用户一句话就能改回来。
+   *
+   * @param {object} candidate 已规范化的偏好（`preferences.js` 的产物）
+   * @returns {{added:object|null, superseded:string[], promoted:boolean}}
+   */
+  addPreference(candidate) {
+    const { mergePreference } = preferencesDomain;
+    const before = this.preferences();
+    const merged = mergePreference(before, candidate, Date.now());
+    if (!merged.added && !merged.superseded.length) return { added: null, superseded: [], promoted: false };
+    this.state.preferences = merged.list;
+    this.scheduleSave();
+    bus.emit('event', { t: 'preferences.updated', preferences: merged.list });
+    return merged;
+  }
+
+  /** 删掉一条偏好（用户在设置页点的）。软删，留痕。 */
+  retirePreference(id) {
+    const list = Array.isArray(this.state.preferences) ? this.state.preferences : [];
+    const hit = list.find((p) => p && p.id === id);
+    if (!hit) return null;
+    hit.status = 'retired';
+    hit.retiredAt = Date.now();
+    this.scheduleSave();
+    bus.emit('event', { t: 'preferences.updated', preferences: list });
+    return hit;
   }
 
   // ---------- 桌面设置（规格 §5.2 / §5.6） ----------

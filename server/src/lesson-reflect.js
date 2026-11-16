@@ -39,6 +39,7 @@ import {
   REFLECT_MAX_CHARS,
   buildReflectInput,
   parseReflectOutput,
+  parsePreferenceOutput,
 } from './lesson-reflect-prompt.js';
 
 export {
@@ -173,8 +174,21 @@ export function createLessonReflector({ runner, logFn = log } = {}) {
       });
       if (!r.error) added++;
     }
+    // ★ 同一段输出里可能还有"用户的习惯"（规格 §3.2）。
+    //   偏好**直接生效**（不像经验要手工启用）：说错了代价小，用户一句话就能改回来。
+    let prefs = 0;
+    try {
+      for (const p of parsePreferenceOutput(reply)) {
+        const r = store.addPreference(p);
+        if (r?.added) prefs += 1;
+      }
+      if (prefs) logFn?.(`【${room.name}】复盘：记录 ${prefs} 条用户习惯`);
+    } catch (err) {
+      logFn?.(`记录用户习惯失败：${err?.message ?? err}`);
+    }
+
     logFn?.(`【${room.name}】复盘完成：新增 ${added} 条候选经验（待用户启用）`);
-    return { added };
+    return { added, preferences: prefs };
   }
 
   return (options = {}) => {
