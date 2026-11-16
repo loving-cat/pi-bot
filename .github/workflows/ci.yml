@@ -115,7 +115,7 @@ jobs:
           flutter-version: '3.47.7'
           channel: stable
           cache: true
-      - uses: NuGet/setup-nuget@v2
+      - uses: NuGet/setup-nuget@v4
         if: runner.os == 'Windows'
       # App 的集成用例（local_server_token_test 等）会真起服务端子进程，要有服务端依赖。
       # 不装的话那些用例会自己跳过，等于没测。
