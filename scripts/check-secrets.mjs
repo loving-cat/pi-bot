@@ -166,6 +166,64 @@ function readFile(file) {
 
 const isAllowed = (line) => ALLOW.some((re) => re.test(line));
 
+/**
+ * 历史豁免：**逐条、绑定 sha、写明原因**。
+ *
+ * ## 为什么需要这个表
+ *
+ * `--push` 在 `before` 找不到（强推、或 before 已经被覆盖）时会扫**整条历史**。
+ * 于是“当年那次提交信息里举了一个反例”会在今天变成红灯 —— 而这些提交
+ * 已经公开过、也已经各自过了它们当时的扫描。
+ *
+ * 改历史能改，但**改了也不算数**：旧对象在 GitHub 上仍按 sha 取得到，
+ * 已经克隆的人手里也还有 —— 己经漏掉的凭据只能轮换，不能靠改历史收回。
+ * 所以这里的条目必须是“**现在已经不构成风险**”，通常是“已轮换”或
+ * “根本不是真凭据”。
+ *
+ * ★ 新增一条等于一次安全评审。不许静默：命中了照样打印出来，
+ *   只是在退出码上不计入失败。
+ * ★ 豁免只认 sha + 规则名：同样的内容出现在**新**提交里照样红。
+ */
+const HISTORY_EXEMPTIONS = [
+  {
+    sha: '78f608a',
+    rule: '邮箱不是 noreply',
+    reason:
+      '另一台机器的本地身份（域名不带点，发不出信）；改它要重写其后 160+ 个提交，'
+      + '而旧对象在远端仍然取得到，重写救不了什么',
+  },
+  {
+    sha: '33692eb',
+    rule: 'macOS 用户目录',
+    reason: '提交信息在**举反例**说明扫描器自己的规则（“写死了本机路径 … → 命中…”），不是真路径',
+  },
+  {
+    sha: 'bec76ba',
+    rule: 'OpenAI/Anthropic 风格 key',
+    reason:
+      '同一类：提交信息在解释“占位符 vs 真 key”。但它形状像真 key（51 字符、'
+      + '高熵），已在 2026-11-16 提请轮换；本仓库无法核实是否已撤销 —— '
+      + '**在确认之前，这是一条已知的历史暴露，不是误报**',
+  },
+];
+
+// 表结构自检：写错一个 sha 就等于"豁免静默失效"，CI 会永远红着而没人知道为什么。
+for (const e of HISTORY_EXEMPTIONS) {
+  if (!/^[0-9a-f]{7,40}$/.test(String(e.sha ?? '')) || !String(e.rule ?? '').trim() || !String(e.reason ?? '').trim()) {
+    throw new Error(`HISTORY_EXEMPTIONS 条目格式不对（sha/rule/reason）：${JSON.stringify(e)}`);
+  }
+}
+
+/** 这条命中能不能算历史豁免（只看 sha + 规则名，不看内容）。 */
+function historyExemptionOf(hit) {
+  // ★ 匹配“以 sha 开头”：正文命中是 `commit <sha> 提交信息`，
+  //   邮箱命中是 `commit <sha>` —— 严格相等会把前者漏掉（实测踩过）。
+  return HISTORY_EXEMPTIONS.find(
+    (e) => String(hit.file ?? '').startsWith(`commit ${e.sha}`)
+      && String(hit.rule ?? '').includes(e.rule),
+  );
+}
+
 /** 仅放行整体由明确样例序列组成的值，不以局部片段判断凭据。 */
 function looksLikePlaceholder(text) {
   const s = String(text ?? '');
@@ -197,7 +255,7 @@ const KEY_SHAPED_RULES = new Set([
   '硬编码口令',
 ]);
 
-const hits = [];
+let hits = [];
 
 function scanText(where, text) {
   const lines = String(text ?? '').split(/\r?\n/);
@@ -277,6 +335,26 @@ for (const file of (metaMode ? [] : trackedFiles())) {
   const text = readFile(file);
   if (!text) continue;
   scanText(file, text);
+}
+
+if (metaMode && hits.length) {
+  // 把历史豁免的挑出来：它们仍然打印（可见），但不让退出码变红。
+  const exempted = hits.filter((h) => historyExemptionOf(h));
+  const blocking = hits.filter((h) => !historyExemptionOf(h));
+  if (exempted.length) {
+    console.error(`⚠ 历史豁免 ${exempted.length} 处（不计入失败，但仍列出来）：\n`);
+    for (const h of exempted) {
+      const e = historyExemptionOf(h);
+      console.error(`  ${h.file}  [${h.rule}]`);
+      console.error(`    原因：${e.reason}`);
+    }
+    console.error('');
+  }
+  if (!blocking.length) {
+    console.log('✓ 敏感信息扫描：提交元数据与 PR 正文，除历史豁免外未发现疑似凭据/本机路径');
+    process.exit(0);
+  }
+  hits = blocking;
 }
 
 if (!hits.length) {

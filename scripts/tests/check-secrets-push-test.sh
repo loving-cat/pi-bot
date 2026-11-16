@@ -74,6 +74,20 @@ b6="$(git -C "$d4" rev-parse HEAD)"
 commit "$d4" 1+someone@users.noreply.github.com "msg"$'\n\n'"Co-authored-by: pi-bot <$gh_noreply> Someone <$real_mail>"
 expect "real address on the same github noreply line is caught" 1 "$d4" "$b6" HEAD
 
-rm -rf "$d" "$d2" "$d3" "$d4"
+# ---- 历史豁免是“绑 sha”的，不是“绑内容”的 ----
+#
+# 仓库里有几条历史提交，信息里刻意举了反例（说明扫描器自己的规则），
+# 它们进了 HISTORY_EXEMPTIONS。这里守住最危险的那个方向：
+# **同样的内容出现在新提交里必须照样红** —— 否则豁免就成了洗白通道。
+# 反例文本在运行时拼，免得这个文件自己被扫描器命中。
+sl=""
+for i in 1 2 3 4 5 6 7 8; do sl="$sl/"; done
+d5="$(new_repo)"
+commit "$d5" 1+someone@users.noreply.github.com "clean"
+b7="$(git -C "$d5" rev-parse HEAD)"
+commit "$d5" 1+someone@users.noreply.github.com "doc"$'\n\n'"写死了本机路径 ${sl}Users/alex/code/... → 命中"
+expect "doc-style example in a NEW commit is still caught (exemption is sha-bound)" 1 "$d5" "$b7" HEAD
+
+rm -rf "$d" "$d2" "$d3" "$d4" "$d5"
 if [ "$fail" = 0 ]; then echo "check-secrets --push: all passed"; else echo "check-secrets --push: FAILED"; fi
 exit "$fail"
