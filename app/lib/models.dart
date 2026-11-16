@@ -262,6 +262,16 @@ class Msg {
   bool get isAborted => status == 'aborted';
   bool get isRef => kind == 'ref' && refs.isNotEmpty;
 
+  /// 这条消息默认**不推给用户**。
+  ///
+  /// 目前只有一个来源：被派活的 bot 在自己私聊里写的过程。
+  /// 它的**交付物**已经被搬到派活房间了（`delegated-delivery.js`），
+  /// 原来那一份留着可查（磁盘/接口都在），但界面上不再重复一遍。
+  bool get isInternal => meta?['internal'] == true;
+
+  /// 派活交付：作者是干活的 bot，但这条落在**派活房间**里。
+  bool get isDelegated => kind == 'delegated' || meta?['delegated'] == true;
+
   /// 上下文压缩的提示条（服务端在压缩成功后写一条 kind='compact'）
   bool get isCompact => kind == 'compact';
 

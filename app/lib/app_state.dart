@@ -1858,6 +1858,7 @@ class AppState extends ChangeNotifier {
       final list = ((res['messages'] as List?) ?? const [])
           .whereType<Map<String, dynamic>>()
           .map(_visibleMessage)
+          .where((m) => !m.isInternal)
           .toList();
       messages[roomId] = list;
       _notify();
@@ -2650,6 +2651,9 @@ class AppState extends ChangeNotifier {
 
       case 'msg.new':
         final msg = _visibleMessage((ev['msg'] as Map).cast<String, dynamic>());
+        // ★ 成员私聊里的"过程"不推给用户：交付物已经搬到派活房间了，
+        //   这里再收一遍就是重复（产品决定 2026-11-16）。
+        if (msg.isInternal) break;
         final list = messages.putIfAbsent(msg.roomId, () => []);
         if (!list.any((m) => m.id == msg.id)) {
           // 插队：服务端说这条插在哪条之前，本地就插哪。
@@ -2684,9 +2688,11 @@ class AppState extends ChangeNotifier {
           final after = afterId == null
               ? -1
               : list.indexWhere((m) => m.id == afterId);
+          final moved = _visibleMessage(raw.cast<String, dynamic>());
+          if (moved.isInternal) break;
           list.insert(
             after >= 0 ? after + 1 : list.length,
-            _visibleMessage(raw.cast<String, dynamic>()),
+            moved,
           );
           _notify();
         }
@@ -3053,6 +3059,15 @@ class AppState extends ChangeNotifier {
 
   void _replace(Map<String, dynamic> json) {
     final msg = _visibleMessage(json);
+    if (msg.isInternal) {
+      // 被标成 internal（执行结束、交付物已搬走）→ 从列表里撤掉
+      final hit = messages[msg.roomId];
+      if (hit != null) {
+        hit.removeWhere((m) => m.id == msg.id);
+        _notify();
+      }
+      return;
+    }
     final list = messages.putIfAbsent(msg.roomId, () => []);
     final idx = list.indexWhere((m) => m.id == msg.id);
     if (idx >= 0) {
