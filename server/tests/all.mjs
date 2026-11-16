@@ -137,6 +137,7 @@ const TESTS = [
   'island-login',
   'repo-trust',
   'task-grant-reclaim',
+  'repo-lock',
 ];
 
 let failed = 0;

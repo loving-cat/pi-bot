@@ -47,6 +47,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { config } from './config.js';
 import { repoTrustVerdict } from './repo-trust.js';
+import { acquireRepoWrite, releaseRepoWrite } from './repo-lock.js';
 import { spawnCommand } from './spawn-command.js';
 
 /** 一次 git 调用的默认超时。clone/fetch 之类的长操作另行放宽。 */
@@ -403,6 +404,8 @@ export function runGit({
    * 把信任域做成显式参数，测试才不必伪造全局状态。
    */
   trustRoots = null,
+  /** 谁在写（写锁按它判重入/冲突）。脚本调用可以不传，那就是 `anon`。 */
+  taskId = null,
 } = {}) {
   const key = String(op ?? '');
   if (REFUSED_OPERATIONS[key]) {
@@ -491,6 +494,17 @@ export function runGit({
     '-c', 'advice.detachedHead=false',
   ];
 
+  // ★ 规格 §7.3：同一公共目录的 Git **写入**按公共目录协调。
+  //
+  //   只对 mutates 的操作拿锁：读操作并发没有坏处（而且经常并行读）。
+  //   拿不到就**拒绝**而不是排队 —— runGit 是同步的，等只能变成"模型干等"。
+  let lockToken = null;
+  if (spec.mutates) {
+    const got = acquireRepoWrite({ commonDir: layout.commonDir, taskId: String(taskId ?? 'anon') });
+    if (!got.ok) return { ok: false, op: key, refused: true, code: got.code, error: got.text };
+    lockToken = { commonDir: layout.commonDir, taskId: String(taskId ?? 'anon') };
+  }
+
   const res = spawnSync(git.file, [...configGuards, ...args], {
     cwd: layout.root,
     encoding: 'utf8',
@@ -509,7 +523,17 @@ export function runGit({
     maxBuffer: 32 * 1024 * 1024,
   });
 
+  // ★ 写锁必须放：这里不用 try/finally 包整个函数（那会改动太大），
+  //   而是在**每一条返回路径**上都放。三处返回，都要有。
+  const dropLock = () => {
+    if (lockToken) {
+      releaseRepoWrite(lockToken);
+      lockToken = null;
+    }
+  };
+
   if (res.error) {
+    dropLock();
     return { ok: false, op: key, error: `git 启动失败：${String(res.error.message || res.error)}` };
   }
   let stdout = res.stdout || '';
@@ -519,6 +543,7 @@ export function runGit({
     truncated = true;
   }
   const stderrText = res.stderr || '';
+  dropLock();
   return {
     ok: res.status === 0,
     op: key,
