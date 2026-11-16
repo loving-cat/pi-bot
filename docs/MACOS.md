@@ -168,3 +168,34 @@ HTTP 403 权限拒绝，相关聊天流程仍需在凭据及模型权限有效�
 - 本地通知目前仅在 Android/iOS 启用；macOS 不初始化该插件，暂不提供本地通知。
 - 首次监听局域网地址时可能出现系统防火墙提示；手机连接需网络权限与可达性。
 - 中文使用系统字体回退；不同平台的字体渲染可能存在差异。
+
+## v1.4.1 起在 Mac 上的行为（适配起点）
+
+这一版加的东西大多是 Windows 相关的，Mac 上会**降级但不崩**。逐项说清"Mac 上现在是什么样"，
+免得对着代码猜。
+
+| 功能 | Windows 上 | macOS 现在 | 需要做什么 |
+|---|---|---|---|
+| 调研后台浏览器 `browser_research` | 岛里起真 Chromium（窗口在另一张桌面）+ CDP 驱动 | **自动降级为无头**（`islandSupported()` 为假）。登录态照旧带：快照路径取 `~/Library/Application Support/Google/Chrome`，Cookie 由 Keychain 里 "Chrome Safe Storage" 那把钥匙解开，同一用户可读 | 不用改代码。真机跑一次**需要登录**的站点，确认 `open` 返回的是登录后的正文 |
+| 岛 `desktop_island_*` | `CreateDesktop` 独立桌面 | **明确拒绝**并说明原因（macOS 没有 `CreateDesktop` 等价 API），不会静默降级成"动用户鼠标" | 二选一：虚拟机做 GUI 隔离，或接受"操作当前桌面"（必须先单独确认）。见 GitHub Issues |
+| 桌面输入 `desktop_input` | `SendInput` + 租约 + 接管检测 | 空壳：六个函数留了槽位，13 项测试守着"不许谎报成功" | GitHub Issue「桌面输入：macOS 实现（W2d）」 |
+| ego 收尾与全屏 | 退全屏 + `handOff()` 把控制权交回用户 | 同一份脚本（ego 是跨平台 Chromium），未在 Mac 实测 | 跑一次"打开给我看"，确认收尾后页面能点、底下没有 "Agent is in control" |
+| 退出快捷键 | `Ctrl+Shift+Q` | `⌘+Shift+Q`（同一份代码，control 与 meta 都认） | 无需改动 |
+| 收浏览器进程 | `taskkill /PID /T /F` 杀整棵树 | `kill()`（按平台分支） | 若偶发"profile 目录被占"，说明有子进程没退，记一笔 |
+
+### 适配时的自查顺序
+
+```bash
+cd server && node tests/all.mjs                    # 136 个测试文件
+cd ../app && flutter analyze && flutter test       # 783 项（~3 跳过）
+cd .. && node scripts/check-secrets.mjs            # 提交身份/凭据
+cd server && node scripts/check-consistency.mjs    # 八项一致性（含锁文件不许带镜像地址）
+./scripts/pack-macos.sh                            # .app + .dmg
+```
+
+⚠ 打包时不要设 `PUB_HOSTED_URL` 到镜像：`flutter pub get` 会把镜像地址写进
+`pubspec.lock`，一旦提交，CI 用官方源跑 `--enforce-lockfile` 会红。现在有检查拦
+（`check-consistency.mjs` 第 8 项），但仍然别提交镜像版锁文件。
+
+⚠ 本地打包机若跑过测试，`app/build` 与 `dist/` 会变大很多 —— `pack-macos.sh` 自己会清理暂存目录，
+旧成品按脚本的恢复逻辑保留。
