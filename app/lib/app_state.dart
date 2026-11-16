@@ -16,6 +16,7 @@ import 'models.dart';
 import 'reconnect_sweep.dart';
 import 'attachment_deletions.dart';
 import 'grant_view.dart';
+import 'onboarding_model.dart';
 import 'native.dart';
 import 'notify.dart';
 import 'platform.dart';
@@ -455,6 +456,79 @@ class AppState extends ChangeNotifier {
   void dismissModelSetup() {
     modelSetupSkipped = true;
     notifyListeners();
+  }
+
+  // ---------------------------------------------------------------- 首次授权页（§13.2）
+
+  /// 首启页的计划（服务端算好的“该说什么、该让用户选什么”）。
+  OnboardingPlan? onboardingPlan;
+
+  bool onboardingLoaded = false;
+
+  /// 用户本会话里跳过了一次。
+  ///
+  /// 只存内存，和 `modelSetupSkipped` 一致：这不是“我不再需要授权”的表达，
+  /// 只是“现在先不看”。下次启动还没有人来源的授权时，还会再问一次。
+  bool onboardingSkipped = false;
+
+  /// 上次走过首启时选了什么（服务端记着的，用来回填选项）。
+  String? onboardingSavedProjectId;
+  String? onboardingSavedGitScope;
+
+  /// 是否应该把主界面挡在首启页后面。
+  ///
+  /// 三个条件缺一不可：拉过一次、服务端说是首次、用户没点过“稍后”。
+  /// 少任何一个都不弹 —— 宁可不打扰，也别在正常用户面前突然遮一屏。
+  bool get needsOnboarding =>
+      onboardingLoaded && (onboardingPlan?.firstRun ?? false) && !onboardingSkipped;
+
+  void dismissOnboarding() {
+    onboardingSkipped = true;
+    _notify();
+  }
+
+  Future<void> loadOnboarding() async {
+    final client = api;
+    if (client == null) return;
+    try {
+      final json = await client.get('/api/onboarding');
+      if (_disposed || !identical(api, client)) return;
+      onboardingPlan = OnboardingPlan.fromJson(json);
+      final rec = (json['onboarding'] as Map?)?.cast<String, dynamic>() ?? const {};
+      onboardingSavedProjectId = rec['projectId'] as String?;
+      onboardingSavedGitScope = rec['gitScope'] as String?;
+      onboardingLoaded = true;
+      _notify();
+    } catch (err) {
+      // 首启页拉失败不该拦住用户用 App：界面上少一页引导，不是“坏了”。
+      lastError = '首次授权页加载失败：$err';
+      onboardingLoaded = true;
+      _notify();
+    }
+  }
+
+  /// 提交首启页的选择。返回错误文案（成功 null）。
+  ///
+  /// 这个请求要 nonce（服务端标的是 defense 档：它建的是授权根，
+  /// 等于改防线本身）——`Api.post` 会自己按路径补上，不用这里记得。
+  Future<String?> applyOnboarding({
+    required String projectId,
+    required String gitScope,
+  }) async {
+    final client = api;
+    if (client == null) return '未连接服务端';
+    try {
+      await client.post('/api/onboarding/apply', {
+        'projectId': projectId,
+        'gitScope': gitScope,
+      });
+      await loadOnboarding();
+      // 新授权要立刻出现在授权面板里，否则用户会以为没生效。
+      await loadGrants();
+      return null;
+    } catch (err) {
+      return '$err';
+    }
   }
 
   /// 让引导页重新出现（配置好后由 UI 调用，或用户手动重开引导）。
@@ -1681,6 +1755,10 @@ class AppState extends ChangeNotifier {
       }
       lastError = null;
       _lastRefreshStatus = 200;
+      // 首次授权页（规格 §13.2）：只在本会话首次刷新时拉一次。
+      // 不放进 /api/state 里：那个接口每次重连都打，而首启页要真探桌面
+      // 权限（Windows 上是一次 PowerShell），不该跟着心跳跑。
+      if (!onboardingLoaded) unawaited(loadOnboarding());
     } catch (err) {
       if (_disposed || !identical(api, client)) return;
       lastError = '$err';

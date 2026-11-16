@@ -28,6 +28,7 @@ import 'update_info.dart';
 import 'widgets/update_prompt.dart';
 import 'l10n/l10n.dart';
 import 'widgets/model_setup_gate.dart';
+import 'widgets/permission_setup_gate.dart';
 import 'window_state.dart';
 
 /// 开发用：`--dart-define=PI_BOT_URL=http://127.0.0.1:8787 --dart-define=PI_BOT_TOKEN=test-token`
@@ -505,6 +506,12 @@ class _Root extends StatelessWidget {
     //   而不是"我还没配模型"。与其让人去猜，不如在进主界面前讲清楚并给出入口。
     //   用户可以点"稍后再说"跳过，不强制。
     if (state.needsModelSetup) return const ModelSetupGate();
+
+    // ★ 授权范围（规格 §13.2）放在模型引导**之后**：
+    //   没模型的话 bot 根本不会说话，先解决那个；两个都缺时也能一页一页补。
+    //   这一步只弹给“还没有任何一条人能点出来的授权”的机器（判据在服务端，
+    //   迁移授权不算，见 onboarding.js 的 HUMAN_SOURCES）。
+    if (state.needsOnboarding) return const PermissionSetupGate();
 
     if (_devOpen.isNotEmpty) {
       final match = state.rooms.where(
