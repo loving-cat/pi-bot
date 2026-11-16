@@ -42,7 +42,7 @@
 | §5.2 每次输入前检查取消状态、会话、目标窗口 | 🟨 | 取消/会话/租约都查了；**「目标窗口」没查** —— 记录前台窗口标题只用于审计，不校验"还是同一个窗口" | `desktop-input-session.js:242`（只有 `foreground: sent.foreground`，没有 `targetWindow` 比对） |
 | §5.2 高风险动作「观察—确认—重新校验目标—执行—核对结果」 | 🟨 | 有观察、有规划校验、有光标复核；**缺"重新校验目标窗口"** 和"确认"这一段（桌面输入不走 `confirm.js`） | 同上 |
 | §5.2 用户接管立即吊销并丢弃未执行输入 | ✅ | `watch()` → `revoke()`；抖动抑制 2 次 | `tests/desktop-takeover.mjs` 21 项 |
-| §5.2 按键释放 / 拖拽中断 / 超时恢复纳入验收 | ⬜ | 拖拽**刻意不做**（明确拒绝）；按键释放有（down/up 成对发）；超时恢复靠 sweep —— 但 `sweepLeases()` **生产代码零调用** | grep `sweepLeases` |
+| §5.2 按键释放 / 拖拽中断 / 超时恢复纳入验收 | 🟨 | 拖拽**刻意不做**（明确拒绝）；按键释放有（down/up 成对发）；超时恢复：`server-main` 的 60 秒 housekeeping 调 `sweepLeases()`（已接，`202f0d7`）。**差的只剩拖拽的验收用例** | `tests/reclamation.mjs` + `grep sweepLeases server-main.js` |
 | §5.4 多屏/缩放：坐标与显示器绑定 | 🟨 | 屏幕矩形每次重探，屏幕外坐标拒绝；**但坐标本身不带"哪个显示器/哪次布局"的标记**，两次动作之间布局变了不会被发现 | `desktop-input.js` `planInput` |
 | §5.4 锁屏/断开：暂停输入并释放租约 | ✅ | `OpenInputDesktop` 失败 → `no_session` + 自动 revoke | `tests/desktop-input.mjs` |
 | §5.5 审计记录授权引用、发起者、实际执行角色、目标摘要、结果 | 🟨 | 授权审计有（§5.5 全套）；**桌面输入的审计只记动作摘要 + 前台窗口标题**，不记授权引用 | `desktop-input-session.js` 的 `pushAudit` |
@@ -64,12 +64,12 @@
 | §6.1 任务 / 资源范围 / 动作集合 | ✅ | `taskId` / `resources[]` / `actions[]` | 同上 |
 | §6.1 参数约束 | ✅ | `checkConstraints` 支持 deny / allow / maxBytes 三种；`tests/grants.mjs:191` 有专门用例 | 读 `grants.js:362-388` + `tests/grants.mjs:191` |
 | §6.1 风险等级 | ✅ | 从 `capabilities.js` 派生（`riskOf`） | `tests/capabilities.mjs` |
-| §6.1 **执行模式** | ⛔→🟨 | 字段有、判定有、UI 有；**调用方不传** → 实质上不生效 | `policy-hook.js:173` 没有 `mode` 参数 |
+| §6.1 **执行模式** | ✅ `406fb89` | `exec-mode.js` 判档 → `session-factory` 算一次 → `policy-hook` 的 `mode` 参数传进网关；一致性检查第 7 项静态守着这一根线 | `check-consistency.mjs` 第 7 项 |
 | §6.1 有效期 / 策略修订号 / 使用次数 / 可否子授权 | ✅ | `expiresAt` / `policyRevision` / `maxUses` / `canDelegate` | `tests/grants.mjs` |
 | §6.1 撤销状态 | ✅ | `revokedAt` / `revokedBy`（user/policy/parent 三态） | 同上 |
 | §6.1 子授权只能收窄 | ✅ | `deriveGrant` 逐项比；**执行 Bot 默认不能转授**（`canDelegate` 强制 false） | 同上 |
 | §6.2 分能力规则（文件/命令/GUI/Git/网络/凭据） | 🟨 | 五类都接网关了；**GUI 那一行的「删除、发送、付款、提权仍需确认」没实现**（桌面输入不走 `confirm.js`） | 读 `capabilities.js` + `confirm.js` |
-| §6.3 级联回收（七触发点） | 🟨 五条已接通 | 只实现了「父链撤销」和「策略变更」两条。<br>· 桌面租约：`revokeLease` 生产零调用<br>· 后台执行：靠 `kill_shell` 手动，任务取消不清<br>· 临时工件：截图不清理<br>· 成员移除：删 bot 不回收授权 | grep `revokeLease` / `pruneScreenshots` |
+| §6.3 级联回收（七触发点） | 🟨 五条已接通 | 已接：父链撤销、策略变更、**任务取消撤租约**（`task-runtime.js:560`）、**三终态兜底释放**、**删 bot 回收授权**（`store.deleteBot`）、**截图保留期**（`pruneScreenshots`，`202f0d7`）。**还差**：解绑工具不回收该工具授权、项目变更不重校、后台进程靠手动 `kill_shell` | `tests/reclamation.mjs` 11 项 |
 | §6.3 后台任务记录主体和资源世代，不能通过 `write_stdin` 续接越过撤销 | ✅ | `write_stdin` 走同一套策略；`tests/shell-bypass-regress.mjs` 守着 | 该测试文件 |
 
 ---
