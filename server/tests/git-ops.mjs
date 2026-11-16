@@ -16,6 +16,21 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 
+// ★ 临时目录要在 import **之前**建好：`git-ops` 会 import config，
+//   而 config 在 import 时读环境变量。信任域默认是工作目录，所以这里
+//   把工作目录设成临时根 —— 否则 §7.3 的信任域判定会把测试仓库全拒掉
+//   （那正好说明它真的在起作用）。
+const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-git-'));
+Object.assign(process.env, {
+  PI_BOT_HOME: path.join(root, 'data'),
+  PI_BOT_WORKSPACE: root,
+  PI_CODING_AGENT_DIR: path.join(root, 'agent'),
+  PI_BOT_PROBE: '0',
+});
+for (const d of [process.env.PI_BOT_HOME, process.env.PI_BOT_WORKSPACE, process.env.PI_CODING_AGENT_DIR]) {
+  fs.mkdirSync(d, { recursive: true });
+}
+
 const m = await import('../src/git-ops.js');
 const {
   locateGit, resolveRepoLayout, runGit, GIT_OPERATIONS, REFUSED_OPERATIONS,
@@ -39,7 +54,6 @@ if (!git.ok) {
   process.exit(1);
 }
 
-const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-git-'));
 const repo = path.join(root, 'repo');
 fs.mkdirSync(repo, { recursive: true });
 

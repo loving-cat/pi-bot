@@ -135,6 +135,7 @@ const TESTS = [
   'grant-context',
   'desktop-settings-route',
   'island-login',
+  'repo-trust',
 ];
 
 let failed = 0;

@@ -45,6 +45,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { config } from './config.js';
+import { repoTrustVerdict } from './repo-trust.js';
 import { spawnCommand } from './spawn-command.js';
 
 /** 一次 git 调用的默认超时。clone/fetch 之类的长操作另行放宽。 */
@@ -394,6 +396,13 @@ export function runGit({
   confirmation = null,
   /** 发起者角色（`{role: 'main'|'lead'|'member'}`）—— 角色门要用。 */
   actor = null,
+  /**
+   * 信任域（绝对路径数组）。默认 = 当前工作目录。
+   *
+   * 为什么会变成参数：单测要在临时目录里建仓库，而"工作目录"是进程级的；
+   * 把信任域做成显式参数，测试才不必伪造全局状态。
+   */
+  trustRoots = null,
 } = {}) {
   const key = String(op ?? '');
   if (REFUSED_OPERATIONS[key]) {
@@ -452,6 +461,19 @@ export function runGit({
 
   const layout = resolveRepoLayout(repoDir);
   if (!layout.ok) return { ok: false, op: key, error: layout.error };
+
+  // ★ 规格 §7.3：所有目标必须属于授予的信任域，否则拒绝。
+  //
+  //   为什么放在这里、而不是在工具层：`resolveRepoLayout` 是**所有** git 操作的
+  //   共同入口，而越界的写法（worktree 的 commondir、外部 alternates、符号链接）
+  //   在任何一条操作上都会出现。放在这里等于"没有一条路能绕过"。
+  const trust = repoTrustVerdict({
+    layout,
+    roots: Array.isArray(trustRoots) && trustRoots.length ? trustRoots : [config.workspace],
+  });
+  if (!trust.ok) {
+    return { ok: false, op: key, refused: true, error: trust.text, code: trust.code, outside: trust.outside };
+  }
 
   const args = [
     ...GLOBAL_SAFE_ARGS,
