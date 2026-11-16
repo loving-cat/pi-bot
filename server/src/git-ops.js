@@ -470,9 +470,15 @@ export function runGit({
   //   为什么放在这里、而不是在工具层：`resolveRepoLayout` 是**所有** git 操作的
   //   共同入口，而越界的写法（worktree 的 commondir、外部 alternates、符号链接）
   //   在任何一条操作上都会出现。放在这里等于"没有一条路能绕过"。
+  //
+  // ★ 信任域也要**解析成真实路径**再比。macOS CI 上就这么挂过一次：
+  //   `os.tmpdir()` 给的是 `/var/folders/...`，而 `/var` 是指向 `/private/var`
+  //   的符号链接 —— layout 里是解析后的，roots 里是没解析的，两边永远不相等，
+  //   于是"合法仓库"被判成"越界"。（同一条坑 `resolveRepoLayout` 早就踩过。）
+  const rawRoots = Array.isArray(trustRoots) && trustRoots.length ? trustRoots : [config.workspace];
   const trust = repoTrustVerdict({
     layout,
-    roots: Array.isArray(trustRoots) && trustRoots.length ? trustRoots : [config.workspace],
+    roots: rawRoots.map((r) => realish(r)),
   });
   if (!trust.ok) {
     return { ok: false, op: key, refused: true, error: trust.text, code: trust.code, outside: trust.outside };

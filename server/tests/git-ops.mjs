@@ -415,6 +415,27 @@ await test('输出过长时截断并标记', () => {
   raw(['checkout', '--', 'big.txt']);
 });
 
+await test('★ 信任域是符号链接时也认（macOS 的 /var → /private/var 就栽在这）', () => {
+  // 造一个"链接目录 → 真目录"，仓库建在真目录里，信任域给**链接**那条路。
+  // 不做 realpath 的实现在这里会把合法仓库判成越界 —— macOS CI 上就是这么红的。
+  const realRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-git-real-'));
+  const realRepo = path.join(realRoot, 'repo');
+  fs.mkdirSync(realRepo, { recursive: true });
+  spawnSync(git.file, ['init', '-q', '.'], { cwd: realRepo });
+  const linkRoot = path.join(root, `link-${Date.now().toString(36)}`);
+  let linked = true;
+  try {
+    fs.symlinkSync(realRoot, linkRoot, 'junction');
+  } catch {
+    linked = false;  // 某些环境不给建链接，那就跳过这条（不假装通过）
+  }
+  if (linked) {
+    const r = runGit({ repoDir: realRepo, op: 'status', trustRoots: [linkRoot] });
+    assert.equal(r.ok, true, `链接形式的信任域应当认：${r.error ?? ''}`);
+  }
+  fs.rmSync(realRoot, { recursive: true, force: true });
+});
+
 const failed = results.filter((r) => !r.ok);
 for (const r of results) {
   console.log(`${r.ok ? '✓' : '✗'} ${r.name}${r.ok ? '' : ' —— ' + r.err}`);
