@@ -20,6 +20,7 @@ import { resolveBotModelSelection } from './model-dispatch.js';
 import { store } from './store.js';
 import { policyChange } from './policy-version.js';
 import { ensureLegacyGrant } from './migration-grants.js';
+import { normalizeGrant } from './grants.js';
 import {
   deleteAttachments,
   referencedAttachmentIds,
@@ -67,7 +68,7 @@ import { routeConnections } from './connections-http.js';
 import { publicMcpCredentials } from './mcp-credentials.js';
 import { probeLogin } from './site-probe.js';
 import { createSiteRuntime } from './site-runtime.js';
-import { planFirstRun, desktopStatusOf } from './onboarding.js';
+import { planFirstRun, planFirstRunGrants, desktopStatusOf } from './onboarding.js';
 import { desktopInputPlatform } from './desktop-input-session.js';
 import { publicSite } from './sites.js';
 import { UploadSessions } from './upload-sessions.js';
@@ -123,6 +124,23 @@ function send(res, status, body) {
  */
 const DESKTOP_PROBE_TTL = 60_000;
 let desktopProbeCache = { at: 0, value: null };
+
+/**
+ * 首启页能选的项目。
+ *
+ * 现在只有一个候选（服务端的工作目录）：仓库里还没有“项目列表”这个东西，
+ * 凭空造一个会让用户选到不存在的路径。多项目等真有了再加 ——
+ * 而且到时候 `planFirstRunGrants` 已经在拿同一份列表做校验，不用改两处。
+ */
+function onboardingProjects() {
+  return [
+    {
+      id: 'workspace',
+      label: path.basename(config.workspace) || 'workspace',
+      path: config.workspace,
+    },
+  ];
+}
 
 function desktopProbe() {
   const now = Date.now();
@@ -689,21 +707,81 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
       // `projects` 现在只有一个候选（服务端的工作目录）：仓库里还没有“项目列表”
       // 这个东西，凭空造一个会让用户选到不存在的路径。多项目等真有了再加。
       if (pathname === '/api/onboarding' && req.method === 'GET') {
-        return send(res, 200, planFirstRun({
-          policy: store.policy(),
+        return send(res, 200, {
+          ...planFirstRun({
+            policy: store.policy(),
+            bots: store.listBots(),
+            projects: onboardingProjects(),
+            grants: store.state.grants ?? [],
+            desktop: desktopStatusOf(desktopProbe()),
+            mcpServerCount: store.mcpLibrary().length,
+            platform: process.platform,
+          }),
+          // 上次走过首启时选了什么（界面用它回填选项）
+          onboarding: store.onboarding(),
+        });
+      }
+
+      // 首启页的"开始"：把用户的选择变成一个**授权根**（规格 §6.1）。
+      //
+      // 这是整个流程里唯一写权限的地方，所以三件事缺一不可：
+      //   · 过管理门（`http-admin` 表里标 defense + policy nonce + 审计）——
+      //     建授权等于改防线，冒充者拿到 local-token 就能自己给自己发权限；
+      //   · 只建“算好的那批”（`planFirstRunGrants`），不在路由里手写动作清单；
+      //   · 先把**上一次首启建的**回收掉，否则每选一次就多一堆积压，
+      //     而界面上看不出哪条才是当前有效的。
+      if (pathname === '/api/onboarding/apply' && req.method === 'POST') {
+        const gate = runner.grantGate;
+        if (!gate) return fail(res, 503, 'NO_GATE', '网关未启用');
+        const body = await readBody(req);
+        const plan = planFirstRunGrants({
+          projectId: body?.projectId,
+          gitScope: body?.gitScope,
           bots: store.listBots(),
-          projects: [
-            {
-              id: 'workspace',
-              label: path.basename(config.workspace) || 'workspace',
-              path: config.workspace,
-            },
-          ],
-          grants: store.state.grants ?? [],
-          desktop: desktopStatusOf(desktopProbe()),
-          mcpServerCount: store.mcpLibrary().length,
-          platform: process.platform,
-        }));
+          projects: onboardingProjects(),
+        });
+        if (!plan.ok) return fail(res, 400, plan.code.toUpperCase(), plan.text);
+
+        // 整批一起过校验，不要让“第二条失败了、第一条已经落盘”变成半个状态。
+        for (const spec of plan.grants) {
+          const bad = normalizeGrant({ ...spec, id: `pre_${spec.subject.botId}` });
+          if (!bad.ok) return fail(res, 400, 'BAD_GRANT', bad.text);
+        }
+
+        const pre = store.onboarding();
+        const revoked = [];
+        for (const id of pre.grantIds) {
+          const r = gate.revoke(id, '首次授权页重新选择，旧的一条作废');
+          if (r.ok && !r.alreadyRevoked) revoked.push(id);
+        }
+
+        const created = [];
+        for (const spec of plan.grants) {
+          const r = gate.add(spec);
+          if (!r.ok) {
+            return fail(res, 500, 'GRANT_FAILED', `授权建立失败：${r.text}`);
+          }
+          created.push(r.grant.id);
+        }
+
+        const record = store.setOnboarding({
+          doneAt: Date.now(),
+          projectId: plan.project.id,
+          projectPath: plan.project.path,
+          gitScope: String(body?.gitScope),
+          actions: plan.actions,
+          grantIds: created,
+        });
+        log(`🔑 首次授权：项目 ${plan.project.path}｜${plan.actions.join(',')}｜${created.length} 条`);
+        return send(res, 200, {
+          ok: true,
+          created,
+          revoked,
+          project: plan.project,
+          actions: plan.actions,
+          notes: plan.notes,
+          onboarding: record,
+        });
       }
 
       const grantRevokeMatch = pathname.match(/^\/api\/grants\/([^/]+)\/revoke$/);

@@ -790,6 +790,40 @@ export class Store {
     return { name: this.userName() };
   }
 
+  // ---------- 首次授权流程（规格 §13.2） ----------
+
+  /**
+   * 用户在首启页做过的选择。
+   *
+   * 为什么要把这个落盘：
+   *   · 界面要分清"还没走过首启"和"走过了但后来授权被收回"；
+   *   · 重新选择时要能找回上一次建的那几条授权（否则每选一次就多一堆积压）。
+   *
+   * ★ 这个记录**不是**授权：授权在 `state.grants`，判定在 `grants.js`。
+   *   这里只存"用户当时选了什么"，删了它不会让任何已有权限生效或失效。
+   */
+  onboarding() {
+    const raw = this.state.onboarding ?? {};
+    const num = Number(raw.doneAt);
+    return {
+      doneAt: Number.isFinite(num) && num > 0 ? num : null,
+      projectId: raw.projectId ? String(raw.projectId) : null,
+      projectPath: raw.projectPath ? String(raw.projectPath) : null,
+      gitScope: raw.gitScope ? String(raw.gitScope) : null,
+      actions: Array.isArray(raw.actions) ? raw.actions.map(String) : [],
+      grantIds: Array.isArray(raw.grantIds) ? raw.grantIds.map(String) : [],
+    };
+  }
+
+  /** 记下首启页的选择。只合并，不重置没传的字段。 */
+  setOnboarding(patch = {}) {
+    const next = { ...this.onboarding(), ...(patch ?? {}) };
+    this.state.onboarding = next;
+    this.scheduleSave();
+    bus.emit('event', { t: 'onboarding.updated', onboarding: next });
+    return next;
+  }
+
   // ---------- 群聊轮次预算 ----------
 
   /** 当前的轮次预算（缺项用默认值补齐，老状态文件也能直接用） */
@@ -1199,8 +1233,7 @@ export class Store {
   }
 
   /** 当前的部门规矩 */
-  policy() {
-    // ★ 一次性迁移：`requireProof` 的默认值从 false 改成 true 之后，
+  policy() {    // ★ 一次性迁移：`requireProof` 的默认值从 false 改成 true 之后，
     //   老用户的 state.json 里仍存着显式的 false —— 不迁移的话，
     //   只有新装的机器享受到新默认值，老用户永远是"不强求证据"。
     //

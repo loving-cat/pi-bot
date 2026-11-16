@@ -25,7 +25,9 @@ const {
   GIT_SCOPE,
   SEPARATE_APPROVAL,
   DESKTOP_STATE,
+  APPLY_FAIL,
   planFirstRun,
+  planFirstRunGrants,
   perCallConfirmItems,
   describeBoundaries,
   desktopStatusOf,
@@ -156,11 +158,14 @@ test('Git 范围的动作是递减的：none ⊂ read ⊂ commit ⊂ push', () =
 });
 
 // ---------------------------------------------------------------- 第 3 步：host 不可选
-test('★ 执行 Bot 的模式选项里没有 host（选了就是放宽）', () => {
+test('★ 执行 Bot 的执行模式不在首启页选（任务级的东西不能在这里定）', () => {
   const plan = baseRun();
   const step3 = plan.steps.find((s) => s.id === STEP.leastPrivilege);
-  assert.ok(!step3.options.modes.includes(MODE.host), 'host 只能属于主 Bot，不能出现在执行 Bot 的下拉框里');
-  assert.deepEqual(step3.options.modes, [MODE.project, MODE.isolated]);
+  assert.equal(step3.kind, 'tell', '§13.2-3 是“派活时分配”，不是首启页的下拉框');
+  // 页面上任何地方都不该出现一个“可以选 host”的控件
+  const json = JSON.stringify(plan);
+  assert.ok(!/"modes"/.test(json), '不该把执行模式做成可选项');
+  assert.ok(!step3.options, '告知类步骤不带 options');
 });
 
 test('★ 已有 host 模式授权的非主 Bot 会被点名', () => {
@@ -302,6 +307,14 @@ test('没有执行 Bot 不阻断，但第 3 步要说清"只有主 Bot 受约束
   assert.match(step3.lines.join(' | '), /还没有执行 Bot/);
 });
 
+test('第 3 步要点明 host 只属于主 Bot、任务级权限在派活时给', () => {
+  const step3 = baseRun().steps.find((s) => s.id === STEP.leastPrivilege);
+  const text = step3.lines.join(' | ');
+  assert.match(text, /host/);
+  assert.match(text, /只属于主 Bot/);
+  assert.match(text, /派活时给/);
+});
+
 // ---------------------------------------------------------------- 有效权限汇总
 test('有效权限汇总：过期的不进"本次有效"', () => {
   const s = summarizeEffectivePermissions({
@@ -368,6 +381,13 @@ test('host / isolated 模式授权不能长期保留', () => {
   assert.match(retentionRefusal(grant({ mode: MODE.isolated })), /isolated 模式/);
 });
 
+test('★ 主 Bot 的 host 模式 + 项目范围可以保留（host 就是它的正常模式）', () => {
+  const mainGrant = grant({ subject: { botId: 'b-main', role: 'main' }, mode: MODE.host });
+  assert.equal(retentionRefusal(mainGrant), null);
+  // 但同一个 host 模式给执行 Bot 就不行
+  assert.match(retentionRefusal(grant({ mode: MODE.host })), /host 模式/);
+});
+
 test('范围里含主机/凭据/桌面 → 不是项目授权', () => {
   const g = grant({ resources: [{ kind: 'path', ref: 'D:/quant-all-in' }, { kind: 'host', ref: 'example.com' }] });
   assert.match(retentionRefusal(g), /非项目资源/);
@@ -427,11 +447,11 @@ test('收尾：已撤销/过期的授权不进任何一栏', () => {
 });
 
 // ---------------------------------------------------------------- 一页 vs 向导
-test('一页里只有两步需要用户选（其余是告知与确认）', () => {
+test('一页里只有一步需要用户选（其余是告知与确认）', () => {
   const plan = baseRun();
   const choices = plan.steps.filter((s) => s.kind === 'choose');
-  assert.equal(choices.length, 2);
-  assert.equal(plan.steps.filter((s) => s.kind === 'tell').length, 1);
+  assert.equal(choices.length, 1);
+  assert.equal(plan.steps.filter((s) => s.kind === 'tell').length, 2);
   assert.equal(plan.steps.filter((s) => s.kind === 'confirm').length, 1);
 });
 
@@ -479,6 +499,89 @@ test('探针失败（拿不到会话/调用挂了）按 denied 报，并进边�
     const plan = baseRun({ desktop: st });
     assert.match(plan.boundaries.cannot.join(' | '), /不会自动改用更宽的模式顶上/);
   }
+});
+
+// ---------------------------------------------------------------- 选择 → 授权
+
+const applyBase = (over = {}) =>
+  planFirstRunGrants({
+    projectId: 'p-quant',
+    gitScope: GIT_SCOPE.commit,
+    bots: [MAIN, CODER],
+    projects: [PROJECT],
+    now: NOW,
+    ...over,
+  });
+
+test('选完就得到每个 bot 一条项目范围的授权（来源只能是人）', () => {
+  const out = applyBase();
+  assert.equal(out.ok, true);
+  assert.equal(out.grants.length, 2);
+  for (const g of out.grants) {
+    assert.equal(g.source, 'user');
+    assert.equal(g.canDelegate, false);
+    assert.equal(g.expiresAt, null);
+    assert.deepEqual(g.resources, [{ kind: 'path', ref: 'D:/quant-all-in' }]);
+  }
+  // 动作 = 项目内读写 + 选的 Git 档位，没有多出来的
+  assert.deepEqual(out.actions.sort(), ['file.read', 'file.write', 'git.commit', 'git.read']);
+});
+
+test('★ 授权里没有 cmd.exec（窄范围 + 认不出目标 = fail-closed）', () => {
+  const out = applyBase();
+  assert.ok(!out.actions.includes('cmd.exec'));
+  assert.ok(!out.actions.includes('cmd.background'));
+  assert.ok(!out.actions.includes('desktop.input'));
+  assert.ok(!out.actions.includes('net.send'));
+  assert.ok(!out.actions.includes('secret.use'));
+  // 而且要在提示里说清“跑命令不在里面”
+  assert.match(out.notes.join(' | '), /命令/);
+});
+
+test('★ 不给执行 Bot 发 host 模式；主 Bot 就是 host（否则那张卡永远匹配不上）', () => {
+  const out = applyBase();
+  const byId = new Map(out.grants.map((g) => [g.subject.botId, g]));
+  assert.equal(byId.get('b-main').mode, MODE.host);
+  assert.equal(byId.get('b-code').mode, MODE.project);
+  // 没有任何一条执行 Bot 的授权是 host
+  for (const g of out.grants) {
+    if (g.subject.role !== 'main') assert.notEqual(g.mode, MODE.host);
+  }
+});
+
+test('Git 选 none 就只给读写，不带任何 git 动作', () => {
+  const out = applyBase({ gitScope: GIT_SCOPE.none });
+  assert.deepEqual(out.actions.sort(), ['file.read', 'file.write']);
+});
+
+test('★ 不存在的项目宁可报错，不猜一个最近似的（否则授权会写到没选过的路径）', () => {
+  const out = applyBase({ projectId: 'p-不存在' });
+  assert.equal(out.ok, false);
+  assert.equal(out.code, APPLY_FAIL.unknownProject);
+});
+
+test('用路径当 id 也认（界面可能没有稳定 id）', () => {
+  const out = applyBase({ projectId: 'D:/quant-all-in' });
+  assert.equal(out.ok, true);
+  assert.equal(out.project.path, 'D:/quant-all-in');
+});
+
+test('未知 Git 档位直接拒，不回落成默认值', () => {
+  const out = applyBase({ gitScope: 'everything' });
+  assert.equal(out.ok, false);
+  assert.equal(out.code, APPLY_FAIL.badGitScope);
+});
+
+test('没 bot 可授权就拒', () => {
+  const out = applyBase({ bots: [] });
+  assert.equal(out.ok, false);
+  assert.equal(out.code, APPLY_FAIL.noBots);
+});
+
+test('★ 不顺手收旧授权：结果里根本没有 revoke 这种东西', () => {
+  const out = applyBase();
+  assert.ok(!('revoke' in out), '收窄只能是对具体那一条的操作');
+  assert.match(out.notes.join(' | '), /不会自动收窄/);
 });
 
 // ---------------------------------------------------------------- 结果

@@ -40,6 +40,9 @@ export const ADMIN_ROUTE_TABLE = Object.freeze([
   // ---- defense：改防线本身 ----
   { method: 'PATCH', path: '/api/policy', level: 'defense', action: 'policy.change', nonce: 'policy', label: '改部门规矩' },
   { method: 'PUT', path: '/api/hooks', level: 'defense', action: 'policy.change', nonce: 'hooks', label: '改工具钩子' },
+  // 首启页的“开始”会**建授权根** —— 等于改防线本身：
+  // 冒充者拿到本机 token 就能自己给自己发权限。要 nonce，也计审计。
+  { method: 'POST', path: '/api/onboarding/apply', level: 'defense', action: 'policy.change', nonce: 'policy', label: '首次授权：建立项目授权' },
   { method: 'POST', path: '/api/mcp', level: 'defense', action: 'mcp.add', nonce: 'mcp', label: '新增 MCP 服务' },
   { method: 'PATCH', path: '/api/mcp/:id', level: 'defense', action: 'mcp.add', nonce: 'mcp', label: '改 MCP 服务' },
   { method: 'DELETE', path: '/api/mcp/:id', level: 'defense', action: 'mcp.add', nonce: 'mcp', label: '删 MCP 服务' },
@@ -144,4 +147,5 @@ export const ADMIN_VIEW_ROUTES = Object.freeze([
   '/api/grants',
   '/api/grant-audit',
   '/api/admin-actions',
+  '/api/onboarding',
 ]);

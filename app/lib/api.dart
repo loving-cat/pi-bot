@@ -111,6 +111,9 @@ class Api {
     final m = method.toUpperCase();
     bool isPath(String p) => path == p || path.startsWith('$p/');
     if (m == 'PATCH' && path == '/api/policy') return 'policy';
+    // 首启页的“开始”会建授权根（范围由用户在页面上选定），
+    // 和改规矩同一档：它改的是“谁能动什么”。
+    if (m == 'POST' && path == '/api/onboarding/apply') return 'policy';
     if (m == 'PUT' && path == '/api/hooks') return 'hooks';
     if (isPath('/api/mcp') && (m == 'POST' || m == 'PATCH' || m == 'DELETE')) return 'mcp';
     if (m == 'POST' && path == '/api/local-capabilities/import') return 'import';

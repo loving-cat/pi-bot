@@ -241,6 +241,124 @@ await test('返回的形状能被 App 的 onboarding_model 直接吃（字段名
   assert.ok(plan.perCallConfirm.some((i) => i.id === 'external-mcp'));
 });
 
+// ---------------------------------------------------------------- 首启页的"开始"
+
+/** 申请一枚 nonce（丢开时自动带在头部）。 */
+async function nonce(purpose = 'policy') {
+  const r = await post('/api/local-nonce', { purpose });
+  return r.json.nonce;
+}
+
+function post(pathname, body, extraHeaders = {}) {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify(body ?? {});
+    const r = http.request(
+      {
+        host: '127.0.0.1',
+        port: PORT,
+        path: pathname,
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer ' + TOKEN,
+          'x-pi-bot-client': 'test',
+          'content-type': 'application/json',
+          'content-length': Buffer.byteLength(payload),
+          ...extraHeaders,
+        },
+      },
+      (res) => {
+        let t = '';
+        res.on('data', (c) => {
+          t += c;
+        });
+        res.on('end', () => {
+          let j = {};
+          try {
+            j = JSON.parse(t);
+          } catch {
+            /* 非 JSON */
+          }
+          resolve({ status: res.statusCode, json: j });
+        });
+      },
+    );
+    r.on('error', reject);
+    r.end(payload);
+  });
+}
+
+await test('★ 不带 nonce 就建不了授权（建授权 = 改防线本身）', async () => {
+  const before = (store.state.grants ?? []).length;
+  const r = await post('/api/onboarding/apply', { projectId: 'workspace', gitScope: 'commit' });
+  assert.ok(r.status >= 400, `应该被拦住，实际 ${r.status}`);
+  assert.equal((store.state.grants ?? []).length, before, '被拦下时不能已经落盘');
+});
+
+await test('★ 选完就真的建出授权（并且写进审计）', async () => {
+  const n = await nonce();
+  const auditedBefore = store.listAdminActions({ limit: 100 }).length;
+  const r = await post(
+    '/api/onboarding/apply',
+    { projectId: 'workspace', gitScope: 'commit' },
+    { 'x-pi-bot-nonce': n },
+  );
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.equal(r.json.ok, true);
+  assert.ok(r.json.created.length >= 2, '主 Bot 和执行 Bot 各一条');
+
+  // 真的进了 locked 的授权表，而且来源是人
+  const ids = new Set(r.json.created);
+  const live = (store.state.grants ?? []).filter((g) => ids.has(g.id) && !g.revokedAt);
+  assert.equal(live.length, r.json.created.length);
+  for (const g of live) assert.equal(g.source, 'user');
+
+  // 记了管理审计
+  assert.ok(store.listAdminActions({ limit: 100 }).length > auditedBefore);
+
+  // 选择落盘了（界面回填要用）
+  const rec = store.onboarding();
+  assert.ok(rec.doneAt > 0);
+  assert.equal(rec.gitScope, 'commit');
+  assert.equal(rec.projectPath, ws);
+});
+
+await test('建完之后页面变成"已配过"（firstRun = false）', async () => {
+  const r = await req('/api/onboarding');
+  assert.equal(r.json.firstRun, false);
+  assert.ok(r.json.onboarding.doneAt > 0);
+  const state = r.json.steps; // 字段还在，界面不会因为"已配过"变成空白
+  assert.equal(state.length, 4);
+});
+
+await test('★ 重新选一遍：旧的被回收，不积压（否则面板上一堆看不出哪条有效）', async () => {
+  const first = store.onboarding().grantIds.slice();
+  const n = await nonce();
+  const r = await post(
+    '/api/onboarding/apply',
+    { projectId: 'workspace', gitScope: 'read' },
+    { 'x-pi-bot-nonce': n },
+  );
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.json.revoked.sort(), first.sort());
+  const liveOld = (store.state.grants ?? []).filter(
+    (g) => first.includes(g.id) && !g.revokedAt,
+  );
+  assert.equal(liveOld.length, 0, '上一次建的必须已经撤销');
+});
+
+await test('选不存在的项目 → 400，且一条授权都不建', async () => {
+  const before = (store.state.grants ?? []).length;
+  const n = await nonce();
+  const r = await post(
+    '/api/onboarding/apply',
+    { projectId: 'nope', gitScope: 'commit' },
+    { 'x-pi-bot-nonce': n },
+  );
+  assert.equal(r.status, 400);
+  assert.equal(r.json.code, 'UNKNOWN_PROJECT');
+  assert.equal((store.state.grants ?? []).length, before);
+});
+
 // ---------------------------------------------------------------- 收尾
 server.close();
 clearTimeout(store.saveTimer);

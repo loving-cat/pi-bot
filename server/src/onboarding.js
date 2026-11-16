@@ -356,7 +356,8 @@ export function planFirstRun({
     : ['还没有执行 Bot：下面第 2 步选的范围只会约束主 Bot 自己'];
   leastPrivilegeLines.push(
     '普通桌面键鼠权限不随角色继承：主 Bot 能用，执行 Bot 默认不能',
-    '执行模式按任务给，跑完随临时授权一起回收，不会留下来变成长期能力',
+    '任务级权限在派活时给（范围随那个任务走），跑完随临时授权一起回收，不会留下来变成长期能力',
+    `${MODE.host}（可信宿主）只属于主 Bot；执行 Bot 默认 ${MODE.project}，要隔离得先真给它沙箱`,
   );
 
   // ---------------------------------------------------------------- 第 4 步
@@ -405,16 +406,18 @@ export function planFirstRun({
     },
     {
       id: STEP.leastPrivilege,
-      kind: 'choose',
-      title: '执行 Bot 的任务级最小权限',
+      // ★ 这一步是**告知**，不是选择。原因要写清楚，否则以后有人会把它改回下拉框：
+      //
+      //   规格 §13.2-3 说的是"为执行 Bot 分配**任务级**最小权限和执行模式"，
+      //   那是**派活时**的事（作业范围随任务走、跑完回收），不是首启页能
+      //   一次定下来的东西。硬在这里做成下拉框会出两个真问题：
+      //     · 选 `isolated` 而后又没真给沙箱时，授权与运行时模式对不上，
+      //       bot 会变成"存在但什么都干不了"，而界面上看不出来；
+      //     · 更坏的是把 `host` 放进下拉框 —— 迟早有人选上，
+      //       于是执行 Bot 拿到了可信宿主模式。
+      kind: 'tell',
+      title: '执行 Bot 拿到什么、拿不到什么',
       lines: leastPrivilegeLines,
-      options: {
-        modes: [MODE.project, MODE.isolated],
-        // ★ host 不在可选项里：规格 §8.1 的 host 是"主 Bot 可信宿主"，
-        //   不给执行 Bot 选 —— 让它出现在下拉框里，迟早会有人选上。
-        note: `执行 Bot 只能选 ${MODE.project} 或 ${MODE.isolated}；${MODE.host} 只属于主 Bot`,
-      },
-      recommended: { mode: MODE.project },
     },
     {
       id: STEP.summary,
@@ -565,7 +568,11 @@ export function retentionRefusal(grant) {
   const actions = Array.isArray(grant.actions) ? grant.actions : [];
   if (actions.includes(A.netSend)) return '对外发送/发布/上传不能靠"保留项目"推出，每次都要单独批';
   if (actions.includes(A.secretUse)) return '凭据使用不能长期保留，每次都要单独批';
-  if (grant.mode !== MODE.project) {
+  // ★ host 模式：主 Bot 的**正常**模式（规格 §8.1），判据是“它在不在项目范围内”，
+  //   不是“模式叫什么”。执行 Bot 拿 host 才是异常 —— 那种情况 `planFirstRun`
+  //   会单独点名，这里不重复报。
+  const isMainSubject = String(grant.subject?.role ?? '') === 'main';
+  if (grant.mode !== MODE.project && !(grant.mode === MODE.host && isMainSubject)) {
     return `${grant.mode} 模式授权不能长期保留：它描述的不是项目范围内的事`;
   }
   const kinds = (Array.isArray(grant.resources) ? grant.resources : []).map((r) => r?.kind);
@@ -573,6 +580,105 @@ export function retentionRefusal(grant) {
     return '范围里含非项目资源（主机/凭据/桌面），不能当成项目授权保留';
   }
   return null;
+}
+
+// ---------------------------------------------------------------- 首启页 → 授权
+
+/** `planFirstRunGrants` 的错误码。 */
+export const APPLY_FAIL = Object.freeze({
+  unknownProject: 'unknown_project',
+  badGitScope: 'bad_git_scope',
+  noBots: 'no_bots',
+});
+
+/**
+ * 项目授权里**能**包含的动作（除 Git 档位带来的那几个以外）。
+ *
+ * ★ 为什么不含 `cmd.exec`：命令的目标埋在命令字符串里，认不出来。
+ *   网关的规则是“窄范围授权 + 认不出目标 → fail-closed 拒绝”
+ *   （`grant-gate.js` 的 `resourceNotCovered`）。把它写进这张卡，
+ *   用户会得到一个“有授权却跑不了任何命令”的 bot，而界面上看不出来。
+ *   跑命令仍由那条范围等于旧规矩的迁移授权覆盖，直到有任务级授权为止。
+ */
+const PROJECT_ACTIONS = Object.freeze([A.fileRead, A.fileWrite]);
+
+/**
+ * 把首启页上的选择算成一批**待创建**的授权（纯函数，不建）。
+ *
+ * 这是 §13.2 第 2 步的落地：用户选了负责人项目和普通 Git 范围，
+ * 就得到一份“范围 = 那个项目路径”的授权根。建立依旧是
+ * `grant-gate.add()` 的事（来源只能是人，规格 §6.1）。
+ *
+ * 四条不会发生的事，每条都对应一个真实风险：
+ *
+ * | 不会 | 为什么 |
+ * |---|---|
+ * | 不会给 `host` 模式（除主 Bot 本身就是 host） | 授权模式必须与该会话的实际执行模式一致，否则它只是张废纸或一道假保险 |
+ * | 不会给桌面键鼠 | 规格 §13.2-3：普通桌面键鼠权限**不随角色继承** |
+ * | 不会给 `cmd.exec` | 窄范围授权对它一律 fail-closed（见 `PROJECT_ACTIONS`） |
+ * | 不会顺手改/收旧授权 | 收窄只能是用户对具体那一条的操作；顺手收等于静默改变现有行为 |
+ *
+ * @returns {{ok:true, grants:object[], project:object, actions:string[], notes:string[]}
+ *   | {ok:false, code:string, text:string}}
+ */
+export function planFirstRunGrants({
+  projectId = null,
+  gitScope = GIT_SCOPE.read,
+  bots = [],
+  projects = [],
+  now = Date.now(),
+} = {}) {
+  const scope = String(gitScope);
+  if (!Object.values(GIT_SCOPE).includes(scope)) {
+    return { ok: false, code: APPLY_FAIL.badGitScope, text: `未知的 Git 范围：${scope}` };
+  }
+  const wanted = String(projectId ?? '');
+  const project = (Array.isArray(projects) ? projects : []).find(
+    (p) => p && (String(p.id ?? '') === wanted || String(p.path ?? '') === wanted),
+  );
+  if (!project || !project.path) {
+    // 不“猜一个最近的”：选不中就让用户重选，否则会把授权写到一个他没选过的路径上
+    return { ok: false, code: APPLY_FAIL.unknownProject, text: '选中的项目不存在或没有路径' };
+  }
+  const botList = (Array.isArray(bots) ? bots : []).filter((b) => b && b.id);
+  if (!botList.length) return { ok: false, code: APPLY_FAIL.noBots, text: '没有任何 bot 可以授权' };
+
+  const actions = [...new Set([...PROJECT_ACTIONS, ...GIT_SCOPE_ACTIONS[scope]])];
+  const label = String(project.label ?? project.path ?? project.id ?? '');
+  const grants = botList.map((bot) => ({
+    source: 'user',
+    sourceRef: `首次授权页：项目 ${label}、Git ${GIT_SCOPE_LABEL[scope]}`,
+    subject: {
+      botId: bot.id,
+      role: isMain(bot) ? 'main' : '',
+      instanceId: '',
+    },
+    taskId: null,
+    parentId: null,
+    actions: [...actions],
+    resources: [{ kind: 'path', ref: String(project.path) }],
+    constraints: {},
+    risk: 'medium',
+    // 主 Bot 实际就跑在 host 上（`executionModeOf`），发给它 project 模式的授权
+    // 在路由里永远匹配不上 —— 那就不是“窄”，是“空”。
+    mode: isMain(bot) ? MODE.host : MODE.project,
+    canDelegate: false,
+    maxUses: null,
+    createdAt: now,
+    expiresAt: null,
+  }));
+
+  return {
+    ok: true,
+    project: { id: String(project.id ?? project.path), label, path: String(project.path) },
+    actions,
+    grants,
+    notes: [
+      '这张卡只覆盖项目内的读/写与本次选的 Git 动作',
+      '跑命令、后台进程、网络、凭据都不在里面',
+      '它不会自动收窄那条“范围 = 旧规矩”的迁移授权；那条要你在授权面板里自己收',
+    ],
+  };
 }
 
 /**
