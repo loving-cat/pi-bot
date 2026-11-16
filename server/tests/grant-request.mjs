@@ -270,6 +270,80 @@ test('没有 minChannel 时按动作名推（不可撤销 → 手机）', () => 
   assert.equal(channelSufficesFor({ channel: 'device', action: 'git.push' }).ok, true);
 });
 
+// ---------------------------------------------------------------- 转呈（负责人 → 主 Bot 私聊）
+//
+// 产品意图（用户原话）："负责人 bot 也要找主 Bot 批准"。
+// 注意这不是让主 Bot 替用户批准（那等于模型能发授权），而是**把卡片挂到
+// 用户最常看的那一个地方**，真正点批准的仍然是用户。
+
+test('★ 负责人发起 → 同时挂到「用户 ↔ 主 Bot」私聊（用户不用满群找卡片）', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-grantreq-fwd-'));
+  Object.assign(process.env, {
+    PI_BOT_HOME: root, PI_BOT_WORKSPACE: path.join(root, 'ws'),
+    PI_CODING_AGENT_DIR: path.join(root, 'agent'), PI_BOT_PROBE: '0',
+  });
+  for (const d of [process.env.PI_BOT_HOME, process.env.PI_BOT_WORKSPACE, process.env.PI_CODING_AGENT_DIR]) {
+    fs.mkdirSync(d, { recursive: true });
+  }
+  const storeMod = await import(`${src('store.js').href}?fwd=1`);
+  const toolsMod = await import(`${src('grant-request-tools.js').href}?fwd=1`);
+  const gMod = await import(`${src('grants.js').href}?fwd=1`);
+  const store = storeMod.store;
+
+  const chief = store.mainBot();                 // 主 Bot（会被建出 DM）
+  const lead = store.createBot({ name: '部门负责人', role: 'member' });
+  const dept = store.createRoom
+    ? store.createRoom({ name: '编码部', kind: 'group', botIds: [lead.id] })
+    : null;
+  const roomId = dept?.id ?? null;
+
+  const tools = toolsMod.buildGrantRequestTools({ store, botId: lead.id, roomId, role: 'lead' });
+  assert.equal(tools.length, 1, '负责人应当拿到申请工具');
+  const res = await tools[0].execute('c1', {
+    actions: [gMod.ACTION.desktopInput],  // 给部门里所有人，先要有个 botIds
+    botIds: [lead.id],
+    reason: '要跑一个网页工具',
+  });
+  // 没部门也能申请（只是 scope=department 才需要部门）
+  assert.notEqual(res.isError, true, JSON.stringify(res.content));
+  const dm = store.ensureDm(chief.id);
+  assert.ok(dm?.id, '主 Bot 的私聊应该存在');
+  const inDm = (store.state.messages ?? store.listMessages?.(dm.id) ?? []);
+  const msgList = Array.isArray(inDm) ? inDm : [];
+  const hit = msgList.filter((k) => k?.kind === 'confirmation' && k?.meta?.action === 'grant.request');
+  assert.ok(hit.length >= 1, '负责人的申请要转呈到主 Bot 私聊里');
+  assert.equal(hit[hit.length - 1].meta.forwardedFrom !== undefined, true, '要标明是从哪个房间转来的');
+  clearTimeout(store.saveTimer);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('主 Bot 自己发起时不再自我转呈（免得同一条出现两遍）', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-grantreq-fwd2-'));
+  Object.assign(process.env, {
+    PI_BOT_HOME: root, PI_BOT_WORKSPACE: path.join(root, 'ws'),
+    PI_CODING_AGENT_DIR: path.join(root, 'agent'), PI_BOT_PROBE: '0',
+  });
+  for (const d of [process.env.PI_BOT_HOME, process.env.PI_BOT_WORKSPACE, process.env.PI_CODING_AGENT_DIR]) {
+    fs.mkdirSync(d, { recursive: true });
+  }
+  const storeMod = await import(`${src('store.js').href}?fwd=2`);
+  const toolsMod = await import(`${src('grant-request-tools.js').href}?fwd=2`);
+  const gMod = await import(`${src('grants.js').href}?fwd=2`);
+  const store = storeMod.store;
+  const chief = store.mainBot();
+  const dm = store.ensureDm(chief.id);
+  const before = (store.listMessages?.(dm.id) ?? []).length;
+
+  const tools = toolsMod.buildGrantRequestTools({ store, botId: chief.id, roomId: dm.id, role: 'main' });
+  const res = await tools[0].execute('c1', { actions: [gMod.ACTION.desktopObserve], reason: '看一眼' });
+  assert.notEqual(res.isError, true, JSON.stringify(res.content));
+  const after = (store.listMessages?.(dm.id) ?? []).length;
+  // 只会多一条（它自己那个房间里那条），不会因为"转呈"再多一条
+  assert.equal(after - before, 1, '主 Bot 发起时不该再自我转呈一次');
+  clearTimeout(store.saveTimer);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
 // ---------------------------------------------------------------- 路由接线
 //
 // 上面那段证明"纯逻辑 + store"通；这一段证明**真的走 HTTP 批准**也会建授权。

@@ -65,6 +65,7 @@
 | §6.1 任务 / 资源范围 / 动作集合 | ✅ | `taskId` / `resources[]` / `actions[]` | 同上 |
 | §6.1 参数约束 | ✅ | `checkConstraints` 支持 deny / allow / maxBytes 三种；`tests/grants.mjs:191` 有专门用例 | 读 `grants.js:362-388` + `tests/grants.mjs:191` |
 | §6.1 风险等级 | ✅ | 从 `capabilities.js` 派生（`riskOf`） | `tests/capabilities.mjs` |
+| §9.1 负责人申请的**转呈**（不是让主 Bot 代批） | ✅ 新增 | 负责人发起时同时挂到「用户 ↔ 主 Bot」私聊，卡片带 `forwardedFrom`；主 Bot 自己发起时不重复转呈。**主 Bot 仍然不能批准** —— 那等于模型发授权 | `tests/grant-request.mjs` 22 项（含转呈与不重复转呈两条） |
 | §9.1 确认门槛按「批的是什么」分档（桌面 / 手机） | ✅ 新增 | `channelSufficesFor({minChannel, allowLocal})`：只读申请桌面可批、能动手的申请要手机；`allowLocalApproval` 默认关，开了之后桌面也算数但记 `channelWeakened`；App 不再硬拦桌面批准（以前桌面端点批准压根不发请求，等于"不用手机就什么都批不了"） | `tests/grant-request.mjs` 20 项（只读桌面批 / 放宽设置后批 / 403 三态） |
 | §6.1 授权根只能来自已认证用户交互（Bot 申请 → 用户手机批准） | ✅ 新增 | `grant-request.js`（纯逻辑）+ `request_permission` 工具（主 Bot / 部门负责人可发起）+ 确认卡（`action: 'grant.request'`，动作目录里没有它 → 默认按不可撤销算 → **必须手机通道**，本机点批准不算数）。批准后在 `POST /api/confirmations/:id/decide` 里以 `source: 'user'` 建授权，一条 bot 一条、绑规矩版本、到期失效 | `tests/grant-request.mjs` 14 项（含 HTTP 接线那条） |
 | §6.1 **执行模式** | ✅ `406fb89` | `exec-mode.js` 判档 → `session-factory` 算一次 → `policy-hook` 的 `mode` 参数传进网关；一致性检查第 7 项静态守着这一根线 | `check-consistency.mjs` 第 7 项 |

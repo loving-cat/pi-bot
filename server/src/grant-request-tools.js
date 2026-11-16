@@ -58,6 +58,7 @@ export function buildGrantRequestTools({ store, botId, roomId, role = 'member' }
       }),
       execute: async (_toolCallId, { actions, scope, botIds, ttlHours, reason }) => {
         const room = roomId ? store.getRoom(roomId) : null;
+        const roomName = room?.name ?? '';
         let targets = [];
         if (Array.isArray(botIds) && botIds.length) {
           targets = botIds.map((id) => store.getBot(String(id))).filter(Boolean);
@@ -103,18 +104,48 @@ export function buildGrantRequestTools({ store, botId, roomId, role = 'member' }
           targetJson: JSON.stringify(req),
         };
         const saved = store.requestConfirmation(confirmation);
+        const me = store.getBot(botId);
+        const meName = me?.name ?? '它';
         store.appendMessage({
           roomId,
           authorType: 'bot',
           authorId: botId,
-          authorName: store.getBot(botId)?.name ?? '',
-          authorEmoji: store.getBot(botId)?.emoji ?? null,
+          authorName: meName,
+          authorEmoji: me?.emoji ?? null,
           kind: 'confirmation',
-          text: `${store.getBot(botId)?.name ?? '它'} 想申请权限，等你在手机上确认：${summary}`,
+          text: `${meName} 想申请权限，等你确认：${summary}`,
           status: 'done',
           meta: { confirmationId: saved.id, action: 'grant.request' },
         });
-        log(`🛡 ${store.getBot(botId)?.name ?? botId} 申请权限：${summary}`);
+
+        // ★ 转呈：负责人发起的申请，**同时**挂到「用户 ↔ 主 Bot」的私聊里。
+        //
+        //   产品意图（用户原话）："负责人 bot 也要找主 Bot 批准"。
+        //   注意这里**不是**让主 Bot 替用户批准 —— 那等于模型能发授权，
+        //   一句提示注入就能自批。主 Bot 在这里只做两件事：
+        //     ① 把事摊到用户最常看的那一个地方（不用满群找卡片）；
+        //     ② 说清这个部门在要什么。
+        //   真正点批准的还是用户自己。
+        let forwardedTo = null;
+        if (role !== 'main') {
+          const chief = store.mainBot?.() ?? null;
+          const dm = chief ? store.ensureDm?.(chief.id) : null;
+          if (dm?.id) {
+            store.appendMessage({
+              roomId: dm.id,
+              authorType: 'bot',
+              authorId: botId,
+              authorName: meName,
+              authorEmoji: me?.emoji ?? null,
+              kind: 'confirmation',
+              text: `${meName}（${roomName || '这个部门'}）申请权限，转呈给你确认：${summary}`,
+              status: 'done',
+              meta: { confirmationId: saved.id, action: 'grant.request', forwardedFrom: roomId },
+            });
+            forwardedTo = dm.id;
+          }
+        }
+        log(`🛡 ${meName} 申请权限：${summary}${forwardedTo ? '（已转呈给主 Bot 的私聊）' : ''}`);
 
         const needDevice = minChannelForRequest({ actions: req.actions }) === 'device';
         return ok(
@@ -127,6 +158,9 @@ export function buildGrantRequestTools({ store, botId, roomId, role = 'member' }
               ? '这条要**手机上**批准：批的是"能动手"的权限，本机桌面能自己点掉的话就等于自己批自己。'
                 + '（用户不用手机端的话，可以在设置里打开「允许在本机批准」—— 那会把这条保证降一档，所以默认关。）'
               : '这条**桌面上**点一下就行：批的是只读权限，批错了也只是"能看"，授权面板一眼能收。',
+            forwardedTo
+              ? '这条申请已经**转呈到你和主 Bot 的私聊**里了 —— 你在那一处点就行，不用在群里翻。'
+              : '',
             '批准前不要反复重复申请；用户拒绝就说明原因不够，换个说法或先做别的。',
           ].filter(Boolean).join('\n'),
           { ticket: saved.id, request: req, minChannel: needDevice ? 'device' : 'local' },
