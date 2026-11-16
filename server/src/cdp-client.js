@@ -135,13 +135,29 @@ export async function evaluate(page, expression, { timeout = DEFAULT_TIMEOUT_MS 
   return res.result?.value ?? null;
 }
 
-/** 打开一个网址，等 `load` 事件。 */
+/**
+ * 打开一个网址，**等到页面真的解析完**再返回。
+ *
+ * ★ `Page.navigate` 只表示"导航已受理"，不代表文档解析完。直接往下读 DOM
+ *   会拿到 `null`（data: URL 尤其明显，本地靠时序侥幸通过，CI 上就炸了）。
+ *   所以回包之后轮询 `document.readyState`，直到 `complete`。
+ */
 export async function navigate(page, url, { timeout = DEFAULT_TIMEOUT_MS } = {}) {
   const target = String(url ?? '').trim();
   if (!/^(https?|data|file|about):/i.test(target)) throw new Error(`不支持的地址：${target}`);
   await page.send('Page.enable', {}, { timeout });
   const res = await page.send('Page.navigate', { url: target }, { timeout });
   if (res.errorText) throw new Error(`打开失败：${res.errorText}`);
+
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    try {
+      const state = await evaluate(page, 'document.readyState', { timeout: 2000 });
+      if (state === 'complete') return res.frameId ?? null;
+    } catch { /* 导航过程中文档会被换掉，读不到就再等一轮 */ }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  // 超时不算失败：有些页面永远有个挂着的资源。调用方自己决定够不够用。
   return res.frameId ?? null;
 }
 

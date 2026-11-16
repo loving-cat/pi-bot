@@ -102,6 +102,8 @@ try {
   await test('打开 data: URL 并读到内容（不联网）', async () => {
     const r = await openHeadless({ key: KEY, shareLogin: false, dataDir: root });
     await r.session.navigate('data:text/html,<title>pi-probe</title><h1 id=x>hello</h1>');
+    // ★ 回归锁：navigate 返回时文档必须已解析完，否则调用方紧接着读 DOM 会拿到 null
+    assert.equal(await r.session.evaluate('document.readyState'), 'complete');
     const got = await r.session.evaluate('document.getElementById("x").textContent');
     assert.equal(got, 'hello');
     const title = await r.session.evaluate('document.title');
@@ -153,9 +155,14 @@ try {
     assert.equal(fs.existsSync(dir), false, '临时 profile 应该删掉');
   });
   await test('★ 岛模式：窗口在另一张桌面上，CDP 照样能驱动', async () => {
+    // 岛要"真交互桌面"：非 Windows 会合理退回无头，CI（session 0）也没有桌面。
+    // 这两种情况明确跳过 —— 不假装通过，也不假装失败。
+    if (process.platform !== 'win32' || process.env.CI) {
+      console.log(`  （跳过岛模式：platform=${process.platform}${process.env.CI ? ' / CI 无交互桌面' : ''}）`);
+      return;
+    }
     const r = await openBrowser({ key: `${KEY}-island`, mode: 'island', shareLogin: false, dataDir: root });
     if (!r.ok) {
-      // 没有交互会话（CI）时岛起不来 —— 明确跳过，不假装通过
       console.log(`  （跳过岛模式：${r.text}）`);
       return;
     }
