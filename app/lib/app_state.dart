@@ -458,6 +458,49 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ---------------------------------------------------------------- 桌面设置（§5.2 / §5.6）
+
+  /// 服务端的桌面设置：两个"放宽"开关 + 一个等待门槛。
+  Map<String, dynamic> desktopSettings = const {
+    'trustPhantomInput': false,
+    'awayAfterMs': 0,
+    'allowLocalApproval': false,
+  };
+
+  /// 输入环境诊断（有东西在合成输入 / 信任没开），用来解释"它为什么不动鼠标"。
+  Map<String, dynamic>? desktopEnvironment;
+
+  Future<void> loadDesktopSettings() async {
+    final client = api;
+    if (client == null) return;
+    try {
+      final json = await client.get('/api/desktop-settings');
+      desktopSettings = (json['settings'] as Map?)?.cast<String, dynamic>() ?? desktopSettings;
+      desktopEnvironment = (json['environment'] as Map?)?.cast<String, dynamic>();
+      _notify();
+    } catch (err) {
+      lastError = '桌面设置读取失败：$err';
+      _notify();
+    }
+  }
+
+  /// 改桌面设置。返回错误文案（成功 null）。
+  ///
+  /// ★ 这两个开关都是**放宽**，所以服务端要 nonce + 记审计 ——
+  ///   `Api.post/patch` 会自己按路径补，调用点不用记得。
+  Future<String?> setDesktopSettings(Map<String, dynamic> patch) async {
+    final client = api;
+    if (client == null) return '未连接服务端';
+    try {
+      final json = await client.patch('/api/desktop-settings', patch);
+      desktopSettings = (json['settings'] as Map?)?.cast<String, dynamic>() ?? desktopSettings;
+      _notify();
+      return null;
+    } catch (err) {
+      return '$err';
+    }
+  }
+
   // ---------------------------------------------------------------- 首次授权页（§13.2）
 
   /// 首启页的计划（服务端算好的“该说什么、该让用户选什么”）。

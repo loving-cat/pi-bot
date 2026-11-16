@@ -4,6 +4,7 @@ import 'area.dart';
 import 'avatar.dart';
 import 'chat.dart';
 import 'common.dart';
+import 'desktop.dart';
 import 'errors.dart';
 import 'model.dart';
 import 'onboarding.dart';
@@ -18,6 +19,7 @@ export 'area.dart';
 /// 全部区域。按文件名排序，方便查重。
 const allStringAreas = <StringArea>[
   areaAvatar,
+  areaDesktop,
   areaChat,
   areaCommon,
   areaErrors,

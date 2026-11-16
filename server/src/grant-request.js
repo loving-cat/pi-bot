@@ -48,6 +48,35 @@ export const REQUESTABLE_ACTIONS = Object.freeze([
 
 const REQUESTABLE = new Set(REQUESTABLE_ACTIONS);
 
+/**
+ * 哪些动作"批错了真的会出事" —— 决定这条申请能不能在**本机桌面**上批准。
+ *
+ * 判据不是"动作危不危险"，而是"给了它之后，它能不能自己把下一张卡点掉"：
+ *   · `desktop.input`：能点桌面上的任何东西（包括这张卡）；
+ *   · `cmd.exec`：能读本机 token、自己调批准接口；
+ *   · `file.write` / `git.commit`：能把东西写坏，且不容易一眼看出来。
+ *
+ * 只读的那几个（看屏幕、读文件、读仓库）批错了也只是"能看"，
+ * 授权面板一眼能收掉 —— 那些允许在桌面上点。
+ */
+export const NEEDS_DEVICE_CHANNEL = Object.freeze([
+  ACTION.desktopInput,
+  ACTION.cmdExec,
+  ACTION.fileWrite,
+  ACTION.gitCommit,
+]);
+
+/**
+ * 这条申请要求的最低通道。
+ *
+ * @param {string[]} actions
+ * @returns {'local'|'device'}
+ */
+export function minChannelForRequest({ actions = [] } = {}) {
+  const list = Array.isArray(actions) ? actions : [];
+  return list.some((a) => NEEDS_DEVICE_CHANNEL.includes(a)) ? 'device' : 'local';
+}
+
 /** 一张申请最多覆盖几个 bot（卡上要能数清）。 */
 export const MAX_BOTS_PER_REQUEST = 12;
 /** 期限上下限：太短没意义，太长就是"永久授权"的别名。 */

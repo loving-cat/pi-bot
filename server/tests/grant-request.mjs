@@ -20,9 +20,10 @@ import { pathToFileURL } from 'node:url';
 
 const src = (f) => pathToFileURL(path.join(import.meta.dirname, '..', 'src', f));
 const {
-  REQUESTABLE_ACTIONS, MAX_BOTS_PER_REQUEST, MAX_TTL_MS,
-  planGrantRequest, planGrantsFromRequest, describeGrantRequest,
+  REQUESTABLE_ACTIONS, MAX_BOTS_PER_REQUEST, MAX_TTL_MS, NEEDS_DEVICE_CHANNEL,
+  planGrantRequest, planGrantsFromRequest, describeGrantRequest, minChannelForRequest,
 } = await import(src('grant-request.js'));
+const { channelSufficesFor } = await import(src('confirm.js'));
 const { ACTION, MODE } = await import(src('grants.js'));
 
 const results = [];
@@ -217,6 +218,58 @@ test('★ 走完一遍：申请 → 手机批准 → 授权生效 → 网关放�
   fs.rmSync(root, { recursive: true, force: true });
 });
 
+// ---------------------------------------------------------------- 哪条要手机、哪条桌面就行
+//
+// 用户可能根本不用手机端。所以"一律要手机"是不可用的；"一律桌面"又等于
+// 让能跑命令的 bot 自己点批准。判据是**这条申请批的是什么**：
+// 批"能动手"的权限 → 手机；批"只能看"的 → 桌面。
+
+test('★ 申请"动鼠标 / 跑命令 / 写文件 / 提交" → 要手机', () => {
+  for (const a of NEEDS_DEVICE_CHANNEL) {
+    assert.equal(minChannelForRequest({ actions: [a] }), 'device', `${a} 应当要手机`);
+  }
+  assert.equal(minChannelForRequest({ actions: [ACTION.desktopObserve, ACTION.desktopInput] }), 'device',
+    '混着的时候按最严的算');
+});
+
+test('★ 申请只读（看屏幕 / 读文件 / 读仓库）→ 桌面点一下就行', () => {
+  assert.equal(minChannelForRequest({ actions: [ACTION.desktopObserve] }), 'local');
+  assert.equal(minChannelForRequest({ actions: [ACTION.fileRead, ACTION.gitRead] }), 'local');
+});
+
+test('★ 本机批准：默认拒（说明代价），开了设置才放行并标记 weakened', () => {
+  // 默认：要手机
+  const strict = channelSufficesFor({ channel: 'local', action: 'grant.request', minChannel: 'device' });
+  assert.equal(strict.ok, false);
+  assert.match(strict.reason, /手机上/);
+  assert.match(strict.reason, /允许在本机批准/, '要告诉用户"不用手机端"时该怎么办');
+
+  // 用户显式开了这个设置
+  const weak = channelSufficesFor({
+    channel: 'local', action: 'grant.request', minChannel: 'device', allowLocal: true,
+  });
+  assert.equal(weak.ok, true);
+  assert.equal(weak.weakened, true, '要能被审计记下来"这条是按放宽设置批的"');
+});
+
+test('只读那条：桌面直接放行，不需要放宽设置', () => {
+  const r = channelSufficesFor({ channel: 'local', action: 'grant.request', minChannel: 'local' });
+  assert.equal(r.ok, true);
+  assert.equal(r.weakened, undefined);
+});
+
+test('手机通道永远够格（不管门槛是哪个）', () => {
+  for (const minChannel of ['local', 'device']) {
+    const r = channelSufficesFor({ channel: 'device', action: 'grant.request', minChannel });
+    assert.equal(r.ok, true);
+  }
+});
+
+test('没有 minChannel 时按动作名推（不可撤销 → 手机）', () => {
+  assert.equal(channelSufficesFor({ channel: 'local', action: 'git.push' }).ok, false);
+  assert.equal(channelSufficesFor({ channel: 'device', action: 'git.push' }).ok, true);
+});
+
 // ---------------------------------------------------------------- 路由接线
 //
 // 上面那段证明"纯逻辑 + store"通；这一段证明**真的走 HTTP 批准**也会建授权。
@@ -301,6 +354,73 @@ test('★ 走 HTTP 路由批准 → 真的多出授权（接线）', async () =>
   assert.ok(after.some((g) => (g.actions ?? []).includes(gMod.ACTION.desktopInput)), '批准后授权要真的落地');
   // 一次一用
   assert.ok(store.getConfirmation('cf_route_1').consumedAt, '批准过的票据要标成已用');
+
+  // ---- 只读的申请：**桌面**就能批（用户不用手机端时的正常路径）----
+  const readReq = reqMod.planGrantRequest({ actions: [gMod.ACTION.desktopObserve], bots: [store.getBot(bot.id)] }).request;
+  store.requestConfirmation({
+    ...confirmMod.buildConfirmation({
+      id: 'cf_route_read', action: 'grant.request',
+      target: { actions: readReq.actions, botIds: readReq.bots.map((b) => b.id), ttlMs: readReq.ttlMs },
+      summary: 'read only', requestedBy: 'b_main', roomId: 'r1',
+      policyRevision: store.policyVersion(),
+      minChannel: reqMod.minChannelForRequest({ actions: readReq.actions }),
+    }),
+    targetJson: JSON.stringify(readReq),
+  });
+  const local = await new Promise((resolve, reject) => {
+    const payload = JSON.stringify({ approve: true });
+    const r = http.request({
+      host: '127.0.0.1', port, path: '/api/confirmations/cf_route_read/decide', method: 'POST',
+      headers: {
+        authorization: 'Bearer ' + TOKEN, 'x-pi-bot-client': 'app',
+        'x-pi-bot-channel': 'local',   // ← 桌面端
+        'content-type': 'application/json', 'content-length': Buffer.byteLength(payload),
+      },
+    }, (res) => {
+      let t = '';
+      res.on('data', (c) => { t += c; });
+      res.on('end', () => { let j = {}; try { j = JSON.parse(t); } catch { /* noop */ } resolve({ status: res.statusCode, json: j }); });
+    });
+    r.on('error', reject);
+    r.write(payload);
+    r.end();
+  });
+  assert.equal(local.status, 200, `只读申请在桌面就能批：${JSON.stringify(local.json)}`);
+  assert.ok((local.json.granted ?? []).length === 1);
+
+  // ---- 开了「允许在本机批准」之后，连"动鼠标"那条也能在桌面上批 ----
+  store.state.desktop = { ...(store.state.desktop ?? {}), allowLocalApproval: true };
+  const inputReq2 = reqMod.planGrantRequest({ actions: [gMod.ACTION.cmdExec], bots: [store.getBot(bot.id)] }).request;
+  store.requestConfirmation({
+    ...confirmMod.buildConfirmation({
+      id: 'cf_route_cmd', action: 'grant.request',
+      target: { actions: inputReq2.actions, botIds: inputReq2.bots.map((b) => b.id), ttlMs: inputReq2.ttlMs },
+      summary: 'cmd', requestedBy: 'b_main', roomId: 'r1',
+      policyRevision: store.policyVersion(),
+      minChannel: reqMod.minChannelForRequest({ actions: inputReq2.actions }),
+    }),
+    targetJson: JSON.stringify(inputReq2),
+  });
+  const weakened = await new Promise((resolve, reject) => {
+    const payload = JSON.stringify({ approve: true });
+    const r = http.request({
+      host: '127.0.0.1', port, path: '/api/confirmations/cf_route_cmd/decide', method: 'POST',
+      headers: {
+        authorization: 'Bearer ' + TOKEN, 'x-pi-bot-client': 'app',
+        'x-pi-bot-channel': 'local',
+        'content-type': 'application/json', 'content-length': Buffer.byteLength(payload),
+      },
+    }, (res) => {
+      let t = '';
+      res.on('data', (c) => { t += c; });
+      res.on('end', () => { let j = {}; try { j = JSON.parse(t); } catch { /* noop */ } resolve({ status: res.statusCode, json: j }); });
+    });
+    r.on('error', reject);
+    r.write(payload);
+    r.end();
+  });
+  assert.equal(weakened.status, 200, '开了设置之后桌面也能批');
+  assert.equal(weakened.json.confirmation.channelWeakened, true, '要能被审计看出来"这条是按放宽设置批的"');
 
   server.close();
   clearTimeout(store.saveTimer);

@@ -21,6 +21,7 @@ import '../widgets/server_config_section.dart';
 import '../widgets/log_section.dart';
 import '../widgets/mcp_section.dart';
 import '../widgets/lessons_section.dart';
+import '../widgets/desktop_approval_section.dart';
 import '../widgets/grants_section.dart';
 import '../widgets/skills_library.dart';
 import '../widgets/sites_section.dart';
@@ -126,7 +127,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       4 => const [SitesSection()],
                       // 系统页：谁能动什么。规格 §11「用户始终可以接管、取消、收回授权」——
                       // 看不到有哪些授权，就等于收不回。
-                      5 => const [GrantsSection(), GrantAuditSection()],
+                      5 => const [
+                        DesktopApprovalSection(),
+                        GrantsSection(),
+                        GrantAuditSection(),
+                      ],
                       _ => _advancedTab,
                     },
                   ),

@@ -84,6 +84,45 @@ export function channelSuffices(channel, action) {
   };
 }
 
+/**
+ * 按"这条确认要求的最低通道"判，而不是按动作名。
+ *
+ * ## 为什么要能单独指定
+ *
+ * 有的确认的严重程度取决于**它批的是什么**，而不是它叫什么。
+ * 最典型的是「权限申请」（`grant.request`）：申请"看屏幕"和申请"动鼠标 + 跑命令"
+ * 用同一个动作名，危险程度差一个数量级。
+ *
+ * 所以：
+ *   · 只读类申请 → 桌面点一下就行（批错了也只是"能看"，授权面板一眼能收）；
+ *   · 会动手的（动鼠标 / 跑命令 / 写文件 / 提交）→ 仍然手机；
+ *   · **用户显式开了「允许在本机批准」**（默认关）→ 桌面也算数，
+ *     代价写在设置页和卡片上：一个有跑命令能力的 bot 理论上能自己点批准。
+ *
+ * @param {object} p
+ * @param {string} p.channel `CHANNEL.local` | `CHANNEL.device`
+ * @param {string} p.action 动作名（没给 minChannel 时按它推）
+ * @param {'local'|'device'} [p.minChannel] 这条确认要求的最低通道
+ * @param {boolean} [p.allowLocal] 用户是否显式允许本机批准
+ */
+export function channelSufficesFor({ channel, action, minChannel = null, allowLocal = false } = {}) {
+  const need = minChannel === 'local' || minChannel === 'device'
+    ? minChannel
+    : (reversibilityOf(action) === REVERSIBILITY.reversible ? 'local' : 'device');
+  if (need === 'local') return { ok: true, need };
+  if (channel === CHANNEL.device) return { ok: true, need };
+  if (allowLocal === true) return { ok: true, need, weakened: true, reason: '按本机批准设置放行' };
+  return {
+    ok: false,
+    need,
+    reason: '这条要你**在手机上**点。'
+      + (need === 'device'
+        ? '本机桌面上的批准不算数 —— 能跑命令的 bot 理论上可以自己点。'
+        : '')
+      + '如果你不用手机端，可以在设置里打开「允许在本机批准」（会记审计，并且明确写着代价）。',
+  };
+}
+
 /** 确认的有效期：不可恢复动作短，可恢复动作略长。 */
 export function ttlFor(action) {
   return reversibilityOf(action) === REVERSIBILITY.irreversible ? 5 * 60_000 : 30 * 60_000;
@@ -131,12 +170,15 @@ export function digestOf(target) {
 export function buildConfirmation({
   id, action, target, summary = '', display = null,
   requestedBy = null, roomId = null, taskRunId = null, policyRevision = null, now = Date.now(),
+  /** 这条确认要求的最低通道（不给就按动作推）。见 `channelSufficesFor`。 */
+  minChannel = null,
 } = {}) {
   const act = String(action ?? '');
   return Object.freeze({
     id: String(id ?? ''),
     action: act,
     reversibility: reversibilityOf(act),
+    minChannel: minChannel === 'local' || minChannel === 'device' ? minChannel : null,
     targetDigest: digestOf(target),
     summary: String(summary ?? '').slice(0, 500),
     display: display && typeof display === 'object' ? display : null,

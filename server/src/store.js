@@ -19,7 +19,7 @@ import { newId, now, readJson, writeJsonAtomic, insertionPoint, log } from './ut
 import { normalizeRules } from './shell-policy.js';
 import { sanitizeMemoryText } from './memory-sanitize.js';
 import { TaskRunStore } from './tasks/task-run-store.js';
-import { channelSuffices } from './confirm.js';
+import { channelSuffices, channelSufficesFor } from './confirm.js';
 import { normalizeOverride, checkOverrideBounds, resolve as resolveOverride } from './overrides.js';
 import { defaultWindowsInstanceDir, teardownWindowsInstance } from './sandbox-win.js';
 
@@ -822,6 +822,23 @@ export class Store {
        * 想要"我不在时才动我这台桌面"的用户自己配一个 90 秒。
        */
       awayAfterMs: Number.isFinite(away) && away >= 0 ? Math.min(away, 3600_000) : 0,
+      /**
+       * 允不允许在**本机桌面**上批准"要手机那条通道"的确认。
+       *
+       * ## 为什么默认关
+       *
+       * 本机桌面上的批准是有代价的：一个能跑命令的 bot（有 `cmd.exec`）可以
+       * 自己读本机 token、自己调 `/api/confirmations/:id/decide` ——
+       * 也就是说"批准"这件事它自己就能做。手机端做不到这一点，因为那台设备
+       * 它摸不到。所以默认要求手机。
+       *
+       * ## 为什么还要给这个开关
+       *
+       * 有些用户根本不用手机端。对他们来说默认行为就是"什么都批不了" ——
+       * 那比"稍微弱一点但能用"更糟。所以给一个**显式**开关：
+       * 打开之后桌面也能批，每一条都记审计，设置页和卡片上都写明代价。
+       */
+      allowLocalApproval: raw.allowLocalApproval === true,
     };
   }
 
@@ -835,6 +852,9 @@ export class Store {
       awayAfterMs: patch.awayAfterMs === undefined
         ? prev.awayAfterMs
         : (Number.isFinite(away) && away >= 0 ? Math.min(away, 3600_000) : prev.awayAfterMs),
+      allowLocalApproval: patch.allowLocalApproval === undefined
+        ? prev.allowLocalApproval
+        : patch.allowLocalApproval === true,
     };
     this.state.desktop = next;
     this.scheduleSave();
@@ -1496,13 +1516,22 @@ export class Store {
     if (!c) return null;
     if (c.decision !== null) return c; // 已决过，幂等
 
-    // 批准不可撤销动作时，通道必须够格（规格 §9）
-    if (approved && !channelSuffices(channel, c.action).ok) {
-      return {
-        ...c,
-        rejected: true,
-        rejectedReason: channelSuffices(channel, c.action).reason,
-      };
+    // 批准时通道必须够格（规格 §9）。
+    //
+    // ★ 判据不再只看动作名：权限申请（`grant.request`）的严重程度取决于
+    //   **它申请的是什么**，所以那条确认自己带 `minChannel`。
+    //   另外用户显式开了「允许在本机批准」时，桌面也算数（记 weakened，落审计）。
+    if (approved) {
+      const verdict = channelSufficesFor({
+        channel,
+        action: c.action,
+        minChannel: c.minChannel ?? null,
+        allowLocal: this.desktopSettings().allowLocalApproval === true,
+      });
+      if (!verdict.ok) {
+        return { ...c, rejected: true, rejectedReason: verdict.reason };
+      }
+      if (verdict.weakened) c.channelWeakened = true;
     }
 
     c.decision = approved ? 'approved' : 'denied';

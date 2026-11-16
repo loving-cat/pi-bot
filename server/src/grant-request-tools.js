@@ -14,7 +14,7 @@ import { Type } from 'typebox';
 import { log } from './util.js';
 import { buildConfirmation } from './confirm.js';
 import {
-  REQUESTABLE_ACTIONS, planGrantRequest, describeGrantRequest, DEFAULT_TTL_MS,
+  REQUESTABLE_ACTIONS, planGrantRequest, describeGrantRequest, minChannelForRequest, DEFAULT_TTL_MS,
 } from './grant-request.js';
 
 const ok = (text, details = {}) => ({ content: [{ type: 'text', text }], details });
@@ -94,6 +94,10 @@ export function buildGrantRequestTools({ store, botId, roomId, role = 'member' }
             requestedBy: botId,
             roomId,
             policyRevision: store.policyVersion(),
+            // ★ 这条申请要手机还是桌面：看它申请的是**什么**，不是看它叫什么。
+            //   要"动鼠标/跑命令/写文件"→ 手机（否则它自己就能点掉这张卡）；
+            //   只是"看屏幕/读文件"→ 桌面上点一下就行。
+            minChannel: minChannelForRequest({ actions: req.actions }),
           }),
           // 批准之后要靠它把授权建出来（http 的确认路由读这个字段）
           targetJson: JSON.stringify(req),
@@ -112,17 +116,20 @@ export function buildGrantRequestTools({ store, botId, roomId, role = 'member' }
         });
         log(`🛡 ${store.getBot(botId)?.name ?? botId} 申请权限：${summary}`);
 
+        const needDevice = minChannelForRequest({ actions: req.actions }) === 'device';
         return ok(
           [
             `已经发起申请：${summary}`,
             `给的是：${req.bots.map((b) => b.name || b.id).join('、')}`,
             req.reason ? `理由：${req.reason}` : '',
             '',
-            '用户会在**手机上**看到这张卡片，点批准之后权限才生效。',
-            '本机桌面上的批准不算数 —— 那样模型就能给自己扩权了。',
+            needDevice
+              ? '这条要**手机上**批准：批的是"能动手"的权限，本机桌面能自己点掉的话就等于自己批自己。'
+                + '（用户不用手机端的话，可以在设置里打开「允许在本机批准」—— 那会把这条保证降一档，所以默认关。）'
+              : '这条**桌面上**点一下就行：批的是只读权限，批错了也只是"能看"，授权面板一眼能收。',
             '批准前不要反复重复申请；用户拒绝就说明原因不够，换个说法或先做别的。',
           ].filter(Boolean).join('\n'),
-          { ticket: saved.id, request: req },
+          { ticket: saved.id, request: req, minChannel: needDevice ? 'device' : 'local' },
         );
       },
     }),

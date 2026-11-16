@@ -114,6 +114,9 @@ class Api {
     // 首启页的“开始”会建授权根（范围由用户在页面上选定），
     // 和改规矩同一档：它改的是“谁能动什么”。
     if (m == 'POST' && path == '/api/onboarding/apply') return 'policy';
+    // 桌面设置里那两个开关都是**放宽**（信任合成输入 / 允许本机批准），
+    // 所以和改规矩同一档：要 nonce，也要进审计。
+    if (m == 'PATCH' && path == '/api/desktop-settings') return 'policy';
     if (m == 'PUT' && path == '/api/hooks') return 'hooks';
     if (isPath('/api/mcp') && (m == 'POST' || m == 'PATCH' || m == 'DELETE')) return 'mcp';
     if (m == 'POST' && path == '/api/local-capabilities/import') return 'import';
