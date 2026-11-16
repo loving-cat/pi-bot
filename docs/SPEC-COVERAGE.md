@@ -99,7 +99,7 @@
 |---|---|---|---|
 | 三种模式定义（host / project / isolated） | ✅ | `MODE` 常量 + `ALL_MODES` + 迁移授权按主 Bot / 其他分派 | — |
 | 模式在判定时被真的使用 | ✅ | `exec-mode.js` 判档 → `session-factory` 算一次 → `policy-hook` 传给网关；一致性检查第 7 项守着 | `tests/exec-mode.mjs` 11 项 |
-| 模式不能自动降级 | ⬜ | 没有"降级"这个概念，因为没有"当前模式"这个状态 | — |
+| 模式不能自动降级 | ✅ `406fb89` | `exec-mode.js` 就是"当前模式"的判定：它在会话建立时算一次实际档位（沙箱化=isolated / 主 Bot=host / 其余=project），网关按它过滤授权 —— **没有降级路径**，判成什么就是什么，不够用就报拒绝 | `tests/exec-mode.mjs` 17 项 |
 | 「主 Bot 可信宿主模式，OS 实际能力须明示」 | 🟨 | 文档写了（`docs/WINDOWS.md`/`MACOS.md`）；**界面上没有明示这个能力边界** | — |
 
 ---
