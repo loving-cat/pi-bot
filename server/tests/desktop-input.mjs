@@ -254,7 +254,9 @@ function makeFakePlatform(over = {}) {
   const calls = { env: 0, probe: 0, perform: [] };
   const fake = {
     env: { ok: true, screen: SCREEN, dpi: 120, session: true },
-    lastInput: { ok: true, lastInputAt: T0 - 60_000, idleMs: 60_000 },
+    // 默认模拟"用户已经离开 10 分钟"（离开门槛 90 秒）—— 大多数用例
+    // 关心的是别的判断，不该被"他在看书"挡住
+    lastInput: { ok: true, lastInputAt: T0 - 10 * 60_000, idleMs: 10 * 60_000 },
     perform: () => ({ ok: true, at: { x: 10, y: 10 }, foreground: 'Notepad' }),
     ...over,
   };
@@ -605,6 +607,47 @@ test('发完之后窗口变了 → targetKept=false（消息已发出，只能�
   assert.equal(r.ok, true, '已经发出去了，不能报失败');
   assert.equal(r.targetKept, false, '但要老实说"目标已经变了"');
   assert.equal(session.recentAudit().at(-1).targetKept, false);
+});
+
+// ============================================================ 用户无感（§5.2）
+//
+// 需求原话："用户无感，bot 们在后面操作"。
+// 所以同桌面输入只在**用户真的离开**之后才动手；他只是在看书（没碰鼠标）
+// 时必须等 —— 而且"等"不是错误、不吊销租约、不弹任何东西。
+
+test('★ 用户只是停手（没到离开门槛）→ 只等这一次，一次平台调用都不发生', () => {
+  const plat = makeFakePlatform({
+    lastInput: { ok: true, lastInputAt: T0 - 5_000, idleMs: 5_000 },
+  });
+  const { session, identity } = withLease(plat);
+  const r = session.act({ identity, input: { action: 'move', point: { x: 10, y: 10 } } });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, REFUSE.userActivePending, '"等一下"不是故障，用 pending 而不是 error');
+  assert.match(r.text, /离开门槛/);
+  assert.equal(plat.calls.perform.length, 0, '用户在看着，一下都不许动');
+});
+
+test('★ "等"不吊销租约：他离开之后立刻能用（不需要重新申请）', () => {
+  const plat = makeFakePlatform({
+    lastInput: { ok: true, lastInputAt: T0 - 5_000, idleMs: 5_000 },
+  });
+  const { session, identity } = withLease(plat);
+  session.act({ identity, input: { action: 'move', point: { x: 10, y: 10 } } });
+  // 用户走开了
+  plat.fake.lastInput = { ok: true, lastInputAt: T0 - 10 * 60_000, idleMs: 10 * 60_000 };
+  const r = session.act({ identity, input: { action: 'move', point: { x: 10, y: 10 } } });
+  assert.equal(r.ok, true, '同一个 epoch 就该能用，不该因为"等过"就作废');
+  assert.equal(plat.calls.perform.length, 1);
+});
+
+test('离开门槛可配 0 → 回到"安静就动手"（给"我就要看着它干"的用户）', () => {
+  const plat = makeFakePlatform({
+    lastInput: { ok: true, lastInputAt: T0 - 5_000, idleMs: 5_000 },
+  });
+  plat.deps.awayAfterMs = () => 0;
+  const { session, identity } = withLease(plat);
+  const r = session.act({ identity, input: { action: 'move', point: { x: 10, y: 10 } } });
+  assert.equal(r.ok, true);
 });
 
 // ============================================================ 审计带授权引用（§5.5）

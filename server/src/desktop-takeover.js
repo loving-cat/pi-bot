@@ -49,6 +49,13 @@ export const TAKEOVER = Object.freeze({
   /** 探针不可用 / 返回垃圾 —— **保守当成"可能有用户"** */
   unknown: 'unknown',
   /**
+   * 用户**还在**这台电脑前（停手但没走）。
+   *
+   * 和 `userActive`（他正在动）分开：那个要立刻让开并吊销租约；
+   * 这个只是"现在别动鼠标"——**不吊销、不计数**，稍后再试就行。
+   */
+  stillHere: 'still_here',
+  /**
    * 有"刚动过"的信号，但**光标没动** —— 几乎肯定是别的程序在合成输入。
    *
    * 实测来源：远程控制软件（GameViewer / UU 之类）靠不断重置
@@ -72,6 +79,29 @@ export const ACTION = Object.freeze({
 export const DEFAULT_TOLERANCE_MS = 1_500;
 /** 多久之内算"用户刚刚在动"（比它更久就算安静了）。 */
 export const DEFAULT_ACTIVE_WINDOW_MS = 2_000;
+
+/**
+ * "只在用户离开时才动鼠标"这个模式的门槛（**默认关闭**）。
+ *
+ * ## 全双工不是"等你走开"
+ *
+ * 产品的目标形态是：**用户在同一台机器上正常干活，bot 同时在干活**。
+ * 那靠的是"两张桌面并行"（规格 §5.6 的 T1 独立桌面）—— 两边各有自己的
+ * 光标和焦点，物理上就不打架。
+ *
+ * 而同桌面（T2）**只有一个指针**，那是物理限制，不是政策选择：
+ * 两个东西抢一个光标，必然串行。所以 T2 的定位是"退路"，不是主路。
+ *
+ * ## 那这个门槛还要不要
+ *
+ * 要，但只作为**可选模式**：有些用户会希望"我不在的时候它才动我这台桌面"，
+ * 那就把这个值配成 90 秒之类的。默认 `0` = 关掉这个等待，回到
+ * "安静 2 秒就动手、你一碰鼠标就立刻让开"。
+ *
+ * ★ 为什么默认必须是 0：把"等你离开"设成默认，等于把全双工这条路堵死 ——
+ *   用户明明在机器上，bot 却一步都不能动，那这个产品就没法用。
+ */
+export const DEFAULT_AWAY_AFTER_MS = 0;
 
 /**
  * 建一个检测器状态。
@@ -110,6 +140,46 @@ export function noteInjection(state, { now = Date.now() } = {}) {
 }
 
 /**
+ * "安静"分两种：**他停手了**（还在看）和**他走了**（可以动手）。
+ *
+ * 只有后者才 proceed；前者给 `wait` —— 不吊销租约、不报错，
+ * 只是"现在别动"，上层该做的是稍后再试。
+ *
+ * ★ 这个区分就是"用户无感"的全部秘密：用户没走，我们就不该碰他的鼠标。
+ */
+function awayOrQuiet({ idleFor, awayAfterMs, verdict, TAKEOVER, ACTION, phantomish = false }) {
+  // ★ 合成输入源优先：有信号但光标不动 = 不是用户在用，**不需要等它"离开"**。
+  //   （远程控制软件常驻时，"等用户离开"这个门槛永远不会满足。）
+  if (phantomish) {
+    return verdict(
+      TAKEOVER.phantom,
+      ACTION.proceed,
+      '有程序在持续合成输入（光标没动过），不是用户在用 —— 不用等"离开"',
+    );
+  }
+  const away = Number(awayAfterMs);
+  if (!Number.isFinite(away) || away <= 0) {
+    // 关掉门槛：回到"安静就动手"
+    return verdict(TAKEOVER.quiet, ACTION.proceed, `已经 ${Math.round(idleFor / 1000)}s 没人动输入`);
+  }
+  if (idleFor >= away) {
+    return verdict(
+      TAKEOVER.quiet,
+      ACTION.proceed,
+      `用户已经 ${Math.round(idleFor / 1000)}s 没碰过这台电脑（超过离开门槛 ${Math.round(away / 1000)}s）`,
+    );
+  }
+  // ★ 用 stillHere 而不是 userActive：后者在 watch() 里会累计 strike，
+  //   两次就把租约吊销了 —— 而"用户在看书"不该算被接管。
+  return verdict(
+    TAKEOVER.stillHere,
+    ACTION.wait,
+    `用户 ${Math.round(idleFor / 1000)}s 前还在用这台电脑（离开门槛 ${Math.round(away / 1000)}s）—— `
+      + '现在动鼠标会被看见，等会儿再来',
+  );
+}
+
+/**
  * 判定"刚才那点输入是谁的"。
  *
  * @param {object} state
@@ -137,6 +207,11 @@ export function classify({
    * 只有它为真，`cursorStill` 才有资格把 `userActive` 降级成 `phantom`。
    */
   syntheticSource = false,
+  /**
+   * 多久没输入才算"用户离开了"（同桌面输入只在离开时动手）。
+   * `0` = 关掉这个门槛（回到"安静 2 秒就动手"的老行为，只给测试/特殊场景用）。
+   */
+  awayAfterMs = DEFAULT_AWAY_AFTER_MS,
 } = {}) {
   const phantomish = syntheticSource === true && cursorStill === true;
   const phantomVerdict = (reason) => verdict(TAKEOVER.phantom, ACTION.proceed, reason);
@@ -165,7 +240,7 @@ export function classify({
   if (mine === 0) {
     const idleFor = last > 0 ? now - last : Number.POSITIVE_INFINITY;
     if (idleFor >= Math.max(0, activeWindowMs)) {
-      return verdict(TAKEOVER.quiet, ACTION.proceed, `已经 ${Math.round(idleFor / 1000)}s 没人动输入`);
+      return awayOrQuiet({ idleFor, awayAfterMs, verdict, TAKEOVER, ACTION, phantomish });
     }
     if (phantomish) {
       return phantomVerdict(
@@ -208,7 +283,7 @@ export function classify({
   // ---- 最近一次输入已经很旧了：安静
   const idleFor = last > 0 ? now - last : Number.POSITIVE_INFINITY;
   if (idleFor >= Math.max(0, activeWindowMs)) {
-    return verdict(TAKEOVER.quiet, ACTION.proceed, `已经 ${Math.round(idleFor / 1000)}s 没人动输入`);
+    return awayOrQuiet({ idleFor, awayAfterMs, verdict, TAKEOVER, ACTION, phantomish });
   }
 
   // ---- 平台报的输入发生在我们最后一次注入**之前**（且不够旧）：
@@ -239,8 +314,9 @@ export function watch({
   strikesToYield = 2,
   cursorStill = null,
   syntheticSource = false,
+  awayAfterMs = DEFAULT_AWAY_AFTER_MS,
 } = {}) {
-  const raw = classify({ state, lastInputAt, now, toleranceMs, activeWindowMs, cursorStill, syntheticSource });
+  const raw = classify({ state, lastInputAt, now, toleranceMs, activeWindowMs, cursorStill, syntheticSource, awayAfterMs });
 
   // ★ 只对 `userActive` 做抖动抑制，但 `unknown` 也不清零计数。
   //

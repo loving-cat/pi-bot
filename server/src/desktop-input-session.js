@@ -112,6 +112,11 @@ export function createDesktopInputSession({
    * 关（默认）：识别出来也**让开**，但把话说清楚 —— 用户才知道有个开关可开。
    */
   trustPhantomInput = () => false,
+  /**
+   * 多久没输入才算"用户离开了"。同桌面输入等到这个门槛才动手 ——
+   * 这是"用户无感"那条需求的可调旋钮（默认 90 秒）。
+   */
+  awayAfterMs = () => 90_000,
   log = () => {},
 } = {}) {
   const lease = createLeaseState({ desktopId });
@@ -269,6 +274,8 @@ export function createDesktopInputSession({
         // 只有"租约申请时判定有合成输入源"且"用户开了信任"，才允许把
         // userActive 降级成 phantom 并继续干。
         syntheticSource: syntheticSource && trust,
+        // ★ 用户无感：他不离开，我们就不碰鼠标（默认 90 秒门槛）。
+        awayAfterMs: typeof awayAfterMs === 'function' ? awayAfterMs() : 90_000,
       });
       if (verdict.verdict === 'phantom_input') {
         // 继续，但记一笔：审计里要能看出"这次是按信任配置硬干的"
@@ -286,7 +293,12 @@ export function createDesktopInputSession({
       if (verdict.action === WATCH_ACTION.wait) {
         // 只停这一次，**不吊销租约**：抖动抑制阶段的 pause 不是接管。
         // 两种情况分开报：判断得出"用户在动"和"我们看不清"对模型是两件事。
-        const code = verdict.verdict === 'user_active' ? REFUSE.userActivePending : REFUSE.probeUncertain;
+        // ★ "用户在动"和"用户还在看"都是**正常等待**，不是"我们看不清"。
+        //   只有时间戳对不上（probe 抖动）才是 probeUncertain —— 混在一起
+        //   会让模型以为探针坏了，然后去重试。
+        const code = (verdict.verdict === 'user_active' || verdict.verdict === 'still_here')
+          ? REFUSE.userActivePending
+          : REFUSE.probeUncertain;
         pushAudit({ kind: 'wait', code, taskId, botId, why: verdict.verdict });
         return { ok: false, code, text: verdict.reason };
       }
@@ -444,6 +456,7 @@ export function desktopInputSession(deps) {
       foregroundTitle: (...a) => platform.foregroundTitle(...a),
       // 用户在设置里显式打开"信任合成输入"之后，才允许无视远程控制软件的心跳
       trustPhantomInput: () => store.desktopSettings().trustPhantomInput === true,
+      awayAfterMs: () => store.desktopSettings().awayAfterMs,
     });
   }
   return singleton;

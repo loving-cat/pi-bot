@@ -811,17 +811,30 @@ export class Store {
    */
   desktopSettings() {
     const raw = this.state.desktop ?? {};
+    const away = Number(raw.awayAfterMs);
     return {
       trustPhantomInput: raw.trustPhantomInput === true,
+      /**
+       * "只在用户离开时才动鼠标"这个模式的门槛。**默认 0 = 关闭**。
+       *
+       * 默认关掉的理由：目标是全双工（用户干活的同时 bot 也在干活），
+       * 那是靠独立桌面并行的；把"等你离开"设成默认会把这条路堵死。
+       * 想要"我不在时才动我这台桌面"的用户自己配一个 90 秒。
+       */
+      awayAfterMs: Number.isFinite(away) && away >= 0 ? Math.min(away, 3600_000) : 0,
     };
   }
 
   setDesktopSettings(patch = {}) {
     const prev = this.desktopSettings();
+    const away = Number(patch.awayAfterMs);
     const next = {
       trustPhantomInput: patch.trustPhantomInput === undefined
         ? prev.trustPhantomInput
         : patch.trustPhantomInput === true,
+      awayAfterMs: patch.awayAfterMs === undefined
+        ? prev.awayAfterMs
+        : (Number.isFinite(away) && away >= 0 ? Math.min(away, 3600_000) : prev.awayAfterMs),
     };
     this.state.desktop = next;
     this.scheduleSave();

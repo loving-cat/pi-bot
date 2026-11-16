@@ -46,6 +46,17 @@ const CAPTURE_TIMEOUT_MS = 40_000;
 const IDLE_CLOSE_MS = 10 * 60_000;
 
 /**
+ * 同时最多开几张岛。
+ *
+ * 每张岛 = 一个常驻 powershell + 里面跑的应用。4 张已经够"用户 + 几个 bot
+ * 并行"了；再多只会让一台机器同时开着 8 个浏览器互相抢内存。
+ *
+ * ★ 到上限时的行为是**明确拒绝并说清**，不是排队 —— 排队会让调用方以为
+ *   在干活，实际在等一张不知道什么时候空的桌子。
+ */
+export const MAX_ISLANDS = 4;
+
+/**
  * Win32 声明。三处坑都踩过（`docs/WINDOWS-HIDDEN-DESKTOP.md` 有记录）：
  *   · `CreateDesktopW` 的 `lpDevice` 必须是 `IntPtr`，传 string 得到 87；
  *   · `CreateProcessW` 的 `lpApplicationName` 必须是真 NULL，PowerShell 的
@@ -378,6 +389,16 @@ function startServer(name) {
 async function sessionFor(name) {
   const existing = islands.get(name);
   if (existing && !existing.closed) return existing;
+  // ★ 全双工要的是"各开各的桌子"，不是无限开桌子 —— 到上限就明确拒绝。
+  if (islands.size >= MAX_ISLANDS) {
+    const busy = [...islands.keys()].join('、');
+    const err = new Error(
+      `已经开了 ${islands.size} 张独立桌面（上限 ${MAX_ISLANDS}）：${busy}。`
+        + '先收掉不用的（desktop_island_input 传 action=close，或等它们空闲自动回收）。',
+    );
+    err.code = 'too_many_islands';
+    throw err;
+  }
   const entry = startServer(name);
   const ready = await entry.ready;
   if (ready?.ok !== true) {
@@ -430,7 +451,15 @@ async function call(name, op, params = {}, opts = {}) {
   if (!isSupported()) return notPlatform();
   const deskName = String(name ?? '').trim();
   if (!deskName) return { ok: false, code: ISLAND_FAIL.badPoint, text: '岛需要一个名字' };
-  const entry = await sessionFor(deskName);
+  let entry = null;
+  try {
+    entry = await sessionFor(deskName);
+  } catch (err) {
+    if (err?.code === 'too_many_islands') {
+      return { ok: false, code: err.code, text: String(err.message ?? err) };
+    }
+    return { ok: false, code: 'call_failed', text: `岛起不来：${err?.message ?? err}` };
+  }
   if (!entry) return { ok: false, code: 'call_failed', text: '岛起不来（建岛失败或 powershell 起不来）' };
   return serial(entry, () => request(entry, op, params, opts));
 }

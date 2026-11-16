@@ -35,7 +35,7 @@ globalThis.fetch = () => { throw new Error('测试期间不允许联网'); };
 const T = await import(new URL('../src/desktop-takeover.js', import.meta.url));
 const {
   TAKEOVER, ACTION, createWatchState, noteInjection, classify, watch, normalizeProbe, describeWatch,
-  DEFAULT_TOLERANCE_MS, DEFAULT_ACTIVE_WINDOW_MS,
+  DEFAULT_TOLERANCE_MS, DEFAULT_ACTIVE_WINDOW_MS, DEFAULT_AWAY_AFTER_MS,
 } = T;
 
 const results = [];
@@ -107,15 +107,67 @@ test('刚好超出容差就判用户（边界要严，不能靠"应该不会"）
   assert.equal(r.verdict, TAKEOVER.userActive);
 });
 
-test('很久没人动 → quiet，可以继续', () => {
+test('安静够久 → quiet，可以继续（默认不要求"用户离开"）', () => {
   const s = createWatchState();
   noteInjection(s, { now: T0 });
   const r = classify({ state: s, lastInputAt: T0, now: T0 + DEFAULT_ACTIVE_WINDOW_MS + 1 });
-  // 这里 last === mine，落进 selfRecent 分支；用一个更早的时间验证 quiet
   const q = classify({ state: s, lastInputAt: T0 - 60_000, now: T0 });
   assert.equal(q.verdict, TAKEOVER.quiet);
   assert.equal(q.action, ACTION.proceed);
   assert.ok(r);
+  // ★ 默认值是 0：全双工产品不能默认"等用户离开"
+  assert.equal(DEFAULT_AWAY_AFTER_MS, 0);
+});
+
+// ---------------------------------------------------------------- 用户无感（§5.2）
+//
+// 需求原话："用户无感，bot 们在后面操作"。所以同桌面输入只在**用户真的离开**
+// 之后才动手；他还在看东西（只是没碰鼠标）时必须等。
+
+test('★ 开了"只在用户离开时动"的门槛：他停手但没走 → still_here + wait', () => {
+  const s = createWatchState();
+  noteInjection(s, { now: T0 });
+  const r = classify({ state: s, lastInputAt: T0 - 5_000, now: T0, awayAfterMs: 90_000 });
+  assert.equal(r.verdict, TAKEOVER.stillHere);
+  assert.equal(r.action, ACTION.wait);
+  assert.match(r.reason, /离开门槛/);
+});
+
+test('★ 同一个场景、门槛关掉（默认）→ 直接干（全双工不等人）', () => {
+  const s = createWatchState();
+  noteInjection(s, { now: T0 });
+  const r = classify({ state: s, lastInputAt: T0 - 5_000, now: T0 });
+  assert.equal(r.verdict, TAKEOVER.quiet);
+  assert.equal(r.action, ACTION.proceed);
+});
+
+test('★ 开了门槛之后："还在看"不会累计成接管（连试三次也不吊销租约）', () => {
+  const s = createWatchState();
+  noteInjection(s, { now: T0 });
+  for (let i = 0; i < 3; i += 1) {
+    const r = watch({ state: s, lastInputAt: T0 - 5_000, now: T0, awayAfterMs: 90_000 });
+    assert.equal(r.action, ACTION.wait, '应当是"等一下"，不是"让开"');
+  }
+  assert.equal(s.consecutiveUserActive, 0, '不能在"用户在看书"上计数');
+});
+
+test('离开门槛配成很大的值 → 一直等（"我不在时才动"的极端配置）', () => {
+  const s = createWatchState();
+  noteInjection(s, { now: T0 });
+  const r = classify({ state: s, lastInputAt: T0 - 60_000, now: T0, awayAfterMs: 3600_000 });
+  assert.equal(r.verdict, TAKEOVER.stillHere);
+  assert.equal(r.action, ACTION.wait);
+});
+
+test('★ 合成输入源不需要"等离开"（远程控制软件常驻时永远等不到）', () => {
+  const s = createWatchState();
+  noteInjection(s, { now: T0 });
+  const r = classify({
+    state: s, lastInputAt: T0 - 5_000, now: T0,
+    cursorStill: true, syntheticSource: true,
+  });
+  assert.equal(r.verdict, TAKEOVER.phantom);
+  assert.equal(r.action, ACTION.proceed);
 });
 
 test('★ 从没注入过也能判（lastInputAt 很旧 → quiet）', () => {

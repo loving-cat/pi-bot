@@ -54,7 +54,9 @@ function installFakePlatform(over = {}) {
   const calls = { perform: [] };
   const fake = {
     env: { ok: true, screen: { x: 0, y: 0, width: 2560, height: 1440 }, dpi: 120, session: true },
-    lastInput: { ok: true, lastInputAt: Date.now() - 60_000, idleMs: 60_000 },
+    // 默认"用户已经离开 10 分钟"（离开门槛 90 秒）：大多数用例不该被
+    // "他还在看书"挡住；要测这个门槛的用例自己覆盖它
+    lastInput: { ok: true, lastInputAt: Date.now() - 10 * 60_000, idleMs: 10 * 60_000 },
     noise: { ok: true, kind: 'quiet', phantom: false, noisy: false, cursorStill: true, samples: [3000, 3100], cursor: { x: 1, y: 1 } },
     perform: () => ({ ok: true, at: { x: 400, y: 300 }, foreground: 'Notepad' }),
     ...over,

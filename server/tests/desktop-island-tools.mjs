@@ -45,13 +45,15 @@ if (!env.ok || env.session !== true) {
   process.exit(0);
 }
 
-const { buildIslandTools, DEFAULT_ISLAND } = await import(src('desktop-island-tools.js'));
-const tools = buildIslandTools({ botId: 'b_test_island' });
+const { buildIslandTools, defaultIslandName } = await import(src('desktop-island-tools.js'));
+// 默认岛名按 botId 分（全双工：每个 bot 一张自己的桌子）
+const BOT_ID = 'b_test_island';
+const island = defaultIslandName(BOT_ID);
+const tools = buildIslandTools({ botId: BOT_ID });
 const byName = new Map(tools.map((t) => [t.name, t]));
 const call = (name, params) => byName.get(name).execute('call-1', params);
 const textOf = (r) => (r.content ?? []).map((c) => c.text ?? '').join('\n');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const island = DEFAULT_ISLAND;
 
 try {
   await test('三个工具都在，且名字/参数长得对', () => {
@@ -76,6 +78,14 @@ try {
     const r = await call('desktop_island_launch', { app: 'notepad.exe', args: ['a', '&', 'del', '*'] });
     assert.equal(r.isError, true);
     assert.match(textOf(r), /不接命令串/);
+  });
+
+  await test('★ 不同的 bot 默认不共用一张岛（否则又变回抢窗口）', () => {
+    assert.notEqual(defaultIslandName('bot_a'), defaultIslandName('bot_b'));
+    assert.equal(defaultIslandName('bot_a'), 'island-bot_a');
+    assert.equal(defaultIslandName(''), 'island-default');
+    // 名字里的怪字符要洗掉（否则 CreateDesktop 会拿到一个非法名字）
+    assert.equal(defaultIslandName('a/b:c d'), 'island-a_b_c_d');
   });
 
   await test('启动一个真实应用 → 岛上有窗口', async () => {

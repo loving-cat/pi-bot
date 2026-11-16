@@ -33,8 +33,20 @@ import {
   listIslandChildren, captureIslandWindow, postIslandMessages, readIslandText, closeIsland,
 } from './desktop-island-win.js';
 
-/** 默认岛名。一个 bot 一个岛够用了；要并行就自己传名字。 */
-export const DEFAULT_ISLAND = 'pibot-island';
+/**
+ * 默认岛名（每个 bot 一张，不共用）。
+ *
+ * ★ 这是"全双工"的关键一步：用户在这台机器上正常干活，bot 在**自己的**
+ *   那张桌面上干活。如果所有 bot 共用一张岛，两个任务就会在同一张桌子上
+ *   抢窗口 —— 那又变回"抢一个光标"的老问题了，只是换了个地方。
+ *
+ *   按 botId 分：同一个 bot 的多个任务共享一张桌子（它本来就是同一个人），
+ *   不同 bot 各有一张。要更细就显式传 island（比如带上 taskId）。
+ */
+export function defaultIslandName(botId) {
+  const id = String(botId ?? '').trim().replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 24);
+  return id ? `island-${id}` : 'island-default';
+}
 
 const ok = (text, details = {}) => ({ content: [{ type: 'text', text }], details });
 const fail = (text, details = {}) => ({ content: [{ type: 'text', text }], details, isError: true });
@@ -55,8 +67,8 @@ function rememberPid(island, pid) {
   launchedPids.set(island, list);
 }
 
-function islandName(raw) {
-  return String(raw ?? '').trim() || DEFAULT_ISLAND;
+function islandName(raw, botId) {
+  return String(raw ?? '').trim() || defaultIslandName(botId);
 }
 
 /** 等窗口出现（首帧多久全看机器心情，别写固定 sleep）。 */
@@ -160,7 +172,7 @@ export function buildIslandTools({ botId } = {}) {
       execute: async (_id, { app, args, island, shareLogin }) => {
         const g = guardTier();
         if (g.error) return g.error;
-        const name = islandName(island);
+        const name = islandName(island, botId);
 
         // ---- 登录态共享（规格 §5.6 的可用性那一半）----
         //
@@ -235,7 +247,7 @@ export function buildIslandTools({ botId } = {}) {
       execute: async (_id, { island, window, capture }) => {
         const g = guardTier();
         if (g.error) return g.error;
-        const name = islandName(island);
+        const name = islandName(island, botId);
         if (!islandExists({ name }).exists) {
           return fail(`岛上什么都没有（还没起应用，或者进程已经退了）。先用 desktop_island_launch 起一个。`);
         }
@@ -323,7 +335,7 @@ export function buildIslandTools({ botId } = {}) {
       execute: async (_id, { action, island, window, control, x, y, text }) => {
         const g = guardTier();
         if (g.error) return g.error;
-        const name = islandName(island);
+        const name = islandName(island, botId);
 
         if (action === 'close') {
           const pids = launchedPids.get(name) ?? [];
