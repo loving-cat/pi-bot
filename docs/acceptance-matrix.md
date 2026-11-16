@@ -122,7 +122,7 @@
 | 组 | 状态 | 证据 / 下一步 |
 |---|---|---|
 | 普通 Git（status/diff/add/commit） | 静态 | `git-ops.mjs` 22 项 |
-| worktree 授权图 | 未做 | `docs/TODO.md`：解析已做，授权图没有 |
+| worktree 授权图 | 未做 | 解析已做，授权图没有（待办见 GitHub Issues） |
 | Git 并发（公共目录协调、锁冲突） | 未做 | — |
 | 结果真实性（退出码 + 仓库状态 + 差异） | 静态 | `git-ops.mjs` 的退出码与状态断言 |
 

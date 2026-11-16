@@ -302,7 +302,7 @@ export function describeBoundaries({ mode = MODE.project, platform = process.pla
 /**
  * 首次授权页：把规格 §13.2 的前四步算成一页要展示的内容。
  *
- * 一页而不是向导，原因写在 `docs/NEXT-SESSION.md`：五步里三步是"告知"，
+ * 一页而不是向导，理由：五步里三步是"告知"，
  * 只有一步是"选择"。拆成向导只会让人多点四次"下一步"。
  *
  * @param {object} p

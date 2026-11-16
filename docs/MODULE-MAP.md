@@ -167,7 +167,7 @@
 | `widgets/avatar_character.dart` / `widgets/avatar_character_painter.dart` | 稳定角色参数与缓存的伪三维绘制；不管理交互或动画资源 |
 | `widgets/avatar_projection.dart` | 视线到yaw/pitch的透视变换，供前脸、眼睛与侧壁共用（纯逻辑） |
 | `widgets/avatar_solid.dart` | 连续侧壁网格、顶点颜色及同向实体覆盖面，按深度排列三角面 |
-| `widgets/blob_avatar.dart` / `widgets/avatar_life.dart` | 头像交互、动画生命周期、指针阻尼与群成员组合；设计约束见 `docs/TODO-AVATAR.md` |
+| `widgets/blob_avatar.dart` / `widgets/avatar_life.dart` | 头像交互、动画生命周期、指针阻尼与群成员组合；设计约束见 `docs/AVATAR.md` |
 | `theme.dart` | 颜色/字号/圆角；新增图标需核对当前依赖字体的实际字形 |
 | `theme_colors.dart` | 从主控头像色派生按钮、用户气泡、链接和选中颜色；按文字与背景对比度调整亮度，状态色独立 |
 | `avatar_appearance.dart` / `widgets/avatar_appearance_picker.dart` | 头像颜色与形状校验、种子回退和外观编辑草稿；保存复用 Bot 更新接口 |

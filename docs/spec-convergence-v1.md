@@ -189,7 +189,7 @@ node scripts/check-capability-drift.mjs  # 新增：确认没有第二份手写�
 **做什么**
 - 复制规格到 `docs/spec-permissions-v1.0.1.md`，加状态头
 - 重写 `docs/PERMISSIONS-INVENTORY.md` 进度表：按 §11 三层重列，P0 逐条带 commit
-- 新建 `docs/TODO.md`：所有欠账一页看完，每条带「下一步最小动作」
+- 欠账进 GitHub Issues：每条带「下一步最小动作」（此前是一张 TODO 台账，2026-11 删除）
 - 新建 `scripts/check-spec-progress.mjs`：进度表里写的 commit 是否真在 `git log` 里
 
 **验收**
@@ -302,7 +302,7 @@ node scripts/check-style.mjs           # §1 的三条机器可判断约定
 
 ### W7 · P1/P2 欠账登记（不实现）
 把 §2.3 里未开始的（worktree 授权图、审计对账、公平排队、优先级、截图增量、
-证据外置、模板权限差异预览、许可证清单）写进 `docs/TODO.md`，每条带「阻塞谁 / 最小下一步」
+证据外置、模板权限差异预览、许可证清单）写进 GitHub Issues，每条带「阻塞谁 / 最小下一步」
 
 ---
 

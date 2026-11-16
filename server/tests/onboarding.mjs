@@ -417,7 +417,7 @@ test('收尾：临时授权进回收，项目授权进可保留', () => {
       grant({ id: 'g-keep' }),
     ],
     bots: [CODER],
-    artifacts: ['docs/SPEC-COVERAGE.md'],
+    artifacts: ['docs/PLATFORMS.md'],
     testedBoundaries: ['Windows 实机'],
     sideEffects: ['新增一个 worktree'],
     now: NOW,

@@ -1,5 +1,5 @@
 > **本文件是规格的仓库副本**（原稿在 `~/Downloads`，已随代码入库）。
-> 进度台账：`docs/TODO.md`。收束计划：`docs/spec-convergence-v1.md`。
+> 收束计划：`docs/spec-convergence-v1.md`。待办在 GitHub Issues。
 >
 > **状态（2026-11-15，@ `dc225aa`）**：P0 交付 9/12，剩桌面输入、桌面单写租约、
 > 用户自定义覆盖层；P1/P2 未开始。**本稿不构成任何验收通过结论**
