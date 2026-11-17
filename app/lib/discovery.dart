@@ -143,24 +143,54 @@ List<DiscoveredHost> mergeHosts(Iterable<DiscoveredHost> hosts) {
 
 /// 广播探测一次，返回 [listen] 内应答过来的主机。
 ///
-/// 不抛异常：发现失败只意味着"手动填地址"，不该让整个配对页报错。
+/// **绝不抛异常**：发现失败只意味着"手动填地址"，不该让整个配对页报错。
 /// 返回空列表时，界面要去提示"确认同一个 Wi-Fi / 电脑上服务端在跑"。
+///
+/// 为什么要 runZonedGuarded 包一层：UDP 广播失败有两种送达方式 ——
+/// send() 同步抛（能 try/catch），以及系统把 ICMP 错误当**异步错误**送回来
+/// （macOS 的 CI runner 上就是这样，`No route to host` 直接变成未捕获异常）。
+/// 后一种只能从 zone 上接。
 Future<List<DiscoveredHost>> discoverHosts({
   Duration listen = const Duration(milliseconds: 1600),
   int port = kDiscoveryPort,
+}) {
+  final found = <DiscoveredHost>[];
+  final done = Completer<List<DiscoveredHost>>();
+  void finish() {
+    if (!done.isCompleted) done.complete(mergeHosts(found));
+  }
+
+  runZonedGuarded(() async {
+    try {
+      await _discoverOnce(listen: listen, port: port, found: found);
+    } catch (_) {
+      // 兜底：任何一种失败都退化成"没找到"
+    }
+    finish();
+  }, (_, _) => finish());
+
+  return done.future;
+}
+
+/// 真正干活的这一段（异常由 [discoverHosts] 兜住）。
+Future<void> _discoverOnce({
+  required Duration listen,
+  required int port,
+  required List<DiscoveredHost> found,
 }) async {
   RawDatagramSocket? socket;
-  final found = <DiscoveredHost>[];
   try {
     socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
     socket.broadcastEnabled = true;
 
     final probe = utf8.encode(jsonEncode({'t': kProbeType, 'v': 1}));
+    // 有些路由器会吃掉 255.255.255.255，但对本网段的广播地址放行 —— 两个都发。
+    // 一张网卡都没有（CI 上的 macOS/容器）时别发广播：send 会抛
+    // "No route to host"，而我们只是想"没找到"。
+    final subnets = await _subnetBroadcasts();
     final targets = <InternetAddress>[
-      InternetAddress('255.255.255.255'),
-      // 有些路由器会吃掉 255.255.255.255，但对本网段的广播地址放行。
-      // 手头只有自己的 IP，就按最普遍的 /24 推一个广播地址出来。
-      ...await _subnetBroadcasts(),
+      if (subnets.isNotEmpty) InternetAddress('255.255.255.255'),
+      ...subnets,
     ];
 
     for (final target in targets) {
@@ -173,7 +203,9 @@ Future<List<DiscoveredHost>> discoverHosts({
 
     final done = Completer<void>();
     late StreamSubscription<RawSocketEvent> sub;
-    sub = socket.listen((event) {
+    // onError 必须有：没有广播路由的机器上，系统的 ICMP 错误会以 socket 错误事件
+    // 回到这条流里，不接就是未捕获异常 —— 发现失败只该是"没找到"，不该炸掉页面。
+    sub = socket.listen(onError: (_) {}, (event) {
       if (event != RawSocketEvent.read) return;
       Datagram? datagram;
       while ((datagram = socket?.receive()) != null) {
@@ -191,7 +223,6 @@ Future<List<DiscoveredHost>> discoverHosts({
   } finally {
     socket?.close();
   }
-  return mergeHosts(found);
 }
 
 /// 本机各网卡的 /24 广播地址（192.168.1.37 → 192.168.1.255）。

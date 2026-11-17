@@ -160,6 +160,8 @@ void main() {
     });
 
     test('discoverHosts 在没人应答时安静地返回空列表', () async {
+      // CI 的 macOS runner 没有广播路由：socket 会把 ICMP 错误当错误事件送回来。
+      // 这条用例真正要守的是"发现失败 ≠ 抛异常把页面弄崩"，所以只断言结果与不抛。
       final hosts = await discoverHosts(
         listen: const Duration(milliseconds: 200),
         port: responder.port + 1, // 没人听的端口
