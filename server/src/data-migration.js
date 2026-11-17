@@ -30,6 +30,9 @@ export const ENTRIES = Object.freeze([
   'model-health.json',
   'hooks.json',
   'secret.key',
+  // 自签证书与私钥（HTTPS 用）。不搬的话换目录后证书重签、
+  // 手机上固定的指纹全部失效 —— 每台手机都得重新配对一遍。
+  'tls',
   'run-stats.json',
   // 首次接单的持久请求回执与命令回执（批次 06）：不搬会丢去重与命令结果。
   'task-requests',

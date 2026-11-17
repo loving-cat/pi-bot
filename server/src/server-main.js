@@ -1,3 +1,6 @@
+import https from 'node:https';
+import path from 'node:path';
+
 import { config, describeConfig } from './config.js';
 import { store } from './store.js';
 import { backfillProgressSenders } from './progress-migration.js';
@@ -25,6 +28,7 @@ import { createGrantGate } from './grant-gate.js';
 import { ensureLegacyGrant } from './migration-grants.js';
 import { bus } from './bus.js';
 import { buildAnnouncement, startDiscovery } from './discovery.js';
+import { ensureTlsMaterial, setActiveTls, tlsOptions } from './tls.js';
 
 /**
  * 本次进程的「实例世代」。
@@ -326,12 +330,48 @@ async function main() {
 
   /** 局域网发现应答器（UDP）；起不来就是 null，关闭时顺手收掉 */
   let discovery = null;
+  /** 加密监听（手机走这条） */
+  let tlsServer = null;
+  /** 发现应答里要告诉手机的加密信息：{port, fingerprint}；null = 明文 */
+  let tlsInfo = null;
 
   server.listen(config.port, config.host, async () => {
     await banner(pairing, runner);
+
+    // ★ 加密监听：手机连的是这条。证书是本机自签的（局域网里没有可信 CA），
+    //   身份靠客户端固定指纹 + 6 位校验码人眼比对，见 docs/ANDROID.md。
+    if (config.tlsEnabled) {
+      try {
+        const material = ensureTlsMaterial({
+          dir: path.join(config.dataDir, 'tls'),
+          commonName: config.serverName,
+          log,
+        });
+        tlsServer = https.createServer(tlsOptions(material), server.handler);
+        // WS 也挂上来：wss:// 走同一套 upgrade 处理
+        attachWs(tlsServer, { runner });
+        await new Promise((resolve, reject) => {
+          tlsServer.once('error', reject);
+          tlsServer.listen(config.tlsPort, config.host, resolve);
+        });
+        tlsInfo = { port: config.tlsPort, fingerprint: material.fingerprint };
+        // /health 和 serverInfo 要能告诉 App"这条链路是加密的、指纹是多少"
+        setActiveTls(tlsInfo);
+        log(`🔒 加密监听已开启：https://${config.host}:${config.tlsPort}  (wss://…/ws)`);
+        log(`   证书指纹 ${material.fingerprint}（手机第一次配对时会显示 6 位校验码）`);
+      } catch (err) {
+        tlsServer = null;
+        tlsInfo = null;
+        setActiveTls(null);
+        log(`⚠ 加密监听起不来（${err?.message || err}）—— 手机将回退到明文 http，聊天内容在局域网里可被嗅探`);
+      }
+    }
+
     // 局域网发现：手机在同一 Wi-Fi 下能直接看到这台机器，不用手抄 IP。
     // 起不来（端口被占/防火墙）只是少了一个便利，不影响服务端本身。
-    discovery = await startDiscovery({ announcement: () => buildAnnouncement({ pairing: !config.staticToken }) });
+    discovery = await startDiscovery({
+      announcement: () => buildAnnouncement({ pairing: !config.staticToken, tls: tlsInfo }),
+    });
     // API/WS 就绪后做一次持久恢复；失败如实记录，不阻断旧聊天。
     try {
       const recovered = await taskHost.recover();
@@ -349,6 +389,9 @@ async function main() {
     log(`${signal} → 收工`);
     pairing.stop();
     discovery?.close?.();
+    try {
+      tlsServer?.close();
+    } catch {}
     scheduler.stop();
     clearInterval(housekeeping);
     runner.health?.stop();

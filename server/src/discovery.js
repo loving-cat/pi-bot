@@ -62,7 +62,12 @@ export function isLanSource(address) {
 /** 手机该看到的这台主机的样子。 */
 export function buildAnnouncement(overrides = {}) {
   const port = overrides.port ?? config.port;
-  const urls = lanAddresses().map(({ address }) => `http://${address}:${port}`);
+  // TLS 开着的话，手机该连的是加密那条腿：地址给 https，并把证书指纹一起带上，
+  // 客户端第一次就用它固定证书（自签证书没有 CA 可查，只能这样）。
+  const tls = overrides.tls === undefined ? null : overrides.tls;
+  const urls = lanAddresses().map(({ address }) =>
+    tls?.port ? `https://${address}:${tls.port}` : `http://${address}:${port}`,
+  );
   return {
     t: ANNOUNCE_TYPE,
     v: PROTOCOL_VERSION,
@@ -77,6 +82,8 @@ export function buildAnnouncement(overrides = {}) {
     pairing: overrides.pairing ?? true,
     /** 支持"请求连接"：手机点一下，电脑上弹窗允许（见 pair-requests.js） */
     approve: overrides.approve ?? true,
+    /** 加密监听：{port, fingerprint}；null = 这条链路是明文（界面上要提示） */
+    tls,
   };
 }
 

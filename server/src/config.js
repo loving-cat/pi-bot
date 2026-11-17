@@ -92,6 +92,19 @@ export const config = {
    * 关掉后手机仍然能手动填地址配对，只是不再自动出现在列表里。
    */
   discoveryEnabled: process.env.PI_BOT_DISCOVERY !== '0',
+  /**
+   * 加密监听（HTTPS + WSS）。默认开。
+   *
+   * 手机走 `https://<局域网IP>:<tlsPort>`：同一个 Wi-Fi 上抓包的人只能看到密文，
+   * token 和聊天内容都不会在空气里裸奔。桌面端仍然连本机 `http://127.0.0.1:port`
+   * （回环没有中间人，也就不必为它维护一张要跟网卡一起重签的证书）。
+   *
+   * 关掉（PI_BOT_TLS=0）只在排障时用 —— 关了之后手机端那条路就是明文，
+   * 客户端会在界面上提示"未加密"。
+   */
+  tlsEnabled: process.env.PI_BOT_TLS !== '0',
+  /** 加密监听的端口（和 HTTP 的 8787 并存） */
+  tlsPort: Number(process.env.PI_BOT_TLS_PORT || 8443),
   /** 发现应答的 UDP 端口。改两边都要改（App 里硬编码 8788 作为默认探测端口） */
   discoveryPort: Number(process.env.PI_BOT_DISCOVERY_PORT || 8788),
   /** 固定 token：设了就跳过配对码（自用/服务器部署方便） */

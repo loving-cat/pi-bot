@@ -39,6 +39,7 @@ import { readLocalToken } from './local-token.js';
 import { NONCE_PURPOSE, consumeNonce, issueNonce } from './local-nonce.js';
 import { planAdminRoute } from './http-admin.js';
 import { createPairRequests } from './pair-requests.js';
+import { activeTls } from './tls.js';
 import { describeConfirmation } from './confirm.js';
 import { shells } from './shells.js';
 import { computeNextRun, validateSchedule } from './automations.js';
@@ -414,7 +415,14 @@ export function hostAllowed(hostHeader) {
   return lanAddresses().some((a) => String(a.address).toLowerCase() === lower);
 }
 
-export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ log }) }) {
+/**
+ * 请求处理器：HTTP 和 HTTPS 两个 listener **共享同一份**。
+ *
+ * 抽出来的原因很实际：手机走 `https://<ip>:<tlsPort>`（局域网要加密），
+ * 桌面端走 `http://127.0.0.1:<port>`（本机回环，没有中间人可言，也就不必为它
+ * 维护一张要跟网卡 IP 一起重签的证书）。两条链路不能各写一份路由。
+ */
+export function createRequestHandler({ runner, pairing, sites = createSiteRuntime({ log }) }) {
   /**
    * 规矩变更后重发迁移授权。
    *
@@ -457,7 +465,7 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
   const uploads = new UploadSessions({
     dir: path.join(config.dataDir, 'uploads', '_partial'),
   });
-  const server = http.createServer(async (req, res) => {
+  return async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     const pathname = url.pathname.replace(/\/+$/, '') || '/';
     const clientIp = (r) => String(r.socket?.remoteAddress ?? '').replace(/^::ffff:/, '');
@@ -487,6 +495,9 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
           // 只说「本机要不要 token」，不带 token 本身：桌面端据此提示去设置里填 token，
           // 而不是拿着空 token 一直重连。
           auth: config.trustLocal ? 'local' : 'token',
+          // 加密监听的端口/指纹（null = 明文）。手机端据此显示"已加密 · 校验码"，
+          // 桌面端弹窗用它显示同一串 6 位码给人比对。
+          tls: activeTls(),
           ...(config.trustLocal
             ? { stats: store.stats(), model: runner.modelLabel(), note: runner.initNote }
             : {}),
@@ -2126,8 +2137,14 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
                 : 500;
       return send(res, status, { error: String(err?.message || err), code });
     }
-  });
+  };
+}
 
+/** 返回的 server 上挂着 handler，方便再挂一个 TLS listener 复用同一份路由。 */
+export function createHttpServer(options) {
+  const handler = createRequestHandler(options);
+  const server = http.createServer(handler);
+  server.handler = handler;
   return server;
 }
 
@@ -2135,6 +2152,8 @@ export function serverInfo(runner) {
   return {
     version: VERSION,
     serverInstanceId: config.serverInstanceId,
+    // 加密监听的端口与证书指纹（null = 这条链路是明文）。App 用它显示校验码。
+    tls: activeTls(),
     hostname: config.hostname,
     workspace: config.workspace,
     // 数据目录也回给 App：这是用户最该知道、也最不该被“神秘换掉”的东西

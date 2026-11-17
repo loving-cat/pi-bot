@@ -95,6 +95,7 @@ const TESTS = [
   'auth',
   'discovery',
   'pair-request',
+  'tls',
   'pair-request-http',
   'device-revoke',
   'disk',
