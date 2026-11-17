@@ -144,3 +144,30 @@ jobs:
         working-directory: app
         timeout-minutes: 20
         run: flutter build windows --release --no-pub
+
+  android:
+    name: android apk build
+    runs-on: ubuntu-latest
+    env:
+      PUB_HOSTED_URL: https://pub.dev
+    steps:
+      - uses: actions/checkout@v5
+      # 打 apk 要 JDK 17+：runner 上的默认 java 版本会随镜像漂移，钉住。
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.7'
+          channel: stable
+          cache: true
+      - name: Resolve locked Flutter dependencies
+        working-directory: app
+        run: flutter pub get --enforce-lockfile
+      # 只造不收：这一步是为了让"安卓编不过"在合并前就红（Gradle 插件升级、
+      # 权限清单、compileSdk 36 这类问题，Windows 的 windows-builder 一个都发现不了）。
+      - name: Build Android apk
+        working-directory: app
+        timeout-minutes: 30
+        run: flutter build apk --release --no-pub

@@ -9,6 +9,7 @@ const tests = [
   'prepare-macos-bundle-test.mjs',
   'stage-app-build-test.mjs',
   'prepare-windows-bundle-test.mjs',
+  'pack-android-test.mjs',
 ];
 
 let failed = 0;
