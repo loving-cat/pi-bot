@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   APP_ID,
   apkFileName,
+  assertSigner,
   commandLine,
   assertVersionsAgree,
   checkJdk,
@@ -118,6 +119,10 @@ test('签名证书指纹能从 apksigner 输出里读出来', () => {
     parseSignerDigest(output),
     '03cddcf5c4deea5f1abfe9327b6f552452d707532a66a8e77153af5f031445d6',
   );
+});
+
+test('找不到 apksigner 必须直接失败，不能静默跳过签名校验', () => {
+  assert.throws(() => assertSigner('x.apk', { apksignerPath: null }), /找不到 apksigner/);
 });
 
 test('apksigner 没输出指纹时要返回 null（不能让调用方当成通过）', () => {

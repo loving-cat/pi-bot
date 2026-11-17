@@ -198,11 +198,15 @@ function findApksigner(appDir) {
   return null;
 }
 
-/** 签名证书必须跟已发布的那些版本一致，否则已装用户升不上来。 */
+/** 签名证书必须跟已发布的那些版本一致，否则已装用户升不上来。
+ *
+ * 找不到 apksigner 时**也失败**：能 `flutter build apk` 成功就说明这台机器有 Android SDK，
+ * 那 apksigner 一定在某个 build-tools 里。"查不到就跳过"等于把最贵的那道检查静默关掉。 */
 export function assertSigner(apkPath, { apksignerPath }) {
   if (!apksignerPath) {
-    console.warn('⚠ 没找到 apksigner（ANDROID_HOME / local.properties 里没有 build-tools），跳过签名校验');
-    return null;
+    throw new Error(
+      '找不到 apksigner，无法校验签名证书（构建能过就说明 SDK 在，只是没在 ANDROID_HOME / app/android/local.properties 里找到 build-tools）。把 sdk.dir 写进 app/android/local.properties 后重跑',
+    );
   }
   // .bat/.cmd 不能直接 spawn（Windows 上 EINVAL）。走 shell 让它自己处理引号：
   // 整条命令作为字符串传（不是 args 数组），否则新版 Node 会报 DEP0190
@@ -320,13 +324,18 @@ export function main(argv = process.argv.slice(2)) {
   const out = path.resolve(repoRoot, options.out ?? path.join('dist', apkFileName(version)));
   fs.mkdirSync(path.dirname(out), { recursive: true });
   const temp = `${out}.tmp-${process.pid}`;
-  fs.copyFileSync(apkPath, temp);
-  fs.renameSync(temp, out); // 同目录 rename：要么换成新包，要么上一版原样在
+  try {
+    fs.copyFileSync(apkPath, temp);
+    fs.renameSync(temp, out); // 同目录 rename：要么换成新包，要么上一版原样在
+  } finally {
+    // 复制/改名中途挂了：把临时文件抹掉，不留一个 82MB 的半成品
+    if (fs.existsSync(temp)) fs.rmSync(temp, { force: true });
+  }
 
   const size = fs.statSync(out).size;
   console.log(`\n${path.relative(repoRoot, out)}`);
   console.log(`  ${(size / 1024 / 1024).toFixed(1)} MB`);
-  if (signer) console.log(`  签名 ${signer.slice(0, 16)}…（与已发布版本一致）`);
+  console.log(`  签名 ${signer.slice(0, 16)}…（与已发布版本一致）`);
   console.log(`  sha256 ${sha256(out)}`);
   console.log('\n上传到 release：gh release upload v<版本> <文件> --clobber');
   return 0;
