@@ -1125,6 +1125,8 @@ class ServerInfo {
     this.model,
     this.note,
     this.tools = const [],
+    this.tlsFingerprint = '',
+    this.tlsPort = 0,
   });
 
   final String version;
@@ -1139,6 +1141,11 @@ class ServerInfo {
   final String? note;
   final List<String> tools;
 
+  /// 服务端证书指纹（sha256 hex）。空 = 服务端没开加密监听。
+  /// 电脑端拿它显示 6 位校验码，让人和手机上的对一遍。
+  final String tlsFingerprint;
+  final int tlsPort;
+
   factory ServerInfo.fromJson(Map<String, dynamic> json) => ServerInfo(
     version: json['version'] as String? ?? '',
     hostname: json['hostname'] as String? ?? '',
@@ -1147,6 +1154,12 @@ class ServerInfo {
     model: json['model'] as String?,
     note: json['note'] as String?,
     tools: ((json['tools'] as List?) ?? const []).whereType<String>().toList(),
+    tlsFingerprint: (json['tls'] is Map && (json['tls'] as Map)['fingerprint'] is String)
+        ? (json['tls'] as Map)['fingerprint'] as String
+        : '',
+    tlsPort: (json['tls'] is Map && (json['tls'] as Map)['port'] is num)
+        ? ((json['tls'] as Map)['port'] as num).toInt()
+        : 0,
   );
 }
 

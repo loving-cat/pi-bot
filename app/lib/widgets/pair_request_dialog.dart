@@ -17,9 +17,13 @@ import '../theme.dart';
 ///   · 显示来源 IP 和名字，让人能判断这是不是自己的手机；
 ///   · 有倒计时：没人管的时候自己消失，不留一个挂着的授权入口。
 class PairRequestDialog extends StatefulWidget {
-  const PairRequestDialog({super.key, required this.request});
+  const PairRequestDialog({super.key, required this.request, this.verificationCode = ''});
 
   final PairRequestHost request;
+
+  /// 这台电脑证书指纹的 6 位校验码（见 pinned_http.dart）。
+  /// 手机上也会显示同一串 —— 人对一眼就知道中间有没有人换了证书。
+  final String verificationCode;
 
   @override
   State<PairRequestDialog> createState() => _PairRequestDialogState();
@@ -111,6 +115,26 @@ class _PairRequestDialogState extends State<PairRequestDialog> {
               ],
             ),
           ),
+          if (widget.verificationCode.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text(
+              s.t('pairRequest.verifyTitle'),
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: PB.fsXxs, color: PB.textTertiary),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              widget.verificationCode,
+              style: TextStyle(
+                fontFamily: PB.monoFamily,
+                fontFamilyFallback: PB.monoFallback,
+                fontSize: PB.fsXl,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 3,
+                color: PB.textPrimary,
+              ),
+            ),
+          ],
           const SizedBox(height: 10),
           Text(
             s.tf('pairRequest.countdown', {'n': '$_remaining'}),

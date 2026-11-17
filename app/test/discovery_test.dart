@@ -62,6 +62,24 @@ void main() {
       expect(parseAnnouncement(_announce({'urls': 'x', 'port': '8787'})), isNull);
     });
 
+    test('★ 带 tls 的应答：地址优先 https，指纹和端口都读出来', () {
+      final host = parseAnnouncement(_announce({
+        'urls': ['https://192.168.1.7:8443'],
+        'tls': {'port': 8443, 'fingerprint': 'ab' * 32},
+      }));
+      expect(host, isNotNull);
+      expect(host!.secure, isTrue);
+      expect(host.url, 'https://192.168.1.7:8443');
+      expect(host.tlsPort, 8443);
+      expect(host.fingerprint, 'ab' * 32);
+    });
+
+    test('没有 tls 字段（老服务端）→ 明文，secure=false', () {
+      final host = parseAnnouncement(_announce({}));
+      expect(host!.secure, isFalse);
+      expect(host.url, 'http://192.168.1.7:8787');
+    });
+
     test('机器名为空时用 name 当标题', () {
       final host = parseAnnouncement(_announce({'hostname': ''}));
       expect(host!.label, 'pi-bot');
@@ -78,6 +96,31 @@ void main() {
           urls: urls,
           pairing: true,
         );
+
+    test('同一台主机两次应答：tls 信息缺失的一侧被补齐', () {
+      final plain = DiscoveredHost(
+        name: 'pi-bot',
+        hostname: 'pc-a',
+        version: '1.4.1',
+        port: 8787,
+        urls: ['http://192.168.1.7:8787'],
+        pairing: true,
+      );
+      final secure = DiscoveredHost(
+        name: 'pi-bot',
+        hostname: 'pc-a',
+        version: '1.4.1',
+        port: 8787,
+        urls: ['https://192.168.1.7:8443'],
+        pairing: true,
+        tlsPort: 8443,
+        fingerprint: 'cc' * 32,
+      );
+      final merged = mergeHosts([plain, secure]);
+      expect(merged, hasLength(1));
+      expect(merged.single.secure, isTrue, reason: '只要有一次说加密，就不能把这条当成明文');
+      expect(merged.single.fingerprint, 'cc' * 32);
+    });
 
     test('同一台主机两次应答（广播 + 子网广播）只留一条，地址合并', () {
       final merged = mergeHosts([

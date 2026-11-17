@@ -281,7 +281,49 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           ),
                         ],
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 8),
+                      // 加密状态要显式写出来：用户有权知道"这条链路是不是明文"。
+                      Row(
+                        children: [
+                          Icon(
+                            state.serverFingerprint.isEmpty
+                                ? LucideIcons.lockOpen
+                                : LucideIcons.lock,
+                            size: 13,
+                            color: state.serverFingerprint.isEmpty
+                                ? PB.danger
+                                : PB.colors(context).accentBright,
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              state.serverFingerprint.isEmpty
+                                  ? s.t('settings.connect.tlsOff')
+                                  : s.t('settings.connect.tlsOn'),
+                              style: TextStyle(
+                                fontSize: PB.fsXxs,
+                                color: state.serverFingerprint.isEmpty
+                                    ? PB.danger
+                                    : PB.textTertiary,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (state.fingerprintCode6.isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          s.tf('settings.connect.tlsCode', {
+                            'code': state.fingerprintCode6,
+                          }),
+                          style: TextStyle(
+                            fontSize: PB.fsXxs,
+                            color: PB.textQuaternary,
+                            height: 1.5,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 8),
                       Text(
                         s.t('settings.connect.remoteHint'),
                         style: TextStyle(

@@ -36,6 +36,8 @@ dependencies:
   # 按「字素簇」截断文本：substring 按 UTF-16 code unit 切会把 emoji、
   # 组合字符切坏（末尾出现「�」）。列表预览和引用条都靠它。
   characters: ^1.4.0
+  # 证书指纹固定要用 sha256（局域网自签证书没有 CA 可查）
+  crypto: ^3.0.6
 
 dev_dependencies:
   flutter_test:

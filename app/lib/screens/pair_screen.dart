@@ -8,6 +8,7 @@ import 'scan_screen.dart';
 import '../api.dart';
 import '../discovery.dart';
 import '../pair_request.dart';
+import '../pinned_http.dart';
 import '../widgets/pair_nearby.dart';
 import '../l10n/l10n.dart';
 import '../platform.dart';
@@ -107,6 +108,8 @@ class _PairScreenState extends State<PairScreen> {
       _error = null;
     });
     try {
+      // 先固定证书再发请求：这台电脑的 https 是自签的，不装指纹第一条请求就握手失败
+      installPinnedFingerprint(host.fingerprint);
       final ticket = await requestPairing(
         host.url,
         device: _deviceController.text.trim(),
@@ -118,7 +121,12 @@ class _PairScreenState extends State<PairScreen> {
       if (!mounted) return;
       if (result.ok) {
         // 拿到 token 之后和填配对码成功走同一条路
-        await state.useToken(host.url, result.token!, device: _deviceController.text.trim());
+        await state.useToken(
+          host.url,
+          result.token!,
+          device: _deviceController.text.trim(),
+          fingerprint: host.fingerprint,
+        );
         if (mounted) Navigator.of(context).maybePop();
         return;
       }
@@ -187,11 +195,15 @@ class _PairScreenState extends State<PairScreen> {
     });
     final state = AppScope.read(context);
     try {
+      // 选中了某台电脑就带上它公告的证书指纹；手动填地址时没有指纹（明文）
+      final fingerprint = _picked?.fingerprint ?? '';
+      installPinnedFingerprint(fingerprint);
       if (_useToken) {
         await state.useToken(
           _urlController.text,
           _secretController.text,
           device: _deviceController.text,
+          fingerprint: fingerprint,
         );
       } else {
         await state.pairWithCode(

@@ -241,7 +241,10 @@ class _PiBotAppState extends State<PiBotApp> with WidgetsBindingObserver {
       allow = await showDialog<bool>(
         context: context,
         barrierDismissible: false,
-        builder: (_) => PairRequestDialog(request: request),
+        builder: (_) => PairRequestDialog(
+          request: request,
+          verificationCode: _state.serverTlsCode6,
+        ),
       );
     } finally {
       _pairDialogOpen = false;

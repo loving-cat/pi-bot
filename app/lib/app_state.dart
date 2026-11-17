@@ -14,6 +14,7 @@ import 'attachment_preview_request.dart';
 import 'browser_pane_state.dart';
 import 'models.dart';
 import 'pair_request.dart';
+import 'pinned_http.dart';
 import 'reconnect_sweep.dart';
 import 'attachment_deletions.dart';
 import 'grant_view.dart';
@@ -78,6 +79,8 @@ class AppState extends ChangeNotifier {
   static const _kEntry = 'server_entry';
   static const _kNode = 'server_node';
   static const _kDevice = 'device_name';
+  /// 这台手机固定的是哪张证书（sha256 hex）。换电脑/换证书时一起清掉。
+  static const _kFingerprint = 'server_tls_fingerprint';
   // 用户点了"以后再说"的那个版本：同一个版本不再反复弹，出了更新的版本才再问
   static const _kSkippedUpdate = 'skipped_update_version';
   // ★ 布局偏好：右侧面板停在哪个 tab、三栏各多宽。
@@ -90,6 +93,18 @@ class AppState extends ChangeNotifier {
 
   String? serverUrl;
   String? token;
+
+  /// 已固定的服务端证书指纹（sha256 hex）。空 = 这条链路没有加密。
+  String serverFingerprint = '';
+
+  /// 人眼比对的 6 位校验码（电脑弹窗上显示同一串）
+  String get fingerprintCode6 => fingerprintCode(serverFingerprint);
+
+  /// 这台机器自己公告的证书指纹：桌面端弹窗显示校验码用（手机端为空）
+  String get serverTlsCode6 => fingerprintCode(serverInfo?.tlsFingerprint ?? '');
+
+  /// 服务端是否开了加密监听
+  bool get serverTlsEnabled => (serverInfo?.tlsPort ?? 0) > 0;
   String deviceName = '我的手机';
   Api? _api;
   Api? get api => _api;
@@ -687,6 +702,10 @@ class AppState extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     serverUrl = prefs.getString(_kUrl);
     token = prefs.getString(_kToken);
+    serverFingerprint = prefs.getString(_kFingerprint) ?? '';
+    // ★ 一定要在任何网络请求之前装好：手机连的是 https（自签），
+    //   没装固定指纹的话第一条 /api/state 就会被证书校验拒掉。
+    installPinnedFingerprint(serverFingerprint);
     localToken = prefs.getString(_kLocalToken) ?? '';
     deviceName = prefs.getString(_kDevice) ?? '我的手机';
     serverDataDir = prefs.getString(_kDataDir) ?? '';
@@ -1003,16 +1022,27 @@ class AppState extends ChangeNotifier {
     connect();
   }
 
-  Future<void> useToken(String url, String rawToken, {String? device}) async {
+  Future<void> useToken(
+    String url,
+    String rawToken, {
+    String? device,
+    String? fingerprint,
+  }) async {
     serverUrl = normalizeBaseUrl(url);
     token = rawToken.trim();
     localMode = token!.isEmpty;
     if (device != null && device.isNotEmpty) deviceName = device;
+    // 指纹先装上再发请求：握手就发生在下一行 Api 调用里
+    if (fingerprint != null) {
+      serverFingerprint = fingerprint;
+      installPinnedFingerprint(fingerprint);
+    }
     api = Api(serverUrl!, token);
       taskRuns.bindApi(api);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kUrl, serverUrl!);
     await prefs.setString(_kToken, token!);
+    await prefs.setString(_kFingerprint, serverFingerprint);
     await prefs.setString(_kDevice, deviceName);
     await refresh();
     connect();
@@ -1282,8 +1312,11 @@ class AppState extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_kUrl);
     await prefs.remove(_kToken);
+    await prefs.remove(_kFingerprint);
     serverUrl = null;
     token = null;
+    serverFingerprint = '';
+    installPinnedFingerprint(null);
     localMode = false;
     devices = const [];
     pairing = null;

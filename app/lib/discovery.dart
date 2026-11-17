@@ -33,6 +33,8 @@ class DiscoveredHost {
     required this.urls,
     required this.pairing,
     this.approve = false,
+    this.tlsPort = 0,
+    this.fingerprint = '',
   });
 
   /// 用户给这台主机起的名字（`PI_BOT_NAME`，默认 "pi-bot"）
@@ -53,10 +55,23 @@ class DiscoveredHost {
   /// 支持"请求连接"：手机点一下，电脑上弹窗让人点允许（老版本服务端没有这个字段）
   final bool approve;
 
+  /// 加密监听的端口（0 = 这台主机只有明文 http）
+  final int tlsPort;
+
+  /// 证书指纹（sha256 hex）。有了它才谈得上"固定证书"，见 pinned_http.dart
+  final String fingerprint;
+
+  /// 是不是走加密链路
+  bool get secure => tlsPort > 0 && fingerprint.isNotEmpty;
+
   /// 列表里显示什么：机器名比 "pi-bot" 有用（两台都是 pi-bot 时只能靠它）
   String get label => hostname.trim().isNotEmpty ? hostname : name;
 
-  String get url => urls.isNotEmpty ? urls.first : 'http://$hostname:$port';
+  /// 从哪个地址连。加密优先：服务端开了 TLS 就给 https，否则退回 http。
+  String get url {
+    if (urls.isNotEmpty) return urls.first;
+    return secure ? 'https://$hostname:$tlsPort' : 'http://$hostname:$port';
+  }
 
   /// 同一台主机的应答可能来自多次探测（255.255.255.255 + 子网广播各一次），
   /// 去重按"机器名 + 端口" —— 同一台机器换 IP（Wi-Fi/有线）也该算同一个条目。
@@ -109,6 +124,12 @@ DiscoveredHost? parseAnnouncement(String text) {
     pairing: decoded['pairing'] is bool ? decoded['pairing'] as bool : true,
     // 老服务端没有这个字段 → 只能走配对码
     approve: decoded['approve'] is bool ? decoded['approve'] as bool : false,
+    tlsPort: decoded['tls'] is Map && (decoded['tls'] as Map)['port'] is num
+        ? ((decoded['tls'] as Map)['port'] as num).toInt()
+        : 0,
+    fingerprint: decoded['tls'] is Map && (decoded['tls'] as Map)['fingerprint'] is String
+        ? (decoded['tls'] as Map)['fingerprint'] as String
+        : '',
   );
 }
 
@@ -134,6 +155,8 @@ List<DiscoveredHost> mergeHosts(Iterable<DiscoveredHost> hosts) {
       urls: merged,
       pairing: existing.pairing && host.pairing,
       approve: existing.approve || host.approve,
+      tlsPort: existing.tlsPort != 0 ? existing.tlsPort : host.tlsPort,
+      fingerprint: existing.fingerprint.isNotEmpty ? existing.fingerprint : host.fingerprint,
     );
   }
   final list = byKey.values.toList()
