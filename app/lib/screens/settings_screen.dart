@@ -30,7 +30,9 @@ import '../motion.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../app_state.dart';
+import '../widgets/mobile_connect_section.dart';
 import '../widgets/update_prompt.dart';
+
 
 /// 设置页。
 ///
@@ -123,11 +125,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       0 => _connectTab,
                       1 => _serverTab,
                       2 => const [SkillsLibrarySection(), LessonsSection()],
-                      3 => const [McpSection()],
-                      4 => const [SitesSection()],
+                      // 应用连接 = 跟外部系统对接：MCP 服务 + 网站/团队。
+                      // 这两块原来被拆在"应用连接"和"系统"两个 tab 里，
+                      // 于是"系统"页打开的是应用连接的内容 —— 标签和内容对不上。
+                      3 => const [McpSection(), SitesSection()],
                       // 系统页：谁能动什么。规格 §11「用户始终可以接管、取消、收回授权」——
                       // 看不到有哪些授权，就等于收不回。
-                      5 => const [
+                      4 => const [
                         DesktopApprovalSection(),
                         GrantsSection(),
                         GrantAuditSection(),
@@ -147,7 +151,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// 标签页一：手机连接与设备
   List<Widget> get _connectTab {
     final s = L10n.s(context);
-    final state = AppScope.read(context);
     final pairing = AppScope.read(context).pairing;
     final base = AppScope.read(context).serverUrl ?? '';
     final expiresAt = pairing?['expiresAt'] is num
@@ -164,6 +167,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ? s.t('settings.connect.subtitleHost')
             : s.t('settings.connect.subtitleRemote'),
       ),
+      // ★ 手机端（远程客户端）自己的块。抽成独立 widget 的原因见它的注释：
+      //   原来这块被嵌在宿主端的条件里，手机上永远不显示（"换不了电脑"）。
+      if (!isHostPlatform) ...[
+        const MobileConnectSection(),
+        const SizedBox(height: 14),
+      ],
       // ★ 二维码只有**宿主端**（跑服务端的那台电脑）才画。
       //
       //   只判 `pairing != null` 不够：手机连上自己的服务端之后 pairing 也非空，
@@ -246,124 +255,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   color: PB.textQuaternary,
                 ),
               ),
-              // 手机端（远程客户端）：说清楚"我连的是哪台"，再给一个重新扫码
-              if (!isHostPlatform) ...[
-                _Card(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        s.t('settings.connect.connectedServer'),
-                        style: TextStyle(
-                          fontSize: PB.fsXs,
-                          color: PB.textTertiary,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              state.serverUrl ??
-                                  s.t('settings.connect.unknownServer'),
-                              style: TextStyle(
-                                fontFamily: PB.monoFamily,
-                                fontFamilyFallback: PB.monoFallback,
-                                fontSize: PB.fsSm,
-                                color: PB.textPrimary,
-                              ),
-                            ),
-                          ),
-                          Icon(
-                            LucideIcons.smartphone,
-                            size: 16,
-                            color: PB.textQuaternary,
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      // 加密状态要显式写出来：用户有权知道"这条链路是不是明文"。
-                      Row(
-                        children: [
-                          Icon(
-                            state.serverFingerprint.isEmpty
-                                ? LucideIcons.lockOpen
-                                : LucideIcons.lock,
-                            size: 13,
-                            color: state.serverFingerprint.isEmpty
-                                ? PB.danger
-                                : PB.colors(context).accentBright,
-                          ),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              state.serverFingerprint.isEmpty
-                                  ? s.t('settings.connect.tlsOff')
-                                  : s.t('settings.connect.tlsOn'),
-                              style: TextStyle(
-                                fontSize: PB.fsXxs,
-                                color: state.serverFingerprint.isEmpty
-                                    ? PB.danger
-                                    : PB.textTertiary,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      if (state.fingerprintCode6.isNotEmpty) ...[
-                        const SizedBox(height: 6),
-                        Text(
-                          s.tf('settings.connect.tlsCode', {
-                            'code': state.fingerprintCode6,
-                          }),
-                          style: TextStyle(
-                            fontSize: PB.fsXxs,
-                            color: PB.textQuaternary,
-                            height: 1.5,
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: 8),
-                      Text(
-                        s.t('settings.connect.remoteHint'),
-                        style: TextStyle(
-                          fontSize: PB.fsXxs,
-                          color: PB.textQuaternary,
-                          height: 1.6,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 10),
-                _Card(
-                  child: ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    // 这个按钮实际是"退出登录并重连"，不是扫码 ——
-                    // 用二维码图标会让人以为还要扫一次。
-                    leading: Icon(
-                      LucideIcons.refreshCw,
-                      size: 20,
-                      color: PB.colors(context).accentBright,
-                    ),
-                    title: Text(
-                      s.t('settings.connect.rescan'),
-                      style: const TextStyle(fontSize: PB.fsSm),
-                    ),
-                    subtitle: Text(
-                      s.t('settings.connect.rescanSubtitle'),
-                      style: TextStyle(
-                        fontSize: PB.fsXxs,
-                        color: PB.textQuaternary,
-                      ),
-                    ),
-                    onTap: () async {
-                      await state.signOut();
-                      if (mounted) Navigator.pop(context);
-                    },
-                  ),
-                ),
-              ],
               const SizedBox(height: 14),
               _Hint(s.t('settings.connect.wifiHint')),
             ],

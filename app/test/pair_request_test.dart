@@ -105,6 +105,14 @@ void main() {
     expect(result.status, PairApprovalStatus.timeout);
   });
 
+  test('★ 等待上限要比服务端 TTL 长（先收到"已过期"才好提示）', () {
+    expect(kPairApprovalTimeout, greaterThan(kPairRequestTtl));
+    // 35s / 0.9s ≈ 39 轮：够密才有"立刻有反应"的体感
+    final rounds = kPairApprovalTimeout.inMilliseconds / kPairApprovalInterval.inMilliseconds;
+    expect(rounds, greaterThan(30));
+    expect(rounds, lessThan(60), reason: '轮询太密纯属浪费');
+  });
+
   group('PairRequestHost.fromJson', () {
     test('正常解析', () {
       final r = PairRequestHost.fromJson({

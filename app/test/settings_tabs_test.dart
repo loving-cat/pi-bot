@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pi_bot/models.dart';
@@ -104,6 +106,47 @@ void main() {
       expect(find.text('页面 1'), findsOneWidget);
       // 切换完成后旧内容必须消失（否则会叠在一起）
       expect(find.text('页面 0'), findsNothing);
+    });
+  });
+
+  // 标签与内容错位过一次：四个 tab 的文案是 连接 / 服务端 / 技能 / 应用连接 /
+  // 系统 / 高级，而 switch 分支把"系统"接到了应用连接的内容上 —— 点开"系统"
+  // 看到的是网站集成，还以为是权限页坏了。所以这里直接钉接线。
+  group('标签与内容对齐', () {
+    late String source;
+    setUpAll(() {
+      source = File('lib/screens/settings_screen.dart').readAsStringSync();
+    });
+
+    test('标签顺序固定（内容分支按下标取，顺序一变就全错位）', () {
+      final itemsStart = source.indexOf('static const _items');
+      final itemsEnd = source.indexOf('];', itemsStart);
+      final seg = source.substring(itemsStart, itemsEnd);
+      final keys = RegExp(r"labelKey: '([^']+)'")
+          .allMatches(seg)
+          .map((m) => m.group(1))
+          .toList();
+      expect(keys, [
+        'settings.tab.connect',
+        'settings.tab.server',
+        'settings.tab.skills',
+        'settings.tab.sites',
+        'settings.tab.system',
+        'settings.tab.advanced',
+      ]);
+    });
+
+    test('「系统」页给的是权限那几块（不是网站集成）', () {
+      expect(source.contains('4 => const ['), isTrue);
+      final branch = source.substring(source.indexOf('4 => const ['));
+      final body = branch.substring(0, branch.indexOf('],') + 2);
+      expect(body, contains('DesktopApprovalSection'));
+      expect(body, contains('GrantsSection'));
+      expect(body, isNot(contains('SitesSection')), reason: '网站集成不属于系统页');
+    });
+
+    test('网站集成归到「应用连接」页（和 MCP 一起）', () {
+      expect(source, contains('3 => const [McpSection(), SitesSection()]'));
     });
   });
 }

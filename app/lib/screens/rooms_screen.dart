@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../app_state.dart';
 import '../l10n/l10n.dart';
 import '../models.dart';
+import '../platform.dart';
 import '../scope.dart';
 import '../text_utils.dart';
 import '../theme.dart';
@@ -13,6 +14,7 @@ import '../widgets/toast.dart';
 import '../widgets/avatar_life.dart';
 import '../widgets/anchored_menu.dart';
 import '../widgets/create_group_dialog.dart';
+import 'pair_screen.dart';
 import '../widgets/theme_toggle_button.dart';
 import '../widgets/blob_avatar.dart';
 import '../widgets/floating_menu.dart';
@@ -232,6 +234,21 @@ class _RoomsScreenState extends State<RoomsScreen> {
                 onTap: () => _showCreateSheet(context),
               ),
             ),
+            // 手机端：直接在首页换电脑。
+            //
+            // 为什么放在这儿：手机一旦连上某台电脑，登录页就没了；电脑关机/换网络之后
+            // 用户想换一台，原来只能进设置翻（而且那页的入口当时还坏了）。
+            // 这是"我在连哪台"的最短路径 —— 一步打开附近的电脑列表。
+            if (isMobilePlatform) ...[
+              const SizedBox(width: 10),
+              _CircleIcon(
+                icon: LucideIcons.laptop,
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const PairScreen()),
+                ),
+              ),
+            ],
             const SizedBox(width: 10),
             _CircleIcon(
               icon: LucideIcons.settings,

@@ -96,8 +96,11 @@ class _SitesSectionState extends State<SitesSection> {
     );
   }
 
-  void _toast(BuildContext context, String text) {
-    toast(context, text, kind: ToastKind.error);
+  /// 提示。★ 默认 info，**不要默认 error**：这个函数原来写死
+  /// `ToastKind.error`，于是"连接成功""已添加""已删除"全都顶着红叉弹出来 ——
+  /// 用户以为失败了，其实早就成了。成功了就必须画对勾。
+  void _toast(BuildContext context, String text, {ToastKind kind = ToastKind.info}) {
+    toast(context, text, kind: kind);
   }
 
   Future<void> _deleteSite(
@@ -138,7 +141,11 @@ class _SitesSectionState extends State<SitesSection> {
     if (ok != true || !context.mounted) return;
     final err = await state.removeSite(site.id);
     if (!context.mounted) return;
-    _toast(context, err ?? strings.t('sites.removed'));
+    _toast(
+      context,
+      err ?? strings.t('sites.removed'),
+      kind: err == null ? ToastKind.success : ToastKind.error,
+    );
   }
 
   Future<void> _testSite(
@@ -157,6 +164,7 @@ class _SitesSectionState extends State<SitesSection> {
           : strings.tf('sites.connectFailed', {
               'reason': r['reason'] ?? strings.t('sites.unknownReason'),
             }),
+      kind: r['ok'] == true ? ToastKind.success : ToastKind.error,
     );
     await state.loadSites();
   }
@@ -223,12 +231,16 @@ class _SitesSectionState extends State<SitesSection> {
     final err = await state.bindSiteTeam(site.id, site.name);
     if (!context.mounted) return;
     if (err != null) {
-      _toast(context, err);
+      _toast(context, err, kind: ToastKind.error);
       return;
     }
     await state.loadSites();
     if (!context.mounted) return;
-    _toast(context, strings.tf('sites.teamCreated', {'name': site.name}));
+    _toast(
+      context,
+      strings.tf('sites.teamCreated', {'name': site.name}),
+      kind: ToastKind.success,
+    );
   }
 
   /// 添加系统：填 → 探测 → 保存
@@ -469,7 +481,7 @@ class _SitesSectionState extends State<SitesSection> {
     accField.dispose();
     pwdField.dispose();
     if (saved == true && context.mounted) {
-      _toast(context, strings.t('sites.added'));
+      _toast(context, strings.t('sites.added'), kind: ToastKind.success);
     }
   }
 }

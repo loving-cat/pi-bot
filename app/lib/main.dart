@@ -234,12 +234,22 @@ class _PiBotAppState extends State<PiBotApp> with WidgetsBindingObserver {
         .toList();
     if (next.isEmpty) return;
     final request = next.first;
+    // ★ 必须用 Navigator 的 context，不能用 State 的 context：
+    //   本 widget 的 build 返回的就是 MaterialApp，State.context 在它**之上**，
+    //   `showDialog(context: context)` 找不到 Navigator，直接抛异常 ——
+    //   表现就是"电脑端完全没有弹窗"，而服务端日志里一切正常。
+    final dialogContext = _navKey.currentContext;
+    if (dialogContext == null) {
+      // 界面还没挂上（启动瞬间），下一个 notify 再来
+      _promptedPairRequests.remove(request.id);
+      return;
+    }
     _promptedPairRequests.add(request.id);
     _pairDialogOpen = true;
     bool? allow;
     try {
       allow = await showDialog<bool>(
-        context: context,
+        context: dialogContext,
         barrierDismissible: false,
         builder: (_) => PairRequestDialog(
           request: request,
@@ -268,7 +278,10 @@ class _PiBotAppState extends State<PiBotApp> with WidgetsBindingObserver {
     if (!mounted || info == null) return;
     if (!shouldPromptUpdate(info, _state.skippedUpdateVersion)) return;
 
-    final choice = await showUpdateDialog(context, info);
+    // 同上：要用 Navigator 的 context，否则 showDialog 找不到 Navigator
+    final navContext = _navKey.currentContext;
+    if (navContext == null || !navContext.mounted) return;
+    final choice = await showUpdateDialog(navContext, info);
     if (!mounted) return;
 
     switch (choice) {

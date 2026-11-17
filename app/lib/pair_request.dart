@@ -9,6 +9,18 @@ import 'dart:async';
 
 import 'api.dart';
 
+/// 服务端的请求有效期（`server/src/pair-requests.js` 的 REQUEST_TTL_MS）。
+///
+/// 复制一份常量的原因：手机要在**服务端说"过期"之后**才决定放弃，
+/// 而不是先自己超时、让用户看到一句笼统的"等太久了"。
+const Duration kPairRequestTtl = Duration(seconds: 30);
+
+/// 手机端最多等多久。比 TTL 长 5 秒：多等一轮轮询，好让"已过期"这个明确状态先到。
+const Duration kPairApprovalTimeout = Duration(seconds: 35);
+
+/// 轮询间隔。900ms 够快（人点完允许，手机上几乎立刻有反应），又不至于打满网络。
+const Duration kPairApprovalInterval = Duration(milliseconds: 900);
+
 /// 电脑上"待批"的一条请求（手机端不用管，桌面 App 用它弹窗）。
 class PairRequestHost {
   const PairRequestHost({
@@ -93,8 +105,8 @@ class PairRequestTicket {
 /// 不抛异常：等不到（拒绝/过期/超时/网络断）都由 status 说明，界面照它渲染。
 Future<PairApprovalResult> awaitApproval({
   required PairRequestTicket ticket,
-  Duration interval = const Duration(milliseconds: 900),
-  Duration timeout = const Duration(seconds: 65),
+  Duration interval = kPairApprovalInterval,
+  Duration timeout = kPairApprovalTimeout,
   Future<Map<String, dynamic>> Function(String baseUrl, String id)? statusOf,
   Future<void> Function(Duration)? sleep,
 }) async {
