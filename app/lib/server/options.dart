@@ -34,10 +34,14 @@ class ServerLaunchOptions {
   /// 偏好端口被占用时桌面端会换一个空闲端口启动，
   /// 环境变量必须传实际端口，否则服务端会去抢那个被占的端口然后退出。
   /// 注意：[port] 字段始终是用户的偏好值，不会被这次换端口改掉。
-  Map<String, String> envForPort(int actualPort) => {
-    'PI_BOT_PORT': '$actualPort',
-    if (data.isNotEmpty) 'PI_BOT_HOME': data,
-  };
+  Map<String, String> envForPort(int actualPort, {int? tlsPort}) => {
+        'PI_BOT_PORT': '$actualPort',
+        // ★ 加密监听是独立的一条腿（手机走它）。和 HTTP 端口一样，
+        //   由桌面端先探好再告诉服务端 —— 否则 8443 被占时服务端只会
+        //   打个警告退回明文，用户不会知道手机那条链路没加密。
+        if (tlsPort != null && tlsPort > 0) 'PI_BOT_TLS_PORT': '$tlsPort',
+        if (data.isNotEmpty) 'PI_BOT_HOME': data,
+      };
 
   @override
   bool operator ==(Object other) =>

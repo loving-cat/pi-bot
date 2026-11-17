@@ -29,6 +29,14 @@ import 'locate.dart';
 /// 再多就说明机器上有别的问题，继续往后扫只会让用户等更久。
 const int kMaxPortProbeAttempts = 20;
 
+/// 加密监听（HTTPS + WSS）的默认端口，与服务端 `config.tlsPort` 一致。
+///
+/// 手机走这条（见 docs/ANDROID.md）。桌面上是**独立**于 HTTP 端口的一条腿，
+/// 所以它也要自己挑空闲口：8443 被别的程序占着时，服务端会打个警告退回明文，
+/// 手机就只能连未加密的 http —— 与其让用户事后才发现"原来一直没加密"，
+/// 不如启动时就换一个能用的。
+const int kDefaultTlsPort = 8443;
+
 /// 一次端口选择的结果。
 class PortChoice {
   const PortChoice({
@@ -119,6 +127,28 @@ Future<PortProbeKind> probePort(
 /// - 全都不可用 → 返回带 problem 的结果（调用方据此给出可读失败原因）。
 ///
 /// 注意：**邻口上的 pi-bot 不复用**，继续往后找 —— 只信任偏好端口那一个实例。
+/// 从 [preferred] 起挑一个**空闲**端口（不复用邻口的 pi-bot）。
+///
+/// 给"加密监听"用：那条腿没有复用语义 —— 邻口上就算有别的 pi-bot，
+/// 我们也必须自己绑一个新的，不能把手机的加密连接指到别的实例上。
+///
+/// @returns 空闲端口；一个都没找到时返回 null（调用方让服务端用默认值即可，
+///          加密起不来只是降级，不该拦住整个启动流程）。
+Future<int?> chooseFreePort(
+  int preferred, {
+  int maxAttempts = kMaxPortProbeAttempts,
+  Future<PortProbeKind> Function(int port)? probe,
+}) async {
+  final check = probe ?? probePort;
+  for (var i = 0; i <= maxAttempts; i++) {
+    final candidate = preferred + i;
+    if (candidate > 65535) break;
+    // 只认 free：piBot / occupied / blocked 全跳过
+    if (await check(candidate) == PortProbeKind.free) return candidate;
+  }
+  return null;
+}
+
 Future<PortChoice> choosePort(
   int preferred, {
   int maxAttempts = kMaxPortProbeAttempts,

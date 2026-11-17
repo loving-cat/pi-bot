@@ -148,4 +148,60 @@ void main() {
       expect(r.notice, isNull);
     });
   });
+
+  group('加密监听端口（chooseFreePort）', () {
+    test('偏好端口空着 → 就用它', () async {
+      expect(await chooseFreePort(8443, probe: (p) async => PortProbeKind.free), 8443);
+    });
+
+    test('★ 被占用 → 往后找第一个空闲的', () async {
+      final port = await chooseFreePort(
+        8443,
+        probe: (p) async => p == 8443 ? PortProbeKind.occupied : PortProbeKind.free,
+      );
+      expect(port, 8444);
+    });
+
+    test('★ 邻口是别的 pi-bot 也跳过（加密腿不复用别人的实例）', () async {
+      final port = await chooseFreePort(
+        8443,
+        probe: (p) async {
+          if (p == 8443) return PortProbeKind.occupied;
+          if (p == 8444) return PortProbeKind.piBot;
+          return PortProbeKind.free;
+        },
+      );
+      expect(port, 8445, reason: '不能把手机的加密连接指到别的实例上');
+    });
+
+    test('全都被占 → 返回 null（服务端按自己的降级逻辑走，不拦启动）', () async {
+      expect(
+        await chooseFreePort(8443, maxAttempts: 3, probe: (p) async => PortProbeKind.occupied),
+        isNull,
+      );
+    });
+
+    test('没权限的端口也跳过', () async {
+      expect(
+        await chooseFreePort(
+          8443,
+          probe: (p) async => p == 8443 ? PortProbeKind.blocked : PortProbeKind.free,
+        ),
+        8444,
+      );
+    });
+
+    test('探测次数不超过上限', () async {
+      var calls = 0;
+      await chooseFreePort(
+        8443,
+        maxAttempts: 5,
+        probe: (p) async {
+          calls += 1;
+          return PortProbeKind.occupied;
+        },
+      );
+      expect(calls, lessThanOrEqualTo(6), reason: '偏好端口 + maxAttempts 个');
+    });
+  });
 }

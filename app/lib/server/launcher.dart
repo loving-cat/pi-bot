@@ -213,6 +213,19 @@ class LocalServerLauncher {
       }
       if (choice.notice != null) log.note(choice.notice!);
 
+      // ★ 加密监听（手机连这条）也自己挑端口。
+      //
+      //   服务端在 8443 上绑不上时只是打警告、退回明文 http —— 不拦启动，
+      //   但手机那条链路就悄悄没加密了。桌面端先探一个空闲口传下去，
+      //   用户的手机才能一直走 https。
+      //   挑不到（全被占）就传 null，服务端用默认值、按它自己的降级逻辑走。
+      final tlsPort = await chooseFreePort(kDefaultTlsPort);
+      if (tlsPort == null) {
+        log.note('加密端口 $kDefaultTlsPort 附近都不可用 —— 手机将回退到明文连接');
+      } else if (tlsPort != kDefaultTlsPort) {
+        log.note('加密端口 $kDefaultTlsPort 被占用，改用 $tlsPort');
+      }
+
       var lastTriedPort = choice.port;
       for (var attempt = 1; attempt <= 2; attempt++) {
         final port = choice.port;
@@ -222,7 +235,7 @@ class LocalServerLauncher {
           entryPath: _entryPath!,
           serverDir: serverDirectory,
           logPath: log.path,
-          extraEnv: options.envForPort(port),
+          extraEnv: options.envForPort(port, tlsPort: tlsPort),
         );
         _serverProcess = proc;
         // 启动器自己的输出很短（就一行 pid），读干净就好
