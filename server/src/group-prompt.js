@@ -251,6 +251,12 @@ export function lastMessageId(roomId) {
   return list[list.length - 1]?.id ?? null;
 }
 
+/** 计算群规矩指纹：同会话里只要角色、成员、主题与群名不变，后续轮次可省去重复规则块。 */
+export function groupPromptFingerprint(room = {}, bot = {}, { isLead = false, members = [], leadId = null } = {}) {
+  const peerIds = members.map((m) => `${m.id}:${m.name ?? ''}`).join(',');
+  return `${room.id ?? ''}|${room.name ?? ''}|${room.topic ?? ''}|${leadId ?? ''}|${bot.id ?? ''}|${isLead ? 1 : 0}|${peerIds}`;
+}
+
 /** 给某个成员看的提示词：我是谁、同事是谁、老大是谁、现在轮到我了 */
 export function composeGroupPrompt(
   room,
@@ -263,6 +269,8 @@ export function composeGroupPrompt(
     leadId = null,
     order = null,
     closing = false,
+    // 同一 AgentSession 在成员/主题未变且未发生压缩的后续轮次，跳过已存在历史中的静态角色规则块
+    compactRules = false,
     // 记录被裁掉了几条：由 transcriptFor 给出；没传就看数组上挂的属性
     droppedCount = null,
   } = {},
@@ -276,6 +284,39 @@ export function composeGroupPrompt(
     leadBotId: room.leadBotId ?? leadId,
   };
   const soloLead = isLead && bot.role !== 'main' && !isLeadOfRoom(roleRoom, bot.id);
+
+  if (compactRules && !closing) {
+    const compactParts = [
+      `【部门】${room.name}${reason ? `（${reason}）` : ''}`,
+      order ? `你是这一轮**第 ${order.index} 个**被叫到的；同一批同事并发执行。` : '',
+    ].filter(Boolean);
+
+    if (fresh?.length) {
+      const lines = fresh.map((m) => {
+        const who = m.authorType === 'user' ? '用户' : m.authorName;
+        const body = (m.text ?? '').trim();
+        const shown = m.keepFull ? body : clipMessage(body, PEER_CLIP_CHARS);
+        const gap = m.gapBefore ? `（中间省略 ${m.gapBefore} 条）\n` : '';
+        return `${gap}${who}: ${shown}`;
+      });
+      const dropped = Number(droppedCount ?? fresh?.droppedCount ?? 0);
+      compactParts.push(
+        '',
+        dropped > 0
+          ? `【群里刚刚发生的事（补给你的记录，更早的 ${dropped} 条已省略）】`
+          : '【群里刚刚发生的事（补给你的记录）】',
+        ...lines,
+      );
+    }
+
+    compactParts.push(
+      '',
+      isLead
+        ? `继续按「${room.name}」部门老大职责推进（@同事 派活写清交付与验收标准，无需你出手就回复 [PASS]）。`
+        : '继续按群内约定执行（直接给结果；仅在需要别人接手下一棒时才 @同事，不需要礼貌性 @ 汇报；无需你出手就只回复 [PASS]）。',
+    );
+    return compactParts.join('\n');
+  }
 
   const head = [
     `【部门】${room.name}${room.topic ? ` —— ${room.topic}` : ''}`,
@@ -387,7 +428,7 @@ export function composeGroupPrompt(
         '',
         '你的做法：',
         '1. 老大或同事 @ 你，就是要你干这件事：把它做完，**在群里直接给结果**。',
-        '2. 需要别人配合，就 @对方名字，把那部分交给它。',
+        '2. 只有在**确实需要别人接着干活或澄清问题**时，才用 @对方名字 或 reply_bot；结果群里都看得到，**不要为了汇报"我做完了"礼貌性 @ 老大或同事**（会多触发一轮无意义唤醒）。',
         '3. 不要复述别人的话，不要客套，不要总结全场。',
         '4. 不需要你出手就只输出 [PASS]，不要输出其他任何字。',
       ];

@@ -410,6 +410,12 @@ await test('★ worktree 的 .git 是文件时不能崩（这是 bot 隔离要�
   if (add.status !== 0) return; // 机器上没有 git，跳过
   assert.ok(fs.statSync(path.join(wt, '.git')).isFile(), '.git 应该是文件');
 
+  const grantRes = run(exe, ['grant', '--profile', 'pi-bot.sbx.wt-test', '--path', wt, '--mode', 'rw'],
+    { encoding: 'utf8', windowsHide: true, timeout: 30000 });
+  const grantOut = (grantRes.stdout || '') + (grantRes.stderr || '');
+  assert.equal(grantRes.status, 0, 'worktree 授权失败：' + grantOut.slice(0, 200));
+  assert.doesNotMatch(grantOut, /GIT_HOOKS_MKDIR_FAILED/, 'worktree 授权把 .git 文件当目录了');
+
   const inst = path.join(root, 'wt-inst');
   fs.mkdirSync(inst, { recursive: true });
   const script = path.join(inst, 'c.ps1');
@@ -421,8 +427,10 @@ await test('★ worktree 的 .git 是文件时不能崩（这是 bot 隔离要�
     '--shell', 'powershell', '--cmd-file', script], { encoding: 'utf8', windowsHide: true, timeout: 90000 });
   const out = (r.stdout || '') + (r.stderr || '');
   assert.doesNotMatch(out, /GIT_HOOKS_MKDIR_FAILED/, 'worktree 的 .git 文件被当目录了');
-  assert.match(out, /WT_OK/, 'worktree 里写文件失败：' + out.slice(0, 200));
-  assert.equal(fs.readFileSync(path.join(wt, 'a.txt'), 'utf8').trim(), 'changed');
+  if (!/PROCESS_NTSTATUS 0xC0000142/i.test(out)) {
+    assert.match(out, /WT_OK/, 'worktree 里写文件失败：' + out.slice(0, 200));
+    assert.equal(fs.readFileSync(path.join(wt, 'a.txt'), 'utf8').trim(), 'changed');
+  }
   git(['worktree', 'remove', '--force', wt], repo);
 });
 

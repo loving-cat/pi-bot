@@ -36,10 +36,13 @@ import '../widgets/update_prompt.dart';
 
 /// 设置页。
 ///
-/// 桌面端在这里「展示」二维码给手机扫（PC 是宿主，不需要自己去配对）。
-/// 手机端在这里能看到自己连的是哪台机器，也能断开重配。
+/// 桌面端（宿主）展示服务端配置、模型、技能、应用连接与本机配对码；
+/// 手机端（远程终端）隔离宿主运维项，保留连接与设备、权限与安全、通知与偏好。
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key});
+  const SettingsScreen({super.key, this.hostOverride});
+
+  /// 仅用于测试在不同平台视口下预览/校验手机端与桌面端隔离布局。
+  final bool? hostOverride;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -48,15 +51,20 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   Timer? _ticker;
 
+  bool get _isHost => widget.hostOverride ?? isHostPlatform;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       AppScope.read(context).loadPairingInfo();
     });
-    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() {});
-    });
+    if (_isHost) {
+      _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted) setState(() {});
+      });
+    }
   }
 
   /// 当前选中的标签页
@@ -71,6 +79,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
+    final host = _isHost;
 
     return Scaffold(
       backgroundColor: PB.bgApp,
@@ -95,11 +104,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       body: Center(
         child: ConstrainedBox(
-          constraints: BoxConstraints(maxWidth: _tab == 3 ? 980 : 680),
+          constraints: BoxConstraints(maxWidth: (host && _tab == 3) ? 980 : 680),
           child: Column(
             children: [
               _SettingsTabs(
                 index: _tab,
+                isHost: host,
                 onChanged: (i) => setState(() => _tab = i),
               ),
               Expanded(
@@ -119,25 +129,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     );
                   },
                   child: ListView(
-                    key: ValueKey<int>(_tab),
+                    key: ValueKey<String>('${host ? 'host' : 'mobile'}-$_tab'),
                     padding: const EdgeInsets.fromLTRB(14, 6, 14, 40),
-                    children: switch (_tab) {
-                      0 => _connectTab,
-                      1 => _serverTab,
-                      2 => const [SkillsLibrarySection(), LessonsSection()],
-                      // 应用连接 = 跟外部系统对接：MCP 服务 + 网站/团队。
-                      // 这两块原来被拆在"应用连接"和"系统"两个 tab 里，
-                      // 于是"系统"页打开的是应用连接的内容 —— 标签和内容对不上。
-                      3 => const [McpSection(), SitesSection()],
-                      // 系统页：谁能动什么。规格 §11「用户始终可以接管、取消、收回授权」——
-                      // 看不到有哪些授权，就等于收不回。
-                      4 => const [
-                        DesktopApprovalSection(),
-                        GrantsSection(),
-                        GrantAuditSection(),
-                      ],
-                      _ => _advancedTab,
-                    },
+                    children: host
+                        ? switch (_tab) {
+                            0 => _connectTab,
+                            1 => _serverTab,
+                            2 => const [SkillsLibrarySection(), LessonsSection()],
+                            3 => const [McpSection(), SitesSection()],
+                            4 => const [
+                              DesktopApprovalSection(),
+                              GrantsSection(),
+                              GrantAuditSection(),
+                            ],
+                            _ => _advancedTab,
+                          }
+                        : switch (_tab) {
+                            0 => _mobileConnectTab,
+                            1 => const [GrantsSection(), GrantAuditSection()],
+                            _ => _mobilePrefsTab,
+                          },
                   ),
                 ),
               ),
@@ -309,8 +320,78 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ],
           ),
         ),
-      ] else
+      ] else if (isHostPlatform)
         _Card(child: _Hint(s.t('settings.connect.fixedTokenHint'))),
+    ];
+  }
+
+  /// 手机端标签一：连接与设备（隔离所有 PC 宿主管理与本机路径项）
+  List<Widget> get _mobileConnectTab {
+    final state = AppScope.read(context);
+    return [
+      const SizedBox(height: 8),
+      const MobileConnectSection(showDisconnect: true),
+      const SizedBox(height: 18),
+      _MobileDevicesCard(state: state),
+    ];
+  }
+
+  /// 手机端标签三：通知与偏好
+  List<Widget> get _mobilePrefsTab {
+    final s = L10n.s(context);
+    return [
+      const SizedBox(height: 8),
+      _SectionTitle(
+        icon: LucideIcons.bellRing,
+        title: s.t('settings.notify.title'),
+        subtitle: s.t('settings.notify.subtitle'),
+      ),
+      _Card(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              s.t('settings.notify.hint'),
+              style: TextStyle(
+                fontSize: PB.fsXxs,
+                color: PB.textQuaternary,
+                height: 1.5,
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () async {
+                  await Notifier.init();
+                  await Notifier.show(
+                    title: s.t('settings.notify.testTitle'),
+                    body: s.t('settings.notify.testBody'),
+                    roomId: null,
+                  );
+                },
+                icon: const Icon(LucideIcons.bellRing, size: 16),
+                label: Text(s.t('settings.notify.testButton')),
+              ),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () => Native.requestIgnoreBatteryOptimizations(),
+                icon: const Icon(LucideIcons.batteryCharging, size: 16),
+                label: Text(s.t('settings.notify.batteryButton')),
+              ),
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 18),
+      const UserNameSection(),
+      const SizedBox(height: 18),
+      const _AppearanceCard(),
+      const SizedBox(height: 12),
+      const LanguageCard(),
     ];
   }
 
@@ -567,12 +648,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
 /// 标签数量会随功能增长（连接 / 服务端 / 技能 / 系统 / 高级），
 /// 所以整条做成可横向滚动，窄窗口下不会溢出。
 class _SettingsTabs extends StatelessWidget {
-  const _SettingsTabs({required this.index, required this.onChanged});
+  const _SettingsTabs({
+    required this.index,
+    required this.onChanged,
+    this.isHost = true,
+  });
 
   final int index;
   final ValueChanged<int> onChanged;
+  final bool isHost;
 
-  /// 标签图标与文案 key，顺序与 _SettingsScreenState._tab 一致。
+  /// 桌面端标签图标与文案 key，顺序与 _SettingsScreenState._tab 一致。
   static const _items = <({IconData icon, String labelKey})>[
     (icon: LucideIcons.smartphone, labelKey: 'settings.tab.connect'),
     (icon: LucideIcons.server, labelKey: 'settings.tab.server'),
@@ -581,21 +667,30 @@ class _SettingsTabs extends StatelessWidget {
     (icon: LucideIcons.network, labelKey: 'settings.tab.system'),
     (icon: LucideIcons.slidersHorizontal, labelKey: 'settings.tab.advanced'),
   ];
+
+  /// 手机端专用精简标签：连接与设备 / 权限与安全 / 通知与偏好。
+  static const _mobileItems = <({IconData icon, String labelKey})>[
+    (icon: LucideIcons.smartphone, labelKey: 'settings.mobile.tab.connect'),
+    (icon: LucideIcons.shieldCheck, labelKey: 'settings.mobile.tab.security'),
+    (icon: LucideIcons.slidersHorizontal, labelKey: 'settings.mobile.tab.prefs'),
+  ];
+
   @override
   Widget build(BuildContext context) {
     final s = L10n.s(context);
+    final items = isHost ? _items : _mobileItems;
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 4, 14, 10),
-      // 可横向滚动：手机或窄窗口下五个标签排不下时不会溢出（Row 会报 RenderFlex overflow）
+      // 可横向滚动：手机或窄窗口下排不下时不会溢出
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: Row(
           children: [
-            for (var i = 0; i < _items.length; i++) ...[
+            for (var i = 0; i < items.length; i++) ...[
               if (i > 0) const SizedBox(width: 6),
               _TabPill(
-                icon: _items[i].icon,
-                label: s.t(_items[i].labelKey),
+                icon: items[i].icon,
+                label: s.t(items[i].labelKey),
                 selected: i == index,
                 onTap: () => onChanged(i),
               ),
@@ -897,6 +992,176 @@ class _InfoRow extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _MobileDevicesCard extends StatelessWidget {
+  const _MobileDevicesCard({required this.state});
+
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = L10n.s(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _SectionTitle(
+          icon: LucideIcons.monitorSmartphone,
+          title: s.t('settings.devices.pairedList'),
+        ),
+        _Card(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    LucideIcons.smartphone,
+                    size: 15,
+                    color: PB.colors(context).accentBright,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    s.t('settings.devices.thisPhone'),
+                    style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      state.deviceName,
+                      textAlign: TextAlign.end,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: PB.fsSm,
+                        fontWeight: FontWeight.w500,
+                        color: PB.textPrimary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              if (state.devices.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Divider(height: 1, color: PB.borderTertiary),
+                const SizedBox(height: 8),
+                for (final d in state.devices)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(
+                      children: [
+                        Icon(
+                          LucideIcons.monitorSmartphone,
+                          size: 15,
+                          color: PB.textTertiary,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '${d['name']}',
+                                style: TextStyle(
+                                  fontSize: PB.fsSm,
+                                  color: PB.textPrimary,
+                                ),
+                              ),
+                              Text(
+                                s.tf('settings.server.lastSeen', {
+                                  'time': formatTime(
+                                    (d['lastSeenAt'] as num?)?.toInt() ?? 0,
+                                  ),
+                                }),
+                                style: TextStyle(
+                                  fontSize: PB.fsXxs,
+                                  color: PB.textQuaternary,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () => state.revokeDevice('${d['id']}'),
+                          child: Text(
+                            s.t('common.remove'),
+                            style: TextStyle(
+                              color: PB.danger,
+                              fontSize: PB.fsXs,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _AppearanceCard extends StatelessWidget {
+  const _AppearanceCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final s = L10n.s(context);
+    return ValueListenableBuilder<PBColorMode>(
+      valueListenable: pbColorMode,
+      builder: (context, mode, _) => Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: PB.bgBubble,
+          borderRadius: BorderRadius.circular(PB.rLg),
+          border: Border.all(color: PB.borderSecondary),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  mode == PBColorMode.light
+                      ? LucideIcons.sun
+                      : LucideIcons.moon,
+                  size: 18,
+                  color: PB.textSecondary,
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  s.t('settings.appearance'),
+                  style: const TextStyle(fontSize: PB.fsSm),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ChoiceChip(
+                  key: const ValueKey('appearance-dark'),
+                  label: Text(s.t('settings.appearance.dark')),
+                  selected: mode == PBColorMode.dark,
+                  onSelected: (_) => saveColorMode(PBColorMode.dark),
+                ),
+                ChoiceChip(
+                  key: const ValueKey('appearance-light'),
+                  label: Text(s.t('settings.appearance.light')),
+                  selected: mode == PBColorMode.light,
+                  onSelected: (_) => saveColorMode(PBColorMode.light),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -113,3 +113,15 @@ export function rotateCursor(cursor, endpointCount) {
   const count = Math.max(1, Number(endpointCount) || 1);
   return ((Math.floor(Number(cursor) || 0) + 1) % count + count) % count;
 }
+
+/** 从当前端点的下一条开始，挑选第一个健康的备用端点索引；都不健康返回 null。 */
+export function pickHealthyEndpoint(endpointCount, current = 0, isHealthy = () => true) {
+  const count = Number(endpointCount) || 0;
+  if (count <= 1) return null;
+  const start = ((Math.floor(Number(current) || 0) % count) + count) % count;
+  for (let offset = 1; offset < count; offset++) {
+    const candidate = (start + offset) % count;
+    if (isHealthy(candidate)) return candidate;
+  }
+  return null;
+}

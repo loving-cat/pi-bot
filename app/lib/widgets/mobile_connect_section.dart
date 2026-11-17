@@ -2,23 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../l10n/l10n.dart';
+import '../models.dart';
 import '../scope.dart';
 import '../theme.dart';
 import '../screens/pair_screen.dart';
 
-/// 手机端「连接」页：我连的是哪台电脑 / 是不是加密 / 怎么换一台。
-///
-/// ## 为什么单独一个 widget（而不是塞在 settings_screen 里）
-///
-/// 它原来就埋在 settings_screen 的 `_connectTab` 里，而且**嵌在宿主端的条件内**
-/// （`if (isHostPlatform && pairing != null)`）—— 那个条件对手机恒为 false，
-/// 于是这一整块从来没渲染过。表现是：手机连上电脑之后，设置里既看不到
-/// "我连的是哪台"，也没有"换一台电脑"的入口，用户只能卸载重装清数据。
-///
-/// 抽成独立 widget 之后可以单独 pump 起来测（见 test/mobile_connect_section_test.dart），
-/// 而不是依赖"在真机上点一遍"才发现它没显示。
+/// 手机端「连接与设备」面板：连接状态、主机摘要、切换电脑与重新配对。
 class MobileConnectSection extends StatelessWidget {
-  const MobileConnectSection({super.key});
+  const MobileConnectSection({super.key, this.showDisconnect = false});
+
+  final bool showDisconnect;
 
   @override
   Widget build(BuildContext context) {
@@ -26,12 +19,25 @@ class MobileConnectSection extends StatelessWidget {
     final state = AppScope.of(context);
     final accent = PB.colors(context).accentBright;
     final encrypted = state.serverFingerprint.isNotEmpty;
+    final info = state.serverInfo;
+
+    final (statusColor, statusLabel) = switch (state.link) {
+      LinkState.online => (PB.success, s.t('settings.connect.statusOnline')),
+      LinkState.connecting => (
+        PB.warn,
+        s.t('settings.connect.statusConnecting'),
+      ),
+      LinkState.offline => (
+        PB.textQuaternary,
+        s.t('settings.connect.statusOffline'),
+      ),
+    };
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Container(
-          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+          padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
           decoration: BoxDecoration(
             color: PB.bgPane,
             borderRadius: BorderRadius.circular(PB.rXl),
@@ -40,80 +46,157 @@ class MobileConnectSection extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                s.t('settings.connect.connectedServer'),
-                style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
-              ),
-              const SizedBox(height: 6),
               Row(
                 children: [
                   Expanded(
                     child: Text(
-                      state.serverUrl ?? s.t('settings.connect.unknownServer'),
-                      style: TextStyle(
-                        fontFamily: PB.monoFamily,
-                        fontFamilyFallback: PB.monoFallback,
-                        fontSize: PB.fsSm,
-                        color: PB.textPrimary,
-                      ),
+                      s.t('settings.connect.connectedServer'),
+                      style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
                     ),
                   ),
-                  Icon(
-                    LucideIcons.smartphone,
-                    size: 16,
-                    color: PB.textQuaternary,
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: statusColor.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 6,
+                          height: 6,
+                          decoration: BoxDecoration(
+                            color: statusColor,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 5),
+                        Text(
+                          statusLabel,
+                          style: TextStyle(
+                            fontSize: PB.fsXxs,
+                            fontWeight: FontWeight.w500,
+                            color: statusColor,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
               const SizedBox(height: 8),
-              // 加密状态要显式写出来：用户有权知道"这条链路是不是明文"。
+              Text(
+                state.serverUrl ?? s.t('settings.connect.unknownServer'),
+                style: TextStyle(
+                  fontFamily: PB.monoFamily,
+                  fontFamilyFallback: PB.monoFallback,
+                  fontSize: PB.fsSm,
+                  fontWeight: FontWeight.w600,
+                  color: PB.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        encrypted ? LucideIcons.lock : LucideIcons.lockOpen,
+                        size: 13,
+                        color: encrypted ? accent : PB.danger,
+                      ),
+                      const SizedBox(width: 5),
+                      Text(
+                        encrypted
+                            ? s.t('settings.connect.tlsOn')
+                            : s.t('settings.connect.tlsOff'),
+                        style: TextStyle(
+                          fontSize: PB.fsXxs,
+                          color: encrypted ? PB.textSecondary : PB.danger,
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (state.fingerprintCode6.isNotEmpty)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: PB.bgBubble,
+                        borderRadius: BorderRadius.circular(PB.rSm),
+                        border: Border.all(color: PB.borderSecondary),
+                      ),
+                      child: Text(
+                        s.tf('settings.connect.tlsCode', {
+                          'code': state.fingerprintCode6,
+                        }),
+                        style: TextStyle(
+                          fontFamily: PB.monoFamily,
+                          fontFamilyFallback: PB.monoFallback,
+                          fontSize: PB.fsXxs,
+                          color: PB.textSecondary,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              if (info != null) ...[
+                const SizedBox(height: 12),
+                Divider(height: 1, color: PB.borderTertiary),
+                const SizedBox(height: 10),
+                if (info.hostname.isNotEmpty)
+                  _CompactMetaRow(
+                    label: s.t('settings.server.hostname'),
+                    value: info.hostname,
+                  ),
+                if ((info.model ?? '').isNotEmpty)
+                  _CompactMetaRow(
+                    label: s.t('settings.server.model'),
+                    value: info.model!,
+                  ),
+                if (info.version.isNotEmpty)
+                  _CompactMetaRow(
+                    label: s.t('settings.server.version'),
+                    value: info.version,
+                  ),
+              ],
+              const SizedBox(height: 10),
               Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Icon(
-                    encrypted ? LucideIcons.lock : LucideIcons.lockOpen,
+                    LucideIcons.messageSquare,
                     size: 13,
-                    color: encrypted ? accent : PB.danger,
+                    color: PB.textQuaternary,
                   ),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
-                      encrypted
-                          ? s.t('settings.connect.tlsOn')
-                          : s.t('settings.connect.tlsOff'),
+                      s.t('settings.connect.chatManageHint'),
                       style: TextStyle(
                         fontSize: PB.fsXxs,
-                        color: encrypted ? PB.textTertiary : PB.danger,
+                        color: PB.textQuaternary,
+                        height: 1.4,
                       ),
                     ),
                   ),
                 ],
               ),
-              if (state.fingerprintCode6.isNotEmpty) ...[
-                const SizedBox(height: 6),
-                Text(
-                  s.tf('settings.connect.tlsCode', {'code': state.fingerprintCode6}),
-                  style: TextStyle(
-                    fontSize: PB.fsXxs,
-                    color: PB.textQuaternary,
-                    height: 1.5,
-                  ),
-                ),
-              ],
-              const SizedBox(height: 8),
-              Text(
-                s.t('settings.connect.remoteHint'),
-                style: TextStyle(
-                  fontSize: PB.fsXxs,
-                  color: PB.textQuaternary,
-                  height: 1.6,
-                ),
-              ),
             ],
           ),
         ),
-        const SizedBox(height: 10),
-        // ★ 用 Material 而不是 Container 包 ListTile：带背景色的 DecoratedBox
-        //   会挡住 ListTile 的水波纹（debug 模式直接断言报错）。
+        const SizedBox(height: 12),
+        // ★ 用 Material 而不是 Container 包 ListTile：防止水波纹断言报错。
         Material(
           color: PB.bgPane,
           clipBehavior: Clip.antiAlias,
@@ -121,35 +204,100 @@ class MobileConnectSection extends StatelessWidget {
             borderRadius: BorderRadius.circular(PB.rXl),
             side: BorderSide(color: PB.borderTertiary),
           ),
-          child: ListTile(
-            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-            // 这个按钮不是扫码 —— 它打开的是"附近的电脑"那一页。
-            leading: Icon(LucideIcons.laptop, size: 20, color: accent),
-            title: Text(
-              s.t('settings.connect.rescan'),
-              style: const TextStyle(fontSize: PB.fsSm),
-            ),
-            subtitle: Text(
-              s.t('settings.connect.rescanSubtitle'),
-              style: TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
-            ),
-            // ★ 直接打开配对页，**不先 signOut**：原来先断开再回登录页，
-            //   中途想反悔时原来那台已经下线了，还得重新连一次。
-            //   现在新电脑连上了才替换，没连上就原样返回。
-            onTap: () async {
-              final before = state.serverUrl;
-              await Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const PairScreen()),
-              );
-              if (!context.mounted) return;
-              if (state.serverUrl != null && state.serverUrl != before) {
-                // 换成功：设置页压在主界面上，退回去看新电脑的会话
-                Navigator.of(context).maybePop();
-              }
-            },
+          child: Column(
+            children: [
+              ListTile(
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 2,
+                ),
+                leading: Icon(LucideIcons.laptop, size: 19, color: accent),
+                title: Text(
+                  s.t('settings.connect.rescan'),
+                  style: const TextStyle(fontSize: PB.fsSm),
+                ),
+                subtitle: Text(
+                  s.t('settings.connect.rescanSubtitle'),
+                  style: TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
+                ),
+                // 直接打开配对页，不先断开：新电脑连上后才替换。
+                onTap: () async {
+                  final before = state.serverUrl;
+                  await Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const PairScreen()),
+                  );
+                  if (!context.mounted) return;
+                  if (state.serverUrl != null && state.serverUrl != before) {
+                    Navigator.of(context).maybePop();
+                  }
+                },
+              ),
+              if (showDisconnect) ...[
+                Divider(height: 1, color: PB.borderTertiary),
+                ListTile(
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 2,
+                  ),
+                  leading: Icon(
+                    LucideIcons.unlink,
+                    size: 18,
+                    color: PB.danger,
+                  ),
+                  title: Text(
+                    s.t('settings.actions.repair'),
+                    style: TextStyle(fontSize: PB.fsSm, color: PB.danger),
+                  ),
+                  onTap: () async {
+                    await state.signOut();
+                    if (context.mounted) {
+                      Navigator.of(context).maybePop();
+                    }
+                  },
+                ),
+              ],
+            ],
           ),
         ),
       ],
+    );
+  }
+}
+
+class _CompactMetaRow extends StatelessWidget {
+  const _CompactMetaRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 56,
+            child: Text(
+              label,
+              style: TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontFamily: PB.monoFamily,
+                fontFamilyFallback: PB.monoFallback,
+                fontSize: PB.fsXxs,
+                color: PB.textSecondary,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

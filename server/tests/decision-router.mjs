@@ -9,6 +9,8 @@ import {
   decide,
   shouldAskShouldReply,
   interpretShouldReply,
+  jevStats,
+  resetJevState,
 } from '../src/decision-router.js';
 import {
   classifyFailure,
@@ -380,4 +382,32 @@ test('validate 也挡住非布尔：双层防护', () => {
   assert.equal(POINTS['should-reply'].validate({ shouldReply: false }), true);
   assert.equal(POINTS['should-reply'].validate({ shouldReply: 'yes' }), false);
   assert.equal(POINTS['should-reply'].validate({}), false);
+});
+
+test('★ Jev 连续 401 触发熔断冷却（不阻塞聊天），换 key 立刻恢复', async () => {
+  resetJevState();
+  let calls = 0;
+  const badAuthFetch = async () => {
+    calls++;
+    return stubFetch(401, { message: 'bad key' })();
+  };
+  await decide('assign-model', { task: 'x' }, ON, { fetchImpl: badAuthFetch });
+  await decide('assign-model', { task: 'x' }, ON, { fetchImpl: badAuthFetch });
+  assert.equal(calls, 2);
+
+  // 第 3 次：仍在冷却期内，不发网络请求直接 fallback
+  const third = await decide('assign-model', { task: 'x' }, ON, { fetchImpl: badAuthFetch });
+  assert.equal(calls, 2, '熔断期间不得继续发网络请求');
+  assert.equal(third.ok, false);
+  assert.equal(third.source, 'fallback');
+  assert.match(third.why, /冷却中/);
+
+  // 换了 apiKey → 配置键变更，立即清掉熔断并重测通过
+  const okFetch = stubFetch(200, {
+    answers: { kind: { type: 'choice', choice: 'coding', confidence: 0.9 } },
+  });
+  const recovered = await decide('assign-model', { task: 'x' }, { ...ON, apiKey: 'k-new' }, { fetchImpl: okFetch });
+  assert.equal(recovered.ok, true);
+  assert.equal(jevStats().hits, 1);
+  resetJevState();
 });

@@ -79,3 +79,6 @@ native/*/target/
 # Windows 沙箱启动器产物（scripts/build-sandbox-win.ps1 生成，随发版编译）
 server/resources/pibot-sandbox.exe
 server/resources/pibot-sandbox.sha256
+
+# 本机沙箱探针残留目录
+*.sbxprobe/

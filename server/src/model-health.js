@@ -315,12 +315,15 @@ export class ModelHealth {
     }
   }
 
-  /** 后台把所有模型跑一遍；只跑没新鲜结果的（force 可强制重跑） */
-  async runAll({ concurrency = 6, force = false, timeoutMs = 25_000 } = {}) {
+  /** 后台把模型跑一遍（传 onlySlugs 时只测指定列表；只跑没新鲜结果的） */
+  async runAll({ concurrency = 6, force = false, timeoutMs = 25_000, onlySlugs = null } = {}) {
     if (this.running) return { skipped: true };
     this.running = true;
     try {
-      const all = this.runner.availableModels.map((m) => `${m.provider}/${m.id}`);
+      const allowSet = onlySlugs ? new Set(onlySlugs) : null;
+      const all = this.runner.availableModels
+        .filter((m) => !allowSet || allowSet.has(`${m.provider}/${m.id}`) || allowSet.has(m.id))
+        .map((m) => `${m.provider}/${m.id}`);
       const queue = force ? all : all.filter((slug) => !this.get(slug));
       this.progress = { done: 0, total: queue.length };
       if (!queue.length) {

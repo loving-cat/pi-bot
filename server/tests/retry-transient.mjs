@@ -175,4 +175,27 @@ function main2() {
     assert.equal(d.kind, 'auth');
   });
 
+  test('★ 402 / quota 归为额度不足：不单路重试，不标可恢复，delayMs 归零', () => {
+    const d1 = decideRetry({ error: '余额不足', status: 402, attempt: 1 });
+    assert.equal(d1.retry, false);
+    assert.equal(d1.kind, 'quota');
+    assert.equal(d1.delayMs, 0);
+
+    const d2 = decideRetry({ error: 'You exceeded your current quota, insufficient_quota', attempt: 1 });
+    assert.equal(d2.retry, false);
+    assert.equal(d2.kind, 'quota');
+
+    assert.equal(isRecoverableFailure({ error: '余额不足', status: 402 }), false);
+  });
+
+  test('★ decideRetry 附带真实退避 delayMs（供 TaskSupervisor 使用）', () => {
+    const t1 = decideRetry({ error: 'HTTP 429', status: 429, attempt: 1 });
+    const t3 = decideRetry({ error: 'HTTP 429', status: 429, attempt: 3 });
+    assert.ok(t1.delayMs >= 1500 && t1.delayMs < 2200, `attempt=1 期望约 1.5s，实际 ${t1.delayMs}`);
+    assert.ok(t3.delayMs >= 6000 && t3.delayMs < 7000, `attempt=3 期望约 6s，实际 ${t3.delayMs}`);
+
+    const empty = decideRetry({ error: '空回复', attempt: 1 });
+    assert.equal(empty.delayMs, 3000);
+  });
+
 }

@@ -35,15 +35,6 @@ class LanguageCard extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 4),
-          Text(
-            strings.t('settings.languageSubtitle'),
-            style: TextStyle(
-              fontSize: PB.fsXxs,
-              color: PB.textQuaternary,
-              height: 1.5,
-            ),
-          ),
           const SizedBox(height: 10),
           Wrap(
             spacing: 8,

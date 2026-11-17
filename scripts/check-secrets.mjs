@@ -26,6 +26,14 @@ import path from 'node:path';
 import process from 'node:process';
 
 const STAGED = process.argv.includes('--staged');
+const GIT_CWD = (() => {
+  try {
+    execFileSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: process.cwd(), stdio: 'ignore' });
+    return process.cwd();
+  } catch {
+    return path.resolve(import.meta.dirname, '..');
+  }
+})();
 
 /** 允许出现的"像但是不是"的样例值 */
 const ALLOW = [
@@ -135,14 +143,14 @@ function trackedFiles() {
   const args = STAGED
     ? ['diff', '--cached', '--name-only', '--diff-filter=ACM']
     : ['ls-files'];
-  const tracked = execFileSync('git', args, { encoding: 'utf8' })
+  const tracked = execFileSync('git', args, { cwd: GIT_CWD, encoding: 'utf8' })
     .split(/\r?\n/)
     .filter(Boolean);
   if (STAGED) return tracked;
   // 未跟踪且未被 ignore 的新文件也要扫
   let untracked = [];
   try {
-    untracked = execFileSync('git', ['ls-files', '--others', '--exclude-standard'], { encoding: 'utf8' })
+    untracked = execFileSync('git', ['ls-files', '--others', '--exclude-standard'], { cwd: GIT_CWD, encoding: 'utf8' })
       .split(/\r?\n/)
       .filter(Boolean);
   } catch {
@@ -153,9 +161,10 @@ function trackedFiles() {
 
 function readFile(file) {
   try {
-    const stat = fs.statSync(file);
+    const full = path.isAbsolute(file) ? file : path.resolve(GIT_CWD, file);
+    const stat = fs.statSync(full);
     if (!stat.isFile() || stat.size > MAX_BYTES) return '';
-    const buf = fs.readFileSync(file);
+    const buf = fs.readFileSync(full);
     // 二进制（前 8KB 有 NUL）直接跳过
     if (buf.subarray(0, 8192).includes(0)) return '';
     return buf.toString('utf8');
@@ -297,7 +306,7 @@ const okMail = (m) => /@users\.noreply\.github\.com$/i.test(m) || /^noreply@gith
 
 function scanCommitMeta(range) {
   const SEP = '\u001e';
-  const out = execFileSync('git', ['log', '--format=%h%x1f%ae%x1f%ce%x1f%B' + SEP, ...range], { encoding: 'utf8', maxBuffer: 1 << 28 });
+  const out = execFileSync('git', ['log', '--format=%h%x1f%ae%x1f%ce%x1f%B' + SEP, ...range], { cwd: GIT_CWD, encoding: 'utf8', maxBuffer: 1 << 28 });
   for (const rec of out.split(SEP).map((r) => r.trim()).filter(Boolean)) {
     const [sha, author, committer, body] = rec.split('\u001f');
     for (const [who, mail] of [['作者', author], ['提交者', committer]]) {
@@ -319,7 +328,7 @@ if (pushIdx !== -1) {
   let known = false;
   if (before && !/^0+$/.test(before)) {
     try {
-      execFileSync('git', ['cat-file', '-e', `${before}^{commit}`], { stdio: 'ignore' });
+      execFileSync('git', ['cat-file', '-e', `${before}^{commit}`], { cwd: GIT_CWD, stdio: 'ignore' });
       known = true;
     } catch {
       known = false; // 强推后旧提交不在了：按整条历史扫

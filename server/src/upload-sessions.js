@@ -14,6 +14,7 @@ import { newId } from './util.js';
 export const CHUNK_SIZE = 4 * 1024 * 1024;
 export const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
 const STALE_MS = 24 * 3600 * 1000;
+const MAX_SESSIONS = 50;
 
 export class UploadSessions {
   constructor({ dir }) {
@@ -38,6 +39,16 @@ export class UploadSessions {
 
   /** 开一个上传会话；size 超出上限直接拒绝 */
   init({ name = 'file', size = 0, mime = '' } = {}) {
+    const at = Date.now();
+    for (const [sid, s] of this.sessions) {
+      if (at - s.createdAt > STALE_MS) {
+        try { fs.rmSync(s.file, { force: true }); } catch {}
+        this.sessions.delete(sid);
+      }
+    }
+    if (this.sessions.size >= MAX_SESSIONS) {
+      return { error: '同时进行的分片上传过多，请稍后再试' };
+    }
     const total = Number(size);
     if (!Number.isFinite(total) || total <= 0) {
       return { error: '文件大小不对' };

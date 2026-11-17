@@ -108,7 +108,9 @@ class ServerSupervisor {
     final pid = readPid();
     if (pid == null) return;
     if (Platform.isWindows) {
-      await Process.run('taskkill', ['/PID', '$pid', '/T', '/F']);
+      if (await _isNodeProcessWindows(pid)) {
+        await Process.run('taskkill', ['/PID', '$pid', '/T', '/F']);
+      }
     } else if (await _isRunning(pid)) {
       if (!Process.killPid(pid, ProcessSignal.sigterm) &&
           await _isRunning(pid)) {
@@ -124,6 +126,20 @@ class ServerSupervisor {
     }
     if (readPid() == pid) {
       pidFile.deleteSync();
+    }
+  }
+
+  /// Windows 下确认 PID 对应的是 node.exe 进程再强杀，防止 PID 复用误杀。
+  Future<bool> _isNodeProcessWindows(int pid) async {
+    try {
+      final r = await Process.run(
+        'tasklist',
+        ['/FI', 'PID eq $pid', '/FO', 'CSV', '/NH'],
+      );
+      final out = '${r.stdout}'.trim().toLowerCase();
+      return out.startsWith('"node');
+    } catch (_) {
+      return false;
     }
   }
 

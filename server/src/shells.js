@@ -113,8 +113,17 @@ export class ShellRegistry {
    * @returns {{id:string, pid:number|null, error?:string}}
    */
   start({ roomId, botId, taskId = null, command, cwd, env = null }) {
-    if (this.shells.size >= this.maxShells) {
+    const runningCount = [...this.shells.values()].filter((s) => s.running).length;
+    if (runningCount >= this.maxShells) {
       return { id: null, pid: null, error: `后台进程已达上限（${this.maxShells} 个），先结束不用的` };
+    }
+    if (this.shells.size >= this.maxShells * 3) {
+      for (const [oldId, old] of this.shells) {
+        if (!old.running) {
+          this.shells.delete(oldId);
+          break;
+        }
+      }
     }
     const text = String(command ?? '').trim();
     if (!text) return { id: null, pid: null, error: '命令为空' };
@@ -213,6 +222,7 @@ export class ShellRegistry {
       //   以前是靠模型自己记得 kill_shell —— 那等于没回收）。
       taskId: taskId ? String(taskId) : null,
       cwd,
+      needsSandbox,
       child,
       pid: child.pid ?? null,
       running: true,
@@ -279,6 +289,15 @@ export class ShellRegistry {
     const entry = this.shells.get(id);
     if (!entry) return null;
     const deadline = Date.now() + Math.min(Math.max(Number(waitMs) || 0, 0), 10_000);
+    let compiled = null;
+    let invalidPattern = false;
+    if (pattern) {
+      try {
+        compiled = new RegExp(String(pattern).slice(0, 512), 'm');
+      } catch {
+        invalidPattern = true;
+      }
+    }
 
     const snapshot = () => {
       const full = entry.chunks.join('');
@@ -293,7 +312,9 @@ export class ShellRegistry {
         truncated: entry.truncated,
         offset: full.length,
         output: chunk,
-        matched: pattern ? new RegExp(pattern, 'm').test(chunk) : false,
+        matched: pattern
+          ? (invalidPattern ? chunk.includes(String(pattern)) : compiled.test(chunk.slice(-16384)))
+          : false,
       };
     };
 
@@ -352,7 +373,7 @@ export class ShellRegistry {
     const entry = this.shells.get(id);
     if (!entry) return { ok: false, error: '没有这个后台进程' };
     try {
-      if (entry.running) entry.child.kill();
+      this.#terminateEntry(entry);
       return { ok: true, wasRunning: entry.running };
     } catch (err) {
       return { ok: false, error: String(err?.message || err) };
@@ -370,9 +391,7 @@ export class ShellRegistry {
     let n = 0;
     for (const [id, entry] of this.shells) {
       if (entry.roomId !== roomId) continue;
-      try {
-        if (entry.running) entry.child.kill();
-      } catch (_) {}
+      this.#terminateEntry(entry);
       this.shells.delete(id);
       n++;
     }
@@ -390,9 +409,7 @@ export class ShellRegistry {
         continue;
       }
       if (entry.running && at - entry.lastOutputAt > limit) {
-        try {
-          entry.child.kill();
-        } catch (_) {}
+        this.#terminateEntry(entry);
         this.shells.delete(id);
         n++;
         log(`后台进程空闲超时已结束：${entry.command.slice(0, 60)}`);
@@ -403,12 +420,23 @@ export class ShellRegistry {
 
   stopAll() {
     for (const entry of this.shells.values()) {
-      try {
-        if (entry.running) entry.child.kill();
-      } catch (_) {}
+      this.#terminateEntry(entry);
     }
     this.shells.clear();
     clearInterval(this.timer);
+  }
+
+  #terminateEntry(entry) {
+    if (!entry?.running) return;
+    if (process.platform === 'win32' && !entry.needsSandbox && entry.pid) {
+      try {
+        spawn('taskkill', ['/PID', String(entry.pid), '/T', '/F'], {
+          windowsHide: true,
+          stdio: 'ignore',
+        }).unref();
+      } catch {}
+    }
+    try { entry.child.kill(); } catch {}
   }
 
   #notify(entry) {

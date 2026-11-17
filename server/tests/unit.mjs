@@ -1911,6 +1911,84 @@ await test('proxy: 非法代理串退化成空串，不抛', () => {
   assert.equal(parseWindowsProxyValue('ftp=127.0.0.1:21'), '');
 });
 
+await test('KV 缓存与上下文：modelLines 置后且 compactRules 省略重复长规矩', async () => {
+  const full = buildAppendSystemPrompt(
+    { role: 'main', name: 'Pi', persona: '你是主控' },
+    { modelLines: 'MODEL_POOL_DYNAMIC', mcpLines: 'MCP_LIST' },
+  );
+  assert.equal(full[0], '你是主控');
+  const modelIdx = full.indexOf('MODEL_POOL_DYNAMIC');
+  const mcpIdx = full.indexOf('MCP_LIST');
+  assert.ok(modelIdx > 2 && modelIdx < mcpIdx, '动态 modelLines 应置于静态提示词之后、MCP 之前');
+
+  const lead = { id: 'lc1', name: '组长' };
+  const mate = { id: 'mc1', name: '成员' };
+  const r = { id: 'rg1', name: '研发组', topic: 'KV' };
+  const unread = [{ authorType: 'bot', authorName: '组长', text: '把接口单测跑完', status: 'done' }];
+  const compact = composeGroupPrompt(r, mate, unread, {
+    isLead: false,
+    reason: '组长 叫了你',
+    members: [lead, mate],
+    leadId: lead.id,
+    order: { index: 1 },
+    compactRules: true,
+  });
+  assert.doesNotMatch(compact, /你是「研发组」的成员/);
+  assert.match(compact, /把接口单测跑完/);
+  assert.match(compact, /\[PASS\]/);
+
+  const closed = composeGroupPrompt(r, lead, unread, {
+    isLead: true,
+    reason: '收尾',
+    members: [lead, mate],
+    leadId: lead.id,
+    closing: true,
+    compactRules: true,
+  });
+  assert.match(closed, /现在做\*\*收尾\*\*/);
+});
+
+await test('★ 多端点故障切换：默认模型识别组 id、坏 key 不回绕', async () => {
+  const { PiRunner } = await import('../src/pi-runner.js');
+  const { modelGroups } = await import('../src/model-groups.js');
+  const gRes = modelGroups.upsert({
+    name: 'FailoverCheck',
+    baseUrl: 'https://primary.example',
+    apiKey: 'ep0-val',
+    models: [{ id: 'm1', name: 'm1' }],
+    endpoints: [
+      { baseUrl: 'https://primary.example', apiKey: 'ep0-val' },
+      { baseUrl: 'https://backup.example', apiKey: 'ep1-val' },
+    ],
+  });
+  assert.ok(gRes.group?.id);
+  const gid = gRes.group.id;
+  try {
+    const runner = new PiRunner();
+    const registered = [];
+    runner.modelRuntime = {
+      registerProvider: (id, cfg) => registered.push({ id, cfg }),
+      unregisterProvider: () => {},
+      getModels: () => [{ provider: gid, id: 'm1' }],
+      getModel: (p, m) => (p === gid && m === 'm1' ? { provider: p, id: m } : null),
+    };
+    runner.model = { provider: gid, id: 'm1' };
+    const defaultBot = store.createBot({ name: '默认路测试', model: null });
+    assert.equal(runner.breakerFor(defaultBot.id)?.groupId, gid, 'bot 未显式设模型时也应定位默认模型组');
+
+    const first = runner.markGroupFailed(defaultBot.id, { kind: 'auth', status: 401 });
+    assert.equal(first?.switchedTo, 1, '401 首轮即切到备用端点 1');
+    assert.equal(registered[0]?.cfg?.baseUrl, 'https://backup.example');
+    assert.equal(runner.breakerFor(defaultBot.id)?.endpointIndex, 1);
+
+    const second = runner.markGroupFailed(defaultBot.id, { kind: 'quota', status: 402 });
+    assert.equal(second?.state, 'open', '402 应立即打开端点 1 的熔断');
+    assert.equal(second?.switchedTo, undefined, '端点 0 仍在冷却期时严禁切回坏端点 0');
+  } finally {
+    modelGroups.remove(gid);
+  }
+});
+
 const passed = results.filter((r) => r.ok).length;
 
 console.log('\n================ 单元测试 ================');

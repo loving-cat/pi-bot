@@ -106,6 +106,7 @@ export function buildGrantRequestTools({ store, botId, roomId, role = 'member' }
         const saved = store.requestConfirmation(confirmation);
         const me = store.getBot(botId);
         const meName = me?.name ?? '它';
+        const minChan = saved.minChannel ?? minChannelForRequest({ actions: req.actions });
         store.appendMessage({
           roomId,
           authorType: 'bot',
@@ -115,7 +116,13 @@ export function buildGrantRequestTools({ store, botId, roomId, role = 'member' }
           kind: 'confirmation',
           text: `${meName} 想申请权限，等你确认：${summary}`,
           status: 'done',
-          meta: { confirmationId: saved.id, action: 'grant.request' },
+          meta: {
+            confirmationId: saved.id,
+            action: 'grant.request',
+            summary,
+            minChannel: minChan,
+            irreversible: minChan !== 'local',
+          },
         });
 
         // ★ 转呈：负责人发起的申请，**同时**挂到「用户 ↔ 主 Bot」的私聊里。
@@ -140,7 +147,14 @@ export function buildGrantRequestTools({ store, botId, roomId, role = 'member' }
               kind: 'confirmation',
               text: `${meName}（${roomName || '这个部门'}）申请权限，转呈给你确认：${summary}`,
               status: 'done',
-              meta: { confirmationId: saved.id, action: 'grant.request', forwardedFrom: roomId },
+              meta: {
+                confirmationId: saved.id,
+                action: 'grant.request',
+                forwardedFrom: roomId,
+                summary,
+                minChannel: minChan,
+                irreversible: minChan !== 'local',
+              },
             });
             forwardedTo = dm.id;
           }

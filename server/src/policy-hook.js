@@ -375,7 +375,6 @@ export function createPolicyExtension({
               summary,
             },
           });
-          bus.emit('event', { t: 'msg.new', msg });
           log(`🛡 ${bot?.name ?? 'bot'} 的操作等待批准：${String(summary).slice(0, 80)}`);
           return {
             block: true,

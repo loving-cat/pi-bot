@@ -455,6 +455,27 @@ class AppState extends ChangeNotifier {
   /// 流式输出的高频更新走这个，不走 notifyListeners。
   /// 否则每 80ms 一次 delta 会把整个界面（含左侧会话列表）重建一遍。
   final ValueNotifier<int> streamTick = ValueNotifier<int>(0);
+  final Map<String, ValueNotifier<int>> _msgStreamTicks = {};
+
+  /// 单条流式消息独立的刷新信号，避免群聊多 Bot 并发流式时互相重排 Markdown。
+  ValueNotifier<int> streamTickFor(String msgId) {
+    final existing = _msgStreamTicks.remove(msgId);
+    if (existing != null) {
+      _msgStreamTicks[msgId] = existing;
+      return existing;
+    }
+    while (_msgStreamTicks.length >= 128) {
+      _msgStreamTicks.remove(_msgStreamTicks.keys.first);
+    }
+    final created = ValueNotifier<int>(0);
+    _msgStreamTicks[msgId] = created;
+    return created;
+  }
+
+  void _bumpStreamTick(String msgId) {
+    streamTickFor(msgId).value++;
+    streamTick.value++;
+  }
   LinkState link = LinkState.offline;
   String? lastError;
   bool ready = false;
@@ -775,6 +796,10 @@ class AppState extends ChangeNotifier {
       if (result.ok) {
         activePort = result.portOr(serverPort);
         serverNotice = result.notice;
+        if (!result.alreadyRunning && !localNeedsToken) {
+          // 新拉起的服务端实例签发了全新的 local-token，丢弃内存里上一次的旧值
+          localToken = '';
+        }
       } else {
         // ★ 失败时把上一次成功留下的"实际端口"清掉。
         //   不清的话界面会继续显示上一轮的 8788，而这次可能根本没起来 ——
@@ -883,8 +908,17 @@ class AppState extends ChangeNotifier {
     _spawnFails = 0;
     serverRetryPaused = false;
     serverProblem = null;
+    if (!localNeedsToken) localToken = '';
     await bootLocalServer(manual: true);
   }
+
+  List<String?> _localTokenCandidates() => [
+        serverLauncher.options.data,
+        serverDataDir,
+        // 用户没显式配数据目录时，服务端走自己的默认位置 —— 试一次相对路径
+        // 下的常见位置。找不到就由下面的 401 兜底把提示给用户。
+        _defaultLocalDataDir(),
+      ];
 
   /// 桌面端：直连本机服务端
   ///
@@ -909,18 +943,12 @@ class AppState extends ChangeNotifier {
     //   本机信任模式下才读 local-token 文件。
     localNeedsToken = await localServerRequiresToken(serverUrl!);
     if (!localNeedsToken && localToken.isEmpty) {
-      final fromFile = await readLocalTokenFromCandidates([
-        serverLauncher.options.data,
-        serverDataDir,
-        // 用户没显式配数据目录时，服务端走自己的默认位置 —— 试一次相对路径
-        // 下的常见位置。找不到就由下面的 401 兜底把提示给用户。
-        _defaultLocalDataDir(),
-      ]);
+      final fromFile = await readLocalTokenFromCandidates(_localTokenCandidates());
       if (fromFile != null) localToken = fromFile;
     }
     token = localToken;
     api = Api(serverUrl!, token!);
-      taskRuns.bindApi(api);
+    taskRuns.bindApi(api, identity: _serviceIdentity);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kUrl, serverUrl!);
     await prefs.setString(_kToken, '');
@@ -932,6 +960,16 @@ class AppState extends ChangeNotifier {
       return;
     }
     await refresh();
+    if (!localNeedsToken && _lastRefreshStatus == 401) {
+      final fresh = await readLocalTokenFromCandidates(_localTokenCandidates());
+      if (fresh != null && fresh.isNotEmpty && fresh != localToken) {
+        localToken = fresh;
+        token = localToken;
+        api = Api(serverUrl!, token!);
+        taskRuns.bindApi(api, identity: _serviceIdentity);
+        await refresh();
+      }
+    }
     if (localNeedsToken && _lastRefreshStatus == 401) {
       // token 不对：清掉存下的，回到「填 token」，而不是拿着错的一直重连
       localToken = '';
@@ -1005,18 +1043,35 @@ class AppState extends ChangeNotifier {
     await connectLocal();
   }
 
-  Future<void> pairWithCode(String url, String code, {String? device}) async {
+  Future<void> pairWithCode(
+    String url,
+    String code, {
+    String? device,
+    String? fingerprint,
+  }) async {
     final base = normalizeBaseUrl(url);
-    final res = await Api.pair(base, code.trim(), device ?? deviceName);
+    final prevFingerprint = serverFingerprint;
+    final nextPin = fingerprint ?? '';
+    serverFingerprint = nextPin;
+    installPinnedFingerprint(nextPin);
+    final Map<String, dynamic> res;
+    try {
+      res = await Api.pair(base, code.trim(), device ?? deviceName);
+    } catch (_) {
+      serverFingerprint = prevFingerprint;
+      installPinnedFingerprint(prevFingerprint);
+      rethrow;
+    }
     serverUrl = base;
     token = res['token'] as String;
     localMode = false;
     if (device != null && device.isNotEmpty) deviceName = device;
     api = Api(serverUrl!, token);
-      taskRuns.bindApi(api);
+    taskRuns.bindApi(api, identity: _serviceIdentity);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kUrl, serverUrl!);
     await prefs.setString(_kToken, token!);
+    await prefs.setString(_kFingerprint, serverFingerprint);
     await prefs.setString(_kDevice, deviceName);
     await refresh();
     connect();
@@ -1038,7 +1093,7 @@ class AppState extends ChangeNotifier {
       installPinnedFingerprint(fingerprint);
     }
     api = Api(serverUrl!, token);
-      taskRuns.bindApi(api);
+    taskRuns.bindApi(api, identity: _serviceIdentity);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kUrl, serverUrl!);
     await prefs.setString(_kToken, token!);
@@ -1216,8 +1271,10 @@ class AppState extends ChangeNotifier {
   Future<void> decideConfirmation(
     String confirmationId, {
     required bool approve,
+    String? minChannel,
   }) async {
-    if (!isMobilePlatform) {
+    final allowLocal = desktopSettings['allowLocalApproval'] == true;
+    if (!isMobilePlatform && approve && minChannel != 'local' && !allowLocal) {
       lastError = '这一步不可撤销，要在这台手机上确认。桌面上的批准不算数 —— '
           '主 Bot 能操作那台电脑，它自己也能点。';
       _notify();
@@ -1227,7 +1284,7 @@ class AppState extends ChangeNotifier {
       await api?.post(
         '/api/confirmations/$confirmationId',
         {'approve': approve},
-        'device',
+        isMobilePlatform ? 'device' : 'local',
       );
     } catch (err) {
       lastError = '$err';
@@ -1810,6 +1867,10 @@ class AppState extends ChangeNotifier {
           ((res['policy'] as Map?) ??
                   const {'dangerous': 'allow', 'requireProof': false})
               .cast<String, dynamic>();
+      if (res['desktopSettings'] is Map) {
+        desktopSettings =
+            (res['desktopSettings'] as Map).cast<String, dynamic>();
+      }
       groupLimits = ((res['groupLimits'] as Map?) ?? const {}).map(
         (k, v) => MapEntry('$k', (v as num?)?.toInt() ?? 0),
       );
@@ -2146,6 +2207,7 @@ class AppState extends ChangeNotifier {
     //   服务端的 session 可能正卡在一个长命令里，几秒到几分钟才真的断。
     //   所以这里乐观地先改本地状态：说停就停。
     typing[roomId] = false;
+    typingBots.remove(roomId);
     queued[roomId] = 0;
     for (final m in messages[roomId] ?? const <Msg>[]) {
       if (m.status == 'streaming') {
@@ -2794,11 +2856,18 @@ class AppState extends ChangeNotifier {
         break;
 
       case 'msg.delta':
-        final msg = _find(ev['roomId'] as String, ev['msgId'] as String);
+        final msgId = ev['msgId'] as String;
+        final msg = _find(ev['roomId'] as String, msgId);
         if (msg != null) {
+          final wasEmpty = msg.text.trim().isEmpty;
           msg.text = ev['text'] as String? ?? msg.text;
           msg.status = 'streaming';
-          streamTick.value++;
+          _bumpStreamTick(msgId);
+          // 首个可见字符到达时必须触发一次树重建，把气泡和 ValueListenableBuilder 挂上去；
+          // 后续增量只走单条消息的 streamTickFor，不惊动整屏或同群其他流式气泡。
+          if (wasEmpty && msg.text.trim().isNotEmpty) {
+            _notify();
+          }
           return; // 不走 notifyListeners
         }
         break;
@@ -2837,13 +2906,18 @@ class AppState extends ChangeNotifier {
         return;
 
       case 'msg.steps':
-        final msg = _find(ev['roomId'] as String, ev['msgId'] as String);
+        final msgId = ev['msgId'] as String;
+        final msg = _find(ev['roomId'] as String, msgId);
         if (msg != null) {
+          final wasEmpty = msg.steps.isEmpty;
           msg.steps = ((ev['steps'] as List?) ?? const [])
               .whereType<Map<String, dynamic>>()
               .map(ToolStep.fromJson)
               .toList();
-          streamTick.value++;
+          _bumpStreamTick(msgId);
+          if (wasEmpty && msg.steps.isNotEmpty) {
+            _notify();
+          }
           return; // 不走 notifyListeners
         }
         break;
@@ -2909,6 +2983,13 @@ class AppState extends ChangeNotifier {
         break;
       case 'policy.updated':
         policy = ((ev['policy'] as Map?) ?? policy).cast<String, dynamic>();
+        _notify();
+        break;
+      case 'desktop.settings':
+        if (ev['settings'] is Map) {
+          desktopSettings =
+              (ev['settings'] as Map).cast<String, dynamic>();
+        }
         _notify();
         break;
 
@@ -3066,8 +3147,9 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// 主控 DM 置顶，其他按最新消息排
+  /// 置顶优先、其次主控 DM，其他按最新消息排
   int _roomOrder(Room a, Room b) {
+    if (a.pinned != b.pinned) return a.pinned ? -1 : 1;
     final mainId = bots.where((x) => x.isMain).map((x) => x.id).firstOrNull;
     final aPin = !a.isGroup && a.botIds.contains(mainId) ? 1 : 0;
     final bPin = !b.isGroup && b.botIds.contains(mainId) ? 1 : 0;
@@ -3231,6 +3313,10 @@ class AppState extends ChangeNotifier {
     disconnect();
     taskRuns.dispose();
     browser.dispose();
+    for (final tick in _msgStreamTicks.values) {
+      tick.dispose();
+    }
+    _msgStreamTicks.clear();
     streamTick.dispose();
     super.dispose();
   }

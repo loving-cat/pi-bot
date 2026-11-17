@@ -111,6 +111,21 @@ await test('PATCH /api/bots/:id 只在带 mcpServers 时才要 nonce', () => {
   assert.equal(withMcp.nonce, 'policy');
 });
 
+await test('★ skills 改写、connections 分配与 verify 路由都在判定表里', () => {
+  const skillPatch = planAdminRoute({ method: 'PATCH', pathname: '/api/skills/x' });
+  assert.ok(skillPatch, 'PATCH /api/skills/:id 应在表里');
+  assert.equal(skillPatch.nonce, 'policy');
+
+  const connBots = planAdminRoute({ method: 'PUT', pathname: '/api/connections/c_1/bots' });
+  assert.ok(connBots, 'PUT /api/connections/:id/bots 应在表里');
+  assert.equal(connBots.nonce, 'policy');
+
+  const connVerify = planAdminRoute({ method: 'POST', pathname: '/api/connections/c_1/verify' });
+  assert.ok(connVerify, 'POST /api/connections/:id/verify 应在表里');
+  assert.equal(connVerify.level, 'probe');
+  assert.equal(connVerify.nonce, null);
+});
+
 await test('路径占位只吃单段（/api/mcp/a/b 不该被 :id 命中）', () => {
   assert.equal(planAdminRoute({ method: 'PATCH', pathname: '/api/mcp/a/b' }), null);
 });
@@ -136,6 +151,7 @@ const runner = {
   model: 'test',
   escalate: async () => {},
   abortManagedTask: () => {},
+  reloadSessionForBot: () => {},
 };
 const server = createHttpServer({ runner, pairing: new Pairing() });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -252,6 +268,32 @@ await test('改策略后迁移授权自动重发（否则只读会连读都拒�
   for (const unsafe of ['file.write', 'file.delete', 'cmd.exec', 'cmd.background', 'git.commit', 'git.push']) {
     assert.ok(!actions.includes(unsafe), `只读模式不该有 ${unsafe}`);
   }
+});
+
+await test('★ PATCH /api/bots/:id 实测：改名免 nonce，改 mcpServers 缺 nonce 403、带 nonce 200', async () => {
+  const chief = store.mainBot();
+  assert.ok(chief?.id);
+
+  const renameRes = await request(`/api/bots/${chief.id}`, {
+    method: 'PATCH',
+    body: { name: '主控新名' },
+  });
+  assert.equal(renameRes.status, 200, JSON.stringify(renameRes.json));
+
+  const noNonceMcp = await request(`/api/bots/${chief.id}`, {
+    method: 'PATCH',
+    body: { mcpServers: ['s1'] },
+  });
+  assert.equal(noNonceMcp.status, 403, JSON.stringify(noNonceMcp.json));
+  assert.equal(noNonceMcp.json.code, 'nonce_required');
+
+  const { nonce } = issueNonce('policy');
+  const okMcp = await request(`/api/bots/${chief.id}`, {
+    method: 'PATCH',
+    nonce,
+    body: { mcpServers: [] },
+  });
+  assert.equal(okMcp.status, 200, JSON.stringify(okMcp.json));
 });
 
 const failed = results.filter((r) => !r.ok);

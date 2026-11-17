@@ -321,8 +321,7 @@ const areaPanel2 = StringArea(
     // ---- 用户名 ----
     'user.title': '我是谁',
     'user.saved': '已保存，bot 下一轮起会这么称呼你',
-    'user.explain':
-        'bot 会用这个名字称呼你。',
+    'user.explain': '助手与团队成员对你的称呼',
     'user.hint': '比如：小陈 / Boss / 老板',
 
     // ---- 工具步骤 ----
@@ -727,7 +726,7 @@ const areaPanel2 = StringArea(
     // ---- user name ----
     'user.title': 'Who am I',
     'user.saved': 'Saved. Bots will call you this from the next turn on.',
-    'user.explain': 'Bots use this name for you. Set it once instead of writing "the user is called XX" into every persona. In groups they also know which messages are yours.',
+    'user.explain': 'How assistants address you',
     'user.hint': 'e.g. Alex / Boss / Chief',
 
     // ---- tool steps ----

@@ -188,6 +188,7 @@ mod imp {
         EXTENDED_STARTUPINFO_PRESENT, PROCESS_INFORMATION, STARTUPINFOEXW,
     };
     use windows_sys::Win32::System::Console::{GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE};
+    use windows_sys::Win32::Storage::FileSystem::CreateFileW;
 
     /// `PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES` 的常量值。
     /// windows-sys 没导出它（它由 `ProcThreadAttributeValue(22, FALSE, TRUE, FALSE)`
@@ -895,17 +896,10 @@ mod imp {
         //   于是每条 git 命令都死在 "could not open '/dev/null'"。
         //   （实测：只设 STARTF_USESTDHANDLES 不够，必须配 SetHandleInformation。）
         si.StartupInfo.dwFlags = windows_sys::Win32::System::Threading::STARTF_USESTDHANDLES;
-        let mut std_invalid = false;
-        for (id, slot) in [
-            (STD_INPUT_HANDLE, &mut si.StartupInfo.hStdInput),
-            (STD_OUTPUT_HANDLE, &mut si.StartupInfo.hStdOutput),
-            (STD_ERROR_HANDLE, &mut si.StartupInfo.hStdError),
-        ] {
+        let prep_std = |id| -> HANDLE {
             let h = unsafe { GetStdHandle(id) };
-            if h.is_null() || h == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
-                std_invalid = true;
-                *slot = std::ptr::null_mut();
-                continue;
+            if h.is_null() || h == INVALID_HANDLE_VALUE {
+                return std::ptr::null_mut();
             }
             unsafe {
                 windows_sys::Win32::Foundation::SetHandleInformation(
@@ -914,16 +908,47 @@ mod imp {
                     windows_sys::Win32::Foundation::HANDLE_FLAG_INHERIT,
                 );
             }
-            *slot = h;
-        }
-        if std_invalid {
-            // 宿主自己就没标准句柄（很少见，双击启动之类）：退回"不传句柄"，
+            h
+        };
+        let mut h_in = prep_std(STD_INPUT_HANDLE);
+        let h_out = prep_std(STD_OUTPUT_HANDLE);
+        let h_err = prep_std(STD_ERROR_HANDLE);
+        let mut nul_stdin: HANDLE = std::ptr::null_mut();
+        if h_out.is_null() && h_err.is_null() {
+            // 宿主自己既无 stdout 也无 stderr：退回"不传句柄"，
             // 让子进程自己找控制台。至少不因为 -1 句柄让 CreateProcess 失败。
             eprintln!("PIBOT_SANDBOX_WARN NO_STD_HANDLES");
             si.StartupInfo.dwFlags = 0;
             si.StartupInfo.hStdInput = std::ptr::null_mut();
             si.StartupInfo.hStdOutput = std::ptr::null_mut();
             si.StartupInfo.hStdError = std::ptr::null_mut();
+        } else {
+            if h_in.is_null() {
+                let nul_w = wide("NUL");
+                let sa = SECURITY_ATTRIBUTES {
+                    nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+                    lpSecurityDescriptor: std::ptr::null_mut(),
+                    bInheritHandle: 1,
+                };
+                let h = unsafe {
+                    CreateFileW(
+                        nul_w.as_ptr(),
+                        0x8000_0000, // GENERIC_READ
+                        3,           // FILE_SHARE_READ | FILE_SHARE_WRITE
+                        &sa,
+                        3,           // OPEN_EXISTING
+                        0,
+                        std::ptr::null_mut(),
+                    )
+                };
+                if !h.is_null() && h != INVALID_HANDLE_VALUE {
+                    nul_stdin = h;
+                    h_in = h;
+                }
+            }
+            si.StartupInfo.hStdInput = h_in;
+            si.StartupInfo.hStdOutput = h_out;
+            si.StartupInfo.hStdError = h_err;
         }
 
         let mut cmdline = wide(&format!("\"{}\" {}", exe, argv.join(" ")));
@@ -945,6 +970,9 @@ mod imp {
         };
         unsafe {
             DeleteProcThreadAttributeList(attr_list);
+            if !nul_stdin.is_null() {
+                CloseHandle(nul_stdin);
+            }
         }
         if ok == 0 {
             let e = unsafe { windows_sys::Win32::Foundation::GetLastError() };
@@ -989,7 +1017,15 @@ mod imp {
             windows_sys::Win32::System::JobObjects::TerminateJobObject(job, 0);
             CloseHandle(job);
         }
-        ExitCode::from((code & 0xFF) as u8)
+        if code >= 0xC000_0000 {
+            eprintln!("PIBOT_SANDBOX_ERR PROCESS_NTSTATUS 0x{code:08X}");
+        }
+        if code == 0 {
+            ExitCode::SUCCESS
+        } else {
+            let low = (code & 0xFF) as u8;
+            ExitCode::from(if low == 0 { 1 } else { low })
+        }
     }
 
     pub fn delete_profile(profile: &str) -> ExitCode {

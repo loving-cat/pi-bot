@@ -151,5 +151,44 @@ await test('★ TTL 边界：正好等于 TTL 时不拦截，超过才拦截', a
   peerDialogReset('edge_a', 'edge_b');
 });
 
+await test('★ reply_bot 在外部群聊触发时：带上下文、DM 标 internal，并在群里落引用对话', async () => {
+  const { peerDialogReset } = await import('../src/tools.js');
+  const { store } = await import('../src/store.js');
+  const caller = store.createBot({ name: '前端甲' });
+  const target = store.createBot({ name: '后端乙' });
+  const room = store.createGroup({ name: '联调群', botIds: [caller.id, target.id], leadBotId: caller.id });
+  const uMsg = store.appendMessage({ roomId: room.id, authorType: 'user', authorName: '我', text: '把登录接口接好', status: 'done' });
+
+  let captured = null;
+  const fakeRunner = {
+    isBusy: () => false,
+    runBotOnce: async (args) => {
+      captured = args;
+      return { ok: true, text: 'POST /api/login 返回 token。', ms: 12 };
+    },
+  };
+  const tool = buildCommonTools({ roomId: room.id, botId: caller.id, runner: fakeRunner }).find((x) => x.name === 'reply_bot');
+  peerDialogReset(caller.id, target.id);
+  const res = await tool.execute('c_ctx', {
+    botId: target.id,
+    text: '登录接口返回哪个字段？',
+    reMessageId: uMsg.id,
+  });
+  assert.notEqual(res.isError, true);
+  assert.ok(captured, '必须调用 runBotOnce');
+  assert.match(captured.prompt, /联调群/);
+  assert.match(captured.prompt, /把登录接口接好/);
+  assert.equal(captured.meta.internal, true, '外部调用时的 DM 执行应标 internal');
+
+  const msgs = store.listMessages(room.id, { limit: 20 });
+  const ask = msgs.find((m) => m.meta?.via === 'reply_bot' && m.authorId === caller.id);
+  const ans = msgs.find((m) => m.meta?.via === 'reply_bot' && m.authorId === target.id);
+  assert.ok(ask && ans, '应在群内留下提问与回应气泡');
+  assert.match(ask.text, /^@后端乙 登录接口返回哪个字段/);
+  assert.equal(ask.meta.re, uMsg.id);
+  assert.equal(ans.meta.re, ask.id);
+  peerDialogReset(caller.id, target.id);
+});
+
 console.log(`\nreply_bot 护栏：${passed}/${passed + failed} 通过`);
 process.exit(failed ? 1 : 0);

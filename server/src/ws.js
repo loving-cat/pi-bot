@@ -5,29 +5,27 @@
  * 下行：hello / msg.* / bot.updated / room.* / typing / pong / error
  */
 import { WebSocketServer } from 'ws';
-import path from 'node:path';
 import { config } from './config.js';
 import { store } from './store.js';
 import { VERSION } from './version.js';
 import { bus } from './bus.js';
 import { openRequest, createRequestLifecycle, resumeAdmitted } from './coordination/task-request-gate.js';
 import { createRequestResultService, createTerminalPublisher } from './tasks/task-request-result.js';
-import { createRequestReceipts } from './tasks/task-request-receipts.js';
 import { projectTaskRunList } from './tasks/task-projection.js';
 import { attachmentDeletionRevision, withoutDeletedAttachments } from './attachments.js';
-import { serverInfo, isLoopback, LOCAL_DEVICE, hostAllowed, isLocalToken } from './http.js';
+import { serverInfo, isLoopback, LOCAL_DEVICE, hostAllowed, isLocalToken, sharedRequestReceipts } from './http.js';
+import { activeTls } from './tls.js';
 import { log, timingSafeEqual } from './util.js';
-
-const taskRequestReceipts = createRequestReceipts({ dir: path.join(config.dataDir, 'task-requests') });
 /**
  * 首次接单请求的发送：预约 → 作用域 → 理解轮 → 收尾。
  * 并发同 requestId 的第二个请求只会拿到 queued/inflight，不会起第二轮理解。
  */
 async function startAdmittedSend({ runner, socket, roomId, requestId, text, attachments = [], mode, clientId = null }) {
+  const receipts = sharedRequestReceipts();
   const room = store.getRoom(roomId);
   if (room?.kind === 'group') {
     // 普通群聊保持原行为：requestId 只做同键去重，不把群消息当首次接单
-    const opened = openRequest({ receipts: taskRequestReceipts, taskRuns: store.taskRuns,
+    const opened = openRequest({ receipts, taskRuns: store.taskRuns,
     requesterId: socket.device?.id ?? 'device_unknown', requestId, roomId, text, attachments, mode });
     if (opened.status === 'done') { socket.send(JSON.stringify({ t: 'ack', clientId, requestId, duplicate: true, accepted: true })); return; }
     if (opened.status === 'inflight') { socket.send(JSON.stringify({ t: 'queued', clientId, requestId, inProgress: true })); return; }
@@ -45,7 +43,7 @@ async function startAdmittedSend({ runner, socket, roomId, requestId, text, atta
     return;
   }
   const opened = openRequest({
-    receipts: taskRequestReceipts,
+    receipts,
     taskRuns: store.taskRuns,
     requesterId: socket.device?.id ?? 'device_unknown',
     requestId, roomId, text, attachments, mode,
@@ -86,20 +84,26 @@ async function startAdmittedSend({ runner, socket, roomId, requestId, text, atta
 
 export function attachWs(server, { runner }) {
   const wss = new WebSocketServer({ server, path: '/ws', verifyClient: verifyWsClient });
-  const requestResultService = createRequestResultService({ receipts: taskRequestReceipts, taskRuns: store.taskRuns });
+  const receipts = sharedRequestReceipts();
+  runner.__wsServers ??= new Set();
+  runner.__wsServers.add(wss);
+  const requestResultService = createRequestResultService({ receipts, taskRuns: store.taskRuns });
   const publishTerminal = createTerminalPublisher({
     service: requestResultService,
-    // 事件按原请求来源设备投递；不向所有设备广播别人的确认
+    // 事件按原请求来源设备投递；不向所有设备广播别人的确认（HTTP + HTTPS 所有 active WSS 共用）
     emit: (event) => {
-      for (const client of wss.clients) {
-        if (client.device?.id === event.requesterId) {
-          try { client.send(JSON.stringify(event)); } catch {}
+      const payload = JSON.stringify(event);
+      for (const activeWss of runner.__wsServers ?? []) {
+        for (const client of activeWss.clients) {
+          if (client.readyState === 1 && client.device?.id === event.requesterId) {
+            try { client.send(payload); } catch {}
+          }
         }
       }
     },
   });
   runner.setRequestLifecycle?.(createRequestLifecycle({
-    receipts: taskRequestReceipts, taskRuns: store.taskRuns, onTerminal: publishTerminal,
+    receipts, taskRuns: store.taskRuns, onTerminal: publishTerminal,
   }));
 
   const resolveDevice = (req) => {
@@ -110,8 +114,8 @@ export function attachWs(server, { runner }) {
       if (config.staticToken && timingSafeEqual(token, config.staticToken)) {
         return { id: 'static', name: 'static-token' };
       }
-      // ★ 本机 token：和 HTTP 用同一份凭据（见 http.js 的 isLocalTokenValid）。
-      if (config.trustLocal && isLocalToken(token)) {
+      // ★ 本机 token：和 HTTP 用同一份凭据且绑定 loopback（见 http.js 的 authenticate）。
+      if (config.trustLocal && isLoopback(req) && isLocalToken(token)) {
         return { ...LOCAL_DEVICE };
       }
       const device = store.findDeviceByToken(token);
@@ -285,6 +289,7 @@ export function attachWs(server, { runner }) {
   wss.on('close', () => {
     clearInterval(heartbeat);
     bus.off('event', forward);
+    runner.__wsServers?.delete(wss);
   });
 
   return wss;
@@ -293,7 +298,7 @@ export function attachWs(server, { runner }) {
 /**
  * WS 握手校验：Upgrade 不经过 HTTP 处理器，要单独防 DNS rebinding / 跨站劫持。
  * - Host 必须是本机名/本机 IP
- * - 带 Origin（浏览器）时，Origin 必须指向本服务自身（同 host 同端口）
+ * - 带 Origin（浏览器）时，Origin 必须指向本服务自身（同 host 同端口，含 TLS 端口及反代同 Host）
  */
 export function verifyWsClient({ origin, req }) {
   if (!hostAllowed(req.headers.host)) return false;
@@ -305,6 +310,9 @@ export function verifyWsClient({ origin, req }) {
     return false;
   }
   if (o.protocol !== 'http:' && o.protocol !== 'https:') return false;
+  const reqHost = String(req.headers.host ?? '').trim().toLowerCase();
+  if (reqHost && o.host.toLowerCase() === reqHost && hostAllowed(o.host)) return true;
   const port = o.port || (o.protocol === 'https:' ? '443' : '80');
-  return hostAllowed(o.host) && port === String(config.port);
+  const tlsPort = activeTls()?.port;
+  return hostAllowed(o.host) && (port === String(config.port) || (tlsPort != null && port === String(tlsPort)));
 }

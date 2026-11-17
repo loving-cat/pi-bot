@@ -10,6 +10,7 @@ on:
     paths:
       - 'app/**'
       - 'server/**'
+      - 'native/**'
       - 'scripts/**'
       - 'docs/**'
       - 'README.md'
@@ -19,6 +20,7 @@ on:
     paths:
       - 'app/**'
       - 'server/**'
+      - 'native/**'
       - 'scripts/**'
       - 'docs/**'
       - 'README.md'

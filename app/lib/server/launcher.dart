@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'health.dart';
@@ -240,11 +241,11 @@ class LocalServerLauncher {
         _serverProcess = proc;
         // 启动器自己的输出很短（就一行 pid），读干净就好
         proc.stdout.listen(
-          (b) => log.note(String.fromCharCodes(b).trim()),
+          (b) => log.note(utf8.decode(b, allowMalformed: true).trim()),
           onError: (_) {},
         );
         proc.stderr.listen(
-          (b) => log.note(String.fromCharCodes(b).trim()),
+          (b) => log.note(utf8.decode(b, allowMalformed: true).trim()),
           onError: (_) {},
         );
         unawaited(

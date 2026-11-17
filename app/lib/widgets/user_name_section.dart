@@ -74,39 +74,25 @@ class _UserNameSectionState extends State<UserNameSection> {
             borderRadius: BorderRadius.circular(PB.rXl),
             border: Border.all(color: PB.borderTertiary),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                strings.t('user.explain'),
-                style: TextStyle(
-                  fontSize: PB.fsXxs,
-                  color: PB.textQuaternary,
-                  height: 1.6,
-                ),
+          child: TextField(
+            controller: _c,
+            onChanged: (_) {
+              if (!_dirty) setState(() => _dirty = true);
+            },
+            onSubmitted: submitUnlessComposing(_c, _save),
+            style: const TextStyle(fontSize: PB.fsSm),
+            decoration: InputDecoration(
+              hintText: strings.t('user.hint'),
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 10,
+                vertical: 10,
               ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: _c,
-                onChanged: (_) {
-                  if (!_dirty) setState(() => _dirty = true);
-                },
-                onSubmitted: submitUnlessComposing(_c, _save),
-                style: const TextStyle(fontSize: PB.fsSm),
-                decoration: InputDecoration(
-                  hintText: strings.t('user.hint'),
-                  isDense: true,
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 10,
-                  ),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(PB.rLg),
-                    borderSide: BorderSide(color: PB.borderSecondary),
-                  ),
-                ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(PB.rLg),
+                borderSide: BorderSide(color: PB.borderSecondary),
               ),
-            ],
+            ),
           ),
         ),
       ],

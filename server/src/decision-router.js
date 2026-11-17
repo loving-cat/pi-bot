@@ -206,6 +206,45 @@ export function shouldUseJev(point, settings = {}) {
   return { use: true, why: '走 Jev' };
 }
 
+const JEV_AUTH_COOLDOWN_MS = 5 * 60_000;
+const JEV_TRANSIENT_COOLDOWN_MS = 60_000;
+
+const jevRuntime = {
+  calls: 0,
+  hits: 0,
+  fallbacks: 0,
+  consecutiveFailures: 0,
+  openUntil: 0,
+  lastFailure: '',
+  configKey: '',
+};
+
+function syncJevConfigKey(settings) {
+  const key = `${settings?.mode ?? ''}|${settings?.baseUrl ?? ''}|${String(settings?.apiKey ?? '').slice(-6)}`;
+  if (key !== jevRuntime.configKey) {
+    jevRuntime.configKey = key;
+    jevRuntime.consecutiveFailures = 0;
+    jevRuntime.openUntil = 0;
+    jevRuntime.lastFailure = '';
+  }
+}
+
+/** 查询 Jev 决策路由累计统计（含熔断冷却截止时间）。 */
+export function jevStats() {
+  return { ...jevRuntime };
+}
+
+/** 重置 Jev 路由运行态统计与熔断（测试或配置重置用）。 */
+export function resetJevState() {
+  jevRuntime.calls = 0;
+  jevRuntime.hits = 0;
+  jevRuntime.fallbacks = 0;
+  jevRuntime.consecutiveFailures = 0;
+  jevRuntime.openUntil = 0;
+  jevRuntime.lastFailure = '';
+  jevRuntime.configKey = '';
+}
+
 /**
  * 执行一次决策。
  *
@@ -216,10 +255,24 @@ export function shouldUseJev(point, settings = {}) {
  *                    source:'jev'|'fallback', failure?:string, error?:string, why:string}>}
  */
 export async function decide(point, payload, settings = {}, { fetchImpl, timeoutMs } = {}) {
+  syncJevConfigKey(settings);
   const gate = shouldUseJev(point, settings);
   if (!gate.use) {
+    jevRuntime.fallbacks++;
     return { ok: false, source: 'fallback', why: gate.why };
   }
+  const now = Date.now();
+  if (jevRuntime.openUntil > now) {
+    jevRuntime.fallbacks++;
+    const leftSec = Math.max(1, Math.ceil((jevRuntime.openUntil - now) / 1000));
+    return {
+      ok: false,
+      source: 'fallback',
+      failure: jevRuntime.lastFailure || JEV_FAILURE.transport,
+      why: `Jev 冷却中（剩余 ${leftSec}s）`,
+    };
+  }
+  jevRuntime.calls++;
   const def = POINTS[point];
   const state = def.build?.(payload ?? {});
   const result = await jevDecide({
@@ -233,6 +286,19 @@ export async function decide(point, payload, settings = {}, { fetchImpl, timeout
     noulThreshold: settings.noulThreshold ?? 0.5,
   });
   if (!result.ok) {
+    jevRuntime.fallbacks++;
+    jevRuntime.lastFailure = result.failure || JEV_FAILURE.transport;
+    if (result.failure === JEV_FAILURE.auth) {
+      jevRuntime.consecutiveFailures++;
+      if (jevRuntime.consecutiveFailures >= 2) {
+        jevRuntime.openUntil = Date.now() + JEV_AUTH_COOLDOWN_MS;
+      }
+    } else if (result.failure === JEV_FAILURE.transport || result.failure === JEV_FAILURE.badResponse) {
+      jevRuntime.consecutiveFailures++;
+      if (jevRuntime.consecutiveFailures >= 3) {
+        jevRuntime.openUntil = Date.now() + JEV_TRANSIENT_COOLDOWN_MS;
+      }
+    }
     return {
       ok: false,
       source: 'fallback',
@@ -249,6 +315,9 @@ export async function decide(point, payload, settings = {}, { fetchImpl, timeout
     valid = false;
   }
   if (!valid) {
+    jevRuntime.fallbacks++;
+    jevRuntime.consecutiveFailures = 0;
+    jevRuntime.openUntil = 0;
     return {
       ok: false,
       source: 'fallback',
@@ -264,6 +333,9 @@ export async function decide(point, payload, settings = {}, { fetchImpl, timeout
       .filter(([, c]) => Number(c) < minConfidence)
       .map(([name]) => name);
     if (lows.length) {
+      jevRuntime.fallbacks++;
+      jevRuntime.consecutiveFailures = 0;
+      jevRuntime.openUntil = 0;
       return {
         ok: false,
         source: 'fallback',
@@ -272,6 +344,10 @@ export async function decide(point, payload, settings = {}, { fetchImpl, timeout
       };
     }
   }
+  jevRuntime.hits++;
+  jevRuntime.consecutiveFailures = 0;
+  jevRuntime.openUntil = 0;
+  jevRuntime.lastFailure = '';
   return {
     ok: true,
     source: 'jev',

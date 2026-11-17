@@ -6,7 +6,7 @@ import { store } from './store.js';
 import { backfillProgressSenders } from './progress-migration.js';
 import { PiRunner } from './pi-runner.js';
 import { Pairing, lanAddresses } from './pairing.js';
-import { createHttpServer } from './http.js';
+import { createHttpServer, resetLocalTokenCache } from './http.js';
 import { createSiteRuntime } from './site-runtime.js';
 import { loadOrCreateKey } from './secrets.js';
 import { issueLocalToken, clearLocalToken } from './local-token.js';
@@ -97,92 +97,7 @@ async function main() {
     log(`服务端进程退出 code=${code}`);
   });
 
-  const reaped = store.reapStaleStreaming();
-  if (reaped) log(`清理了 ${reaped} 条上次遗留的 streaming 消息`);
-
-  // 进程被 kill 时正在跑的任务会永远停在“进行中” —— 启动时收回待办
-  const stuck = store.reconcileTasks();
-  if (stuck) log(`收回了 ${stuck} 条上次遗留的“进行中”任务（已放回待办）`);
-
-  // 根据明确的消息或调度关联补全缺失来源，证据不足的回执保持未知。
-  try {
-    const backfilled = backfillProgressSenders(store);
-    if (backfilled) log(`回填了 ${backfilled} 条私聊进度回执的派活人`);
-  } catch (err) {
-    log('回填进度回执派活人失败（不影响启动）：', err?.message || err);
-  }
-
   const runner = await new PiRunner().init();
-
-  // ★ 授权网关（P0-1）：**必须在任何会话建立之前装好**。
-  //
-  //   规格 §11 的原话是「入口逐次强制核对当前有效授权」——
-  //   网关晚一步装，那段时间里起的会话就没有它，于是"漏掉的入口"又长回来。
-  //
-  //   迁移兼容：升级前那份全局 policy 就是用户当时批准过的口径，
-  //   这里把它如实记成每个 bot 一条根授权（范围等于 policy 现在允许的，不多一分），
-  //   所以网关上线**不改变任何现有行为**。收紧要靠用户新建授权 + 撤销这条。
-  try {
-    const legacy = ensureLegacyGrant({
-      store,
-      policy: store.policy(),
-      policyRevision: store.policyVersion(),
-      botIds: store.listBots().map((b) => b.id),
-      chiefBotId: store.mainBot()?.id ?? null,
-      generation: SERVER_GENERATION,
-    });
-    if (legacy.created.length) {
-      log(`🔑 已为 ${legacy.created.length} 个 bot 建立迁移授权（范围等于当前 policy，不可转授）`);
-    }
-  } catch (err) {
-    // 迁移失败不能挡住启动：网关在没有任何授权时是 fail-closed 的，
-    // 会显式拒绝并说明原因，不会静默放行。
-    log('建立迁移授权失败（网关将 fail-closed）：', err?.message || err);
-  }
-  runner.grantGate = createGrantGate({
-    store,
-    currentPolicyRevision: () => store.policyVersion(),
-    // 实例世代：进程重启就换代，旧批准不会自动续命。
-    currentGeneration: () => SERVER_GENERATION,
-    // 运行期新建的 bot 也要能干活：store.createBot / 建部门 / 模板开部门都会走到
-    // bot.updated。没有这一步，网关上线后新建的 bot 会“存在但没有任何权限”，
-    // 只能重启服务端才能补上 —— 这不该是用户的日常操作。
-    syncGrants: ({ botIds }) => ensureLegacyGrant({
-      store,
-      policy: store.policy(),
-      policyRevision: store.policyVersion(),
-      botIds,
-      chiefBotId: store.mainBot()?.id ?? null,
-      generation: SERVER_GENERATION,
-    }),
-    bus,
-  });
-  runner.grantGate.start();
-
-  // ★ 规格 §6.3：世代号要防的是"上个进程批准的后台动作继续跑"，
-  //   不是"用户给的长期授权重启就没了"。
-  //
-  //   实测的坑：`ensureLegacyGrant` 看到同名同规矩的迁移授权还在，就走
-  //   `existing` 分支 —— 不重发、也不刷新世代；而用户给的长期授权盖的是
-  //   上一条进程的世代。于是**重启一次，所有长期授权全部 `generation_stale`**，
-  //   用户会看到"我的联网授权属于旧世代"。这里把站得住的那些续到本代，
-  //   任务级（带 taskId）的照旧让它过期。
-  try {
-    applyRestamp({ store, generation: SERVER_GENERATION, log });
-  } catch (err) {
-    log('授权世代续期失败：' + (err?.message ?? err));
-  }
-
-  // ★ 规格 §6.3「级联回收」：启动时把"手里的授权"和"现在的事实"对一遍。
-  //
-  //   为什么不放在每次 check 里：那是热路径，而这类错配（角色降级、孤儿主体）
-  //   是**低频事实变化**，启动时核一次就够。核的是"错配"，不是"猜用户想留什么"。
-  try {
-    applyReconcile({ store, workspace: config.workspace, log });
-  } catch (err) {
-    // 对账失败不能挡住启动：网关在没有任何授权时是 fail-closed 的
-    log('授权对账失败：' + (err?.message ?? err));
-  }
   // http.js 里的“规矩改了重发迁移授权”也要带同一个世代（否则新发出来的
   // 授权一校验就被 generation_stale ——签发与校验得不到同一个值）。
   runner.grantGeneration = () => SERVER_GENERATION;
@@ -191,8 +106,6 @@ async function main() {
   runner.taskIntakeEnabled = intakeEnabled();
   const taskHost = createTaskHost({ store, runner });
   runner.taskCommands = createTaskCommands({ store, runner, taskRuns: store.taskRuns });
-  // 探活结果 24 小时过期 —— 服务连跑几天也不会让「全员不可用」这种假结论冻在那儿
-  if (config.autoProbe) runner.health?.startAutoRefresh();
   const pairing = new Pairing();
   pairing.onRotate = async (code) => {
     log(`🔑 配对码已轮换：${code}`);
@@ -201,49 +114,16 @@ async function main() {
     }
   };
 
-  // 站点口令的加密密钥：只在本机数据目录，权限 0600，不进仓库。
-  // 没有它就只能存明文 —— 所以这一步失败要显式告警，不能静默降级。
-  try {
-    store.useSecretsKey(loadOrCreateKey(config.dataDir));
-  } catch (err) {
-    log(`⚠️ 无法初始化口令加密（${err?.message ?? err}）—— 站点口令将无法安全保存`);
-  }
-
-  // ★ 内置 MCP 预设已全部下线（首批不内置任何逆向 MCP）。
-  //
-  //   这里只做**清理**：把早期版本登记进用户库、带 presetId 的旧条目
-  //   标成"已下线"并强制不启用。不自动删（用户可能填过自己的 env/凭据），
-  //   也不报错（升级不该因为一个不存在的预设起不来）。
-  try {
-    const { retired } = markRetiredPresets(store);
-    if (retired.length) {
-      log(`📦 已下线内置 MCP 预设（保持未启用）：${retired.join('、')}`);
-    }
-  } catch (err) {
-    log('⚠️ 下线预设清理失败（继续启动）：', err?.message || err);
-  }
-
   // 外部 Web 系统的传输层：管 token、转发查询。给工具和 HTTP 接口共用一份。
   const sites = createSiteRuntime({ log });
   runner.sites = sites;
 
-  // 本次启动的本机 token：写进 0600 文件，桌面端读出来带在请求上。
-  //
-  //   有了它，回环地址才真正等于本机用户 —— 原来任何本机进程往 127.0.0.1
-  //   发请求都自动是主人，那是个洞。
-  const localToken = issueLocalToken(config.dataDir, { log });
-  log(`本机 token 已写入 ` + config.dataDir + `/local-token`);
-
   const server = createHttpServer({ runner, pairing, sites });
   attachWs(server, { runner });
 
-  // 定时任务：每 30s 看一次有没有到点的
-  const scheduler = createAutomationScheduler({
-    store,
-    log,
-    run: (automation) => runner.runAutomation(automation),
-  });
-  scheduler.start();
+  let bound = false;
+  let scheduler = null;
+  let housekeeping = null;
 
   // ★ 端口被占必须当场说清楚并退出。
   //
@@ -274,60 +154,6 @@ async function main() {
     process.exit(1);
   });
 
-  /**
-   * 后台清理：两件"有实现但从来没被调用过"的事（规格 §5.2 / §5.5）。
-   *
-   * | 清理 | 不做的后果 |
-   * |---|---|
-   * | 桌面租约 sweep | 持有者进程死了/没心跳，租约一直挂着，别的任务要等到自己 acquire 才发现 —— 那时桌面已经白占一个 TTL |
-   * | 截图 prune | 截图按任务落在 data/shots 下，只增不减；规格 §5.5 要求"保留期" |
-   *
-   * 两道都是 60 秒一次：租约 TTL 就是 60 秒，比它更慢会让"僵住的租约"
-   * 多占一段时间；截图清理对时效不敏感，同一个节拍够用。
-   *
-   * 用 unref 让定时器**不阻止进程退出** —— 否则 SIGINT 之后还要等它一轮。
-   */
-  const housekeeping = setInterval(() => {
-    try {
-      const swept = desktopInputSession().sweepLeases();
-      if (swept?.released) {
-        log(`桌面租约回收：${swept.released.botId ?? '?'}（任务 ${swept.released.taskId ?? '?'}）—— ${swept.released.why ?? ''}`);
-      }
-    } catch (err) {
-      log('回收桌面租约失败：' + (err?.message || err));
-    }
-    try {
-      const pruned = pruneScreenshots({ dataDir: config.dataDir });
-      if (pruned?.removed) log(`清理旧截图：${pruned.removed} 张`);
-    } catch (err) {
-      log('清理旧截图失败：' + (err?.message || err));
-    }
-    // 登录态快照过期就清：那是**可用的登录凭据**，不能长期躺在数据目录里
-    // （规格 §5.6 T1 的"共享登录态"必须配一条保留期，否则就是把凭据复制了一份永久留着）。
-    try {
-      const pruned = pruneLoginSnapshots({ dataDir: config.dataDir });
-      if (pruned?.removed) log(`清理过期登录态快照：${pruned.removed} 份`);
-    } catch (err) {
-      log('清理登录态快照失败：' + (err?.message || err));
-    }
-    // 独立桌面（规格 §5.6 T1）：没有操作就自己收摊。
-    //
-    // 岛上的应用是**用户身份下的真实进程**，空转一晚上等于在用户机器上
-    // 挂着一堆没人看的窗口与一个常驻 powershell。这里按"空闲 10 分钟"收。
-    if (islandSupported()) {
-      // setInterval 的回调不能 await；用 promise 链，失败只记日志 ——
-      // 收摊失败不该影响别的 housekeeping。
-      sweepIdleIslands()
-        .then((idle) => {
-          if (idle?.closed?.length) {
-            log(`回收空闲独立桌面：${idle.closed.map((c) => `${c.name}（空闲 ${Math.round(c.idleFor / 1000)}s）`).join('、')}`);
-          }
-        })
-        .catch((err) => log('回收空闲独立桌面失败：' + (err?.message || err)));
-    }
-  }, 60_000);
-  housekeeping.unref?.();
-
   /** 局域网发现应答器（UDP）；起不来就是 null，关闭时顺手收掉 */
   let discovery = null;
   /** 加密监听（手机走这条） */
@@ -336,6 +162,189 @@ async function main() {
   let tlsInfo = null;
 
   server.listen(config.port, config.host, async () => {
+    // 端口真正 listen 成功后才落盘改状态与签发 local-token，避免冲突实例把在跑实例的凭据覆盖掉
+    bound = true;
+
+    const reaped = store.reapStaleStreaming();
+    if (reaped) log(`清理了 ${reaped} 条上次遗留的 streaming 消息`);
+
+    // 进程被 kill 时正在跑的任务会永远停在“进行中” —— 启动时收回待办
+    const stuck = store.reconcileTasks();
+    if (stuck) log(`收回了 ${stuck} 条上次遗留的“进行中”任务（已放回待办）`);
+
+    // 根据明确的消息或调度关联补全缺失来源，证据不足的回执保持未知。
+    try {
+      const backfilled = backfillProgressSenders(store);
+      if (backfilled) log(`回填了 ${backfilled} 条私聊进度回执的派活人`);
+    } catch (err) {
+      log('回填进度回执派活人失败（不影响启动）：', err?.message || err);
+    }
+
+    // ★ 授权网关（P0-1）：**必须在任何会话建立之前装好**。
+    //
+    //   规格 §11 的原话是「入口逐次强制核对当前有效授权」——
+    //   网关晚一步装，那段时间里起的会话就没有它，于是"漏掉的入口"又长回来。
+    //
+    //   迁移兼容：升级前那份全局 policy 就是用户当时批准过的口径，
+    //   这里把它如实记成每个 bot 一条根授权（范围等于 policy 现在允许的，不多一分），
+    //   所以网关上线**不改变任何现有行为**。收紧要靠用户新建授权 + 撤销这条。
+    try {
+      const legacy = ensureLegacyGrant({
+        store,
+        policy: store.policy(),
+        policyRevision: store.policyVersion(),
+        botIds: store.listBots().map((b) => b.id),
+        chiefBotId: store.mainBot()?.id ?? null,
+        generation: SERVER_GENERATION,
+      });
+      if (legacy.created.length) {
+        log(`🔑 已为 ${legacy.created.length} 个 bot 建立迁移授权（范围等于当前 policy，不可转授）`);
+      }
+    } catch (err) {
+      // 迁移失败不能挡住启动：网关在没有任何授权时是 fail-closed 的，
+      // 会显式拒绝并说明原因，不会静默放行。
+      log('建立迁移授权失败（网关将 fail-closed）：', err?.message || err);
+    }
+    runner.grantGate = createGrantGate({
+      store,
+      currentPolicyRevision: () => store.policyVersion(),
+      // 实例世代：进程重启就换代，旧批准不会自动续命。
+      currentGeneration: () => SERVER_GENERATION,
+      // 运行期新建的 bot 也要能干活：store.createBot / 建部门 / 模板开部门都会走到
+      // bot.updated。没有这一步，网关上线后新建的 bot 会“存在但没有任何权限”，
+      // 只能重启服务端才能补上 —— 这不该是用户的日常操作。
+      syncGrants: ({ botIds }) => ensureLegacyGrant({
+        store,
+        policy: store.policy(),
+        policyRevision: store.policyVersion(),
+        botIds,
+        chiefBotId: store.mainBot()?.id ?? null,
+        generation: SERVER_GENERATION,
+      }),
+      bus,
+    });
+    runner.grantGate.start();
+
+    // ★ 规格 §6.3：世代号要防的是"上个进程批准的后台动作继续跑"，
+    //   不是"用户给的长期授权重启就没了"。
+    //
+    //   实测的坑：`ensureLegacyGrant` 看到同名同规矩的迁移授权还在，就走
+    //   `existing` 分支 —— 不重发、也不刷新世代；而用户给的长期授权盖的是
+    //   上一条进程的世代。于是**重启一次，所有长期授权全部 `generation_stale`**，
+    //   用户会看到"我的联网授权属于旧世代"。这里把站得住的那些续到本代，
+    //   任务级（带 taskId）的照旧让它过期。
+    try {
+      applyRestamp({ store, generation: SERVER_GENERATION, log });
+    } catch (err) {
+      log('授权世代续期失败：' + (err?.message ?? err));
+    }
+
+    // ★ 规格 §6.3「级联回收」：启动时把"手里的授权"和"现在的事实"对一遍。
+    //
+    //   为什么不放在每次 check 里：那是热路径，而这类错配（角色降级、孤儿主体）
+    //   是**低频事实变化**，启动时核一次就够。核的是"错配"，不是"猜用户想留什么"。
+    try {
+      applyReconcile({ store, workspace: config.workspace, log });
+    } catch (err) {
+      // 对账失败不能挡住启动：网关在没有任何授权时是 fail-closed 的
+      log('授权对账失败：' + (err?.message ?? err));
+    }
+
+    // 探活结果 24 小时过期 —— 服务连跑几天也不会让「全员不可用」这种假结论冻在那儿
+    if (config.autoProbe) runner.health?.startAutoRefresh();
+
+    // 站点口令的加密密钥：只在本机数据目录，权限 0600，不进仓库。
+    // 没有它就只能存明文 —— 所以这一步失败要显式告警，不能静默降级。
+    try {
+      store.useSecretsKey(loadOrCreateKey(config.dataDir));
+    } catch (err) {
+      log(`⚠️ 无法初始化口令加密（${err?.message ?? err}）—— 站点口令将无法安全保存`);
+    }
+
+    // ★ 内置 MCP 预设已全部下线（首批不内置任何逆向 MCP）。
+    //
+    //   这里只做**清理**：把早期版本登记进用户库、带 presetId 的旧条目
+    //   标成"已下线"并强制不启用。不自动删（用户可能填过自己的 env/凭据），
+    //   也不报错（升级不该因为一个不存在的预设起不来）。
+    try {
+      const { retired } = markRetiredPresets(store);
+      if (retired.length) {
+        log(`📦 已下线内置 MCP 预设（保持未启用）：${retired.join('、')}`);
+      }
+    } catch (err) {
+      log('⚠️ 下线预设清理失败（继续启动）：', err?.message || err);
+    }
+
+    // 本次启动的本机 token：写进 0600 文件，桌面端读出来带在请求上。
+    //
+    //   有了它，回环地址才真正等于本机用户 —— 原来任何本机进程往 127.0.0.1
+    //   发请求都自动是主人，那是个洞。
+    issueLocalToken(config.dataDir, { log });
+    resetLocalTokenCache();
+    log('本机 token 已写入 ' + config.dataDir + '/local-token');
+
+    // 定时任务：每 30s 看一次有没有到点的
+    scheduler = createAutomationScheduler({
+      store,
+      log,
+      run: (automation) => runner.runAutomation(automation),
+    });
+    scheduler.start();
+
+    /**
+     * 后台清理：两件"有实现但从来没被调用过"的事（规格 §5.2 / §5.5）。
+     *
+     * | 清理 | 不做的后果 |
+     * |---|---|
+     * | 桌面租约 sweep | 持有者进程死了/没心跳，租约一直挂着，别的任务要等到自己 acquire 才发现 —— 那时桌面已经白占一个 TTL |
+     * | 截图 prune | 截图按任务落在 data/shots 下，只增不减；规格 §5.5 要求"保留期" |
+     *
+     * 两道都是 60 秒一次：租约 TTL 就是 60 秒，比它更慢会让"僵住的租约"
+     * 多占一段时间；截图清理对时效不敏感，同一个节拍够用。
+     *
+     * 用 unref 让定时器**不阻止进程退出** —— 否则 SIGINT 之后还要等它一轮。
+     */
+    housekeeping = setInterval(() => {
+      try {
+        const swept = desktopInputSession().sweepLeases();
+        if (swept?.released) {
+          log(`桌面租约回收：${swept.released.botId ?? '?'}（任务 ${swept.released.taskId ?? '?'}）—— ${swept.released.why ?? ''}`);
+        }
+      } catch (err) {
+        log('回收桌面租约失败：' + (err?.message || err));
+      }
+      try {
+        const pruned = pruneScreenshots({ dataDir: config.dataDir });
+        if (pruned?.removed) log(`清理旧截图：${pruned.removed} 张`);
+      } catch (err) {
+        log('清理旧截图失败：' + (err?.message || err));
+      }
+      // 登录态快照过期就清：那是**可用的登录凭据**，不能长期躺在数据目录里
+      // （规格 §5.6 T1 的"共享登录态"必须配一条保留期，否则就是把凭据复制了一份永久留着）。
+      try {
+        const pruned = pruneLoginSnapshots({ dataDir: config.dataDir });
+        if (pruned?.removed) log(`清理过期登录态快照：${pruned.removed} 份`);
+      } catch (err) {
+        log('清理登录态快照失败：' + (err?.message || err));
+      }
+      // 独立桌面（规格 §5.6 T1）：没有操作就自己收摊。
+      //
+      // 岛上的应用是**用户身份下的真实进程**，空转一晚上等于在用户机器上
+      // 挂着一堆没人看的窗口与一个常驻 powershell。这里按"空闲 10 分钟"收。
+      if (islandSupported()) {
+        // setInterval 的回调不能 await；用 promise 链，失败只记日志 ——
+        // 收摊失败不该影响别的 housekeeping。
+        sweepIdleIslands()
+          .then((idle) => {
+            if (idle?.closed?.length) {
+              log(`回收空闲独立桌面：${idle.closed.map((c) => `${c.name}（空闲 ${Math.round(c.idleFor / 1000)}s）`).join('、')}`);
+            }
+          })
+          .catch((err) => log('回收空闲独立桌面失败：' + (err?.message || err)));
+      }
+    }, 60_000);
+    housekeeping.unref?.();
+
     await banner(pairing, runner);
 
     // ★ 加密监听：手机连的是这条。证书是本机自签的（局域网里没有可信 CA），
@@ -392,12 +401,13 @@ async function main() {
     try {
       tlsServer?.close();
     } catch {}
-    scheduler.stop();
-    clearInterval(housekeeping);
+    scheduler?.stop();
+    if (housekeeping) clearInterval(housekeeping);
     runner.health?.stop();
     shells.stopAll();
     taskHost.dispose();
     runner.disposeAll();
+    if (bound) clearLocalToken(config.dataDir);
     store.saveNow();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 2000).unref?.();

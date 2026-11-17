@@ -37,7 +37,7 @@ import { lanAddresses } from './pairing.js';
 import { timingSafeEqual, log } from './util.js';
 import { readLocalToken } from './local-token.js';
 import { NONCE_PURPOSE, consumeNonce, issueNonce } from './local-nonce.js';
-import { planAdminRoute } from './http-admin.js';
+import { planAdminRoute, adminRouteNeedsBody } from './http-admin.js';
 import { createPairRequests } from './pair-requests.js';
 import { activeTls } from './tls.js';
 import { describeConfirmation } from './confirm.js';
@@ -218,8 +218,13 @@ function isLocalTokenValid(req, url) {
 export function isLocalToken(provided) {
   if (!provided) return false;
   const expected = localToken();
-  if (!expected) return false;
-  return timingSafeEqual(provided, expected);
+  if (expected && timingSafeEqual(provided, expected)) return true;
+  const fresh = readLocalToken(config.dataDir);
+  if (fresh && fresh !== expected) {
+    _localTokenCache = fresh;
+    return timingSafeEqual(provided, fresh);
+  }
+  return false;
 }
 
 /**
@@ -313,7 +318,7 @@ function authenticate(req, url) {
     }
     // ★ 本机 token：服务端每次启动随机生成、写在 0600 文件里。
     //   桌面端读它并带在请求上 —— 这才是"本机用户 = 主人"的可靠凭据。
-    if (config.trustLocal && isLocalTokenValid(req, url)) {
+    if (config.trustLocal && isLoopback(req) && isLocalTokenValid(req, url)) {
       return { ...LOCAL_DEVICE, lastSeenAt: Date.now(), viaLocalToken: true };
     }
     const device = store.findDeviceByToken(token);
@@ -415,6 +420,14 @@ export function hostAllowed(hostHeader) {
   return lanAddresses().some((a) => String(a.address).toLowerCase() === lower);
 }
 
+let _sharedReceipts;
+
+/** HTTP 与 WS 共享同一份 task-requests 受理存根，避免双实例各自建目录/丢状态。 */
+export function sharedRequestReceipts() {
+  _sharedReceipts ??= createRequestReceipts({ dir: path.join(config.dataDir, 'task-requests') });
+  return _sharedReceipts;
+}
+
 /**
  * 请求处理器：HTTP 和 HTTPS 两个 listener **共享同一份**。
  *
@@ -448,12 +461,14 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
   }
 
   const taskRunRoutes = createTaskRunRoutes({ store, runner });
-  const httpRequestReceipts = createRequestReceipts({ dir: path.join(config.dataDir, 'task-requests') });
-  const requestResultService = createRequestResultService({ receipts: httpRequestReceipts, taskRuns: store.taskRuns });
-  const publishTerminal = createTerminalPublisher({ service: requestResultService, emit: (event) => bus.emit('event', event) });
-  runner.setRequestLifecycle?.(createRequestLifecycle({
-    receipts: httpRequestReceipts, taskRuns: store.taskRuns, onTerminal: publishTerminal,
-  }));
+  const httpRequestReceipts = sharedRequestReceipts();
+  if (!runner?.requestLifecycle) {
+    const requestResultService = createRequestResultService({ receipts: httpRequestReceipts, taskRuns: store.taskRuns });
+    const publishTerminal = createTerminalPublisher({ service: requestResultService, emit: (event) => bus.emit('event', event) });
+    runner?.setRequestLifecycle?.(createRequestLifecycle({
+      receipts: httpRequestReceipts, taskRuns: store.taskRuns, onTerminal: publishTerminal,
+    }));
+  }
   const connections = createConnections({ store, runner, onChange: () => bus.emit('event', { t: 'connections.changed' }) });
   // 连接请求：手机发起 → 电脑上弹窗 → 允许后发 token。
   // 事件走 bus，桌面 App 的 WS 会收到（见 app/lib/app_state.dart 的 pair.request 分支）。
@@ -469,6 +484,13 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     const pathname = url.pathname.replace(/\/+$/, '') || '/';
     const clientIp = (r) => String(r.socket?.remoteAddress ?? '').replace(/^::ffff:/, '');
+    let _cachedBody;
+    const readJsonBody = async (limitOrReq, maybeLimit) => {
+      const limit = typeof limitOrReq === 'number' ? limitOrReq : maybeLimit;
+      if (_cachedBody !== undefined) return _cachedBody;
+      _cachedBody = await readBody(req, limit);
+      return _cachedBody;
+    };
 
     // ★ Host 必须是本机名/本机 IP：防 DNS rebinding ——
     //   恶意域名解析到 127.0.0.1 时，Host 会是那个域名，这里直接拒。
@@ -528,7 +550,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
       // 和配对码一样是**未鉴权**入口（手机此时还没有 token），但比配对码多一道闸：
       // 必须有人在电脑上点"允许"，token 才会发下来。
       if (pathname === '/api/pair/request' && req.method === 'POST') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         try {
           const view = pairRequests.create({
             device: body.device,
@@ -561,7 +583,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
       }
 
       if (pathname === '/api/pair' && req.method === 'POST') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         if (!pairing.verify(body.code)) {
           return fail(res, 401, 'PAIR_CODE_INVALID', '配对码不对或已过期，看服务端控制台最新那 6 位数字');
         }
@@ -617,7 +639,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
 
       const requestDecideMatch = /^\/api\/pair\/request\/([a-f0-9]{32})$/.exec(pathname);
       if (requestDecideMatch && req.method === 'POST') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const result = pairRequests.decide(requestDecideMatch[1], body.approve === true);
         if (!result.ok) {
           const status = result.code === 'PAIR_REQUEST_NOT_FOUND' ? 404 : 409;
@@ -635,7 +657,10 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
       //
       //   nonce 的**校验**仍然在各路由自己手里（那里知道自己的 purpose），
       //   这里只做两件事：记账 + 拒绝"该带 nonce 却完全没带"的请求。
-      const adminPlan = planAdminRoute({ method: req.method, pathname });
+      const adminBody = !isUploadRoute && adminRouteNeedsBody({ method: req.method, pathname })
+        ? await readJsonBody()
+        : null;
+      const adminPlan = planAdminRoute({ method: req.method, pathname, body: adminBody });
       if (adminPlan) {
         if (adminPlan.nonce) {
           // ★ 这里**真正消费** nonce，不是只看有没有这个头。
@@ -717,6 +742,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
           // 群聊轮次预算（防止 bot 解不了就互相聊个没完）
           groupLimits: store.groupLimits(),
           policy: store.policy(),
+          desktopSettings: store.desktopSettings(),
           // 快速决策（Jev）的设置。key 已抹掉，只回"配没配"。
           // 放这里让 App 一次刷新就拿到，设置页不用再单独拉一次。
           decision: publicDecision(store.decision()),
@@ -738,7 +764,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
         return send(res, 200, { hooks: loadHooks() });
       }
       if (pathname === '/api/hooks' && req.method === 'PUT') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const list = Array.isArray(body?.hooks) ? body.hooks : [];
         const bad = list.map((rule) => validateHook(rule)).filter(Boolean);
         if (bad.length) return send(res, 400, { error: bad[0] });
@@ -789,7 +815,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
         return send(res, 200, { settings: store.desktopSettings(), environment });
       }
       if (pathname === '/api/desktop-settings' && req.method === 'PATCH') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const next = store.setDesktopSettings(body ?? {});
         log(`🖱 桌面设置已更新：信任合成输入=${next.trustPhantomInput ? '开' : '关'}`);
         return send(res, 200, { settings: next });
@@ -833,7 +859,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
       if (pathname === '/api/onboarding/apply' && req.method === 'POST') {
         const gate = runner.grantGate;
         if (!gate) return fail(res, 503, 'NO_GATE', '网关未启用');
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const plan = planFirstRunGrants({
           projectId: body?.projectId,
           gitScope: body?.gitScope,
@@ -945,9 +971,9 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
         ? 'device'
         : 'local';
 
-      const confirmMatch = pathname.match(/^\/api\/confirmations\/([^/]+)$/);
+      const confirmMatch = pathname.match(/^\/api\/confirmations\/([^/]+?)(?:\/decide)?$/);
       if (confirmMatch && req.method === 'POST') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const id = decodeURIComponent(confirmMatch[1]);
         const existing = store.getConfirmation(id);
         if (!existing) return fail(res, 404, 'CONFIRMATION_NOT_FOUND', '没有这条确认');
@@ -971,6 +997,18 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
           `🛡 ${approved ? '批准' : '拒绝'}：${describeConfirmation(c)}` +
             `（通道 ${clientChannel}${device?.name ? '，' + device.name : ''}）`,
         );
+
+        const syncConfirmationMessages = (decisionValue) => {
+          for (const [rid, list] of store.messages) {
+            for (const m of list ?? []) {
+              if (m?.meta?.confirmationId === c.id) {
+                store.updateMessage(rid, m.id, {
+                  meta: { ...(m.meta ?? {}), decision: decisionValue },
+                });
+              }
+            }
+          }
+        };
 
         // ★ 授权申请（grant.request）批准之后，**在这里**以用户的名义建授权。
         //
@@ -1010,18 +1048,20 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
             created.push(r.grant.id);
           }
           store.consumeConfirmation(c.id);   // 一次一用
+          syncConfirmationMessages(c.decision);
           log(`🔑 授权申请已批准：${created.length} 条（${(req.actions ?? []).join(',')}）`);
           bus.emit('event', { t: 'grants.issued', grantIds: created });
           return send(res, 200, { confirmation: c, granted: created });
         }
 
+        syncConfirmationMessages(c.decision);
         bus.emit('event', { t: 'confirmation.updated', confirmation: c });
         return send(res, 200, { confirmation: c });
       }
 
       const approvalMatch = pathname.match(/^\/api\/approvals\/([^/]+)$/);
       if (approvalMatch && req.method === 'POST') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const approval = store.decideApproval(approvalMatch[1], {
           approved: body?.approve === true,
         });
@@ -1077,7 +1117,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
       }
 
       if (pathname === '/api/automations' && req.method === 'POST') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const problem = validateSchedule(body);
         if (problem) return send(res, 400, { error: problem });
         if (!store.getRoom(body.roomId)) return fail(res, 400, 'ROOM_NOT_FOUND', '会话不存在');
@@ -1098,7 +1138,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
 
       const autoMatch = pathname.match(/^\/api\/automations\/([^/]+)$/);
       if (autoMatch && req.method === 'PATCH') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const patch = { ...body };
         // 改了排期就重算下一次
         if (body.everyMinutes !== undefined || body.dailyAt !== undefined) {
@@ -1137,7 +1177,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
       }
 
       if (pathname === '/api/tasks' && req.method === 'POST') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const task = store.createTask({
           roomId: body.roomId ?? null,
           title: body.title,
@@ -1151,7 +1191,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
 
       const taskMatch = pathname.match(/^\/api\/tasks\/([^/]+)$/);
       if (taskMatch && req.method === 'PATCH') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const task = store.updateTask(taskMatch[1], body);
         if (!task) return fail(res, 404, 'TASK_NOT_FOUND', '任务不存在');
         return send(res, 200, { task });
@@ -1162,7 +1202,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
       }
 
       // ---------- 任务运行（独立 TaskRun） ----------
-      if (await taskRunRoutes({ req, res, url, pathname, readBody, send, fail, device })) return;
+      if (await taskRunRoutes({ req, res, url, pathname, readBody: readJsonBody, send, fail, device })) return;
 
       if (pathname === '/api/models' && req.method === 'GET') {
         const keyword = (url.searchParams.get('q') || '').toLowerCase();
@@ -1207,7 +1247,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
 
       // 添加前先探测：确认这个站的登录方式，避免存进去却连不上
       if (pathname === '/api/sites/probe' && req.method === 'POST') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const result = await probeLogin({
           baseUrl: body.baseUrl,
           account: body.account,
@@ -1225,7 +1265,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
       }
 
       if (pathname === '/api/sites' && req.method === 'POST') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const r = store.addSite({
           name: body.name,
           baseUrl: body.baseUrl,
@@ -1239,7 +1279,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
 
       const siteMatch = pathname.match(/^\/api\/sites\/([^/]+)$/);
       if (siteMatch && req.method === 'PATCH') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const id = decodeURIComponent(siteMatch[1]);
         const r = store.updateSite(id, body);
         if (r.error) return send(res, 404, { error: r.error });
@@ -1261,7 +1301,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
         const id = decodeURIComponent(siteTeamMatch[1]);
         const site = store.getSite(id);
         if (!site) return fail(res, 404, 'SITE_NOT_FOUND', '系统不存在');
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const teamName = String(body.name ?? `${site.name} 团队`).slice(0, 40);
 
         // 已经有团队就直接复用（别重复建部门）
@@ -1313,7 +1353,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
         return send(res, 200, r);
       }
 
-      if (await routeConnections({ req, res, pathname, connections, readBody, send })) return;
+      if (await routeConnections({ req, res, pathname, connections, readBody: readJsonBody, send })) return;
 
       // ---------- 本机已装能力（只读扫描，不碰用户的 pi 配置）----------
       // 用户在终端里早就装了一堆 skill / MCP，这里让他一键导入，不用手抄。
@@ -1327,7 +1367,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
 
       // 一键导入：传 kind + 名字列表。同名的不重复导，返回明细。
       if (pathname === '/api/local-capabilities/import' && req.method === 'POST') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const kind = String(body.kind ?? '');
         const wanted = new Set(
           (Array.isArray(body.names) ? body.names : []).map((n) => String(n).toLowerCase()),
@@ -1409,7 +1449,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
       if (pathname === '/api/mcp' && req.method === 'POST') {
         const denied = requireMcpNonce();
         if (denied) return denied;
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const r = store.addMcpServer(body);
         if (r.error) return send(res, 400, { error: r.error });
         // 改了服务库，挂着它的会话要重建才能拿到新工具
@@ -1421,7 +1461,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
       if (mcpMatch && req.method === 'PATCH') {
         const denied = requireMcpNonce();
         if (denied) return denied;
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const r = store.updateMcpServer(decodeURIComponent(mcpMatch[1]), body);
         if (r.error) return send(res, 404, { error: r.error });
         await runner.applyMcpChange?.();
@@ -1438,7 +1478,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
 
       // 草稿只做协议验证，不保存配置；已保存凭据在服务端合并。
       if (pathname === '/api/mcp/test' && req.method === 'POST') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         return send(res, 200, await connections.testDraft(body));
       }
 
@@ -1448,7 +1488,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
       }
 
       if (pathname === '/api/skills' && req.method === 'POST') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const r = store.addSkill({
           title: body.title,
           summary: body.summary,
@@ -1461,7 +1501,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
 
       const skillMatch = pathname.match(/^\/api\/skills\/([^/]+)$/);
       if (skillMatch && req.method === 'PATCH') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const r = store.updateSkill(decodeURIComponent(skillMatch[1]), body);
         if (r.error) return send(res, 404, { error: r.error });
         return send(res, 200, { skill: r.skill });
@@ -1475,7 +1515,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
       // 导入：客户端把 SKILL.md 的正文读出来发给这里，服务端负责解析
       // （放在服务端解析是为了让导入规则只有一份，和手动添加走同一套规范化）
       if (pathname === '/api/skills/import' && req.method === 'POST') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const files = Array.isArray(body.files) ? body.files : [];
         const parsed = [];
         const unparsed = [];
@@ -1514,7 +1554,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
       }
 
       if (pathname === '/api/lessons' && req.method === 'POST') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const r = store.addLesson({
           roomId: body.roomId,
           dept: body.dept,
@@ -1530,7 +1570,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
 
       const lessonMatch = pathname.match(/^\/api\/lessons\/([^/]+)$/);
       if (lessonMatch && req.method === 'PATCH') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const r = store.updateLesson(decodeURIComponent(lessonMatch[1]), body);
         if (r.error) return send(res, 404, { error: r.error });
         return send(res, 200, { lesson: r.lesson });
@@ -1552,7 +1592,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
       // ---------- 附件 ----------
       // ---------- 分片上传（大文件走这里） ----------
       if (pathname === '/api/uploads/init' && req.method === 'POST') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const started = uploads.init(body);
         if (started.error) return send(res, 400, { error: started.error });
         return send(res, 200, started);
@@ -1579,7 +1619,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
 
       const completeMatch = pathname.match(/^\/api\/uploads\/([^/]+)\/complete$/);
       if (completeMatch && req.method === 'POST') {
-        const body = await readBody(req).catch(() => ({}));
+        const body = await readJsonBody().catch(() => ({}));
         const done = await uploads.complete(completeMatch[1], { sha256: body?.sha256 });
         if (done.error) return send(res, 400, { error: done.error });
         // 不整读：临时文件直接移进附件目录（rename，跨盘才退化成 copy）
@@ -1623,7 +1663,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
       if ((fileMatch && req.method === 'DELETE')
           || (pathname === '/api/files/delete' && req.method === 'POST')) {
         const singleDelete = req.method === 'DELETE' && fileMatch;
-        const body = singleDelete ? null : await readBody(req).catch(() => ({}));
+        const body = singleDelete ? null : await readJsonBody().catch(() => ({}));
         const ids = singleDelete ? [fileMatch[1]] : (Array.isArray(body?.ids) ? body.ids : []);
         if (!ids.length) return fail(res, 400, 'NO_IDS', '没有指定要删哪些');
         if (ids.length > 500) return fail(res, 400, 'TOO_MANY_IDS', '一次最多删 500 个');
@@ -1689,7 +1729,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
       }
 
       if (pathname === '/api/bots' && req.method === 'POST') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         if (!body.name) return fail(res, 400, 'NAME_REQUIRED', '需要 name');
         const bot = store.createBot({ ...body, createdBy: device.id });
         // ★ 建完就让 bot 主动来打招呼，而不是等用户去侧边栏点它。
@@ -1711,7 +1751,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
 
       const botMatch = pathname.match(/^\/api\/bots\/([^/]+)$/);
       if (botMatch && req.method === 'PATCH') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const previous = store.getBot(botMatch[1]);
         if (!previous) return fail(res, 404, 'BOT_NOT_FOUND', 'bot 不存在');
         let selected;
@@ -1745,7 +1785,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
         return send(res, 200, { user: store.userSummary() });
       }
       if (pathname === '/api/user' && req.method === 'PATCH') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const user = store.updateUserName(body.name);
         // 名字是拼进系统提示的，而提示只在建会话时构造 —— 不重建会话的话
         // 改名只对以后新开的会话生效，正在用的那些还记着旧名字。
@@ -1765,7 +1805,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
         return send(res, 200, { decision: publicDecision(store.decision()) });
       }
       if (pathname === '/api/decision' && req.method === 'PATCH') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const decision = store.updateDecision(body);
         log(
           `⚙️  快速决策（Jev）${decision.enabled ? '已打开' : '已关闭'}` +
@@ -1775,7 +1815,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
       }
       if (pathname === '/api/decision/probe' && req.method === 'POST') {
         // 设置页的"测一下"：只读模型列表，不产生推理费用
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const cfg = store.decision();
         const mode = body.mode === 'custom' || cfg.mode === 'custom' ? 'custom' : 'typesafe';
         const probe = await jevProbe({
@@ -1797,7 +1837,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
       //   服务端无法验证"背后真的有人点了按钮"，那是界面的责任 ——
       //   界面必须把这一步放在 onClick 里，不能在启动或定时任务里预先申请。
       if (pathname === '/api/local-nonce' && req.method === 'POST') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const purpose = String(body?.purpose ?? '');
         if (!Object.values(NONCE_PURPOSE).includes(purpose)) {
           return send(res, 400, { error: 'unknown_purpose' });
@@ -1807,7 +1847,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
 
       if (pathname === '/api/policy' && req.method === 'PATCH') {
         // nonce 由统一的 admin 中间件消费，这里不再重复
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const policy = store.updatePolicy(body);
         // ★ 规矩改了 → 迁移授权要跟着重发（否则网关会按旧规矩拒掉一切）。
         //
@@ -1838,7 +1878,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
         return send(res, 200, { policy, policyChange: change, notified });
       }
       if (pathname === '/api/group-limits' && req.method === 'PATCH') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const limits = store.updateGroupLimits(body);
         log(
           `⚙️  群聊轮次改为：老大 ${limits.leadTurns} 轮 / 成员 ${limits.memberTurns} 轮 / ` +
@@ -1864,7 +1904,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
       }
 
       if (pathname === '/api/model-groups' && req.method === 'POST') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const r = modelGroups.upsert(body);
         if (r.error) return send(res, 400, { error: r.error });
         // 运行时热注册，加完不用重启
@@ -1875,7 +1915,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
 
       // 连通性测试：还没保存也能测（用户在编辑器里填完想先试一下）
       if (pathname === '/api/model-groups/test' && req.method === 'POST') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         // 有 id 就用存着的那份补全（key 打了码，不能拿它当值提交）
         const saved = body.id ? modelGroups.get(body.id) : null;
         const r = await testModelGroup({
@@ -1889,7 +1929,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
 
       const groupMatch = pathname.match(/^\/api\/model-groups\/([^/]+)$/);
       if (groupMatch && req.method === 'PATCH') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const r = modelGroups.upsert({ ...body, id: groupMatch[1] });
         if (r.error) return send(res, 400, { error: r.error });
         // 同 DELETE：刷新含真实网络请求（checkAuth），不等它 ——
@@ -1918,7 +1958,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
         return send(res, 200, { templates: store.templates() });
       }
       if (pathname === '/api/templates' && req.method === 'POST') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         // 两种来源：从现成的部门存（给 roomId），或直接给一份班子
         const r = body.roomId
           ? store.saveTemplateFromRoom(body.roomId, { name: body.name })
@@ -1935,7 +1975,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
       }
       const tplApply = pathname.match(/^\/api\/templates\/([^/]+)\/apply$/);
       if (tplApply && req.method === 'POST') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const r = store.applyTemplate(tplApply[1], { name: body.name });
         if (r.error) return send(res, 404, { error: r.error });
         log(`🧩 照模板开了部门：${r.room.name}（复用/新造 ${r.bots.length} 人）`);
@@ -1947,7 +1987,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
 
       // ---------- 房间 ----------
       if (pathname === '/api/rooms' && req.method === 'POST') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const room = store.createGroup({
           name: body.name,
           topic: body.topic,
@@ -1959,7 +1999,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
       }
 
       if (pathname === '/api/rooms/dm' && req.method === 'POST') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const room = store.ensureDm(body.botId);
         if (!room) return fail(res, 404, 'BOT_NOT_FOUND', 'bot 不存在');
         // 空私聊 → 让它自己开口（自我介绍 + 询问卡片），不阻塞这次请求
@@ -1971,7 +2011,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
 
       const roomMatch = pathname.match(/^\/api\/rooms\/([^/]+)$/);
       if (roomMatch && req.method === 'PATCH') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const room = store.updateRoom(roomMatch[1], body);
         if (!room) return fail(res, 404, 'ROOM_NOT_FOUND', '会话不存在');
         return send(res, 200, { room: store.roomSummary(room) });
@@ -2019,7 +2059,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
         const roomId = memoryRefreshMatch[1];
         const room = store.getRoom(roomId);
         if (!room) return fail(res, 404, 'ROOM_NOT_FOUND', '会话不存在');
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const requested = typeof body.botId === 'string' ? body.botId : '';
         const botId = requested || room.botIds?.[0] || null;
         if (!botId) return fail(res, 400, 'ROOM_HAS_NO_BOT', '会话里没有 bot');
@@ -2039,7 +2079,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
 
       const sendMatch = pathname.match(/^\/api\/rooms\/([^/]+)\/send$/);
       if (sendMatch && req.method === 'POST') {
-        const body = await readBody(req);
+        const body = await readJsonBody();
         const roomId = sendMatch[1];
         const hasRequestId = body?.requestId !== undefined && body?.requestId !== null && String(body.requestId).length > 0;
         const requestId = hasRequestId ? String(body.requestId) : '';

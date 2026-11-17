@@ -106,6 +106,21 @@ await test('端口空闲时能正常起来（不误杀）', async () => {
   assert.ok(!/已被占用/.test(r.output), '端口空着不该报占用');
 });
 
+await test('端口冲突退出时不覆盖已有的 local-token', async () => {
+  const { server, port } = await occupyPort();
+  const home = path.join(root, `home-${port}`);
+  fs.mkdirSync(home, { recursive: true });
+  const tokenFile = path.join(home, 'local-token');
+  fs.writeFileSync(tokenFile, 'keep-existing-token', 'utf8');
+  try {
+    const r = await boot({ port });
+    assert.equal(r.code, 1);
+    assert.equal(fs.readFileSync(tokenFile, 'utf8'), 'keep-existing-token');
+  } finally {
+    server.close();
+  }
+});
+
 console.log(`\n${failed ? '✗' : '✓'} ${passed} 通过，${failed} 失败`);
 fs.rmSync(root, { recursive: true, force: true });
 process.exit(failed ? 1 : 0);

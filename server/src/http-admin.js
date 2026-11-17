@@ -16,9 +16,11 @@
  * HTTP 层的主体是**用户**（桌面端/手机 App）。用户当然可以改自己的策略，
  * 所以这里**不是**"拦住用户"，而是两件别的事：
  *
- *   1. **防冒充**：同用户的其它进程能读到 local-token，
- *      拿它直接调 `PATCH /api/policy` 就把防线改了。一次性 nonce 堵这条路
- *      （见 local-nonce.js 的说明与它的局限）。
+ *   1. **意图声明与单次重放保护**：同用户的其它进程虽然拿着 `local-token` 也能调
+ *      `/api/local-nonce` 自己领凭据，所以这一层防的是"直接裸调管理接口 / 意外重放"，
+ *      强制两步明确意图（用途绑定、单次有效、60 秒过期）并配合审计留痕；
+ *      对不受信任的本机 bot，仍须依靠只读模式、AppContainer 沙箱与手机通道确认，
+ *      不能仅靠 `local-nonce` 本身阻挡已握有 `local-token` 的同级进程。
  *   2. **审计**：规格 §5.5 要求动作可审计。用户改了什么、什么时候改的，
  *      要能在界面里查到。
  *
@@ -53,6 +55,7 @@ export const ADMIN_ROUTE_TABLE = Object.freeze([
   { method: 'POST', path: '/api/local-capabilities/import', level: 'defense', action: 'mcp.add', nonce: 'import', label: '导入本机 MCP/技能' },
   // 改 bot 挂哪些 MCP：等价于改"这个 bot 能用哪些外部能力"
   { method: 'PATCH', path: '/api/bots/:id', level: 'defense', action: 'policy.change', nonce: 'policy', label: '改 bot 配置（含能力）', onlyWithMcp: true },
+  { method: 'PUT', path: '/api/connections/:id/bots', level: 'defense', action: 'policy.change', nonce: 'policy', label: '分配应用连接给 Bot' },
   // 模型组里存 baseUrl + key：改了等于把请求发到别的地方
   { method: 'POST', path: '/api/model-groups', level: 'defense', action: 'secret.use', nonce: 'policy', label: '改模型组' },
   { method: 'PATCH', path: '/api/model-groups/:id', level: 'defense', action: 'secret.use', nonce: 'policy', label: '改模型组' },
@@ -74,11 +77,13 @@ export const ADMIN_ROUTE_TABLE = Object.freeze([
   { method: 'DELETE', path: '/api/devices/:id', level: 'probe', action: 'policy.change', nonce: null, label: '撤销设备' },
   // 技能库是给所有 bot 注入的提示词：能改它等于能改所有 bot 的做法
   { method: 'POST', path: '/api/skills', level: 'data', action: 'policy.change', nonce: 'policy', label: '加技能' },
+  { method: 'PATCH', path: '/api/skills/:id', level: 'data', action: 'policy.change', nonce: 'policy', label: '改技能' },
   { method: 'POST', path: '/api/skills/import', level: 'data', action: 'policy.change', nonce: 'policy', label: '导入技能' },
   { method: 'DELETE', path: '/api/skills/:id', level: 'data', action: 'policy.change', nonce: 'policy', label: '删技能' },
 
   // ---- probe：起子进程/发外部请求，但不改状态 ----
   { method: 'POST', path: '/api/mcp/test', level: 'probe', action: 'mcp.add', nonce: null, label: '试连 MCP' },
+  { method: 'POST', path: '/api/connections/:id/verify', level: 'probe', action: 'mcp.add', nonce: null, label: '验证应用连接' },
   { method: 'POST', path: '/api/sites/probe', level: 'probe', action: 'net.fetch', nonce: null, label: '探测站点' },
   { method: 'POST', path: '/api/model-groups/test', level: 'probe', action: 'net.fetch', nonce: null, label: '试连模型组' },
   { method: 'POST', path: '/api/decision/probe', level: 'probe', action: 'net.fetch', nonce: null, label: '探测决策模型' },
@@ -133,6 +138,17 @@ export function planAdminRoute({ method, pathname, body = null } = {}) {
     };
   }
   return null;
+}
+
+/**
+ * 这条 HTTP 请求在进 planAdminRoute 前需不需要预读 JSON 请求体。
+ *
+ * 当前只有带 `onlyWithMcp` 的路由要看 body 字段，其它路由免读以免多耗开销。
+ */
+export function adminRouteNeedsBody({ method, pathname } = {}) {
+  const m = String(method ?? '').toUpperCase();
+  const p = String(pathname ?? '');
+  return ADMIN_ROUTE_TABLE.some((rule) => rule.onlyWithMcp && rule.method === m && matchPattern(rule.path, p));
 }
 
 /** 表里覆盖了哪些 (method, pattern)，诊断/测试用。 */

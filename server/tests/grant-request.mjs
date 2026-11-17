@@ -27,9 +27,9 @@ const { channelSufficesFor } = await import(src('confirm.js'));
 const { ACTION, MODE } = await import(src('grants.js'));
 
 const results = [];
-function test(name, fn) {
+async function test(name, fn) {
   try {
-    fn();
+    await fn();
     results.push({ name, ok: true });
   } catch (err) {
     results.push({ name, ok: false, err: err?.message || String(err) });
@@ -43,7 +43,7 @@ const BOTS = [
 ];
 
 // ---------------------------------------------------------------- 申请
-test('申请能整理成一张可批准的请求', () => {
+await test('申请能整理成一张可批准的请求', () => {
   const r = planGrantRequest({
     actions: [ACTION.desktopObserve, ACTION.desktopInput],
     bots: BOTS,
@@ -56,7 +56,7 @@ test('申请能整理成一张可批准的请求', () => {
   assert.match(r.request.reason, /网页工具/);
 });
 
-test('★ 危险动作不能从这条路申请（一张卡改防线是不行的）', () => {
+await test('★ 危险动作不能从这条路申请（一张卡改防线是不行的）', () => {
   for (const bad of [ACTION.policyChange, ACTION.secretUse, ACTION.netSend, ACTION.gitDestructive, ACTION.fileDelete]) {
     const r = planGrantRequest({ actions: [bad], bots: BOTS });
     assert.equal(r.ok, false, `${bad} 不该能这样申请`);
@@ -66,26 +66,26 @@ test('★ 危险动作不能从这条路申请（一张卡改防线是不行的�
   }
 });
 
-test('可申请清单里不含改规矩 / 用凭据 / 对外发送 / 破坏性 Git', () => {
+await test('可申请清单里不含改规矩 / 用凭据 / 对外发送 / 破坏性 Git', () => {
   for (const bad of [ACTION.policyChange, ACTION.secretUse, ACTION.netSend, ACTION.gitDestructive, ACTION.mcpAdd]) {
     assert.ok(!REQUESTABLE_ACTIONS.includes(bad), `${bad} 不该在可申请清单里`);
   }
 });
 
-test('重复动作去重；空动作拒', () => {
+await test('重复动作去重；空动作拒', () => {
   const r = planGrantRequest({ actions: [ACTION.desktopInput, ACTION.desktopInput], bots: BOTS });
   assert.deepEqual(r.request.actions, [ACTION.desktopInput]);
   assert.equal(planGrantRequest({ actions: [], bots: BOTS }).ok, false);
 });
 
-test('一次申请太多 bot 会拒（卡片上要能数清）', () => {
+await test('一次申请太多 bot 会拒（卡片上要能数清）', () => {
   const many = Array.from({ length: MAX_BOTS_PER_REQUEST + 1 }, (_, i) => ({ id: `b${i}`, name: `b${i}` }));
   const r = planGrantRequest({ actions: [ACTION.desktopInput], bots: many });
   assert.equal(r.ok, false);
   assert.equal(r.code, 'too_many_bots');
 });
 
-test('★ 期限夹在 5 分钟 ~ 24 小时之间（"永久授权"不存在）', () => {
+await test('★ 期限夹在 5 分钟 ~ 24 小时之间（"永久授权"不存在）', () => {
   const short = planGrantRequest({ actions: [ACTION.desktopInput], bots: BOTS, ttlMs: 1000 });
   assert.equal(short.request.ttlMs, 5 * 60_000);
   const forever = planGrantRequest({ actions: [ACTION.desktopInput], bots: BOTS, ttlMs: 365 * 24 * 3600_000 });
@@ -93,7 +93,7 @@ test('★ 期限夹在 5 分钟 ~ 24 小时之间（"永久授权"不存在）',
 });
 
 // ---------------------------------------------------------------- 批准后建什么
-test('★ 一条 bot 一条授权（好撤销、好审计、到期逐条失效）', () => {
+await test('★ 一条 bot 一条授权（好撤销、好审计、到期逐条失效）', () => {
   const req = planGrantRequest({ actions: [ACTION.desktopInput], bots: BOTS, ttlMs: 3600_000 }).request;
   const grants = planGrantsFromRequest({ request: req, approvedBy: { deviceName: 'iPhone' }, now: NOW });
   assert.equal(grants.length, 2);
@@ -106,7 +106,7 @@ test('★ 一条 bot 一条授权（好撤销、好审计、到期逐条失效�
   }
 });
 
-test('★ mode 必须和那个 bot 的实际执行模式一致（否则是张废纸）', () => {
+await test('★ mode 必须和那个 bot 的实际执行模式一致（否则是张废纸）', () => {
   const req = planGrantRequest({ actions: [ACTION.desktopInput], bots: BOTS }).request;
   const [main, member] = planGrantsFromRequest({ request: req, now: NOW });
   assert.equal(main.mode, MODE.host, '主 Bot 实际跑 host，发 project 模式它永远匹配不上');
@@ -114,7 +114,7 @@ test('★ mode 必须和那个 bot 的实际执行模式一致（否则是张废
   assert.equal(main.subject.role, 'main');
 });
 
-test('动鼠标的授权风险档更高（审计按它分）', () => {
+await test('动鼠标的授权风险档更高（审计按它分）', () => {
   const input = planGrantsFromRequest({
     request: planGrantRequest({ actions: [ACTION.desktopInput], bots: [BOTS[1]] }).request, now: NOW,
   })[0];
@@ -125,14 +125,14 @@ test('动鼠标的授权风险档更高（审计按它分）', () => {
   assert.equal(observe.risk, 'medium');
 });
 
-test('不带资源限制（目标是"整台机器/整张桌面"，写个路径是假的）', () => {
+await test('不带资源限制（目标是"整台机器/整张桌面"，写个路径是假的）', () => {
   const g = planGrantsFromRequest({
     request: planGrantRequest({ actions: [ACTION.desktopInput], bots: [BOTS[1]] }).request, now: NOW,
   })[0];
   assert.deepEqual(g.resources, []);
 });
 
-test('绑当前规矩版本（规矩变了要重新核对）', () => {
+await test('绑当前规矩版本（规矩变了要重新核对）', () => {
   const g = planGrantsFromRequest({
     request: planGrantRequest({ actions: [ACTION.desktopInput], bots: [BOTS[1]] }).request,
     now: NOW,
@@ -142,7 +142,7 @@ test('绑当前规矩版本（规矩变了要重新核对）', () => {
 });
 
 // ---------------------------------------------------------------- 卡片文案
-test('卡片文案一眼能读懂（谁、能干什么、多久）', () => {
+await test('卡片文案一眼能读懂（谁、能干什么、多久）', () => {
   const req = planGrantRequest({
     actions: [ACTION.desktopObserve, ACTION.desktopInput],
     bots: [BOTS[1]],
@@ -159,7 +159,7 @@ test('卡片文案一眼能读懂（谁、能干什么、多久）', () => {
 //
 // 这一段是"接线"证明：走一遍 store → confirm → 批准 → 建 grant → 网关放行。
 // 少了任何一环，用户点了批准而权限没出来 —— 那是最难查的那种"点了没用"。
-test('★ 走完一遍：申请 → 手机批准 → 授权生效 → 网关放行', async () => {
+await test('★ 走完一遍：申请 → 手机批准 → 授权生效 → 网关放行', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-grantreq-'));
   Object.assign(process.env, {
     PI_BOT_HOME: root, PI_BOT_WORKSPACE: path.join(root, 'ws'),
@@ -224,7 +224,7 @@ test('★ 走完一遍：申请 → 手机批准 → 授权生效 → 网关放�
 // 让能跑命令的 bot 自己点批准。判据是**这条申请批的是什么**：
 // 批"能动手"的权限 → 手机；批"只能看"的 → 桌面。
 
-test('★ 申请"动鼠标 / 跑命令 / 写文件 / 提交" → 要手机', () => {
+await test('★ 申请"动鼠标 / 跑命令 / 写文件 / 提交" → 要手机', () => {
   for (const a of NEEDS_DEVICE_CHANNEL) {
     assert.equal(minChannelForRequest({ actions: [a] }), 'device', `${a} 应当要手机`);
   }
@@ -232,12 +232,12 @@ test('★ 申请"动鼠标 / 跑命令 / 写文件 / 提交" → 要手机', () 
     '混着的时候按最严的算');
 });
 
-test('★ 申请只读（看屏幕 / 读文件 / 读仓库）→ 桌面点一下就行', () => {
+await test('★ 申请只读（看屏幕 / 读文件 / 读仓库）→ 桌面点一下就行', () => {
   assert.equal(minChannelForRequest({ actions: [ACTION.desktopObserve] }), 'local');
   assert.equal(minChannelForRequest({ actions: [ACTION.fileRead, ACTION.gitRead] }), 'local');
 });
 
-test('★ 本机批准：默认拒（说明代价），开了设置才放行并标记 weakened', () => {
+await test('★ 本机批准：默认拒（说明代价），开了设置才放行并标记 weakened', () => {
   // 默认：要手机
   const strict = channelSufficesFor({ channel: 'local', action: 'grant.request', minChannel: 'device' });
   assert.equal(strict.ok, false);
@@ -252,20 +252,20 @@ test('★ 本机批准：默认拒（说明代价），开了设置才放行并�
   assert.equal(weak.weakened, true, '要能被审计记下来"这条是按放宽设置批的"');
 });
 
-test('只读那条：桌面直接放行，不需要放宽设置', () => {
+await test('只读那条：桌面直接放行，不需要放宽设置', () => {
   const r = channelSufficesFor({ channel: 'local', action: 'grant.request', minChannel: 'local' });
   assert.equal(r.ok, true);
   assert.equal(r.weakened, undefined);
 });
 
-test('手机通道永远够格（不管门槛是哪个）', () => {
+await test('手机通道永远够格（不管门槛是哪个）', () => {
   for (const minChannel of ['local', 'device']) {
     const r = channelSufficesFor({ channel: 'device', action: 'grant.request', minChannel });
     assert.equal(r.ok, true);
   }
 });
 
-test('没有 minChannel 时按动作名推（不可撤销 → 手机）', () => {
+await test('没有 minChannel 时按动作名推（不可撤销 → 手机）', () => {
   assert.equal(channelSufficesFor({ channel: 'local', action: 'git.push' }).ok, false);
   assert.equal(channelSufficesFor({ channel: 'device', action: 'git.push' }).ok, true);
 });
@@ -276,7 +276,7 @@ test('没有 minChannel 时按动作名推（不可撤销 → 手机）', () => 
 // 注意这不是让主 Bot 替用户批准（那等于模型能发授权），而是**把卡片挂到
 // 用户最常看的那一个地方**，真正点批准的仍然是用户。
 
-test('★ 负责人发起 → 同时挂到「用户 ↔ 主 Bot」私聊（用户不用满群找卡片）', async () => {
+await test('★ 负责人发起 → 同时挂到「用户 ↔ 主 Bot」私聊（用户不用满群找卡片）', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-grantreq-fwd-'));
   Object.assign(process.env, {
     PI_BOT_HOME: root, PI_BOT_WORKSPACE: path.join(root, 'ws'),
@@ -317,7 +317,7 @@ test('★ 负责人发起 → 同时挂到「用户 ↔ 主 Bot」私聊（用�
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('主 Bot 自己发起时不再自我转呈（免得同一条出现两遍）', async () => {
+await test('主 Bot 自己发起时不再自我转呈（免得同一条出现两遍）', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-grantreq-fwd2-'));
   Object.assign(process.env, {
     PI_BOT_HOME: root, PI_BOT_WORKSPACE: path.join(root, 'ws'),
@@ -348,7 +348,7 @@ test('主 Bot 自己发起时不再自我转呈（免得同一条出现两遍）
 //
 // 上面那段证明"纯逻辑 + store"通；这一段证明**真的走 HTTP 批准**也会建授权。
 // 少了这条，"用户点了批准、权限没出来"这种错只在生产里出现。
-test('★ 走 HTTP 路由批准 → 真的多出授权（接线）', async () => {
+await test('★ 走 HTTP 路由批准 → 真的多出授权（接线）', async () => {
   const http = await import('node:http');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-grantreq-route-'));
   Object.assign(process.env, {
@@ -358,14 +358,16 @@ test('★ 走 HTTP 路由批准 → 真的多出授权（接线）', async () =>
   for (const d of [process.env.PI_BOT_HOME, process.env.PI_BOT_WORKSPACE, process.env.PI_CODING_AGENT_DIR]) {
     fs.mkdirSync(d, { recursive: true });
   }
-  // 换一套全新的 store/http 实例（前一个测试已经用掉了模块缓存）
-  const storeMod = await import(`${src('store.js').href}?route=1`);
-  const httpMod = await import(`${src('http.js').href}?route=1`);
-  const grantMod = await import(`${src('grant-gate.js').href}?route=1`);
-  const pairMod = await import(`${src('pairing.js').href}?route=1`);
-  const reqMod = await import(`${src('grant-request.js').href}?route=1`);
-  const confirmMod = await import(`${src('confirm.js').href}?route=1`);
-  const gMod = await import(`${src('grants.js').href}?route=1`);
+  // 复用规范模块单例（与 http.js 内部静态 import 一致），并保证目录存在
+  const { config } = await import(src('config.js'));
+  fs.mkdirSync(config.dataDir, { recursive: true });
+  const storeMod = await import(src('store.js'));
+  const httpMod = await import(src('http.js'));
+  const grantMod = await import(src('grant-gate.js'));
+  const pairMod = await import(src('pairing.js'));
+  const reqMod = await import(src('grant-request.js'));
+  const confirmMod = await import(src('confirm.js'));
+  const gMod = await import(src('grants.js'));
 
   const store = storeMod.store;
   const gate = grantMod.createGrantGate({
@@ -394,6 +396,16 @@ test('★ 走 HTTP 路由批准 → 真的多出授权（接线）', async () =>
     targetJson: JSON.stringify(req),
   };
   store.requestConfirmation(confirmation);
+  const dmRoom = store.ensureDm(bot.id);
+  const cardMsg = store.appendMessage({
+    roomId: dmRoom.id,
+    authorType: 'bot',
+    authorId: bot.id,
+    kind: 'confirmation',
+    text: 'route test',
+    status: 'done',
+    meta: { confirmationId: 'cf_route_1', action: 'grant.request' },
+  });
   const before = (store.state.grants ?? []).length;
 
   const decide = (channel) => new Promise((resolve, reject) => {
@@ -428,6 +440,7 @@ test('★ 走 HTTP 路由批准 → 真的多出授权（接线）', async () =>
   assert.ok(after.some((g) => (g.actions ?? []).includes(gMod.ACTION.desktopInput)), '批准后授权要真的落地');
   // 一次一用
   assert.ok(store.getConfirmation('cf_route_1').consumedAt, '批准过的票据要标成已用');
+  assert.equal(store.getMessage(dmRoom.id, cardMsg.id)?.meta?.decision, 'approved', '确认卡片消息的 decision 应同步更新');
 
   // ---- 只读的申请：**桌面**就能批（用户不用手机端时的正常路径）----
   const readReq = reqMod.planGrantRequest({ actions: [gMod.ACTION.desktopObserve], bots: [store.getBot(bot.id)] }).request;
@@ -496,9 +509,13 @@ test('★ 走 HTTP 路由批准 → 真的多出授权（接线）', async () =>
   assert.equal(weakened.status, 200, '开了设置之后桌面也能批');
   assert.equal(weakened.json.confirmation.channelWeakened, true, '要能被审计看出来"这条是按放宽设置批的"');
 
-  server.close();
+  store.state.desktop = { ...(store.state.desktop ?? {}), allowLocalApproval: false };
+  await new Promise((r) => server.close(r));
   clearTimeout(store.saveTimer);
   fs.rmSync(root, { recursive: true, force: true });
+  if (path.basename(config.dataDir).startsWith('pi-grantreq-')) {
+    fs.rmSync(config.dataDir, { recursive: true, force: true });
+  }
 });
 
 const failed = results.filter((r) => !r.ok);

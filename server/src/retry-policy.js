@@ -15,6 +15,11 @@
 /** 默认最多重试几次（不含第一次）。2 次 ≈ 原样一次 + 换个说法一次 */
 export const MAX_RETRIES = 2;
 
+/** 非临时故障（如空回复 / 超时）的固定重试等待（毫秒）。 */
+export const RETRY_DELAY_MS = 3000;
+
+const QUOTA_PATTERNS = /insufficient_quota|quota exceeded|billing hard limit|arrears|余额不足|额度不足|欠费/i;
+
 /**
  * 临时故障（限流 / 上游抖动）可以多试几次。
  *
@@ -68,12 +73,12 @@ export function decideRetry({
   /// 429 限流和"任务做不成"长得一模一样，重试策略就废了。
   status = null,
 } = {}) {
-  if (aborting) return { retry: false, why: '用户已终止，不再重试', kind: 'aborted' };
+  if (aborting) return { retry: false, why: '用户已终止，不再重试', kind: 'aborted', delayMs: 0 };
 
   const text = String(error ?? '');
   // 「忙」不是失败：它只是还在干上一件事，重试只会继续撞墙
   if (/already processing|正在处理|在忙/i.test(text)) {
-    return { retry: false, why: '它还在处理上一件事，等它空了再说', kind: 'busy' };
+    return { retry: false, why: '它还在处理上一件事，等它空了再说', kind: 'busy', delayMs: 0 };
   }
   // 鉴权 / 配置类：重试一百次也一样。
   //
@@ -86,7 +91,15 @@ export function decideRetry({
     authCode === 403 ||
     /401|403|unauthorized|forbidden|invalid api key|鉴权|未授权/i.test(text)
   ) {
-    return { retry: false, why: '鉴权或配置有问题，重试也没用', kind: 'auth' };
+    return { retry: false, why: '鉴权或配置有问题，重试也没用', kind: 'auth', delayMs: 0 };
+  }
+  if (authCode === 402 || /\b402\b/.test(text) || QUOTA_PATTERNS.test(text)) {
+    return {
+      retry: false,
+      why: authCode === 402 ? '接口余额或配额不足（HTTP 402）' : '接口余额或配额不足',
+      kind: 'quota',
+      delayMs: 0,
+    };
   }
 
   // ★ 临时故障：限流 / 上游抖动 / 网关错误。
@@ -112,6 +125,7 @@ export function decideRetry({
         retry: false,
         why: `接口连续 ${attempt} 次不稳定，先停下（可能是 key 额度或上游故障）`,
         kind: 'transient-exhausted',
+        delayMs: 0,
       };
     }
     // 前几次老老实实等接口恢复；到后半程就换个思路 ——
@@ -125,31 +139,32 @@ export function decideRetry({
         : '接口临时不稳定（限流或上游抖动），等一会儿再试',
       kind: 'transient',
       switchModel,
+      delayMs: transientBackoffMs(attempt),
     };
   }
 
   if (attempt > maxRetries) {
-    return { retry: false, why: `已经试了 ${attempt} 次`, kind: 'exhausted' };
+    return { retry: false, why: `已经试了 ${attempt} 次`, kind: 'exhausted', delayMs: 0 };
   }
   // 用户主动中止（"已被终止""这一轮已中止"这类都要认出来）
   if (/已.{0,2}(终止|中止)|aborted|cancelled/i.test(text)) {
-    return { retry: false, why: '这一轮已被终止', kind: 'aborted' };
+    return { retry: false, why: '这一轮已被终止', kind: 'aborted', delayMs: 0 };
   }
   // 空回复：这是最值得重试的一类（模型偶发不出内容）
   if (/没有给出内容|空回复|empty/i.test(text)) {
-    return { retry: true, why: '它上次没出内容，值得再来一次', kind: 'empty' };
+    return { retry: true, why: '它上次没出内容，值得再来一次', kind: 'empty', delayMs: RETRY_DELAY_MS };
   }
   // 超时：重试有价值，但只给一次机会（第二次还超时就别耗了）
   if (/超时|timeout|timed out/i.test(text)) {
     return attempt <= 1
-      ? { retry: true, why: '上次超时了，再给一次机会', kind: 'timeout' }
-      : { retry: false, why: '连续超时，可能是任务太重或模型不稳', kind: 'timeout-twice' };
+      ? { retry: true, why: '上次超时了，再给一次机会', kind: 'timeout', delayMs: RETRY_DELAY_MS }
+      : { retry: false, why: '连续超时，可能是任务太重或模型不稳', kind: 'timeout-twice', delayMs: 0 };
   }
 
   // 其余（工具报错、模型抽风、未知）：默认给一次重试
   return attempt <= 1
-    ? { retry: true, why: '上次没跑成，再试一次', kind: 'unknown' }
-    : { retry: false, why: `试了 ${attempt} 次都没成`, kind: 'exhausted' };
+    ? { retry: true, why: '上次没跑成，再试一次', kind: 'unknown', delayMs: RETRY_DELAY_MS }
+    : { retry: false, why: `试了 ${attempt} 次都没成`, kind: 'exhausted', delayMs: 0 };
 }
 
 /**
@@ -180,6 +195,9 @@ export function isRecoverableFailure({ error = '', status = null } = {}) {
     code === 403 ||
     /401|403|unauthorized|forbidden|invalid api key|鉴权|未授权/i.test(text)
   ) {
+    return false;
+  }
+  if (code === 402 || /\b402\b/.test(text) || QUOTA_PATTERNS.test(text)) {
     return false;
   }
 
@@ -309,6 +327,12 @@ export function failureNote({
     return (
       `${botName} 的模型接口暂时不可用，这次任务已停止。` +
       '\n稍后或修复模型组配置后，请重新发送任务；系统不会自动重放已完成的操作。'
+    );
+  }
+  if (kind === 'quota') {
+    return (
+      `${botName} 没能完成：模型接口余额或配额不足（${r}）。` +
+      '\n请充值或换用备用密钥后重试。'
     );
   }
   if (kind === 'transient-exhausted') {

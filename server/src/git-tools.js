@@ -372,6 +372,7 @@ export function buildGitTools({ runner, store, roomId, botId }) {
             confirmation: existing,
             target: nowTarget.target,
             policyRevision: store.policyVersion(),
+            allowLocal: store.desktopSettings().allowLocalApproval === true,
           });
           if (!verdict.ok) {
             return fail(`这次 push 不能执行：${verdict.text}（${verdict.code}）`);
@@ -450,7 +451,13 @@ export function buildGitTools({ runner, store, roomId, botId }) {
           kind: 'confirmation',
           text: `${store.getBot(botId)?.name ?? '它'} 想推代码，等你在手机上确认：${summary}`,
           status: 'done',
-          meta: { confirmationId: saved.id, action: 'git.push' },
+          meta: {
+            confirmationId: saved.id,
+            action: 'git.push',
+            summary,
+            minChannel: 'device',
+            irreversible: true,
+          },
         });
         log(`🛡 ${store.getBot(botId)?.name ?? botId} 请求 push 确认：${summary}`);
 
@@ -538,6 +545,7 @@ export function buildGitTools({ runner, store, roomId, botId }) {
             confirmation: existing,
             target: nowTarget,
             policyRevision: store.policyVersion(),
+            allowLocal: store.desktopSettings().allowLocalApproval === true,
           });
           if (!verdict.ok) {
             return fail(`这次 ${key} 不能执行：${verdict.text}（${verdict.code}）`);
@@ -590,7 +598,13 @@ export function buildGitTools({ runner, store, roomId, botId }) {
           kind: 'confirmation',
           text: `${store.getBot(botId)?.name ?? '它'} 想改共享分支 / 丢代码，等你在手机上确认：${summary}`,
           status: 'done',
-          meta: { confirmationId: saved.id, action: 'git.destructive' },
+          meta: {
+            confirmationId: saved.id,
+            action: 'git.destructive',
+            summary,
+            minChannel: 'device',
+            irreversible: true,
+          },
         });
         log(`🛡 ${store.getBot(botId)?.name ?? botId} 请求 ${key} 确认：${summary}`);
 

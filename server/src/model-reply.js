@@ -5,9 +5,12 @@ export function modelFailure(error) {
     || /\baborted\b|\bcancelled\b|\bcanceled\b|已终止|已中止/i.test(raw)) {
     return { status: null, auth: false, aborted: true, error: '已终止' };
   }
-  const status = Number(error?.status ?? error?.statusCode) || Number(raw.match(/\b(400|401|403|404|408|429|500|502|503|504)\b/)?.[1]) || null;
+  const status = Number(error?.status ?? error?.statusCode) || Number(raw.match(/\b(400|401|402|403|404|408|429|500|502|503|504)\b/)?.[1]) || null;
   if (status === 401 || /unauthorized|invalid[ _-]?(?:api[ _-]?)?key|authentication[ _-]?(?:failed|error)/i.test(raw)) {
     return { status: 401, auth: true, error: '模型请求认证失败（HTTP 401），请检查模型组凭据与接口认证配置。' };
+  }
+  if (status === 402 || /insufficient_quota|quota exceeded|billing hard limit|arrears|余额不足|额度不足|欠费/i.test(raw)) {
+    return { status: status || 402, auth: false, quota: true, error: '该接口配额或余额不足，请检查用量或切换备用密钥。' };
   }
   if (status === 403 || /forbidden|permission[ _-]denied/i.test(raw)) {
     return { status: 403, auth: true, error: '模型请求被拒绝（HTTP 403），请检查账号及模型访问权限。' };

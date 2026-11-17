@@ -2,8 +2,13 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:pi_bot/app_state.dart';
+import 'package:pi_bot/l10n/l10n.dart';
 import 'package:pi_bot/models.dart';
+import 'package:pi_bot/scope.dart';
+import 'package:pi_bot/screens/settings_screen.dart';
 import 'package:pi_bot/theme.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// 技能库与设置页标签的纯展示测试。
 ///
@@ -147,6 +152,124 @@ void main() {
 
     test('网站集成归到「应用连接」页（和 MCP 一起）', () {
       expect(source, contains('3 => const [McpSection(), SitesSection()]'));
+    });
+  });
+
+  group('手机端与桌面端设置隔离', () {
+    AppState buildState() {
+      final s = AppState()
+        ..serverUrl = 'https://192.168.1.10:8443'
+        ..token = 't_test'
+        ..deviceName = '我的Pixel'
+        ..link = LinkState.online
+        ..serverFingerprint = 'ab' * 32
+        ..grantsLoaded = true
+        ..grantAuditLoaded = true
+        ..serverInfo = ServerInfo(
+          hostname: 'workstation-pc',
+          model: 'openai/gpt-5',
+          version: '1.4.2',
+          workspace: 'D:/secret/pc-workspace',
+          dataDir: 'D:/secret/pc-data',
+        );
+      return s;
+    }
+
+    Future<void> pumpSettings(
+      WidgetTester tester, {
+      required bool hostOverride,
+      required Size size,
+    }) async {
+      SharedPreferences.setMockInitialValues({});
+      tester.view.devicePixelRatio = 2.0;
+      tester.view.physicalSize = Size(size.width * 2, size.height * 2);
+      addTearDown(tester.view.reset);
+
+      final state = buildState();
+      addTearDown(state.dispose);
+
+      await tester.pumpWidget(
+        AppScope(
+          state: state,
+          child: L10n(
+            controller: LocaleController(),
+            child: MaterialApp(
+              theme: PB.theme(),
+              home: SettingsScreen(hostOverride: hostOverride),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+    }
+
+    testWidgets('★ 手机端仅显示 3 个精简标签，隔离 PC 宿主设置与本地路径', (tester) async {
+      for (final size in const [Size(360, 800), Size(320, 640)]) {
+        await pumpSettings(tester, hostOverride: false, size: size);
+        expect(tester.takeException(), isNull);
+
+        expect(find.text('连接与设备'), findsOneWidget);
+        expect(find.text('权限与安全'), findsOneWidget);
+        expect(find.text('通知与偏好'), findsOneWidget);
+
+        // PC 专属宿主运维标签彻底隔离
+        expect(find.text('服务端'), findsNothing);
+        expect(find.text('技能'), findsNothing);
+        expect(find.text('应用连接'), findsNothing);
+        expect(find.text('系统'), findsNothing);
+        expect(find.text('高级'), findsNothing);
+
+        // Tab 0：连接与设备只展示主机摘要，不暴露 PC 本地目录与固定口令引导
+        expect(find.text('workstation-pc'), findsOneWidget);
+        expect(find.text('openai/gpt-5'), findsOneWidget);
+        expect(find.text('1.4.2'), findsOneWidget);
+        expect(find.text('我的Pixel'), findsOneWidget);
+        expect(find.text('换一台电脑'), findsOneWidget);
+        expect(find.text('断开重新配对'), findsOneWidget);
+        expect(find.textContaining('pc-workspace'), findsNothing);
+        expect(find.textContaining('pc-data'), findsNothing);
+        expect(find.textContaining('PI_BOT_TOKEN'), findsNothing);
+      }
+
+      // Tab 1：权限与安全仅保留授权与审计，不出现 PC 本机批准/合成鼠标开关
+      await tester.tap(find.text('权限与安全'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(tester.takeException(), isNull);
+      expect(find.text('授权'), findsOneWidget);
+      expect(find.text('最近的授权判定'), findsOneWidget);
+      expect(find.text('允许在本机批准'), findsNothing);
+
+      // Tab 2：通知与偏好含后台通知、称呼、外观与语言
+      await tester.tap(find.text('通知与偏好'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(tester.takeException(), isNull);
+      expect(find.text('后台通知'), findsOneWidget);
+      expect(find.text('我是谁'), findsOneWidget);
+      expect(find.text('外观'), findsOneWidget);
+      expect(find.text('深色'), findsOneWidget);
+      expect(find.text('浅色'), findsOneWidget);
+      expect(find.text('语言'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('appearance-light')));
+      await tester.pump();
+      expect(pbColorMode.value, PBColorMode.light);
+      addTearDown(() => pbColorMode.value = PBColorMode.dark);
+    });
+
+    testWidgets('★ 桌面端（PC 宿主）完整保留原有 6 个设置标签', (tester) async {
+      await pumpSettings(tester, hostOverride: true, size: const Size(1200, 800));
+      expect(tester.takeException(), isNull);
+
+      expect(find.text('连接'), findsOneWidget);
+      expect(find.text('服务端'), findsOneWidget);
+      expect(find.text('技能'), findsOneWidget);
+      expect(find.text('应用连接'), findsOneWidget);
+      expect(find.text('系统'), findsOneWidget);
+      expect(find.text('高级'), findsOneWidget);
+      expect(find.text('连接与设备'), findsNothing);
     });
   });
 }

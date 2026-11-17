@@ -78,6 +78,18 @@ void main() {
       expect(find.textContaining('▍'), findsOneWidget,
           reason: '流式中应带光标');
     });
+
+    test('★ streamTickFor 为每条消息提供独立 notifier 且复用同一实例', () {
+      final state = _State();
+      final t1a = state.streamTickFor('m1');
+      final t1b = state.streamTickFor('m1');
+      final t2 = state.streamTickFor('m2');
+      expect(identical(t1a, t1b), isTrue);
+      expect(identical(t1a, t2), isFalse);
+      t1a.value++;
+      expect(t2.value, 0);
+      state.dispose();
+    });
   });
 
   group('活动胶囊：形象与状态', () {

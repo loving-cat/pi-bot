@@ -9,6 +9,7 @@ import {
   ModelGroupStore,
   endpointAt,
   normalizeEndpoints,
+  pickHealthyEndpoint,
   publicEndpoints,
   rotateCursor,
 } from '../src/model-groups.js';
@@ -191,4 +192,12 @@ test('只改某条端点的 key 时，没传的那条保留原 key', () => {
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+test('★ pickHealthyEndpoint 跳过正在冷却的坏端点', () => {
+  const healthy0 = new Set([2]);
+  assert.equal(pickHealthyEndpoint(3, 0, (i) => healthy0.has(i)), 2, '应跳过不健康的 1 直接选 2');
+  assert.equal(pickHealthyEndpoint(3, 2, (i) => i === 1), 1, '应回绕选中 1 而跳过坏掉的 0');
+  assert.equal(pickHealthyEndpoint(3, 0, () => false), null, '全军覆没时返回 null');
+  assert.equal(pickHealthyEndpoint(1, 0, () => true), null, '单端点无备用可切');
 });

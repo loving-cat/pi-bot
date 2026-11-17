@@ -207,9 +207,10 @@ export function buildConfirmation({
  * @param {object} p.target        这次要执行的实际目标
  * @param {number} [p.now]
  * @param {string|null} [p.policyRevision] 当前策略版本
+ * @param {boolean} [p.allowLocal] 是否打开了「允许在本机批准」设置
  * @returns {{ok:true}|{ok:false, code:string, text:string}}
  */
-export function checkConfirmation({ confirmation, target, now = Date.now(), policyRevision = null } = {}) {
+export function checkConfirmation({ confirmation, target, now = Date.now(), policyRevision = null, allowLocal = false } = {}) {
   const c = confirmation;
   if (!c) return { ok: false, code: 'no_confirmation', text: '没有确认记录' };
   if (c.decision === 'denied') {
@@ -236,7 +237,12 @@ export function checkConfirmation({ confirmation, target, now = Date.now(), poli
       text: '要执行的目标和用户确认的那个不一样了，必须重新确认',
     };
   }
-  const suffices = channelSuffices(c.channel, c.action);
+  const suffices = channelSufficesFor({
+    channel: c.channel,
+    action: c.action,
+    minChannel: c.minChannel ?? null,
+    allowLocal: allowLocal === true && c.channelWeakened === true,
+  });
   if (!suffices.ok) return { ok: false, code: 'weak_channel', text: suffices.reason };
   return { ok: true };
 }

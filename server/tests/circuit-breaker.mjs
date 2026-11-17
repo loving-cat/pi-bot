@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   BREAKER_STATE,
   COOLDOWN_AUTH_MS,
+  COOLDOWN_QUOTA_MS,
   COOLDOWN_TRANSIENT_MS,
   OPEN_AFTER_FAILS,
   breakerNote,
@@ -171,4 +172,17 @@ test('没有组名时也能给出通顺的句子', () => {
   }
   const note = breakerNote(b, { now: 1000 });
   assert.match(note, /当前模型/);
+});
+
+test('★ 401/402/403 首轮即打开熔断（凭证与额度错误不等 3 次）', () => {
+  for (const [kind, status, expectedCooldown] of [
+    ['auth', 401, COOLDOWN_AUTH_MS],
+    ['auth', 403, COOLDOWN_AUTH_MS],
+    ['quota', 402, COOLDOWN_QUOTA_MS],
+  ]) {
+    const next = recordFailure(createBreaker(), { kind, status, now: 5000 });
+    assert.equal(next.state, BREAKER_STATE.open, `status=${status} 第 1 次就应打开`);
+    assert.equal(next.fails, 1);
+    assert.equal(next.cooldownMs, expectedCooldown);
+  }
 });

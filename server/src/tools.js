@@ -947,9 +947,32 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
         const dm = store.ensureDm(target.id);
         if (!dm) return fail('开不了私信会话');
 
+        const caller = store.getBot(botId);
+        const callerName = caller?.name ?? botId;
+        const srcRoom = roomId ? store.getRoom(roomId) : null;
+        const hasExternalRoom = Boolean(srcRoom && srcRoom.id !== dm.id);
+        const recentContext = (() => {
+          if (!hasExternalRoom) return '';
+          const items = store.listMessages(srcRoom.id, { limit: 12 })
+            .filter((m) => m.status === 'done' && m.authorType !== 'system' && !m.meta?.internal && (m.text ?? '').trim());
+          const picked = [];
+          let total = 0;
+          for (let i = items.length - 1; i >= 0 && picked.length < 8; i--) {
+            const m = items[i];
+            const who = m.authorType === 'user' ? '用户' : (m.authorName || m.authorId || '同事');
+            const body = String(m.text).trim().slice(0, 400);
+            const line = `${who}: ${body}`;
+            if (total + line.length > 2400 && picked.length > 0) break;
+            total += line.length;
+            picked.unshift(line);
+          }
+          return picked.length ? `【所在会话「${srcRoom.name}」最近上下文】\n${picked.join('\n')}\n` : '';
+        })();
+
         const prompt = [
-          '【同事在问你一句话，只需要回话，不要开工】',
+          `【同事「${callerName}」在问你一句话，只需要回话，不要开工】`,
           '',
+          ...(recentContext ? [recentContext] : []),
           text,
           '',
           '直接回答。不要执行任务、不要改文件、不要建任务、不要 @ 别人。',
@@ -975,6 +998,7 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
               from: botId,
               re: reId,
               dialog: true,
+              ...(hasExternalRoom ? { internal: true, fromRoomId: srcRoom.id } : {}),
               // 对话窗口的起点。TTL 判定不看它（服务端按 id 对自行记账），
               // 但留在 meta 里方便排查「这段往来是什么时候开始的」。
               dialogStartedAt: startedAt,
@@ -1013,6 +1037,34 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
         const shown = raw.length > 1200
           ? `${raw.slice(0, 1200)}\n\n（回复已截断，原文 ${raw.length} 字）`
           : raw;
+        if (hasExternalRoom && raw.trim()) {
+          const askMsg = store.appendMessage(
+            {
+              roomId: srcRoom.id,
+              authorType: 'bot',
+              authorId: botId,
+              authorName: callerName,
+              authorEmoji: caller?.emoji,
+              text: `@${target.name} ${text}`,
+              status: 'done',
+              meta: { via: 'reply_bot', dialog: true, to: target.id, ...(reId ? { re: reId } : {}) },
+            },
+            { beforeStreaming: true },
+          );
+          store.appendMessage(
+            {
+              roomId: srcRoom.id,
+              authorType: 'bot',
+              authorId: target.id,
+              authorName: target.name,
+              authorEmoji: target.emoji,
+              text: raw.trim().length > 1200 ? `${raw.trim().slice(0, 1200)}…` : raw.trim(),
+              status: 'done',
+              meta: { via: 'reply_bot', dialog: true, from: botId, re: askMsg.id, reFrom: botId },
+            },
+            { beforeStreaming: true },
+          );
+        }
         return ok(`【${target.name} 回你】\n${shown}`, {
           botId: target.id,
           ms: result.ms,

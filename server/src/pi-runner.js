@@ -28,7 +28,7 @@ import {
   MIRROR_SKIPPED_NO_DM,
 } from './dm.js';
 import { loadExtraProviders, settingsDefaultModel } from './providers.js';
-import { modelGroups, rotateCursor } from './model-groups.js';
+import { modelGroups, pickHealthyEndpoint, rotateCursor } from './model-groups.js';
 import { ProviderUpdates, providerLeaseScope } from './provider-updates.js';
 import { settleRetryMessage } from './retry-messages.js';
 import { assistantFailure, fallbackModels, modelFailure, recoverModelReply } from './model-reply.js';
@@ -107,6 +107,7 @@ import {
   failureNote,
   transientBackoffMs,
   isRecoverableFailure,
+  RETRY_DELAY_MS,
 } from './retry-policy.js';
 import {
   canRequest as breakerAllows,
@@ -126,6 +127,7 @@ import { collectArtifacts } from './artifact-watch.js';
 import {
   composeGroupPrompt,
   departmentOf,
+  groupPromptFingerprint,
   isStrictlyAfter,
   lastDoneIdOf,
   lastDoneIndexAll,
@@ -138,9 +140,6 @@ import {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const MAX_STEP_TEXT = 200;
-
-/** 重试前等多久（毫秒）：立刻重发大概率撞上同样的偶发问题 */
-const RETRY_DELAY_MS = 3000;
 
 function textOf(message) {
   const content = message?.content;
@@ -255,6 +254,8 @@ export class PiRunner {
      * 让每个 bot 各自撞 N 次是纯粹的浪费（实测 6 个成员 = 66 次请求）。
      */
     this.breakers = new Map();
+    /** 每个端点的独立熔断状态（key = `${groupId}#${endpointIdx}`），避免轮转时绕回刚坏掉的端点 */
+    this.endpointBreakers = new Map();
     /**
      * 每个模型组当前用第几条端点（多 key 轮转用）。
      *
@@ -324,7 +325,7 @@ export class PiRunner {
       await deliverDirectInput({
         prepare: () => this.#buildInput(merged, [], roomId),
         run: ({ promptText }) =>
-          this.run(roomId, botId, promptText, { skipUserMessage: true, attachments: [] }),
+          this.#runWithEndpointFailover(roomId, botId, promptText, { skipUserMessage: true, attachments: [] }),
         getEntry: () => this.sessions.get(this.#key(roomId, botId)),
         isCancelled: () =>
           this.aborting.has(roomId) ||
@@ -632,7 +633,16 @@ export class PiRunner {
     //   PI_BOT_PROBE=0 关掉：菜单照样有，只是不自动探、也不按探活结果切线路，
     //   要探可以让主控手动调 probe_model。
     if (config.autoProbe) {
-      this.health.runAll({ concurrency: 6 }).catch((err) => log('模型探活出错：', err?.message || err));
+      const prioritySlugs = new Set();
+      for (const raw of [this.modelLabel(), config.model, ...menuSlugs(), ...store.listBots().map((b) => b.model)]) {
+        if (!raw) continue;
+        const resolved = this.resolveModel(raw);
+        prioritySlugs.add(resolved ? `${resolved.provider}/${resolved.id}` : String(raw).trim());
+      }
+      this.health.runAll({
+        concurrency: 6,
+        ...(prioritySlugs.size ? { onlySlugs: prioritySlugs } : {}),
+      }).catch((err) => log('模型探活出错：', err?.message || err));
 
       // 菜单里那些模型的「档位矩阵」：找出会静默返回空的组合（思考等级 × 模型）
       this.health
@@ -730,6 +740,9 @@ export class PiRunner {
         }
         this.endpointCursors.delete(id);
         this.breakers.delete(id);
+        for (const k of [...this.endpointBreakers.keys()]) {
+          if (k.startsWith(`${id}#`)) this.endpointBreakers.delete(k);
+        }
         this.health?.forgetProvider?.(id);
         this.refreshDefaultModel();
       });
@@ -1136,42 +1149,46 @@ export class PiRunner {
     });
   }
 
+  #endpointBreaker(groupId, endpointIndex = 0, now = Date.now()) {
+    const idx = Number.isInteger(endpointIndex) && endpointIndex >= 0 ? endpointIndex : 0;
+    const epKey = `${groupId}#${idx}`;
+    let cb = this.endpointBreakers.get(epKey);
+    if (!cb && idx === (this.endpointCursors.get(groupId) ?? 0) && this.breakers.has(groupId)) {
+      cb = this.breakers.get(groupId);
+    }
+    if (!cb) cb = createBreaker();
+    const settled = settleAfterCooldown(cb, now);
+    this.endpointBreakers.set(epKey, settled);
+    if (idx === (this.endpointCursors.get(groupId) ?? 0)) {
+      this.breakers.set(groupId, settled);
+    }
+    return settled;
+  }
+
   /**
    * 取某个模型组的熔断器（没有就建一个）。
    *
-   * 从 bot 的 model slug 里取组 id（`<组id>/<模型id>`）。
-   * 取不到就返回 null —— 调用方按"没有熔断"处理，绝不让它挡住正常流程。
+   * 统一通过 providerForBot 解析（支持 bot 未显式绑定 model 而走默认模型组的情况），
+   * 按组 id 与当前端点下标维护状态；取不到才返回 null。
    */
   breakerFor(botId) {
-    const bot = store.getBot(botId);
-    const slug = String(bot?.model ?? '').trim();
-    if (!slug.includes('/')) return null;
-    const groupId = slug.slice(0, slug.indexOf('/'));
+    const groupId = this.providerForBot(botId);
     if (!groupId) return null;
-    let cb = this.breakers.get(groupId);
-    if (!cb) {
-      cb = createBreaker();
-      this.breakers.set(groupId, cb);
-    }
-    // 冷却结束自动转 halfOpen（纯函数，状态推进）
-    const settled = settleAfterCooldown(cb, Date.now());
-    if (settled !== cb) {
-      this.breakers.set(groupId, settled);
-      cb = settled;
-    }
-    return { groupId, breaker: cb };
+    const endpointIndex = this.endpointCursors.get(groupId) ?? 0;
+    const breaker = this.#endpointBreaker(groupId, endpointIndex, Date.now());
+    return { groupId, endpointIndex, breaker };
   }
 
   /** 把一个模型组标记为"刚成功过" —— 恢复后立刻回到正常。 */
   markGroupHealthy(botId) {
     const found = this.breakerFor(botId);
     if (!found) return;
+    const okBreaker = breakerOk(found.breaker);
+    this.endpointBreakers.set(`${found.groupId}#${found.endpointIndex}`, okBreaker);
+    this.breakers.set(found.groupId, okBreaker);
     if (found.breaker.state !== BREAKER_STATE.closed || (found.breaker.fails ?? 0) > 0) {
-      this.breakers.set(found.groupId, breakerOk(found.breaker));
-      log(`✅ 模型组 ${found.groupId} 恢复正常`);
-      return;
+      log(`✅ 模型组 ${found.groupId}（通路 ${found.endpointIndex + 1}）恢复正常`);
     }
-    this.breakers.set(found.groupId, breakerOk(found.breaker));
   }
 
   /** 记一次通路失败（只有真·通路故障才计入）。 */
@@ -1179,22 +1196,23 @@ export class PiRunner {
     const found = this.breakerFor(botId);
     if (!found) return null;
     if (!isCircuitFailure({ kind, status })) return found.breaker;
-    const next = breakerFail(found.breaker, { kind, status, now: Date.now() });
+    const now = Date.now();
+    const next = breakerFail(found.breaker, { kind, status, now });
+    this.endpointBreakers.set(`${found.groupId}#${found.endpointIndex}`, next);
     this.breakers.set(found.groupId, next);
     if (next.state === BREAKER_STATE.open) {
       const group = modelGroups.get(found.groupId);
       const name = group?.name ?? found.groupId;
-      // ★ 熔断的那条路可能只是其中一条端点 —— 有备用就立刻切过去。
+      // ★ 熔断的那条路可能只是其中一条端点 —— 有健康的备用就立刻切过去。
       //
-      //   这是「用户无感」的关键一步：key 不稳时不让他感觉到任何中断，
-      //   后台静默换一条通路接着跑。只有全部端点都挂了才真的停下来。
+      //   这是「用户无感」的关键一步：key 不稳或不生效时后台静默换一条健康通路，
+      //   原失效端点的 open 冷却留在 endpointBreakers 里，避免立刻绕回来。
       const switched = this.#tryRotateEndpoint(found.groupId);
       if (switched) {
         log(
-          `🔁 模型组「${name}」${next.fails} 次通路失败，已切到备用通路 ${switched.index + 1}`,
+          `🔁 模型组「${name}」通路 ${found.endpointIndex + 1} 连续 ${next.fails} 次失败，已切到备用通路 ${switched.index + 1}`,
         );
-        // 切成功后把熔断器重置，让新端点从干净状态开始
-        this.breakers.set(found.groupId, createBreaker());
+        this.breakers.set(found.groupId, this.#endpointBreaker(found.groupId, switched.index, now));
         return { ...next, switchedTo: switched.index };
       }
       log(
@@ -1207,32 +1225,159 @@ export class PiRunner {
   }
 
   /**
-   * 把某个组切到下一条端点（成功后重新注册 provider）。
+   * 把某个组切到下一条健康端点（直接刷新 provider 注册并标旧空闲会话待重载）。
    *
-   * @returns {{index: number}|null} 已切换返回端点序号，待空闲、没有备用或失败返回 null
+   * @returns {{index: number}|null} 已切换返回端点序号，没有健康备用或失败返回 null
    */
   #tryRotateEndpoint(groupId) {
+    this.flushProviderUpdates();
     if (this.providerUpdates.has(groupId)) return null;
     const group = modelGroups.get(groupId);
     const eps = group?.endpoints ?? [];
     if (eps.length < 2) return null;
+    const now = Date.now();
     const prevIdx = this.endpointCursors.get(groupId) ?? 0;
-    const nextIdx = rotateCursor(prevIdx, eps.length);
-    if (nextIdx === prevIdx) return null;
+    const nextIdx = pickHealthyEndpoint(
+      eps.length,
+      prevIdx,
+      (idx) => breakerAllows(this.#endpointBreaker(groupId, idx, now), now).allow,
+    );
+    if (nextIdx === null || nextIdx === prevIdx) return null;
     try {
       const cfg = group.toProviderConfig(nextIdx);
-      const applied = this.providerUpdates.request(groupId, () => {
-        this.modelRuntime.registerProvider(groupId, cfg);
-        this.endpointCursors.set(groupId, nextIdx);
-        this.breakers.set(groupId, createBreaker());
-        this.health?.forgetProvider?.(groupId);
-        this.refreshDefaultModel();
-      });
-      return applied ? { index: nextIdx } : null;
+      this.modelRuntime?.registerProvider(groupId, cfg);
+      this.endpointCursors.set(groupId, nextIdx);
+      this.breakers.set(groupId, this.#endpointBreaker(groupId, nextIdx, now));
+      this.health?.forgetProvider?.(groupId);
+      this.refreshDefaultModel();
+      invalidateSessions(this.sessions, (_key, entry) =>
+        modelChangeAffectsSession(entry, groupId, store.getBot(entry.bot?.id) ?? entry.bot));
+      return { index: nextIdx };
     } catch (err) {
       log(`切换端点失败（${groupId}）：${err?.message ?? err}`);
       return null;
     }
+  }
+
+  /** 清除因坏 key 刚切换时留下的无正文空白错误气泡，实现无感切换。 */
+  #dropFailedEndpointPlaceholder(roomId, res) {
+    if (!res?.messageId) return;
+    const msg = store.getMessage(roomId, res.messageId);
+    if (!msg) return;
+    if ((msg.status === 'error' || msg.status === 'retrying') && !String(msg.text ?? '').trim() && !(msg.steps?.length)) {
+      store.deleteMessage(roomId, msg.id);
+    }
+  }
+
+  /**
+   * 统一执行单次调用并接入多端点故障切换与轻量重试（DM / 合并 / 受管执行 / runBotOnce 共用）。
+   */
+  async #runWithEndpointFailover(roomId, botId, prompt, options = {}) {
+    let gate = this.breakerFor(botId);
+    let gateCheck = gate ? breakerAllows(gate.breaker, Date.now()) : { allow: true };
+    if (!gateCheck.allow && gate?.groupId) {
+      if (this.#tryRotateEndpoint(gate.groupId)) {
+        gate = this.breakerFor(botId);
+        gateCheck = gate ? breakerAllows(gate.breaker, Date.now()) : { allow: true };
+      }
+    }
+    if (!gateCheck.allow) {
+      const error = breakerNote(gate.breaker, {
+        groupName: modelGroups.get(gate.groupId)?.name ?? '',
+      });
+      if (!options.managedContext && options.skipErrorBubble !== true) {
+        const msg = store.appendMessage({
+          roomId,
+          authorType: 'bot',
+          authorId: botId,
+          authorName: store.getBot(botId)?.name ?? botId,
+          authorEmoji: store.getBot(botId)?.emoji,
+          text: '',
+          status: 'error',
+          error,
+        });
+        bus.emit('event', { t: 'msg.error', roomId, msgId: msg.id, error, msg });
+        return { ok: false, text: '', ms: 0, error, status: 503, messageId: msg.id, breakerSkipped: true };
+      }
+      return {
+        ok: false,
+        text: '',
+        ms: 0,
+        error,
+        status: 503,
+        messageId: '',
+        breakerSkipped: true,
+        ...(options.managedContext ? { stop: STOP.failed } : {}),
+      };
+    }
+
+    const baseAttempt = Number(options.attemptIndex) || 1;
+    let attempt = 1;
+    let switches = 0;
+    let currentPrompt = prompt;
+    let res = await this.run(roomId, botId, currentPrompt, {
+      ...options,
+      retryManaged: options.retryManaged ?? true,
+      attemptIndex: baseAttempt,
+    });
+    if (res.ok) {
+      this.markGroupHealthy(botId);
+      settleRetryMessage(store, roomId, res, { succeeded: true });
+      return res;
+    }
+
+    while (!res.ok) {
+      if (this.aborting.has(roomId) || res.cancelled) break;
+      const errText = String(res.error ?? '未知原因');
+      const status = res.status ?? null;
+      const decision = decideRetry({
+        error: errText,
+        attempt,
+        aborting: this.aborting.has(roomId),
+        status,
+      });
+      const failState = this.markGroupFailed(botId, { kind: decision.kind, status });
+      const switched = Number.isInteger(failState?.switchedTo) && switches < 5;
+      // 受管轮次把外层瞬时退避留给 TaskSupervisor，本层仅在切换健康备用端点时立即重试。
+      const allowTransient = !options.managedContext && decision.retry && decision.kind === 'transient' && attempt <= 2;
+      const afterFail = this.breakerFor(botId);
+      const breakerBlocked = !switched && afterFail && afterFail.breaker.state === BREAKER_STATE.open;
+      if (breakerBlocked || (!switched && !allowTransient)) break;
+
+      if (switched) {
+        switches++;
+        this.#dropFailedEndpointPlaceholder(roomId, res);
+      } else {
+        settleRetryMessage(store, roomId, res, { willRetry: true });
+      }
+      await new Promise((r) => setTimeout(r, switched ? 150 : Math.min(decision.delayMs || RETRY_DELAY_MS, 5000)));
+      if (this.aborting.has(roomId)) break;
+
+      attempt++;
+      currentPrompt = switched
+        ? prompt
+        : retryHint({ attempt: attempt - 1, error: errText, kind: decision.kind }) + prompt;
+      res = await this.run(roomId, botId, currentPrompt, {
+        ...options,
+        retryManaged: options.retryManaged ?? true,
+        attemptIndex: baseAttempt + attempt - 1,
+      });
+      if (res.ok) {
+        this.markGroupHealthy(botId);
+        settleRetryMessage(store, roomId, res, { succeeded: true });
+        return res;
+      }
+    }
+
+    settleRetryMessage(
+      store,
+      roomId,
+      res,
+      res.ok
+        ? { succeeded: true }
+        : { error: String(res.error ?? '请求失败'), aborted: this.aborting.has(roomId) },
+    );
+    return res;
   }
 
   /** 首次接单的请求作用域：只在对应理解轮期间存在，轮结束即清理。 */
@@ -1370,7 +1515,7 @@ export class PiRunner {
       const result = await deliverDirectInput({
         prepare: () => this.#buildInput(item.text, item.files, roomId),
         run: ({ promptText }) => this.#withRequestEnvelope(item.request, roomId, botId, () =>
-          this.run(roomId, botId, promptText, { skipUserMessage: true, attachments: item.files, human: true })),
+          this.#runWithEndpointFailover(roomId, botId, promptText, { skipUserMessage: true, attachments: item.files, human: true })),
         getEntry: () => this.sessions.get(this.#key(roomId, botId)),
         isCancelled: () => this.aborting.has(roomId),
         queue: async () => { throw Object.assign(new Error('请求已在队列中'), { code: 'REQUEST_QUEUED' }); },
@@ -1626,12 +1771,18 @@ export class PiRunner {
     }
 
     const fresh = transcriptFor(roomId, botId);
+    const { members, leadId } = departmentOf(room);
+    const isLead = botId === (leadId ?? null);
+    const groupFp = groupPromptFingerprint(room, bot, { isLead, members, leadId });
+    const liveEntry = this.sessions.get(this.#key(roomId, botId));
+    const useCompactRules = Boolean(liveEntry?.session && !liveEntry.compactedSinceInjection && liveEntry.groupRulesFingerprint === groupFp);
     const prompt = composeGroupPrompt(room, bot, fresh, {
-      isLead: botId === (departmentOf(room).leadId ?? null),
+      isLead,
       reason: kickoff ? '部门刚成立，先由你安排' : openerBotId ? openerName + ' 叫了你' : '用户发了新消息',
-      members: departmentOf(room).members,
-      leadId: departmentOf(room).leadId,
+      members,
+      leadId,
       order: { index: 1 },
+      compactRules: useCompactRules,
     });
 
     // 受管执行：把任务/阶段提示真正送进模型输入（旧非受管路径不受影响）
@@ -1647,7 +1798,7 @@ export class PiRunner {
       this.managedInflight.set(managedTaskRun, { key, botId, roomId, session: entry?.session ?? null, attemptId: managedContext?.attemptId ?? null });
     }
     try {
-      const res = await this.run(roomId, botId, attachmentContext ? attachmentContext + '\n\n' + composed : composed, {
+      const res = await this.#runWithEndpointFailover(roomId, botId, attachmentContext ? attachmentContext + '\n\n' + composed : composed, {
         groupTurn: true,
         retryManaged: true,
         taskRunId: newId('run_'),
@@ -1656,6 +1807,10 @@ export class PiRunner {
         managedContext,
         human: !openerBotId,
       });
+      if (res?.ok) {
+        const doneEntry = this.sessions.get(key);
+        if (doneEntry) doneEntry.groupRulesFingerprint = groupFp;
+      }
       // 受管执行的返回值就是这一轮的结果：调用方据此推进 TaskRun。
       return res;
     } catch (err) {
@@ -2022,14 +2177,19 @@ export class PiRunner {
       this.dispatching.add(dispatchKey);
 
       const fresh = transcriptFor(roomId, bot.id);
+      const isLead = bot.id === leadId;
+      const groupFp = groupPromptFingerprint(room, bot, { isLead, members, leadId });
+      const liveEntry = this.sessions.get(dispatchKey);
+      const useCompactRules = Boolean(liveEntry?.session && !liveEntry.compactedSinceInjection && liveEntry.groupRulesFingerprint === groupFp);
       let prompt = composeGroupPrompt(room, bot, fresh, {
-        isLead: bot.id === leadId,
+        isLead,
         reason: item.reason,
         members,
         leadId,
         // ★ 组长定的先后（用户：“可以让组长自行决定先后”）：
         //   把“你是第几个被叫到的”写进它的提示 —— 被叫的顺序就是组长 @ 的顺序。
         order: { index: runs },
+        compactRules: useCompactRules,
       });
       if (attachmentContext) prompt = `${attachmentContext}\n\n${prompt}`;
 
@@ -2108,8 +2268,14 @@ export class PiRunner {
             //   实测 6 个成员的群、key 彻底不可用，原先会打 66 次请求、累积等 584 秒。
             //   有熔断后第 1 个 bot 撞 3 次就停住，其余 5 个立刻得到结论。
             this.flushProviderUpdates();
-            const gate = this.breakerFor(bot.id);
-            const gateCheck = gate ? breakerAllows(gate.breaker, Date.now()) : { allow: true };
+            let gate = this.breakerFor(bot.id);
+            let gateCheck = gate ? breakerAllows(gate.breaker, Date.now()) : { allow: true };
+            if (!gateCheck.allow && gate?.groupId) {
+              if (this.#tryRotateEndpoint(gate.groupId)) {
+                gate = this.breakerFor(bot.id);
+                gateCheck = gate ? breakerAllows(gate.breaker, Date.now()) : { allow: true };
+              }
+            }
             const taskRunId = newId('run_');
 
             // ★ 受管轮次走到这里，bot.id 一定就是上下文声明的执行者
@@ -2143,9 +2309,13 @@ export class PiRunner {
                 human: !item.fromId && isUserInitiatedRound({ openerBotId }),
               });
             }
+            let switchedEndpoint = false;
+            let switches = 0;
             // 第一次的结果也要喂给熔断器，否则"第 1 次就挂"的情况记不到
             if (res.ok) {
               this.markGroupHealthy(bot.id);
+              const doneEntry = this.sessions.get(dispatchKey);
+              if (doneEntry) doneEntry.groupRulesFingerprint = groupFp;
             } else if (!res.breakerSkipped) {
               const firstDecision = decideRetry({
                 error: String(res.error ?? ''),
@@ -2153,10 +2323,11 @@ export class PiRunner {
                 aborting: this.aborting.has(roomId),
                 status: res.status ?? null,
               });
-              this.markGroupFailed(bot.id, {
+              const failState = this.markGroupFailed(bot.id, {
                 kind: firstDecision.kind,
                 status: res.status ?? null,
               });
+              switchedEndpoint = Number.isInteger(failState?.switchedTo);
             }
             let attempt = 1;
             let lastError = res.ok ? '' : String(res.error ?? '未知原因');
@@ -2180,54 +2351,47 @@ export class PiRunner {
                 aborting: this.aborting.has(roomId),
                 status: lastStatus,
               });
-              if (!decision.retry) {
+              const canSwitch = switchedEndpoint && switches < 5;
+              if (!decision.retry && !canSwitch) {
                 log(`【${room.name}】${bot.name} 不再重试：${decision.why}`);
                 lastKind = decision.kind;
                 break;
               }
-              // ★ 熔断器刚打开 → 别再撞了。
-              //
-              //   这一次失败可能就是压垮它的第 3 次。已经确定这条路不通，
-              //   继续按指数退避重试只是把 97 秒的等待重复一遍。
+              // ★ 熔断器刚打开且未能切到备用端点 → 别再撞了。
               const afterFail = this.breakerFor(bot.id);
-              if (afterFail && afterFail.breaker.state === BREAKER_STATE.open) {
+              if (!canSwitch && afterFail && afterFail.breaker.state === BREAKER_STATE.open) {
                 log(`【${room.name}】${bot.name} 熔断已打开，停止重试`);
                 lastKind = 'breaker-open';
                 break;
               }
               attempt++;
-              retries.push(`${attempt}. ${decision.why}`);
-              // ★ 前几次重试**不往群里写东西**。
-              //
-              //   原先每次重试都插一条「XX 在等接口恢复（HTTP 502），第 N 次重试…」。
-              //   10 次重试就是 10 条系统消息，把整段对话刷满 ——
-              //   用户看到的是"群里一直在报错"，而实际上这些重试大多会自己恢复。
-              //
-              //   接口抖动是**我们这边的事**，不该让用户围观。
-              //   只在「放弃」时写一条（下面失败回执那段），那才是他需要知道的。
-              //   中途进度留在日志里，排查时能看到。
+              retries.push(`${attempt}. ${canSwitch ? '已切换到备用端点立即重连' : decision.why}`);
               log(
-                `【${room.name}】${bot.name} 第 ${attempt} 次尝试（${decision.kind}）：${lastError.slice(0, 80)}`,
+                `【${room.name}】${bot.name} 第 ${attempt} 次尝试（${canSwitch ? 'endpoint-failover' : decision.kind}）：${lastError.slice(0, 80)}`,
               );
-              // 隔一会儿再试：立刻重发大概率撞上同样的偶发问题。
-              // 接口抖动类按指数退避 —— 限流时固定 3 秒重发会一直撞同一堵墙。
-              const waitMs =
-                decision.kind === 'transient'
-                  ? transientBackoffMs(attempt - 1)
-                  : RETRY_DELAY_MS;
+              const waitMs = canSwitch
+                ? 150
+                : (decision.delayMs || RETRY_DELAY_MS);
               await new Promise((r) => setTimeout(r, waitMs));
               if (this.aborting.has(roomId)) break;
               // ★ 重试等待期间用户插话 → 旧任务作废，别再起跑
               if (stale()) break;
-              // 换个说法再发，而不是原样重发（原样输入很可能得到同样结果）
-              const hinted = retryHint({
-                attempt: attempt - 1,
-                error: lastError,
-                kind: decision.kind,
-                switchModel: decision.switchModel === true,
-              });
-              settleRetryMessage(store, roomId, res, { willRetry: true });
-              res = await this.run(roomId, bot.id, hinted + prompt, {
+              let nextPrompt = prompt;
+              if (canSwitch) {
+                switches++;
+                this.#dropFailedEndpointPlaceholder(roomId, res);
+              } else {
+                const hinted = retryHint({
+                  attempt: attempt - 1,
+                  error: lastError,
+                  kind: decision.kind,
+                  switchModel: decision.switchModel === true,
+                });
+                settleRetryMessage(store, roomId, res, { willRetry: true });
+                nextPrompt = hinted + prompt;
+              }
+              switchedEndpoint = false;
+              res = await this.run(roomId, bot.id, nextPrompt, {
                 groupTurn: true,
                 retryManaged: true,
                 taskRunId, attemptIndex: attempt,
@@ -2238,14 +2402,23 @@ export class PiRunner {
                 lastError = String(res.error ?? '未知原因');
                 lastStatus = res.status ?? null;
               }
-              // 把这次的结果喂给熔断器（纯函数，非通路故障不计入）
+              // 把这次的结果喂给熔断器（每次按当次真实状态重新归类，避免延用上一个端点的错误类型）
               if (res.ok) {
                 this.markGroupHealthy(bot.id);
+                const doneEntry = this.sessions.get(dispatchKey);
+                if (doneEntry) doneEntry.groupRulesFingerprint = groupFp;
               } else {
-                this.markGroupFailed(bot.id, {
-                  kind: decision.kind,
-                  status: res.status ?? null,
+                const nextDecision = decideRetry({
+                  error: lastError,
+                  attempt,
+                  aborting: this.aborting.has(roomId),
+                  status: lastStatus,
                 });
+                const failState = this.markGroupFailed(bot.id, {
+                  kind: nextDecision.kind,
+                  status: lastStatus,
+                });
+                switchedEndpoint = Number.isInteger(failState?.switchedTo);
               }
             }
 
@@ -2681,7 +2854,7 @@ export class PiRunner {
         // DM 里的每一轮都是用户直接说话 → 走人的保底槽
         // 首次接单请求：作用域在真正取得执行权时激活、本轮真正结束时收尾
         run: async ({ promptText }) => {
-          const execute = () => this.run(roomId, botId, promptText, { skipUserMessage: true, attachments: files, human: true });
+          const execute = () => this.#runWithEndpointFailover(roomId, botId, promptText, { skipUserMessage: true, attachments: files, human: true });
           if (!request) return execute();
           try {
             return await this.#withRequestEnvelope(request, roomId, botId, execute);
@@ -3073,6 +3246,7 @@ export class PiRunner {
           //   这条路径不走 compaction_end 事件，所以在这里单独清一次。
           entry.compactedSinceInjection = true;
           entry.skillsInjected = null;
+          entry.groupRulesFingerprint = null;
           return { compacted: true, failed: false, attempts, why: plan.why };
         } catch (err) {
           lastError = err;
@@ -3723,8 +3897,9 @@ export class PiRunner {
     }, 80);
     const pushSteps = () => {
       beat();
-      bus.emit('event', { t: 'msg.steps', roomId, msgId: botMsg.id, steps: [...steps] });
-      store.updateMessage(roomId, botMsg.id, { steps: [...steps] }, { silent: true });
+      const snap = [...steps];
+      botMsg.steps = snap;
+      bus.emit('event', { t: 'msg.steps', roomId, msgId: botMsg.id, steps: snap });
     };
 
     let stepCapHit = false;
@@ -3761,6 +3936,7 @@ export class PiRunner {
           //   这是"技能只给一次"唯一必须撤回的场景。
           entry.compactedSinceInjection = true;
           entry.skillsInjected = null;
+          entry.groupRulesFingerprint = null;
           // ★ 压缩这件事必须**出现在对话里**，不能只藏在状态里。
           //   否则用户看到的是"bot 刚才那几轮说的话不见了"，完全不知道发生了什么。
           //   留一条 kind='compact' 的记录，App 把它画成对话中间的一条小横条。
@@ -3840,6 +4016,7 @@ export class PiRunner {
           }
           break;
         case 'tool_execution_start': {
+          ensureBeforeSnapshots();
           // ★ 报告只能经**工具 execute** 提交（那里有归属与真实性校验）。
           //   这里只记展示用的步骤，不能抢先 accept —— 否则那条校验被旁路，
           //   一条手工事件就能把未经核实的声明写进结果。
@@ -3878,11 +4055,20 @@ export class PiRunner {
     const unsubscribe = entry.session.subscribe(onEvent);
     entry.unsubscribe = unsubscribe;
 
+    let beforeImages = null;
     let beforeFiles = null;
-    const changes = () => {
+    let snapshotsReady = false;
+    const watchChanges = process.env.PI_BOT_WATCH_CHANGES !== '0';
+    const ensureBeforeSnapshots = () => {
+      if (snapshotsReady) return;
+      snapshotsReady = true;
+      if (config.autoAttachImages) beforeImages = snapshotImages(config.workspace);
+      if (watchChanges) beforeFiles = snapshotWorkspace(config.workspace);
+    };
+    const changes = (after = null) => {
       if (!beforeFiles) return null;
       try {
-        const diff = diffSnapshots(beforeFiles, snapshotWorkspace(config.workspace));
+        const diff = diffSnapshots(beforeFiles, after ?? snapshotWorkspace(config.workspace));
         return diff.total ? summarizeChanges(diff) : null;
       } catch {
         return null;
@@ -3907,11 +4093,7 @@ export class PiRunner {
         const img = readForModel(id);
         if (img) images.push(img);
       }
-      // bot 自己画图：记下开跑前的快照，跑完把新出现的图自动带上
-      const beforeImages = config.autoAttachImages ? snapshotImages(config.workspace) : null;
-      // 这一轮改了哪些文件：跑之前拍一张，跑完比一次
-      const watchChanges = process.env.PI_BOT_WATCH_CHANGES !== '0';
-      beforeFiles = watchChanges ? snapshotWorkspace(config.workspace) : null;
+      // 图片/改动基线快照推迟到首个 tool_execution_start 时懒采样：纯文本或 [PASS] 轮直接零扫描。
       checkCancelled();
       // 槽位：超时就如实回报并在群里留痕，不静默干等
       const remainingMs = deadline ? Math.max(1, deadline - Date.now()) : 0;
@@ -4123,12 +4305,15 @@ export class PiRunner {
           })
         : [];
 
+      // 同一轮只扫一次结束快照，复用于产物收集与变更统计
+      const afterFiles = beforeFiles ? snapshotWorkspace(config.workspace) : null;
+
       // ★ 跑完后把交付物（表格 / 文档 / PDF / 压缩包）也直接发到群里。
       //   只认这一轮新增或改过的文件，源码不算（那是 changed_files 的事）；
       //   图片已经在上面处理过，这里排掉避免重复附件。
       if (config.autoAttachArtifacts !== false && beforeFiles) {
         try {
-          for (const item of collectArtifacts(config.workspace, beforeFiles)) {
+          for (const item of collectArtifacts(config.workspace, beforeFiles, { after: afterFiles })) {
             try {
               produced.push(saveFromPath(item.file));
             } catch (err) {
@@ -4179,7 +4364,7 @@ export class PiRunner {
       if (!finalText) finalText = '（在群里动手步数到上限，先收住）';
       if (emptyRecovered) finalText = `${finalText}\n\n_（原模型首次没出内容，已自动重试）_`;
 
-      const changed = changes();
+      const changed = changes(afterFiles);
       const msg = store.updateMessage(
         roomId,
         botMsg.id,
@@ -4361,7 +4546,7 @@ export class PiRunner {
     if (this.isBusy(roomId, botId)) {
       return { ok: false, text: '', ms: 0, error: `${store.getBot(botId)?.name ?? botId} 正在忙` };
     }
-    return this.run(roomId, botId, prompt, { timeoutMs, meta });
+    return this.#runWithEndpointFailover(roomId, botId, prompt, { timeoutMs, meta, skipErrorBubble: meta?.internal === true });
   }
 
   /**

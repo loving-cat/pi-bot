@@ -39,7 +39,6 @@ export function buildAppendSystemPrompt(
     //   比后面所有通用规矩都优先 —— 和它冲突时以它为准。
     ...(Array.isArray(preferenceLines) ? preferenceLines : []),
     ...(bot.persona ? [effectiveModelPersona(bot)] : []),
-    ...(bot.role === 'main' && modelLines ? [modelLines] : []),
     // ★ 你是谁 / 用户是谁。
     //   不写这个的话，bot 只能从人设里猜用户身份，或者干脆不称呼 ——
     //   而在群里它还需要知道"哪条是那个真人发的"（其余都是同事）。
@@ -148,10 +147,8 @@ export function buildAppendSystemPrompt(
             '不要只说"改好了"——没有证据的交付按未完成算。',
         ]
       : []),
-    // ★ MCP 清单只给主控。
-    //   为什么不给所有 bot：MCP 真会起子进程，几十个 bot 各连一份就把机器拖死了。
-    //   正确分工是「主控知道有哪些能力 → 派活时给具体那个 bot 配上它需要的」。
-    //   空字符串（库里一个服务都没配）时整段不出现，不白占上下文。
+    // ★ MCP 清单与动态模型池放在末尾：避免探活耗时/状态抖动破坏前面静态规矩的 KV Cache 前缀。
+    ...(bot.role === 'main' && modelLines ? [modelLines] : []),
     ...(mcpLines ? [mcpLines] : []),
   ];
 }

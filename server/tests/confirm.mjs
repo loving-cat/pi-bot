@@ -233,6 +233,50 @@ await test('确认记录里不含凭据字段', () => {
   }
 });
 
+await test('★ checkConfirmation 允许 minChannel=local 走本机确认，git.push 仅在 channelWeakened+allowLocal 时放行', () => {
+  const localGrant = {
+    ...buildConfirmation({
+      id: 'cf_local_read',
+      action: 'grant.request',
+      minChannel: 'local',
+      target: { actions: ['file.read'], botIds: ['b_1'] },
+    }),
+    decision: 'approved',
+    channel: CHANNEL.local,
+  };
+  assert.equal(
+    checkConfirmation({ confirmation: localGrant, target: { actions: ['file.read'], botIds: ['b_1'] } }).ok,
+    true,
+    'minChannel=local 时 local 通道应通过 checkConfirmation',
+  );
+
+  const weakenedPush = {
+    ...buildConfirmation({ id: 'cf_push_weak', action: 'git.push', target: { remote: 'origin' } }),
+    decision: 'approved',
+    channel: CHANNEL.local,
+    channelWeakened: true,
+  };
+  assert.equal(
+    checkConfirmation({ confirmation: weakenedPush, target: { remote: 'origin' }, allowLocal: false }).ok,
+    false,
+    '未开 allowLocal 时即便是 weakened 也不该放行',
+  );
+  assert.equal(
+    checkConfirmation({
+      confirmation: { ...weakenedPush, channelWeakened: false },
+      target: { remote: 'origin' },
+      allowLocal: true,
+    }).ok,
+    false,
+    '确认记录本身没标 channelWeakened 时开 allowLocal 也不该放行',
+  );
+  assert.equal(
+    checkConfirmation({ confirmation: weakenedPush, target: { remote: 'origin' }, allowLocal: true }).ok,
+    true,
+    'channelWeakened 且 allowLocal 均成立时才放行',
+  );
+});
+
 const failed = results.filter((r) => !r.ok);
 for (const r of results) {
   console.log(`${r.ok ? '✓' : '✗'} ${r.name}${r.ok ? '' : ' —— ' + r.err}`);

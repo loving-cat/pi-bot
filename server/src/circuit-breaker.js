@@ -43,6 +43,9 @@ export const COOLDOWN_TRANSIENT_MS = 60_000;
 /** 凭证类问题的冷却：钥匙不对不会自己变对，等久一点少撞几次。 */
 export const COOLDOWN_AUTH_MS = 10 * 60_000;
 
+/** 额度/余额不足（HTTP 402）的冷却。 */
+export const COOLDOWN_QUOTA_MS = 10 * 60_000;
+
 export const BREAKER_STATE = Object.freeze({
   closed: 'closed',
   open: 'open',
@@ -59,10 +62,10 @@ export const BREAKER_STATE = Object.freeze({
  */
 export function isCircuitFailure({ kind = '', status = null } = {}) {
   if (kind === 'aborted' || kind === 'busy') return false;
-  if (kind === 'auth') return true;
+  if (kind === 'auth' || kind === 'quota') return true;
   const code = Number(status) || 0;
   if (code === 400 || code === 422) return false;
-  if (code === 401 || code === 403) return true;
+  if (code === 401 || code === 402 || code === 403) return true;
   if (code === 429 || code >= 500) return true;
   return kind === 'transient' || kind === 'timeout';
 }
@@ -71,6 +74,7 @@ export function isCircuitFailure({ kind = '', status = null } = {}) {
 export function cooldownFor({ kind = '', status = null } = {}) {
   const code = Number(status) || 0;
   if (code === 401 || code === 403 || kind === 'auth') return COOLDOWN_AUTH_MS;
+  if (code === 402 || kind === 'quota') return COOLDOWN_QUOTA_MS;
   return COOLDOWN_TRANSIENT_MS;
 }
 
@@ -134,8 +138,11 @@ export function recordFailure(breaker, { kind = '', status = null, now = Date.no
   }
   const fails = (base.fails ?? 0) + 1;
   const cooldownMs = cooldownFor({ kind, status });
-  // halfOpen 的探路失败 → 立刻重新打开（不用再等攒够 3 次）
-  if (base.state === BREAKER_STATE.halfOpen || fails >= OPEN_AFTER_FAILS) {
+  const code = Number(status) || 0;
+  const immediate = kind === 'auth' || kind === 'quota' || code === 401 || code === 402 || code === 403;
+  const threshold = immediate ? 1 : OPEN_AFTER_FAILS;
+  // 凭证/额度错误或 halfOpen 探路失败 → 立刻打开（不用再等攒够 3 次）
+  if (base.state === BREAKER_STATE.halfOpen || fails >= threshold) {
     return {
       state: BREAKER_STATE.open,
       fails,

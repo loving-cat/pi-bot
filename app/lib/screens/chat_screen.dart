@@ -2318,11 +2318,17 @@ class _MessageRow extends StatelessWidget {
     //   桌面端不给 —— 主 Bot 能操作这台电脑，它自己能点，
     //   所以桌面上的"批准"只是仪式，不是安全边界。
     if (msg.isConfirmation) {
+      final state = AppScope.of(context);
+      final minChannel = msg.meta?['minChannel'] as String?;
+      final allowLocal = state.desktopSettings['allowLocalApproval'] == true;
       return ConfirmationCard(
         msg: msg,
-        canApproveHere: isMobilePlatform,
-        onDecide: (approve) => AppScope.read(context)
-            .decideConfirmation(msg.confirmationId ?? '', approve: approve),
+        canApproveHere: isMobilePlatform || minChannel == 'local' || allowLocal,
+        onDecide: (approve) => AppScope.read(context).decideConfirmation(
+          msg.confirmationId ?? '',
+          approve: approve,
+          minChannel: minChannel,
+        ),
       );
     }
 
@@ -2561,7 +2567,7 @@ class _MessageRow extends StatelessWidget {
                   if (msg.steps.isNotEmpty)
                     streaming
                         ? ValueListenableBuilder<int>(
-                            valueListenable: AppScope.read(context).streamTick,
+                            valueListenable: AppScope.read(context).streamTickFor(msg.id),
                             builder: (_, __, ___) => ToolSteps(
                               steps: msg.steps,
                               quietWhenDone: true,
@@ -2653,7 +2659,7 @@ class _MessageRow extends StatelessWidget {
                               )
                             : ValueListenableBuilder<int>(
                                 valueListenable: AppScope.read(context)
-                                    .streamTick,
+                                    .streamTickFor(msg.id),
                                 builder: (_, __, ___) => MdText(
                                         '${msg.text}▍',
                                         selectable: false,

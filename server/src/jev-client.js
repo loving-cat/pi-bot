@@ -36,6 +36,8 @@
  *   }
  */
 
+import { publicFetch } from './net-guard.js';
+
 /** 请求发不出去 / 发出去但对方不认，导致本轮无法用 Jev 决策的错误种类。 */
 export const JEV_FAILURE = Object.freeze({
   /** 没配置 key 或地址 */
@@ -179,7 +181,7 @@ export async function jevDecide({
   state,
   questions,
   timeoutMs = JEV_DEFAULT_TIMEOUT_MS,
-  fetchImpl = globalThis.fetch,
+  fetchImpl = undefined,
   noulThreshold = 0.5,
 } = {}) {
   const started = Date.now();
@@ -193,7 +195,9 @@ export async function jevDecide({
   const base = String(baseUrl || '').trim().replace(/\/+$/, '');
   const key = String(apiKey || '').trim();
   if (!base || !key) return fail(JEV_FAILURE.unconfigured, '未配置 Jev 的地址或 key');
-  if (typeof fetchImpl !== 'function') return fail(JEV_FAILURE.transport, '运行环境没有 fetch');
+  if (fetchImpl === null || (fetchImpl !== undefined && typeof fetchImpl !== 'function')) {
+    return fail(JEV_FAILURE.transport, '运行环境没有 fetch');
+  }
   if (!questions || !Object.keys(questions).length) {
     return fail(JEV_FAILURE.badRequest, '没有要判断的问题');
   }
@@ -204,7 +208,8 @@ export async function jevDecide({
   let json = null;
   let text = '';
   try {
-    const res = await fetchImpl(serviceUrl(base, 'systemone'), {
+    const targetUrl = serviceUrl(base, 'systemone');
+    const reqInit = {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${key}`,
@@ -217,7 +222,10 @@ export async function jevDecide({
         questions,
       }),
       signal: controller.signal,
-    });
+    };
+    const res = typeof fetchImpl === 'function'
+      ? await fetchImpl(targetUrl, reqInit)
+      : (await publicFetch(targetUrl, reqInit, { scope: 'user-config' })).res;
     status = res.status;
     text = await res.text().catch(() => '');
     try {
@@ -264,7 +272,7 @@ export async function jevDecide({
 export async function jevProbe({
   baseUrl,
   apiKey,
-  fetchImpl = globalThis.fetch,
+  fetchImpl = undefined,
   timeoutMs = 6000,
 } = {}) {
   const started = Date.now();
@@ -273,16 +281,20 @@ export async function jevProbe({
   if (!base || !key) {
     return { ok: false, failure: JEV_FAILURE.unconfigured, error: '未配置地址或 key', ms: 0 };
   }
-  if (typeof fetchImpl !== 'function') {
+  if (fetchImpl === null || (fetchImpl !== undefined && typeof fetchImpl !== 'function')) {
     return { ok: false, failure: JEV_FAILURE.transport, error: '运行环境没有 fetch', ms: 0 };
   }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(500, Number(timeoutMs) || 0));
   try {
-    const res = await fetchImpl(`${modelsUrl(base)}`, {
+    const targetUrl = `${modelsUrl(base)}`;
+    const reqInit = {
       headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' },
       signal: controller.signal,
-    });
+    };
+    const res = typeof fetchImpl === 'function'
+      ? await fetchImpl(targetUrl, reqInit)
+      : (await publicFetch(targetUrl, reqInit, { scope: 'user-config' })).res;
     const text = await res.text().catch(() => '');
     if (!res.ok) {
       let detail = text.slice(0, 200);
