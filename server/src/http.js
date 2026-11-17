@@ -534,9 +534,19 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
       // 手机轮询：批准后**只付一次** token（下次再查就是 gone）。
       const requestPollMatch = /^\/api\/pair\/request\/([a-f0-9]{32})$/.exec(pathname);
       if (requestPollMatch && req.method === 'GET') {
-        const view = pairRequests.poll(requestPollMatch[1]);
-        if (!view) return fail(res, 410, 'PAIR_REQUEST_GONE', '这个连接请求已失效（过期或被处理过），在电脑上重新发起');
-        return send(res, 200, view);
+        let polled;
+        try {
+          polled = pairRequests.poll(requestPollMatch[1], { ip: clientIp(req) });
+        } catch (err) {
+          if (err.code === 'PAIR_REQUEST_WRONG_NETWORK') {
+            return fail(res, 403, err.code, '这条连接请求是从另一台设备发起的，当前网络取不到它的授权');
+          }
+          throw err;
+        }
+        if (!polled.ok) {
+          return fail(res, 410, 'PAIR_REQUEST_GONE', '这个连接请求已失效（过期或被处理过），在电脑上重新发起');
+        }
+        return send(res, 200, polled.view);
       }
 
       if (pathname === '/api/pair' && req.method === 'POST') {

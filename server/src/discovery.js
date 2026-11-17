@@ -33,6 +33,32 @@ export const PROTOCOL_VERSION = 1;
 /** 同一个来源 500ms 内只回一次：手机上连点"重新搜索"不该把主机打个半死。 */
 const REPLY_THROTTLE_MS = 500;
 
+/**
+ * 只对**局域网来源**应答。
+ *
+ * 应答里虽然只有名字/地址这种公开信息，但"这台机器装着 pi-bot"本身也是信息：
+ * 从公网打进来的探针（端口映射、云主机的 0.0.0.0 绑定）不该得到确认。
+ * 回环也放行 —— 本机自检/测试走的就是它。
+ */
+export function isLanSource(address) {
+  const ip = String(address ?? '').replace(/^::ffff:/i, '');
+  if (!ip) return false;
+  if (ip === '::1') return true;
+  const parts = ip.split('.');
+  if (parts.length !== 4) {
+    // IPv6：只认链路本地 fe80::/10 与唯一本地 fc00::/7
+    const lower = ip.toLowerCase();
+    return lower.startsWith('fe8') || lower.startsWith('fe9') || lower.startsWith('fea') || lower.startsWith('feb') || lower.startsWith('fc') || lower.startsWith('fd');
+  }
+  const [a, b] = parts.map((n) => Number(n));
+  if (!Number.isFinite(a)) return false;
+  if (a === 127 || a === 10) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 169 && b === 254) return true;
+  return false;
+}
+
 /** 手机该看到的这台主机的样子。 */
 export function buildAnnouncement(overrides = {}) {
   const port = overrides.port ?? config.port;
@@ -86,6 +112,7 @@ export async function startDiscovery({
 
   socket.on('message', (buf, rinfo) => {
     if (!isProbe(buf)) return;
+    if (!isLanSource(rinfo.address)) return;
     const now = Date.now();
     const last = lastReplyAt.get(rinfo.address) ?? 0;
     if (now - last < REPLY_THROTTLE_MS) return;

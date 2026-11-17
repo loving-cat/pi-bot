@@ -67,7 +67,7 @@ test('没人批 → 过一会儿就 expired，拿不到 token', () => {
   const h = harness({ ttlMs: 1000 });
   const view = h.requests.create({ device: '手机', ip: '10.0.0.2' });
   h.tick(1500);
-  const polled = h.requests.poll(view.id);
+  const polled = h.requests.poll(view.id, { ip: '10.0.0.2' }).view;
   assert.equal(polled?.status, 'expired');
   assert.equal(polled.token, undefined);
   assert.equal(h.issued.length, 0, '没人批就不该签发任何设备');
@@ -81,13 +81,13 @@ test('电脑上点了允许 → 轮询拿到 token，而且只有一次', () => 
   assert.equal(decided.status, 'approved');
   assert.deepEqual(h.issued, ['我的手机'], '签发的设备名就是手机上填的名字');
 
-  const first = h.requests.poll(view.id);
+  const first = h.requests.poll(view.id, { ip: '192.168.1.30' }).view;
   assert.equal(first.status, 'approved');
   assert.equal(first.token, 'tok-1');
   assert.equal(first.serverName, 'pi-bot');
   assert.equal(first.workspace, '/work');
 
-  const second = h.requests.poll(view.id);
+  const second = h.requests.poll(view.id, { ip: '192.168.1.30' }).view;
   assert.equal(second.status, 'approved');
   assert.equal(second.token, undefined, '同一个 id 不能第二次拿到 token');
 });
@@ -96,16 +96,29 @@ test('拒绝 → 状态 denied，不发 token，也不能再改主意', () => {
   const h = harness();
   const view = h.requests.create({ device: '手机', ip: '10.0.0.3' });
   assert.equal(h.requests.decide(view.id, false).status, 'denied');
-  const polled = h.requests.poll(view.id);
+  const polled = h.requests.poll(view.id, { ip: '10.0.0.3' }).view;
   assert.equal(polled.status, 'denied');
   assert.equal(polled.token, undefined);
   assert.equal(h.requests.decide(view.id, true).code, 'PAIR_REQUEST_ALREADY_DECIDED');
   assert.equal(h.issued.length, 0);
 });
 
+test('★ 换了来源 IP 就取不到 token（抓包拿到 id 也没用）', () => {
+  const h = harness();
+  const view = h.requests.create({ device: '我的手机', ip: '192.168.1.30' });
+  h.requests.decide(view.id, true);
+  assert.throws(
+    () => h.requests.poll(view.id, { ip: '192.168.1.66' }),
+    (err) => err.code === 'PAIR_REQUEST_WRONG_NETWORK',
+  );
+  // 原 IP 仍然能取到（而且只取一次）
+  const ok = h.requests.poll(view.id, { ip: '192.168.1.30' });
+  assert.equal(ok.view.token, 'tok-1');
+});
+
 test('不存在的 id → poll 返回 null、decide 报 NOT_FOUND', () => {
   const h = harness();
-  assert.equal(h.requests.poll('0'.repeat(32)), null);
+  assert.equal(h.requests.poll('0'.repeat(32)).ok, false);
   assert.equal(h.requests.decide('0'.repeat(32), true).code, 'PAIR_REQUEST_NOT_FOUND');
 });
 

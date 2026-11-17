@@ -133,18 +133,32 @@ export function createPairRequests({ addDevice, emit = () => {}, describeServer 
     return phoneView(request);
   }
 
-  /** 手机轮询。批准后**只交付一次** token。 */
-  function poll(id, at = now()) {
+  /**
+   * 手机轮询。批准后**只交付一次** token。
+   *
+   * token 只交给**发起这条请求的那个 IP**：同一片 Wi-Fi 里有人抓包拿到了
+   * 请求 id（比如从被入侵的路由器日志、或者手机装了流氓 App），只要他不在
+   * 同一个地址上，就拿不到 token。这不是加密的替代品 —— 明文链路上 token
+   * 本身仍然可被嗅探（见 docs/ANDROID.md 的"还没做的事"），但它把
+   * "知道 id 就能换 token" 这条路堵掉了。
+   */
+  function poll(id, { ip = null, at = now() } = {}) {
     prune(at);
     const request = byId.get(String(id ?? ''));
-    if (!request) return null;
+    if (!request) return { ok: false, code: 'PAIR_REQUEST_NOT_FOUND' };
     if (request.status === 'pending' && request.expiresAt <= at) {
       request.status = 'expired';
+    }
+    if (ip && request.ip && String(ip) !== request.ip) {
+      // 不交付 token，也不暴露这条请求的任何内容
+      const err = new Error('这条连接请求不是从当前网络发起的');
+      err.code = 'PAIR_REQUEST_WRONG_NETWORK';
+      throw err;
     }
     const view = phoneView(request, { withToken: true });
     // 交付一次就把 token 从记录里抹掉：同一个 id 再轮询拿不到第二次。
     if (view.token) request.token = null;
-    return view;
+    return { ok: true, view };
   }
 
   /** 电脑上点允许/拒绝。 */
