@@ -51,6 +51,10 @@ function harness({ ttlMs = REQUEST_TTL_MS } = {}) {
   };
 }
 
+test('默认 TTL 是 30 秒（"人抬头去点一下"的时间窗）', () => {
+  assert.equal(REQUEST_TTL_MS, 30_000);
+});
+
 test('发起请求：状态 pending，事件里带设备名和来源 IP', () => {
   const h = harness();
   const view = h.requests.create({ device: '我的手机', platform: 'android', ip: '192.168.1.30' });
