@@ -133,4 +133,5 @@ cd app && flutter test test/phone_layout_test.dart
 | 手机报"应用未安装"/`INSTALL_FAILED_UPDATE_INCOMPATIBLE` | 签名证书和已装版本不同 —— 换个 key 打的包，或换了机器（见上文签名一节） |
 | 配对时 App 提示 `bad host` | 服务端防 DNS rebinding：`Host` 头必须是本机名/IP。走反向代理要设 `PI_BOT_ALLOWED_HOSTS`；模拟器里访问 `10.0.2.2` 也算"外部 Host"，需要显式加进去 |
 | 后台收不到消息 | 关掉电池优化（设置页有入口）；国产 ROM 还要在系统设置里允许"自启动/后台活动" |
+| 跑完脚本后 `app/windows/flutter/generated_plugins.cmake` 变成已修改 | `flutter pub get` 顺手重生成 Windows 的插件清单（少一行 `jni`）。**不要把它混进安卓的提交**；要提交就单独确认 Windows 编得过（CI 每次都会重生成，仓库里那份不是权威） |
 | 打出来的包名/版本号跟预期不符 | `flutter build apk --no-pub` 之前没 `pub get`，或者 pubspec 改了没重编；`scripts/pack-android.mjs` 会通过 Gradle 的 `output-metadata.json` 交叉校验 |

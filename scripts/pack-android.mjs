@@ -111,28 +111,38 @@ export function apkFileName(version) {
   return true;
 }
 
-function run(command, args, options = {}) {
-  const result = spawnSync(command, args, { stdio: 'inherit', ...options });
-  if (result.error) throw new Error(`执行 ${command} 失败：${result.error.message}`);
-  if (result.status !== 0) throw new Error(`${command} ${args.join(' ')} 退出码 ${result.status}`);
-  return result;
-}
-
 function capture(command, args, options = {}) {
   return spawnSync(command, args, { encoding: 'utf8', ...options });
+}
+
+/** 带空格的参数自己加引号，整条命令交给 shell（Windows 上 flutter 是 flutter.bat）。 */
+export function commandLine(command, args) {
+  return [command, ...args].map((part) => (/[\s"]/.test(part) ? `"${part}"` : part)).join(' ');
+}
+
+function runShell(line, options = {}) {
+  const result = spawnSync(line, { stdio: 'inherit', shell: true, ...options });
+  if (result.error) throw new Error(`执行 ${line} 失败：${result.error.message}`);
+  if (result.status !== 0) throw new Error(`${line} 退出码 ${result.status}`);
+  return result;
 }
 
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
 }
 
-/** 找 flutter：PATH 里没有就报明确错误，不去猜用户机器上的路径。 */
+/** 找 flutter：PATH 里没有就报明确错误，不去猜用户机器上的路径。
+ *  Windows 上是 `flutter.bat`，直接 spawn 会 ENOENT，所以取真实路径后走 shell。 */
 function requireFlutter() {
   const probe = capture(process.platform === 'win32' ? 'where' : 'which', ['flutter']);
-  if (probe.status !== 0 || !probe.stdout.trim()) {
+  const first = String(probe.stdout ?? '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)[0];
+  if (probe.status !== 0 || !first) {
     throw new Error('PATH 里找不到 flutter，先装 Flutter SDK 或把它的 bin 加进 PATH');
   }
-  return 'flutter';
+  return first;
 }
 
 /** JDK 必须 17+。先看 JAVA_HOME，没设就看 PATH 上的 java。 */
@@ -283,7 +293,7 @@ export function main(argv = process.argv.slice(2)) {
   if (options.build) {
     const flutter = requireFlutter();
     console.log('解析依赖（--enforce-lockfile，官方源）…');
-    run(flutter, ['pub', 'get', '--enforce-lockfile'], { cwd: appDir, env });
+    runShell(commandLine(flutter, ['pub', 'get', '--enforce-lockfile']), { cwd: appDir, env });
     const targets = {
       universal: [],
       arm64: ['--target-platform', 'android-arm64'],
@@ -291,7 +301,7 @@ export function main(argv = process.argv.slice(2)) {
       x64: ['--target-platform', 'android-x64'],
     }[options.abi];
     console.log(`构建 apk（${options.abi}）…`);
-    run(flutter, ['build', 'apk', '--release', '--no-pub', ...targets], { cwd: appDir, env });
+    runShell(commandLine(flutter, ['build', 'apk', '--release', '--no-pub', ...targets]), { cwd: appDir, env });
   } else {
     console.log('跳过构建（--no-build）');
   }

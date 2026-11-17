@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   APP_ID,
   apkFileName,
+  commandLine,
   assertVersionsAgree,
   checkJdk,
   findMirrorHost,
@@ -75,6 +76,13 @@ test('JDK 21 放行', () => {
 
 test('读不到 Java 版本要报错，不能当通过', () => {
   assert.throws(() => checkJdk({ javaHome: '', runJavaVersion: () => '' }), /读不到 Java 版本/);
+});
+
+test('带空格的路径要被引号包住（否则 Windows 上 C:/Program Files 直接断）', () => {
+  const line = commandLine('C:/flutter/bin/flutter.bat', ['build', 'apk', '--release']);
+  assert.equal(line, 'C:/flutter/bin/flutter.bat build apk --release');
+  const spaced = commandLine('C:/Program Files/flutter/bin/flutter.bat', ['build', 'apk']);
+  assert.equal(spaced, '"C:/Program Files/flutter/bin/flutter.bat" build apk');
 });
 
 test('产物名带平台词和纯 semver', () => {
