@@ -362,6 +362,63 @@ class Api {
     return body;
   }
 
+  /// 发起连接请求（不需要鉴权）：电脑上会弹窗问"允许吗"。
+  ///
+  /// 和 [pair] 的区别：配对码是"知道数字就能连"，这里是"电脑前的人点一下才连"。
+  static Future<Map<String, dynamic>> requestPair(
+    String baseUrl, {
+    required String device,
+    String? platform,
+  }) async {
+    final res = await http
+        .post(
+          Uri.parse('$baseUrl/api/pair/request'),
+          headers: const {
+            'content-type': 'application/json; charset=utf-8',
+            clientHeader: clientHeaderValue,
+          },
+          body: jsonEncode({
+            'device': device,
+            if (platform != null && platform.isNotEmpty) 'platform': platform,
+          }),
+        )
+        .timeout(const Duration(seconds: 15));
+    return _decodePublic(res);
+  }
+
+  /// 轮询连接请求状态（不需要鉴权）。批准后**只交付一次** token。
+  static Future<Map<String, dynamic>> pairRequestStatus(String baseUrl, String id) async {
+    final res = await http
+        .get(Uri.parse('$baseUrl/api/pair/request/$id'))
+        .timeout(const Duration(seconds: 15));
+    return _decodePublic(res);
+  }
+
+  /// 电脑端：当前待批的连接请求（App 重开时补一次，WS 事件只推一次）
+  Future<Map<String, dynamic>> pendingPairRequests() => get('/api/pair/requests');
+
+  /// 电脑端：允许/拒绝
+  Future<Map<String, dynamic>> decidePairRequest(String id, {required bool approve}) =>
+      post('/api/pair/request/$id', {'approve': approve});
+
+  /// 未鉴权请求的响应解码（配对/连接请求这两条路都还没 token）
+  static Map<String, dynamic> _decodePublic(http.Response res) {
+    Map<String, dynamic> body;
+    try {
+      body = jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
+    } catch (_) {
+      body = {};
+    }
+    if (res.statusCode >= 400) {
+      throw ApiException(
+        (body['error'] as String?) ?? 'HTTP ${res.statusCode}',
+        status: res.statusCode,
+        code: body['code'] as String?,
+      );
+    }
+    return body;
+  }
+
   String get wsUrl {
     final ws = baseUrl
         .replaceFirst('http://', 'ws://')

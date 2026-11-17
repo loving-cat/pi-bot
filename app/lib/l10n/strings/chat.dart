@@ -144,6 +144,28 @@ const areaChat = StringArea(
     'pair.recommended': '推荐',
     'pair.modeCode': '配对码',
     'pair.modeToken': '固定 token',
+    'pair.nearbyTitle': '附近的电脑',
+    'pair.rescan': '重新搜索',
+    'pair.searching': '正在搜索同一个 Wi-Fi 下的电脑…',
+    'pair.notFound': '没找到附近的电脑',
+    'pair.notFoundHint':
+        '确认电脑上的 pi-bot 正在运行，两台设备连的是同一个 Wi-Fi。'
+        '电脑第一次运行时系统会问"是否允许 pi-bot 访问网络"，要选允许。',
+    'pair.codeHintForHost': '在 {host} 上点"允许"，或者把它显示的 6 位配对码填在这里',
+    'pair.manualToggle': '找不到？手动填地址',
+    'pair.manualHide': '收起手动填地址',
+    'pair.codeFallback': '或者用电脑上显示的配对码',
+    'pair.requestTitle': '请求连接',
+    'pair.requestSending': '正在请求…',
+    'pair.waitingApproval': '已发送，去电脑上点"允许"',
+    'pair.waitingHint': '电脑上的 pi-bot 会弹出窗口问你这台手机要不要连进来；没人点的话 60 秒后自动失效。',
+    'pair.denied': '电脑上拒绝了这次连接',
+    'pair.expired': '请求已过期，重新点一次那台电脑',
+    'pair.timeout': '等太久了：去电脑上看看有没有弹窗，再试一次',
+    'pair.retry': '重新请求',
+    'pair.failed': '授权已经被取走了，重新请求一次',
+    'pair.approvedConnecting': '已允许，正在连接…',
+
 
     // ---- 扫码 ----
     'scan.permPermanentlyDenied':
@@ -326,6 +348,28 @@ const areaChat = StringArea(
     'pair.recommended': 'Recommended',
     'pair.modeCode': 'Pairing code',
     'pair.modeToken': 'Fixed token',
+    'pair.nearbyTitle': 'Nearby computers',
+    'pair.rescan': 'Search again',
+    'pair.searching': 'Looking for computers on this Wi-Fi…',
+    'pair.notFound': 'No computers found',
+    'pair.notFoundHint':
+        'Make sure pi-bot is running on the computer and both devices are on the same Wi-Fi. '
+        'The first time it runs, the system asks whether to allow network access - choose Allow.',
+    'pair.codeHintForHost': 'Tap Allow on {host}, or type the 6-digit code it shows here',
+    'pair.manualToggle': 'Not there? Enter the address manually',
+    'pair.manualHide': 'Hide manual entry',
+    'pair.codeFallback': 'or use the 6-digit code shown on the computer',
+    'pair.requestTitle': 'Ask to connect',
+    'pair.requestSending': 'Sending…',
+    'pair.waitingApproval': 'Sent - tap Allow on the computer',
+    'pair.waitingHint': 'pi-bot on the computer pops up a window asking whether this phone may connect. It expires in 60 seconds if nobody answers.',
+    'pair.denied': 'The computer declined this connection',
+    'pair.expired': 'Request expired - tap that computer again',
+    'pair.timeout': 'Too long with no answer: check the computer for a prompt, then try again',
+    'pair.retry': 'Ask again',
+    'pair.failed': 'That approval was already used - ask again',
+    'pair.approvedConnecting': 'Approved, connecting…',
+
 
     // ---- Scanning ----
     'scan.permPermanentlyDenied': 'Scanning needs the camera.\nYou denied it twice, so the system no longer asks —\nallow camera access for pi-bot in Settings.',

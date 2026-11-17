@@ -24,6 +24,7 @@ import { intakeEnabled } from './coordination/intake-tool.js';
 import { createGrantGate } from './grant-gate.js';
 import { ensureLegacyGrant } from './migration-grants.js';
 import { bus } from './bus.js';
+import { buildAnnouncement, startDiscovery } from './discovery.js';
 
 /**
  * 本次进程的「实例世代」。
@@ -323,8 +324,14 @@ async function main() {
   }, 60_000);
   housekeeping.unref?.();
 
+  /** 局域网发现应答器（UDP）；起不来就是 null，关闭时顺手收掉 */
+  let discovery = null;
+
   server.listen(config.port, config.host, async () => {
     await banner(pairing, runner);
+    // 局域网发现：手机在同一 Wi-Fi 下能直接看到这台机器，不用手抄 IP。
+    // 起不来（端口被占/防火墙）只是少了一个便利，不影响服务端本身。
+    discovery = await startDiscovery({ announcement: () => buildAnnouncement({ pairing: !config.staticToken }) });
     // API/WS 就绪后做一次持久恢复；失败如实记录，不阻断旧聊天。
     try {
       const recovered = await taskHost.recover();
@@ -341,6 +348,7 @@ async function main() {
     closing = true;
     log(`${signal} → 收工`);
     pairing.stop();
+    discovery?.close?.();
     scheduler.stop();
     clearInterval(housekeeping);
     runner.health?.stop();

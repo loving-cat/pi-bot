@@ -38,6 +38,7 @@ import { timingSafeEqual, log } from './util.js';
 import { readLocalToken } from './local-token.js';
 import { NONCE_PURPOSE, consumeNonce, issueNonce } from './local-nonce.js';
 import { planAdminRoute } from './http-admin.js';
+import { createPairRequests } from './pair-requests.js';
 import { describeConfirmation } from './confirm.js';
 import { shells } from './shells.js';
 import { computeNextRun, validateSchedule } from './automations.js';
@@ -446,12 +447,20 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
     receipts: httpRequestReceipts, taskRuns: store.taskRuns, onTerminal: publishTerminal,
   }));
   const connections = createConnections({ store, runner, onChange: () => bus.emit('event', { t: 'connections.changed' }) });
+  // 连接请求：手机发起 → 电脑上弹窗 → 允许后发 token。
+  // 事件走 bus，桌面 App 的 WS 会收到（见 app/lib/app_state.dart 的 pair.request 分支）。
+  const pairRequests = createPairRequests({
+    addDevice: (name) => store.addDevice(name),
+    emit: (event) => bus.emit('event', event),
+    describeServer: () => ({ serverName: config.serverName, workspace: config.workspace }),
+  });
   const uploads = new UploadSessions({
     dir: path.join(config.dataDir, 'uploads', '_partial'),
   });
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     const pathname = url.pathname.replace(/\/+$/, '') || '/';
+    const clientIp = (r) => String(r.socket?.remoteAddress ?? '').replace(/^::ffff:/, '');
 
     // ★ Host 必须是本机名/本机 IP：防 DNS rebinding ——
     //   恶意域名解析到 127.0.0.1 时，Host 会是那个域名，这里直接拒。
@@ -503,6 +512,33 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         });
       }
 
+      // ---------- 连接请求（手机发起、电脑上点允许） ----------
+      //
+      // 和配对码一样是**未鉴权**入口（手机此时还没有 token），但比配对码多一道闸：
+      // 必须有人在电脑上点"允许"，token 才会发下来。
+      if (pathname === '/api/pair/request' && req.method === 'POST') {
+        const body = await readBody(req);
+        try {
+          const view = pairRequests.create({
+            device: body.device,
+            platform: body.platform,
+            ip: clientIp(req),
+          });
+          return send(res, 200, { ...view, serverName: config.serverName });
+        } catch (err) {
+          const status = err.code === 'PAIR_REQUEST_RATE_LIMITED' ? 429 : 409;
+          return fail(res, status, err.code ?? 'PAIR_REQUEST_FAILED', err.message);
+        }
+      }
+
+      // 手机轮询：批准后**只付一次** token（下次再查就是 gone）。
+      const requestPollMatch = /^\/api\/pair\/request\/([a-f0-9]{32})$/.exec(pathname);
+      if (requestPollMatch && req.method === 'GET') {
+        const view = pairRequests.poll(requestPollMatch[1]);
+        if (!view) return fail(res, 410, 'PAIR_REQUEST_GONE', '这个连接请求已失效（过期或被处理过），在电脑上重新发起');
+        return send(res, 200, view);
+      }
+
       if (pathname === '/api/pair' && req.method === 'POST') {
         const body = await readBody(req);
         if (!pairing.verify(body.code)) {
@@ -550,6 +586,23 @@ export function createHttpServer({ runner, pairing, sites = createSiteRuntime({ 
         if (!isJsonContentType(req.headers['content-type'])) {
           return fail(res, 415, 'BAD_CONTENT_TYPE', 'content-type 必须是 application/json');
         }
+      }
+
+      // ---------- 连接请求：电脑上处理 ----------
+      // 待批列表：桌面 App 重新打开时能补上（WS 事件只推一次）。
+      if (pathname === '/api/pair/requests' && req.method === 'GET') {
+        return send(res, 200, { requests: pairRequests.pending() });
+      }
+
+      const requestDecideMatch = /^\/api\/pair\/request\/([a-f0-9]{32})$/.exec(pathname);
+      if (requestDecideMatch && req.method === 'POST') {
+        const body = await readBody(req);
+        const result = pairRequests.decide(requestDecideMatch[1], body.approve === true);
+        if (!result.ok) {
+          const status = result.code === 'PAIR_REQUEST_NOT_FOUND' ? 404 : 409;
+          return fail(res, status, result.code, '这个连接请求已经失效或处理过了（手机端需要重新发起）');
+        }
+        return send(res, 200, { ok: true, status: result.status });
       }
 
       // ★ 管理动作的审计 + 防冒充（规格 §5.5 / §11）。

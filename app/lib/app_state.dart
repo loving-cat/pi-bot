@@ -13,6 +13,7 @@ import 'ws_frame.dart';
 import 'attachment_preview_request.dart';
 import 'browser_pane_state.dart';
 import 'models.dart';
+import 'pair_request.dart';
 import 'reconnect_sweep.dart';
 import 'attachment_deletions.dart';
 import 'grant_view.dart';
@@ -662,6 +663,9 @@ class AppState extends ChangeNotifier {
   /// 已配对的远程设备（设置页用）
   List<Map<String, dynamic>> devices = const [];
   Map<String, dynamic>? pairing;
+
+  /// 待批的连接请求（只有宿主端会用到：手机点"连接"之后，这里弹窗问允许）
+  List<PairRequestHost> pairRequests = const [];
 
   // ---------------------------------------------------------------- 启动
 
@@ -1834,6 +1838,41 @@ class AppState extends ChangeNotifier {
     _notify();
   }
 
+  /// 电脑端：补拉一次待批的连接请求。
+  ///
+  /// WS 事件只推一次；App 关掉重开、或者断线期间来的请求会漏掉，所以 hello 之后
+  /// 和设置页刷新时都补一次（服务端那侧只保留一小会儿，过期就查不到了）。
+  Future<void> loadPairRequests() async {
+    final client = api;
+    if (client == null) return;
+    try {
+      final res = await client.pendingPairRequests();
+      pairRequests = ((res['requests'] as List?) ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(PairRequestHost.fromJson)
+          .whereType<PairRequestHost>()
+          .toList();
+      _notify();
+    } catch (_) {
+      // 拉不到就算了：真正要弹窗的那条是 WS 推的，这里只是补漏
+    }
+  }
+
+  /// 电脑端：允许 / 拒绝一台手机连进来。
+  Future<void> answerPairRequest(String id, {required bool approve}) async {
+    final client = api;
+    if (client == null) return;
+    try {
+      await client.decidePairRequest(id, approve: approve);
+      pairRequests = pairRequests.where((r) => r.id != id).toList();
+      lastError = null;
+      if (approve) unawaited(loadPairingInfo());
+    } catch (err) {
+      lastError = '$err';
+    }
+    _notify();
+  }
+
   Future<void> revokeDevice(String token) async {
     try {
       await api?.delete('/api/devices/$token');
@@ -2563,6 +2602,8 @@ class AppState extends ChangeNotifier {
         if (helloDevice is Map && helloDevice['id'] is String) _deviceId = helloDevice['id'] as String;
         taskRuns.applyHello(ev);
         unawaited(_reconcileOutbox());
+        // 断线期间来的连接请求要补上，否则那台手机点完"允许"就石沉大海
+        if (isHostPlatform) unawaited(loadPairRequests());
         unawaited(Native.startService());
         _attempt = 0;
         lastError = null;
@@ -2651,6 +2692,23 @@ class AppState extends ChangeNotifier {
       case 'mcp.changed':
       case 'connections.changed':
         connectionsRevision++;
+        break;
+
+      // 手机请求连接这台电脑：弹窗等人点"允许"。
+      case 'pair.request':
+        final request = PairRequestHost.fromJson(
+          (ev['request'] as Map?)?.cast<String, dynamic>() ?? const {},
+        );
+        if (request != null && !pairRequests.any((r) => r.id == request.id)) {
+          pairRequests = [...pairRequests, request];
+        }
+        break;
+
+      case 'pair.request.resolved':
+        final id = (ev['request'] as Map?)?['id'];
+        if (id is String) {
+          pairRequests = pairRequests.where((r) => r.id != id).toList();
+        }
         break;
 
       case 'msg.new':

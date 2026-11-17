@@ -26,6 +26,7 @@ import 'screens/host_connect_screen.dart';
 import 'theme.dart';
 import 'widgets/toast.dart';
 import 'update_info.dart';
+import 'widgets/pair_request_dialog.dart';
 import 'widgets/update_prompt.dart';
 import 'l10n/l10n.dart';
 import 'widgets/model_setup_gate.dart';
@@ -205,6 +206,9 @@ class _PiBotAppState extends State<PiBotApp> with WidgetsBindingObserver {
         requestRoom(ctx, roomId);
       }
     };
+    // 手机通过"附近的电脑"找上来时，电脑这边要当场弹窗问一句。
+    // 监听放在 bootstrap 之前：请求可能在连上 WS 的第一帧就到了。
+    _state.addListener(_maybePromptPairRequest);
     _state.bootstrap().then((_) {
       if (_devUrl.isNotEmpty && _devToken.isNotEmpty && !_state.paired) {
         _state.useToken(_devUrl, _devToken, device: 'dev-shell');
@@ -213,6 +217,41 @@ class _PiBotAppState extends State<PiBotApp> with WidgetsBindingObserver {
       // 别让"连服务器 / 拉状态"和检查更新挤在一起。
       Future<void>.delayed(const Duration(seconds: 4), _maybePromptUpdate);
     });
+  }
+
+  /// 已经弹过窗的请求 id —— 同一个请求不重复弹（状态会反复 notify）。
+  final Set<String> _promptedPairRequests = {};
+  bool _pairDialogOpen = false;
+
+  /// 有手机请求连接 → 弹窗让人点允许/拒绝。
+  ///
+  /// 只在宿主端弹：手机端也收得到这条事件（同一条 WS），但它没有"允许"的权力，
+  /// 弹出来只会让用户以为可以在手机上批准。
+  Future<void> _maybePromptPairRequest() async {
+    if (!mounted || !isHostPlatform || _pairDialogOpen) return;
+    final next = _state.pairRequests
+        .where((r) => !_promptedPairRequests.contains(r.id))
+        .toList();
+    if (next.isEmpty) return;
+    final request = next.first;
+    _promptedPairRequests.add(request.id);
+    _pairDialogOpen = true;
+    bool? allow;
+    try {
+      allow = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => PairRequestDialog(request: request),
+      );
+    } finally {
+      _pairDialogOpen = false;
+    }
+    if (!mounted) return;
+    if (allow != null) {
+      await _state.answerPairRequest(request.id, approve: allow);
+    }
+    // 队列里还有别的请求（比如两台手机同时点）：接着弹下一个
+    if (mounted) unawaited(_maybePromptPairRequest());
   }
 
   /// 查到新版本就问用户要不要下载。
@@ -269,6 +308,7 @@ class _PiBotAppState extends State<PiBotApp> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _state.removeListener(_maybePromptPairRequest);
     _locale.dispose();
     _state.dispose();
     super.dispose();

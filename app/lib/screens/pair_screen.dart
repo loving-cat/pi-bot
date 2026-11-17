@@ -6,7 +6,10 @@ import 'package:flutter/material.dart';
 import 'scan_screen.dart';
 
 import '../api.dart';
+import '../discovery.dart';
+import '../pair_request.dart';
 import '../l10n/l10n.dart';
+import '../platform.dart';
 import '../scope.dart';
 import '../theme.dart';
 import '../widgets/app_logo.dart';
@@ -28,12 +31,109 @@ class _PairScreenState extends State<PairScreen> {
   bool _busy = false;
   String? _error;
 
+  /// 手机端：广播发现的附近主机
+  List<DiscoveredHost> _hosts = const [];
+  bool _scanning = false;
+  DiscoveredHost? _picked;
+
+  /// 手机端默认不展开"手动填地址"：先给"附近有哪些电脑"，找不到再放开手填。
+  bool _showManual = false;
+
+  /// "请求连接"的进度：发出去 → 等电脑上点允许 → 拿到 token
+  _PairPhase _phase = _PairPhase.idle;
+
+  /// 选中的电脑如果不支持"请求连接"（老版本），就直接落到填配对码
+  bool _useCode = false;
+
+  /// 手机端：点了"请求连接"之后，电脑上会不会弹窗，全看这个请求
+  PairApprovalStatus? _lastApproval;
+
+  /// 手机上一上来就该是"选设备"，而不是"抄 IP + 抄配对码"（那套是桌面端的形态）。
+  bool get _phone => isMobilePlatform;
+
   @override
   void initState() {
     super.initState();
     final state = AppScope.read(context);
     _urlController.text = state.serverUrl ?? 'http://192.168.1.100:8787';
     _deviceController.text = state.deviceName;
+    if (_phone) {
+      // 首帧之后再搜：让页面先画出来，搜索期间不会白屏
+      WidgetsBinding.instance.addPostFrameCallback((_) => _discover());
+    }
+  }
+
+  /// 广播搜索附近的电脑。找不到就把手填区打开，免得用户卡在空列表上。
+  Future<void> _discover() async {
+    if (!_phone || _scanning) return;
+    setState(() {
+      _scanning = true;
+      _error = null;
+    });
+    final hosts = await discoverHosts();
+    if (!mounted) return;
+    setState(() {
+      _hosts = hosts;
+      _scanning = false;
+      if (hosts.isEmpty && _picked == null) _showManual = true;
+    });
+  }
+
+  void _pick(DiscoveredHost host) {
+    setState(() {
+      _picked = host;
+      _urlController.text = host.url;
+      // 固定 token 的主机没有配对码可填，直接切到 token 模式
+      _useToken = !host.pairing;
+      // 电脑端支持"弹窗允许"就用它；老版本服务端返回不了 approve，退回配对码
+      _useCode = !host.approve;
+      _showManual = false;
+      _phase = _PairPhase.idle;
+      _lastApproval = null;
+      _error = null;
+    });
+  }
+
+  /// 手机点"请求连接"：电脑会弹窗，等人点允许之后才发 token。
+  Future<void> _askToConnect() async {
+    final host = _picked;
+    if (host == null || _busy) return;
+    final state = AppScope.read(context);
+    setState(() {
+      _busy = true;
+      _phase = _PairPhase.sending;
+      _lastApproval = null;
+      _error = null;
+    });
+    try {
+      final ticket = await requestPairing(
+        host.url,
+        device: _deviceController.text.trim(),
+        platform: Platform.operatingSystem,
+      );
+      if (!mounted) return;
+      setState(() => _phase = _PairPhase.waiting);
+      final result = await awaitApproval(ticket: ticket);
+      if (!mounted) return;
+      if (result.ok) {
+        // 拿到 token 之后和填配对码成功走同一条路
+        await state.useToken(host.url, result.token!, device: _deviceController.text.trim());
+        if (mounted) Navigator.of(context).maybePop();
+        return;
+      }
+      setState(() {
+        _phase = _PairPhase.idle;
+        _lastApproval = result.status;
+      });
+    } catch (err) {
+      if (!mounted) return;
+      setState(() {
+        _phase = _PairPhase.idle;
+        _error = err is ApiException ? err.message : '$err';
+      });
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   @override
@@ -147,164 +247,498 @@ class _PairScreenState extends State<PairScreen> {
                   if (_canScan) ...[
                     _ScanButton(onTap: _scan),
                     const SizedBox(height: 18),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Divider(color: PB.borderTertiary),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          child: Text(
-                            s.t('pair.orManual'),
-                            style: TextStyle(
-                              fontSize: PB.fsXxs,
-                              color: PB.textQuaternary,
-                            ),
-                          ),
-                        ),
-                        Expanded(
-                          child: Divider(color: PB.borderTertiary),
-                        ),
-                      ],
-                    ),
+                    _OrDivider(label: s.t('pair.orManual')),
                     const SizedBox(height: 18),
                   ],
-                  _Segmented(
-                    useToken: _useToken,
-                    onChanged: (v) => setState(() => _useToken = v),
-                  ),
-                  const SizedBox(height: 14),
-                  TextField(
-                    controller: _urlController,
-                    keyboardType: TextInputType.url,
-                    autocorrect: false,
-                    decoration: InputDecoration(
-                      labelText: s.t('pair.serverUrl'),
-                      hintText: 'http://192.168.1.100:8787',
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: _secretController,
-                    keyboardType: _useToken
-                        ? TextInputType.text
-                        : TextInputType.number,
-                    autocorrect: false,
-                    decoration: InputDecoration(
-                      labelText: _useToken ? 'token' : s.t('pair.codeLabel'),
-                      hintText: _useToken ? 'test-token' : '123456',
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: _deviceController,
-                    decoration: InputDecoration(
-                      labelText: s.t('pair.deviceName'),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  FilledButton(
-                    onPressed: _busy ? null : _connect,
-                    child: _busy
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : Text(s.t('pair.connect')),
-                  ),
-                  if (_error != null) ...[
-                    const SizedBox(height: 14),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: PB.danger.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(PB.rXl),
-                        border: Border.all(
-                          color: PB.danger.withValues(alpha: 0.3),
-                        ),
-                      ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Icon(
-                            LucideIcons.circleAlert,
-                            size: 16,
-                            color: PB.danger,
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              _error!,
-                              style: TextStyle(
-                                fontSize: PB.fsXs,
-                                color: PB.danger,
-                                height: 1.4,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 30),
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: PB.bgPane,
-                      borderRadius: BorderRadius.circular(PB.r2xl),
-                      border: Border.all(color: PB.borderTertiary),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Icon(
-                              LucideIcons.zap,
-                              size: 15,
-                              color: PB.textTertiary,
-                            ),
-                            const SizedBox(width: 7),
-                            Text(
-                              s.t('pair.stepsTitle'),
-                              style: TextStyle(
-                                fontSize: PB.fsSm,
-                                fontWeight: FontWeight.w500,
-                                color: PB.textSecondary,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        _Step(index: '1', text: s.t('pair.step1')),
-                        // ★ 示例用中性路径，不要写开发机的绝对路径：
-                        //   这个字符串会被编进 app.so，等于把本机目录随发行包发出去，
-                        //   打包扫描会拦（真实拦截过一次）。
-                        _Code(s.t('pair.step1Command')),
-                        _Step(index: '2', text: s.t('pair.step2')),
-                        _Code(s.t('pair.step2Sample')),
-                        _Step(index: '3', text: s.t('pair.step3')),
-                        const SizedBox(height: 4),
-                        Text(
-                          s.t('pair.hint'),
-                          style: TextStyle(
-                            fontSize: PB.fsXs,
-                            color: PB.textQuaternary,
-                            height: 1.5,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+                  if (_phone)
+                    ..._phoneBody(s)
+                  else
+                    ..._desktopBody(s),
                 ],
               ),
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  /// 手填区的表单（桌面与手机的"手动"分支共用）。
+  List<Widget> _formFields(AppStrings s, {required bool withAddress}) => [
+    if (withAddress) ...[
+      TextField(
+        controller: _urlController,
+        keyboardType: TextInputType.url,
+        autocorrect: false,
+        decoration: InputDecoration(
+          labelText: s.t('pair.serverUrl'),
+          hintText: 'http://192.168.1.100:8787',
+        ),
+      ),
+      const SizedBox(height: 10),
+    ],
+    TextField(
+      controller: _secretController,
+      keyboardType: _useToken ? TextInputType.text : TextInputType.number,
+      autocorrect: false,
+      decoration: InputDecoration(
+        labelText: _useToken ? 'token' : s.t('pair.codeLabel'),
+        hintText: _useToken ? 'test-token' : '123456',
+      ),
+    ),
+  ];
+
+  /// 手机端：附近有哪些电脑 → 选一台 → 填它屏幕上的 6 位码。
+  List<Widget> _phoneBody(AppStrings s) => [
+    _NearbyCard(
+      hosts: _hosts,
+      scanning: _scanning,
+      picked: _picked,
+      onPick: _pick,
+      onRescan: _discover,
+    ),
+    const SizedBox(height: 14),
+    // 选了某台电脑之后：默认请它弹窗问一句；不想等（或老服务端）就填它屏幕上的码
+    if (_picked != null && !_showManual) ...[
+      if (_phase == _PairPhase.waiting)
+        _WaitingCard(
+          host: _picked!.label,
+          title: s.t('pair.waitingApproval'),
+          hint: s.t('pair.waitingHint'),
+          onCancel: () => setState(() => _phase = _PairPhase.idle),
+        )
+      else if (!_useCode) ...[
+        Text(
+          s.tf('pair.codeHintForHost', {'host': _picked!.label}),
+          style: TextStyle(fontSize: PB.fsXs, color: PB.textQuaternary, height: 1.5),
+        ),
+        const SizedBox(height: 10),
+        FilledButton(
+          onPressed: _busy ? null : _askToConnect,
+          child: _phase == _PairPhase.sending
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                )
+              : Text(s.t('pair.requestTitle')),
+        ),
+        if (_lastApproval != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            switch (_lastApproval!) {
+              PairApprovalStatus.denied => s.t('pair.denied'),
+              PairApprovalStatus.expired => s.t('pair.expired'),
+              PairApprovalStatus.timeout => s.t('pair.timeout'),
+              PairApprovalStatus.failed => s.t('pair.failed'),
+              _ => '',
+            },
+            style: TextStyle(fontSize: PB.fsXs, color: PB.danger, height: 1.4),
+          ),
+        ],
+        const SizedBox(height: 6),
+        TextButton(
+          onPressed: () => setState(() => _useCode = true),
+          child: Text(
+            s.t('pair.codeFallback'),
+            style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+          ),
+        ),
+      ] else ...[
+        Text(
+          s.tf('pair.codeHintForHost', {'host': _picked!.label}),
+          style: TextStyle(fontSize: PB.fsXs, color: PB.textQuaternary, height: 1.5),
+        ),
+        const SizedBox(height: 10),
+        ..._formFields(s, withAddress: false),
+        const SizedBox(height: 12),
+        _ConnectButton(busy: _busy, onTap: _connect, label: s.t('pair.connect')),
+      ],
+    ],
+    if (_showManual) ...[
+      const SizedBox(height: 4),
+      _Segmented(useToken: _useToken, onChanged: (v) => setState(() => _useToken = v)),
+      const SizedBox(height: 14),
+      ..._formFields(s, withAddress: true),
+    ],
+    const SizedBox(height: 10),
+    TextField(
+      controller: _deviceController,
+      decoration: InputDecoration(labelText: s.t('pair.deviceName')),
+    ),
+    // 手动填地址那条路自带按钮；选电脑那条路的按钮在上面各支里
+    if (_showManual) ...[
+      const SizedBox(height: 18),
+      _ConnectButton(busy: _busy, onTap: _connect, label: s.t('pair.connect')),
+    ],
+    if (_error != null) ..._errorBox(),
+    const SizedBox(height: 16),
+    _ManualToggle(
+      expanded: _showManual,
+      onTap: () => setState(() => _showManual = !_showManual),
+    ),
+    const SizedBox(height: 18),
+    _StepsCard(s: s),
+  ];
+
+  /// 桌面端：还是原来的"地址 + 码"表单（桌面是宿主机，手边就有终端）。
+  List<Widget> _desktopBody(AppStrings s) => [
+    _Segmented(useToken: _useToken, onChanged: (v) => setState(() => _useToken = v)),
+    const SizedBox(height: 14),
+    ..._formFields(s, withAddress: true),
+    const SizedBox(height: 10),
+    TextField(
+      controller: _deviceController,
+      decoration: InputDecoration(labelText: s.t('pair.deviceName')),
+    ),
+    const SizedBox(height: 20),
+    _ConnectButton(busy: _busy, onTap: _connect, label: s.t('pair.connect')),
+    if (_error != null) ..._errorBox(),
+    const SizedBox(height: 30),
+    _StepsCard(s: s),
+  ];
+
+  List<Widget> _errorBox() => [
+    const SizedBox(height: 14),
+    Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: PB.danger.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(PB.rXl),
+        border: Border.all(color: PB.danger.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(LucideIcons.circleAlert, size: 16, color: PB.danger),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              _error!,
+              style: TextStyle(fontSize: PB.fsXs, color: PB.danger, height: 1.4),
+            ),
+          ),
+        ],
+      ),
+    ),
+  ];
+}
+
+/// "或者手动填"的分隔线
+class _OrDivider extends StatelessWidget {
+  const _OrDivider({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(child: Divider(color: PB.borderTertiary)),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Text(
+            label,
+            style: TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
+          ),
+        ),
+        Expanded(child: Divider(color: PB.borderTertiary)),
+      ],
+    );
+  }
+}
+
+/// 主按钮（连接）
+class _ConnectButton extends StatelessWidget {
+  const _ConnectButton({
+    required this.busy,
+    required this.onTap,
+    required this.label,
+  });
+
+  final bool busy;
+  final VoidCallback onTap;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return FilledButton(
+      onPressed: busy ? null : onTap,
+      child: busy
+          ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.white,
+              ),
+            )
+          : Text(label),
+    );
+  }
+}
+
+/// "手动填地址"开关：平时收起，找不到附近电脑才用得上。
+class _ManualToggle extends StatelessWidget {
+  const _ManualToggle({required this.expanded, required this.onTap});
+
+  final bool expanded;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = L10n.s(context);
+    return TextButton.icon(
+      onPressed: onTap,
+      icon: Icon(
+        expanded ? LucideIcons.chevronUp : LucideIcons.chevronDown,
+        size: 16,
+        color: PB.textTertiary,
+      ),
+      label: Text(
+        expanded ? s.t('pair.manualHide') : s.t('pair.manualToggle'),
+        style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+      ),
+    );
+  }
+}
+
+/// 附近的电脑：列表 + 搜索/重新搜索。
+class _NearbyCard extends StatelessWidget {
+  const _NearbyCard({
+    required this.hosts,
+    required this.scanning,
+    required this.picked,
+    required this.onPick,
+    required this.onRescan,
+  });
+
+  final List<DiscoveredHost> hosts;
+  final bool scanning;
+  final DiscoveredHost? picked;
+  final ValueChanged<DiscoveredHost> onPick;
+  final VoidCallback onRescan;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = L10n.s(context);
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      decoration: BoxDecoration(
+        color: PB.bgPane,
+        borderRadius: BorderRadius.circular(PB.rXl),
+        border: Border.all(color: PB.borderTertiary),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(LucideIcons.radar, size: 15, color: PB.textTertiary),
+              const SizedBox(width: 7),
+              Text(
+                s.t('pair.nearbyTitle'),
+                style: TextStyle(
+                  fontSize: PB.fsSm,
+                  fontWeight: FontWeight.w500,
+                  color: PB.textSecondary,
+                ),
+              ),
+              const Spacer(),
+              if (scanning)
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 1.6),
+                )
+              else
+                InkWell(
+                  onTap: onRescan,
+                  borderRadius: BorderRadius.circular(PB.rSm),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                    child: Row(
+                      children: [
+                        Icon(LucideIcons.refreshCw, size: 13, color: PB.textQuaternary),
+                        const SizedBox(width: 4),
+                        Text(
+                          s.t('pair.rescan'),
+                          style: TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          if (scanning && hosts.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              child: Text(
+                s.t('pair.searching'),
+                style: TextStyle(fontSize: PB.fsXs, color: PB.textQuaternary),
+              ),
+            )
+          else if (hosts.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    s.t('pair.notFound'),
+                    style: TextStyle(fontSize: PB.fsXs, color: PB.textSecondary),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    s.t('pair.notFoundHint'),
+                    style: TextStyle(
+                      fontSize: PB.fsXxs,
+                      color: PB.textQuaternary,
+                      height: 1.5,
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            for (final host in hosts)
+              _HostRow(
+                host: host,
+                selected: picked?.key == host.key,
+                onTap: () => onPick(host),
+              ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 一台电脑
+class _HostRow extends StatelessWidget {
+  const _HostRow({
+    required this.host,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final DiscoveredHost host;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = PB.colors(context).accentBright;
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Material(
+        color: selected ? PB.bgActive : Colors.transparent,
+        borderRadius: BorderRadius.circular(PB.rLg),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(PB.rLg),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+            child: Row(
+              children: [
+                Icon(
+                  LucideIcons.laptop,
+                  size: 17,
+                  color: selected ? accent : PB.textTertiary,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        host.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: PB.fsSm,
+                          fontWeight: FontWeight.w500,
+                          color: PB.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        host.url,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontFamily: PB.monoFamily,
+                          fontFamilyFallback: PB.monoFallback,
+                          fontSize: PB.fsXxs,
+                          color: PB.textQuaternary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (selected)
+                  Icon(LucideIcons.circleCheck, size: 16, color: accent),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// "三步搞定"教程块
+class _StepsCard extends StatelessWidget {
+  const _StepsCard({required this.s});
+
+  final AppStrings s;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: PB.bgPane,
+        borderRadius: BorderRadius.circular(PB.r2xl),
+        border: Border.all(color: PB.borderTertiary),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(LucideIcons.zap, size: 15, color: PB.textTertiary),
+              const SizedBox(width: 7),
+              Text(
+                s.t('pair.stepsTitle'),
+                style: TextStyle(
+                  fontSize: PB.fsSm,
+                  fontWeight: FontWeight.w500,
+                  color: PB.textSecondary,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _Step(index: '1', text: s.t('pair.step1')),
+          // ★ 示例用中性路径，不要写开发机的绝对路径：
+          //   这个字符串会被编进 app.so，等于把本机目录随发行包发出去，
+          //   打包扫描会拦（真实拦截过一次）。
+          _Code(s.t('pair.step1Command')),
+          _Step(index: '2', text: s.t('pair.step2')),
+          _Code(s.t('pair.step2Sample')),
+          _Step(index: '3', text: s.t('pair.step3')),
+          const SizedBox(height: 4),
+          Text(
+            s.t('pair.hint'),
+            style: TextStyle(
+              fontSize: PB.fsXs,
+              color: PB.textQuaternary,
+              height: 1.5,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -509,6 +943,91 @@ class _Code extends StatelessWidget {
           color: PB.textSecondary,
           height: 1.6,
         ),
+      ),
+    );
+  }
+}
+
+/// "请求连接"走到哪一步了
+enum _PairPhase { idle, sending, waiting }
+
+/// 等电脑点"允许"的那张卡：说明在等什么、等多久失效、随时能取消。
+class _WaitingCard extends StatelessWidget {
+  const _WaitingCard({
+    required this.host,
+    required this.title,
+    required this.hint,
+    required this.onCancel,
+  });
+
+  final String host;
+  final String title;
+  final String hint;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: PB.bgPane,
+        borderRadius: BorderRadius.circular(PB.rXl),
+        border: Border.all(color: PB.borderTertiary),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const SizedBox(
+                width: 15,
+                height: 15,
+                child: CircularProgressIndicator(strokeWidth: 1.8),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: PB.fsSm,
+                    fontWeight: FontWeight.w500,
+                    color: PB.textPrimary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            hint,
+            style: TextStyle(fontSize: PB.fsXs, color: PB.textQuaternary, height: 1.5),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  host,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontFamily: PB.monoFamily,
+                    fontFamilyFallback: PB.monoFallback,
+                    fontSize: PB.fsXxs,
+                    color: PB.textTertiary,
+                  ),
+                ),
+              ),
+              TextButton(
+                onPressed: onCancel,
+                child: Text(
+                  L10n.s(context).t('common.cancel'),
+                  style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }

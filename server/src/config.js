@@ -85,6 +85,15 @@ export const config = {
   host: process.env.PI_BOT_HOST || '0.0.0.0',
   port: Number(process.env.PI_BOT_PORT || 8787),
   serverName: process.env.PI_BOT_NAME || 'pi-bot',
+  /**
+   * 局域网发现（UDP 广播）：手机端「附近可配对的电脑」靠它。
+   *
+   * 关掉的理由只有一个：不想在这个网络里被看见（会议室/公共 Wi-Fi）。
+   * 关掉后手机仍然能手动填地址配对，只是不再自动出现在列表里。
+   */
+  discoveryEnabled: process.env.PI_BOT_DISCOVERY !== '0',
+  /** 发现应答的 UDP 端口。改两边都要改（App 里硬编码 8788 作为默认探测端口） */
+  discoveryPort: Number(process.env.PI_BOT_DISCOVERY_PORT || 8788),
   /** 固定 token：设了就跳过配对码（自用/服务器部署方便） */
   staticToken: process.env.PI_BOT_TOKEN || null,
   /**
