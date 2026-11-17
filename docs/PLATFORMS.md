@@ -24,7 +24,7 @@ Flutter 官方的做法就是所有平台目录放在一个仓库里：`flutter 
 | 平台适配小文件 | `app/lib/clipboard_image_macos.dart`、`app/lib/server/spawn_posix.dart` | 对应平台；共享文件只留接口 |
 | 服务端（Node，跨平台） | `server/src/**` | 任何平台。碰进程/路径/编码的改动，**三端都要跑 `node tests/all.mjs`**（CI 的 server job 是 ubuntu + windows + macos） |
 | 打包脚本 | `scripts/pack-windows.ps1`、`scripts/pack-macos.sh` | 各自平台，规则一致：干净临时构建 → 暂存 → 扫描本机路径 → 换成品 → 失败回滚 |
-| 平台文档 | `docs/WINDOWS.md`、`docs/MACOS.md` | 各自平台（构建命令 + 真机验收记录） |
+| 平台文档 | `docs/WINDOWS.md`、`docs/MACOS.md`、`docs/ANDROID.md` | 各自平台（构建命令 + 真机验收记录） |
 
 ## 共享代码怎么写才不打架
 
@@ -54,7 +54,9 @@ PR 之前逐条过一遍：
 
 - 短期特性分支 → PR → `main`；**不再用长期平台分支**。
 - 发布产物都从 `main` 构建：Windows zip（`scripts/pack-windows.ps1`）、
-  Android apk（`flutter build apk`）、macOS dmg（`scripts/pack-macos.sh`）。
+  Android apk（`node scripts/pack-android.mjs`）、macOS dmg（`scripts/pack-macos.sh`）。
+  Android 的 apk **必须用这个脚本打**：它校验版本号、JDK、锁文件镜像地址和签名证书，
+  见 [ANDROID.md](ANDROID.md)。
 - **版本号 / tag / 资产命名**见 [发布约定](RELEASE.md)：tag 只能是纯 semver（`v1.3.0`），
   平台词只进资产文件名。带平台后缀的 tag 会被更新检查判成「预发布 = 比正式版旧」，
   用户永远收不到更新提示。

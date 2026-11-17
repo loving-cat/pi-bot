@@ -18,6 +18,7 @@
 |---|---|
 | [`WINDOWS.md`](WINDOWS.md) | Windows 安装、验收记录 |
 | [`MACOS.md`](MACOS.md) | macOS 安装 |
+| [`ANDROID.md`](ANDROID.md) | 安卓包怎么打、签名为什么不能换、手机上什么变了 |
 | [`RELEASE.md`](RELEASE.md) | **发版硬规则**：tag 纯 semver、资产命名、提交身份 |
 | [`LICENSES.md`](LICENSES.md) | 内置组件许可证（`scripts/check-licenses.mjs` 生成） |
 

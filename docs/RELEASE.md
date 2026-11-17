@@ -118,11 +118,12 @@ git push origin main v1.3.0
 powershell -File scripts/pack-windows.ps1 -WithNode -Zip   # dist/pi-bot-windows{,.zip}
 powershell -File scripts/pack-windows-setup.ps1            # dist/pi-bot-windows-v1.3.0-setup.exe
 ./scripts/pack-macos.sh                                    # dist/pi-bot-<ver>.dmg
-cd app && flutter build apk --release                      # build/app/outputs/flutter-apk/app-release.apk
+node scripts/pack-android.mjs                              # dist/pi-bot-android-v<版本>.apk
 
 # 5. 建 release（★普通 Release，不要勾 Pre-release），资产重命名后上传
 gh release create v1.3.0 --title "pi-bot v1.3.0" --notes-file <说明> \
-  dist/pi-bot-windows-v1.3.0-setup.exe dist/pi-bot-windows-v1.3.0.zip
+  dist/pi-bot-windows-v1.3.0-setup.exe dist/pi-bot-windows-v1.3.0.zip \
+  dist/pi-bot-android-v1.3.0.apk
 ```
 
 ## 平台差异不要写进版本号
