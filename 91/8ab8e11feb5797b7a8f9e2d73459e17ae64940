@@ -1,0 +1,26 @@
+app/lib/server/launcher.dart
+  h_c2e638ff76b3b9 216-228,238
+app/lib/server/options.dart
+  h_c2e638ff76b3b9 37-44
+app/lib/server/port_picker.dart
+  h_c2e638ff76b3b9 32-39,130-151
+app/test/port_picker_test.dart
+  h_c2e638ff76b3b9 151-207
+app/test/server_options_test.dart
+  h_c2e638ff76b3b9 13-36
+docs/MACOS.md
+  h_c2e638ff76b3b9 163-206
+docs/WINDOWS.md
+  h_c2e638ff76b3b9 165-169
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "918ab8e11feb5797b7a8f9e2d73459e17ae64940",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
