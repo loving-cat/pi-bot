@@ -831,6 +831,77 @@ export async function sendUserMessage(
         scopeHandled: Boolean(groupScope),
       };
     }
+
+    // ---------------------------------------------------------------- 群聊忙时「补充要求」：只把话递进去，不打断在跑的成员
+    //
+    // ★ 为什么不能再落到 dispatchGroupRound：那条路发现本轮在跑就 interruptRoundForUser，
+    //   把每个成员的会话都 abort、正在写的消息标 aborted，然后按新要求重跑整轮。
+    //   用户只是补一句约束（"把范围收窄到 A 股"），却把四个成员的活全部作废 ——
+    //   这正是「说好的全双工但一插话就重来」的根因。
+    //   所以 amend 走 steer：话进到正在跑的那几个会话里，谁在跑谁收到，谁都不被打断。
+    if ((runner.roundLocks.has(roomId) || runner.isRoomBusy(roomId)) &&
+        decision.kind === DUPLEX_KIND.amend) {
+      const running = [];
+      for (const bid of room.botIds ?? []) {
+        const e = runner.sessions.get(sessionKey(roomId, bid));
+        if (e?.busy && e.session?.steer) running.push({ bid, entry: e });
+      }
+      if (running.length) {
+        const { promptText } = await runner.buildInput(clean, files, roomId);
+        const models = files.map(readForModel).filter(Boolean);
+        let steered = 0;
+        for (const { bid, entry } of running) {
+          try {
+            await entry.session.steer(promptText, models);
+            if (entry.turnAmends) entry.turnAmends.push(clean.slice(0, 160));
+            steered += 1;
+            runner.bus.emit('event', {
+              t: 'steer.accepted',
+              roomId,
+              mode: 'steer',
+              text: clean,
+              botId: bid,
+            });
+          } catch (err) {
+            log(`【${room.name}】补充要求注入 ${bid} 失败：${err?.message || err}`);
+          }
+        }
+        if (steered > 0) {
+          const userMessage = runner.store.appendMessage({
+            roomId,
+            authorType: 'user',
+            authorName: '我',
+            text: clean,
+            status: 'done',
+            meta: {
+              duplex: DUPLEX_KIND.amend,
+              decidedBy: decision.decidedBy,
+              ...(groupScope ? { requestId: groupScope.requestId } : {}),
+            },
+            attachments: hydrate(files),
+          });
+          runner.store.answerPendingAsk(roomId, clean);
+          runner.bus.emit('event', {
+            t: 'duplex.routed',
+            roomId,
+            messageId: userMessage.id,
+            requestId: groupScope?.requestId ?? null,
+            kind: DUPLEX_KIND.amend,
+            decidedBy: decision.decidedBy,
+            duringMsgId: groupSnap.members[0]?.workMsgId ?? null,
+          });
+          if (groupScope) runner.requestLifecycle?.close?.(groupScope, null, 'answer');
+          return {
+            userMessage,
+            bot,
+            group: true,
+            duplex: DUPLEX_KIND.amend,
+            steered: 'amend',
+            scopeHandled: Boolean(groupScope),
+          };
+        }
+      }
+    }
   }
 
   runner.aborting.delete(roomId);

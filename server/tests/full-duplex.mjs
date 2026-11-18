@@ -332,6 +332,51 @@ await test('FD-2 dispatch_bot 异步派活立刻返回，后台完成后交付�
   runner.runBotOnce = originalRunBotOnce;
 });
 
+await test('FD-3 群聊忙时补一句要求（amend）：只 steer 在跑的成员，不打断、不重排整轮', async () => {
+  const lead = store.createBot({ name: '主管D', persona: '统筹' });
+  const a = store.createBot({ name: '执行D1', persona: '写代码' });
+  const b = store.createBot({ name: '执行D2', persona: '做调研' });
+  const group = store.createGroup({ name: '补充要求组', botIds: [lead.id, a.id, b.id], leadBotId: lead.id });
+  const runner = makeRunner();
+
+  const steered = { [a.id]: [], [b.id]: [] };
+  const aborted = [];
+  for (const bot of [a, b]) {
+    runner.sessions.set(`${group.id}:${bot.id}`, {
+      busy: true,
+      bot,
+      startedAt: Date.now() - 2000,
+      goalText: '按原方案推进',
+      liveMsgId: `m_${bot.id}`,
+      turnAmends: [],
+      session: {
+        model,
+        steer: async (t) => { steered[bot.id].push(t); return 'steered'; },
+        abort: async () => { aborted.push(bot.id); },
+      },
+    });
+  }
+  runner.roundLocks.add(group.id);
+  runner.roundQueue.set(group.id, { text: '排队后续', files: [] });
+
+  const out = await runner.send(group.id, '把范围收窄到 A 股，只看最近一个月');
+  assert.equal(out.duplex, 'amend', '应是补充要求而不是打断重来');
+  assert.equal(out.steered, 'amend');
+
+  assert.deepEqual(aborted, [], '任何人都不能被 abort');
+  assert.match(steered[a.id][0], /收窄到 A 股/, '在跑成员应收到补充要求');
+  assert.match(steered[b.id][0], /收窄到 A 股/, '另一个在跑成员也要收到');
+  assert.equal(runner.roundQueue.get(group.id).text, '排队后续', '原队列不能被换成新文本');
+  assert.equal(runner.sessions.get(`${group.id}:${a.id}`).busy, true, '在跑成员的会话要保留');
+
+  const last = store.listMessages(group.id).at(-1);
+  assert.equal(last.meta?.duplex, 'amend');
+  assert.ok(store.listMessages(group.id).some((m) => m.meta?.duplex === 'amend' && m.authorType === 'user'));
+
+  runner.roundLocks.delete(group.id);
+  runner.roundQueue.delete(group.id);
+});
+
 await test('FD-1 session-factory 旁路 talkLane 强制纯内存与只读工具裁剪，不写 sessionFile', async () => {
   const bot = store.createBot({ name: '只读检验员', role: 'main' });
   const dm = store.ensureDm(bot.id);
