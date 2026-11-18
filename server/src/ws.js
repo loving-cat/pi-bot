@@ -6,24 +6,25 @@
  */
 import { WebSocketServer } from 'ws';
 import path from 'node:path';
-import { config } from './config.js';
-import { store } from './store.js';
+import { config as defaultConfig } from './config.js';
+import { store as defaultStore } from './store.js';
 import { VERSION } from './version.js';
-import { bus } from './bus.js';
+import { bus as defaultBus } from './bus.js';
 import { openRequest, createRequestLifecycle, resumeAdmitted } from './coordination/task-request-gate.js';
 import { createRequestResultService, createTerminalPublisher } from './tasks/task-request-result.js';
 import { createRequestReceipts } from './tasks/task-request-receipts.js';
 import { projectTaskRunList } from './tasks/task-projection.js';
 import { attachmentDeletionRevision, withoutDeletedAttachments } from './attachments.js';
-import { serverInfo, isLoopback, LOCAL_DEVICE, hostAllowed, isLocalToken } from './http.js';
+import { serverInfo, LOCAL_DEVICE, hostAllowed, isLocalToken } from './http.js';
 import { log, timingSafeEqual } from './util.js';
 
-const taskRequestReceipts = createRequestReceipts({ dir: path.join(config.dataDir, 'task-requests') });
 /**
  * 首次接单请求的发送：预约 → 作用域 → 理解轮 → 收尾。
  * 并发同 requestId 的第二个请求只会拿到 queued/inflight，不会起第二轮理解。
  */
-async function startAdmittedSend({ runner, socket, roomId, requestId, text, attachments = [], mode, clientId = null }) {
+async function startAdmittedSend({
+  runner, store, taskRequestReceipts, socket, roomId, requestId, text, attachments = [], mode, clientId = null, duplexMode = 'auto',
+}) {
   const room = store.getRoom(roomId);
   if (room?.kind === 'group') {
     // 普通群聊保持原行为：requestId 只做同键去重，不把群消息当首次接单
@@ -33,14 +34,20 @@ async function startAdmittedSend({ runner, socket, roomId, requestId, text, atta
     if (opened.status === 'inflight') { socket.send(JSON.stringify({ t: 'queued', clientId, requestId, inProgress: true })); return; }
     if (opened.status === 'conflict' || opened.status === 'corrupt') { socket.send(JSON.stringify({ t: 'error', error: opened.text, code: opened.code, clientId, requestId })); return; }
     let failure = null;
+    let handledAsync = false;
     try {
-      const result = await runner.send(roomId, text, { mode, attachments, flushMerge: true, requestId });
+      const result = await runner.send(roomId, text, {
+        mode, attachments, flushMerge: true, requestId, groupScope: opened.scope, duplexMode,
+      });
+      handledAsync = result?.scopeHandled === true;
       if (clientId) socket.send(JSON.stringify({ t: 'ack', clientId, messageId: result.userMessage?.id, requestId }));
     } catch (err) {
       failure = err;
       socket.send(JSON.stringify({ t: 'error', error: String(err?.message || err), code: err?.code, clientId, requestId }));
     } finally {
-      runner.requestLifecycle?.close?.(opened.scope, failure, failure ? null : 'answer');
+      if (!handledAsync) {
+        runner.requestLifecycle?.close?.(opened.scope, failure, failure ? null : 'answer');
+      }
     }
     return;
   }
@@ -71,7 +78,7 @@ async function startAdmittedSend({ runner, socket, roomId, requestId, text, atta
   try {
     // 信封交给 runner：真正取得执行权时才激活作用域，该轮真正结束时才收尾
     const result = await runner.send(roomId, text, {
-      mode, attachments, flushMerge: true, requestId, request: { scope: opened.scope },
+      mode, attachments, flushMerge: true, requestId, request: { scope: opened.scope }, duplexMode,
     });
     if (clientId) socket.send(JSON.stringify({
       t: 'ack', clientId, messageId: result.userMessage?.id, requestId,
@@ -85,7 +92,16 @@ async function startAdmittedSend({ runner, socket, roomId, requestId, text, atta
 }
 
 export function attachWs(server, { runner }) {
-  const wss = new WebSocketServer({ server, path: '/ws', verifyClient: verifyWsClient });
+  const config = runner?.config ?? defaultConfig;
+  const store = runner?.store ?? defaultStore;
+  const bus = runner?.bus ?? defaultBus;
+  const taskRequestReceipts = createRequestReceipts({ dir: path.join(config.dataDir, 'task-requests') });
+
+  const wss = new WebSocketServer({
+    server,
+    path: '/ws',
+    verifyClient: (info) => verifyWsClient(info, config),
+  });
   const requestResultService = createRequestResultService({ receipts: taskRequestReceipts, taskRuns: store.taskRuns });
   const publishTerminal = createTerminalPublisher({
     service: requestResultService,
@@ -111,18 +127,13 @@ export function attachWs(server, { runner }) {
         return { id: 'static', name: 'static-token' };
       }
       // ★ 本机 token：和 HTTP 用同一份凭据（见 http.js 的 isLocalTokenValid）。
-      if (config.trustLocal && isLocalToken(token)) {
+      if (config.trustLocal && isLocalToken(token, config.dataDir)) {
         return { ...LOCAL_DEVICE };
       }
       const device = store.findDeviceByToken(token);
       if (device) store.touchDevice(token);
       return device;
     }
-    // ★ 不带 token 一律拒绝。
-    //
-    //   原来这里是"回环 + 没 Origin 就放行"，和 HTTP 侧同一个洞：
-    //   本机任何进程都能连 WS，然后发 {t:'send'} 直接指挥 bot ——
-    //   只改 HTTP 不改这里等于没堵。浏览器页面本来就必须带 token。
     return null;
   };
 
@@ -217,20 +228,22 @@ export function attachWs(server, { runner }) {
                 mode: cmd.mode,
                 attachments: cmd.attachments,
                 flushMerge: cmd.flushMerge === true,
+                duplexMode: cmd.duplexMode,
               });
               if (cmd.clientId) socket.send(JSON.stringify({ t: 'ack', clientId: cmd.clientId, messageId: userMessage.id }));
               break;
             }
 
             await startAdmittedSend({
-              runner, socket, roomId: cmd.roomId, requestId: rawRequestId,
+              runner, store, taskRequestReceipts, socket, roomId: cmd.roomId, requestId: rawRequestId,
               text: cmd.text, attachments: cmd.attachments, mode: cmd.mode,
               clientId: cmd.clientId ?? null,
+              duplexMode: cmd.duplexMode ?? 'auto',
             });
             break;
           }
           case 'abort':
-            await runner.abort(cmd.roomId);
+            await runner.abort(cmd.roomId, { scope: cmd.scope ?? 'all' });
             break;
           case 'reset':
             runner.resetRoomSessions(cmd.roomId);
@@ -295,8 +308,8 @@ export function attachWs(server, { runner }) {
  * - Host 必须是本机名/本机 IP
  * - 带 Origin（浏览器）时，Origin 必须指向本服务自身（同 host 同端口）
  */
-export function verifyWsClient({ origin, req }) {
-  if (!hostAllowed(req.headers.host)) return false;
+export function verifyWsClient({ origin, req }, cfg = defaultConfig) {
+  if (!hostAllowed(req.headers.host, cfg)) return false;
   if (!origin) return true; // 原生 App 不发 Origin
   let o;
   try {
@@ -306,5 +319,5 @@ export function verifyWsClient({ origin, req }) {
   }
   if (o.protocol !== 'http:' && o.protocol !== 'https:') return false;
   const port = o.port || (o.protocol === 'https:' ? '443' : '80');
-  return hostAllowed(o.host) && port === String(config.port);
+  return hostAllowed(o.host, cfg) && port === String(cfg.port);
 }

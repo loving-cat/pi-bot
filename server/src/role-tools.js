@@ -12,11 +12,13 @@
 import {
   READONLY_ALLOW, MUTATING_TOOLS, COORDINATION_TOOLS, CHIEF_ONLY_TOOLS,
   LEAD_EXTRA_BUILTINS, OPAQUE_SCRIPT_TOOLS, SECURITY_CONFIG_TOOLS,
+  isJarvisApprovalCall,
 } from './capabilities.js';
 
 export {
   READONLY_ALLOW, MUTATING_TOOLS, COORDINATION_TOOLS, CHIEF_ONLY_TOOLS,
   LEAD_EXTRA_BUILTINS, OPAQUE_SCRIPT_TOOLS, SECURITY_CONFIG_TOOLS,
+  isJarvisApprovalCall,
 };
 
 const READONLY_ALLOW_SET = new Set(READONLY_ALLOW);
@@ -162,7 +164,7 @@ export function customToolsForRole(tools, { room, bot, policy = {} } = {}) {
  *   +1 会让所有老会话在下次使用时重建一次（丢的只是进程内的会话缓存，
  *   聊天记录都在库里，不受影响）。
  */
-export const SESSION_TOOLS_VERSION = 3;
+export const SESSION_TOOLS_VERSION = 5;
 
 /** 房间角色、成员或工具集版本变化时签名变化，用于重建缓存会话。 */
 export function roleConfigurationKey(room, bot) {

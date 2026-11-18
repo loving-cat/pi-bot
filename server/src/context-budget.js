@@ -97,7 +97,7 @@ export function withCapacity(model, bot = {}) {
  *   依赖里的 estimateTokens 是 **chars / 4**。英文大致对（4 字符≈1 token），
  *   但中文约 **1 字 1 token** —— 于是 estimateTokens 把中文上下文低估约 4 倍。
  *   而切压缩保留点用的正是这个估计值，所以名义上"保留 6 万 token"
- *   实际留下了 25–29 万字符的原文（Xiao 的实测：压缩前 60.5 万、
+ *   实际留下了 25–29 万字符的原文（实测基准：压缩前 60.5 万、
  *   压缩请求 input 32–36 万，正是这个比例）。
  *
  *   要按"真实 token"来定保留量，就得先测出这块偏差。
@@ -116,7 +116,7 @@ export function withCapacity(model, bot = {}) {
  *     **含 output**（模型这次生成的内容）。而对比基准是"上下文有多长" ——
  *     上下文里没有上一轮的 output（它作为 assistant 消息进了 messages，
  *     由分母的 estimateTokens 计入）。把 output 放分子会让 r 虚高。
- *     压缩请求的 cacheRead 几乎为 0（Xiao 实测），所以实际 ≈ input。
+ *     压缩请求的 cacheRead 几乎为 0（实测基准），所以实际 ≈ input。
  *
  *   ★ 分母为什么必须补 system 和工具：
  *     真实 usage 覆盖的是**整次请求**（system + 工具定义 + 全部消息）。

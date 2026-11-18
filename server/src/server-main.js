@@ -27,6 +27,7 @@ import { intakeEnabled } from './coordination/intake-tool.js';
 import { createGrantGate } from './grant-gate.js';
 import { ensureLegacyGrant } from './migration-grants.js';
 import { bus } from './bus.js';
+import { createServices } from './services/index.js';
 import { buildAnnouncement, startDiscovery } from './discovery.js';
 import { ensureTlsMaterial, setActiveTls, tlsOptions } from './tls.js';
 
@@ -186,6 +187,7 @@ async function main() {
   // http.js 里的“规矩改了重发迁移授权”也要带同一个世代（否则新发出来的
   // 授权一校验就被 generation_stale ——签发与校验得不到同一个值）。
   runner.grantGeneration = () => SERVER_GENERATION;
+  runner.services = createServices({ config, store, bus, runner });
 
   // 07：生产启动装配一个任务宿主；关闭态不要求接单工具。
   runner.taskIntakeEnabled = intakeEnabled();

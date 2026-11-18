@@ -20,7 +20,7 @@
  * 名字冲突时以这里为准（因为 bot 会话本来就默认不加载 mcp.json，
  * 见 config.js 的 resourceSwitches）。
  */
-import { store } from './store.js';
+import { store as defaultStore } from './store.js';
 import { toMcpServersConfig } from './mcp.js';
 import { probeMcpServer } from './mcp-probe.js';
 import { log } from './util.js';
@@ -34,9 +34,11 @@ import { isListedTool, rememberTools } from './mcp-tool-registry.js';
  * @param {object} deps
  * @param {string} deps.botId 这个会话属于哪个 bot（决定连哪几个）
  * @param {string} [deps.roomId] 房间（日志用）
+ * @param {object} [deps.store] 可选 Store 实例
  * @returns {(pi: any) => void} 扩展工厂
  */
-export function createMcpExtension({ botId, roomId = null }) {
+export function createMcpExtension({ botId, roomId = null, store: scopedStore = null }) {
+  const store = scopedStore ?? defaultStore;
   return function mcpExtension(pi) {
     // 只读模式不连接 MCP：工具名不固定，连上之后就能写文件、跑命令。
     if (isReadonlyPolicy(store.policy())) return;
@@ -188,7 +190,8 @@ export function createMcpExtension({ botId, roomId = null }) {
  *
  * @returns {string} 多行文本；一个服务都没有时返回空串
  */
-export function mcpSectionForPrompt() {
+export function mcpSectionForPrompt({ store: scopedStore = null } = {}) {
+  const store = scopedStore ?? defaultStore;
   const servers = store.mcpLibrary();
   if (!servers.length) return '';
   const usable = servers.filter((s) => s.enabled);

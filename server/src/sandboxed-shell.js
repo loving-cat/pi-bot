@@ -29,6 +29,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { buildChildEnv, hostLocale } from './child-env-typed.js';
+import { config as defaultConfig } from './config.js';
 
 /** 解析成真实路径；失败时原样返回（目录可能还没建）。 */
 function realPath(p) {
@@ -181,7 +182,12 @@ export function createSandboxedOperations({ workDir, instanceDir, dataDir }) {
  * @param {object} o.pi      { createBashTool, createPowerShellTool }
  * @returns {object[]}
  */
-export function buildSandboxedShellTools({ bot, workDir, dataDir, tools, pi }) {
+export function buildSandboxedShellTools({
+  bot, workDir, dataDir, tools, pi, mcpCount = null, config: scopedConfig = null,
+}) {
+  const cfg = scopedConfig ?? defaultConfig;
+  // 主控（贾维斯）恒保持可信宿主模式（MODE.host），挂了 MCP 也不降入沙箱
+  if (bot?.role === 'main' && cfg.jarvisMode !== false) return [];
   const wantsBash = Array.isArray(tools) && tools.includes('bash');
   const wantsPowerShell = Array.isArray(tools) && tools.includes('powershell');
   if (!wantsBash && !wantsPowerShell) return [];
@@ -189,7 +195,8 @@ export function buildSandboxedShellTools({ bot, workDir, dataDir, tools, pi }) {
   // 没挂 MCP → 不改变任何行为
   let hasMcp = false;
   try {
-    hasMcp = storeMcpCount(bot?.id) > 0;
+    const count = typeof mcpCount === 'number' ? mcpCount : storeMcpCount(bot?.id);
+    hasMcp = count > 0;
   } catch {
     hasMcp = false;
   }

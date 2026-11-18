@@ -31,8 +31,8 @@ import {
   getAgentDir,
 } from '@earendil-works/pi-coding-agent';
 
-import { config } from './config.js';
-import { store } from './store.js';
+import { config as defaultConfig } from './config.js';
+import { store as defaultStore } from './store.js';
 import { log } from './util.js';
 import {
   REFLECT_SYSTEM,
@@ -61,11 +61,13 @@ export const REFLECT_TIMEOUT_MS = 60_000;
  * @param {object} deps.runner PiRunner（拿 modelRuntime / resolveModel）
  * @param {Function} [deps.logFn]
  */
-export function createLessonReflector({ runner, logFn = log } = {}) {
+export function createLessonReflector({ runner, logFn = log, config: scopedConfig = null, store: scopedStore = null } = {}) {
+  const config = scopedConfig ?? runner?.config ?? defaultConfig;
+  const store = scopedStore ?? runner?.store ?? defaultStore;
   const lastAt = new Map();
 
   async function reflect({ roomId, sinceIndex = 0, lease = null } = {}) {
-    if (process.env.PI_BOT_LESSON_REFLECT === '0') return { skipped: 'disabled' };
+    if (process.env.PI_BOT_LESSON_REFLECT === '0' || config.lessonReflect === false) return { skipped: 'disabled' };
 
     const room = store.getRoom(roomId);
     if (!room || room.kind !== 'group') return { skipped: 'not-group' };

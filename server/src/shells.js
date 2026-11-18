@@ -72,6 +72,8 @@ export const IDLE_MS = 30 * 60 * 1000;
  */
 function hasMcpFor(botId) {
   try {
+    const bot = store.getBot(botId);
+    if (bot?.role === 'main' && config.jarvisMode !== false) return false;
     return store.mcpServersFor(botId).length > 0;
   } catch {
     return true;

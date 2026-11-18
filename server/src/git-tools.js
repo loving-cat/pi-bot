@@ -23,7 +23,7 @@ import { Type } from 'typebox';
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import fs from 'node:fs';
 import path from 'node:path';
-import { config } from './config.js';
+import { config as defaultConfig } from './config.js';
 import { log } from './util.js';
 import {
   runGit, parseStatus, verifyCommitLanded, currentHead, listActiveHooks,
@@ -36,19 +36,11 @@ import { isLeadOfRoom } from './role-tools.js';
 const ok = (text, details = {}) => ({ content: [{ type: 'text', text }], details });
 const fail = (text, details = {}) => ({ content: [{ type: 'text', text }], details, isError: true });
 
-/**
- * 解析"要操作哪个仓库"。
- *
- * ★ 只接受工作目录**之内**的路径。
- *
- * 规格 §6.1 要求"路径使用最终资源标识"，而最容易犯的错是让模型
- * 传一个 `..` 跳出去操作别的项目。所以这里先落成绝对路径，
- * 再确认它在 workspace 里 —— 越界直接拒绝，不做"警告后继续"。
- */
-function resolveRepo(inputPath) {
+function resolveRepo(inputPath, { allowOutsideWorkspace = false, workspace = defaultConfig.workspace } = {}) {
   const raw = String(inputPath ?? '').trim() || '.';
-  const full = path.resolve(config.workspace, raw);
-  const rel = path.relative(config.workspace, full);
+  const full = path.resolve(workspace, raw);
+  if (allowOutsideWorkspace) return full;
+  const rel = path.relative(workspace, full);
   if (rel.startsWith('..') || path.isAbsolute(rel)) {
     return null;
   }
@@ -80,16 +72,8 @@ function describeStatus(parsed) {
  * @param {string} p.roomId
  * @param {string} p.botId
  */
-export function buildGitTools({ runner, store, roomId, botId }) {
-  /**
-   * 这个 bot 在这件事上的角色（规格 §7.1 的 G2/G3 角色门）。
-   *
-   * `main` = 主 Bot；`lead` = 当前群的负责人；其余一律 `member`。
-   *
-   * ★ 这个值**从 store 查**，不读模型自述的字符串 —— 模型说自己是主 Bot
-   *   不代表它是。而且这个角色是建工具集时算一次的：工具集跟着 bot 走，
-   *   换个角色会重建工具集。
-   */
+export function buildGitTools({ runner, store, roomId, botId, config: scopedConfig = null }) {
+  const config = scopedConfig ?? runner?.config ?? defaultConfig;
   const actorRole = (() => {
     const me = store?.getBot?.(botId) ?? null;
     if (me?.role === 'main') return 'main';
@@ -98,16 +82,26 @@ export function buildGitTools({ runner, store, roomId, botId }) {
     return 'member';
   })();
 
+  const allowOutsideWorkspace = actorRole === 'main' && config.jarvisMode !== false;
+  const resolveTarget = (repoDir) => resolveRepo(repoDir, { allowOutsideWorkspace, workspace: config.workspace });
+
   /**
    * 统一入口：跑一次 git，失败就说清原因。
    * @returns {{ok:true, res:object, repo:string}|{ok:false, text:string}}
    */
   function run({ repoDir, op, params, confirmation = null }) {
-    const repo = resolveRepo(repoDir);
+    const repo = resolveTarget(repoDir);
     if (!repo) {
       return { ok: false, text: `只能在你的工作目录里操作仓库（${config.workspace}）。指定的路径在目录之外。` };
     }
-    const res = runGit({ repoDir: repo, op, params, confirmation, actor: { role: actorRole } });
+    const res = runGit({
+      repoDir: repo,
+      op,
+      params,
+      confirmation,
+      actor: { role: actorRole },
+      ...(allowOutsideWorkspace ? { trustRoots: [repo] } : {}),
+    });
     if (res.refused) return { ok: false, text: res.error };
     // ★ 默认仓库是工作目录本身，而工作目录通常不是仓库（里面才是）。
     //   直接抛 "不在任何 git 仓库里" 会让人以为是权限问题，所以补一句怎么用。
@@ -256,7 +250,11 @@ export function buildGitTools({ runner, store, roomId, botId }) {
         if (!r.res.ok) return fail(r.res.error ?? 'git add 失败');
         audit({ op: 'add', repo: r.repo, res: r.res });
         // add 之后立刻回读状态：让模型看到"实际进了什么"，而不是"我以为进了什么"
-        const st = runGit({ repoDir: r.repo, op: 'status' });
+        const st = runGit({
+          repoDir: r.repo,
+          op: 'status',
+          ...(allowOutsideWorkspace ? { trustRoots: [r.repo] } : {}),
+        });
         const parsed = st.ok ? parseStatus(st.stdout) : null;
         return ok(
           `已暂存。\n${parsed ? describeStatus(parsed) : r.res.stdout}`,
@@ -279,7 +277,7 @@ export function buildGitTools({ runner, store, roomId, botId }) {
         paths: Type.Optional(Type.Array(Type.String(), { description: '只提交这些文件（会先 add 再 commit）' })),
       }),
       execute: async (_toolCallId, { repo, message, paths }) => {
-        const target = resolveRepo(repo);
+        const target = resolveTarget(repo);
         if (!target) return fail(`只能在你的工作目录里操作仓库（${config.workspace}）。`);
 
         const msg = String(message ?? '').trim();
@@ -292,11 +290,21 @@ export function buildGitTools({ runner, store, roomId, botId }) {
         // 有 paths 就先 add 指定的，没有就提交已暂存的（不隐式 -A，
         // 那会把别人的改动一起卷进来）
         if (Array.isArray(paths) && paths.length) {
-          const added = runGit({ repoDir: target, op: 'add', params: { paths } });
+          const added = runGit({
+            repoDir: target,
+            op: 'add',
+            params: { paths },
+            ...(allowOutsideWorkspace ? { trustRoots: [target] } : {}),
+          });
           if (!added.ok) return fail(added.error ?? 'git add 失败');
         }
 
-        const res = runGit({ repoDir: target, op: 'commit', params: { message: msg } });
+        const res = runGit({
+          repoDir: target,
+          op: 'commit',
+          params: { message: msg },
+          ...(allowOutsideWorkspace ? { trustRoots: [target] } : {}),
+        });
         audit({ op: 'commit', repo: target, res });
         if (!res.ok) {
           return fail(
@@ -307,7 +315,11 @@ export function buildGitTools({ runner, store, roomId, botId }) {
         }
 
         // 核对这次提交是不是真的产生了
-        const verified = verifyCommitLanded({ beforeHead, repoDir: target });
+        const verified = verifyCommitLanded({
+          beforeHead,
+          repoDir: target,
+          ...(allowOutsideWorkspace ? { trustRoots: [target] } : {}),
+        });
         const hooks = listActiveHooks({ repoDir: target });
         const afterHead = verified.afterHead ?? currentHead({ repoDir: target });
 
@@ -347,7 +359,7 @@ export function buildGitTools({ runner, store, roomId, botId }) {
         ticket: Type.Optional(Type.String({ description: '上次调用拿到的确认票据。用户批准后带它再调一次' })),
       }),
       execute: async (_toolCallId, { repo, remote, branch, ticket }) => {
-        const target = resolveRepo(repo);
+        const target = resolveTarget(repo);
         if (!target) return fail(`只能在你的工作目录里操作仓库（${config.workspace}）。`);
 
         const remoteName = String(remote ?? 'origin').trim() || 'origin';
@@ -381,6 +393,7 @@ export function buildGitTools({ runner, store, roomId, botId }) {
             repoDir: target, op: 'push',
             params: { remote: remoteName, branches: existing.branchList ?? [] },
             confirmation: existing,
+            ...(allowOutsideWorkspace ? { trustRoots: [target] } : {}),
           });
           if (!res.ok) {
             audit({ op: 'push', repo: target, res });
@@ -510,7 +523,7 @@ export function buildGitTools({ runner, store, roomId, botId }) {
         if (!GIT_OPERATIONS[key]?.roles) {
           return fail(`不支持的操作「${key}」。可用：merge / rebase / reset / clean`);
         }
-        const target = resolveRepo(repo);
+        const target = resolveTarget(repo);
         if (!target) return fail(`只能在你的工作目录里操作仓库（${config.workspace}）。`);
 
         // 目标摘要：**这五项一起构成"用户到底在批什么"**

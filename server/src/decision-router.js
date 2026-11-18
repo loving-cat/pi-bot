@@ -175,6 +175,32 @@ export const POINTS = Object.freeze({
     build: ({ task = '' } = {}) => ({ task: String(task || '').slice(0, 4000) }),
     validate: (values) => typeof values?.needsBrowser === 'boolean',
   },
+
+  /**
+   * 全双工忙时意图分流：后台正忙时，区分旁路提问、补充要求还是打断重来。
+   * 标为 careful：判错成 abort_replace 会中断长任务，必须过置信度门槛。
+   */
+  'busy-intent': {
+    weight: POINT_WEIGHT.careful,
+    description: '后台正在执行任务时，判断用户新发消息是旁路提问、补充要求还是打断重来',
+    questions: {
+      intent: {
+        type: 'choice',
+        instructions: '用户在机器人忙碌时发来这条新消息，真实意图属于哪一类？',
+        criteria: {
+          side_reply: '询问当前进度、追问原因、闲聊或纯问题，不需要改动或停止当前任务',
+          amend: '对当前正在做的任务补充条件、增加细节或微调方向',
+          abort_replace: '明确要求停止当前任务、作废重做或彻底换成另一件事',
+        },
+      },
+    },
+    build: ({ message = '', goal = '', phase = '' } = {}) => ({
+      message: String(message || '').slice(0, 1200),
+      currentGoal: String(goal || '').slice(0, 400),
+      currentPhase: String(phase || '').slice(0, 80),
+    }),
+    validate: (values) => ['side_reply', 'amend', 'abort_replace'].includes(values?.intent),
+  },
 });
 
 /** 某个决策点是否已注册且不是 unsuitable。 */

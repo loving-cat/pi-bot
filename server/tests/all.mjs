@@ -148,6 +148,11 @@ const TESTS = [
   'preferences',
   'grant-generation',
   'headless-browser',
+  'duplex-router',
+  'live-work-snapshot',
+  'full-duplex',
+  'jarvis-mode',
+  'sdk-runtime',
 ];
 
 let failed = 0;

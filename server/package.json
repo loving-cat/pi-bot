@@ -1,10 +1,21 @@
 {
-  "name": "pi-bot-server",
+  "name": "orbis-agent",
   "version": "1.4.3",
   "private": true,
   "type": "module",
-  "description": "pi-bot server: 手机 App 背后的 pi agent 常驻服务",
+  "description": "Orbis: Multi-Agent Foundation & Jarvis Runtime",
   "main": "src/index.js",
+  "exports": {
+    ".": "./src/sdk/index.js",
+    "./sdk": "./src/sdk/index.js",
+    "./client": "./src/sdk/client.js",
+    "./capabilities": "./src/capabilities.js",
+    "./server": "./src/index.js"
+  },
+  "bin": {
+    "orbis-server": "./src/index.js",
+    "pi-bot-server": "./src/index.js"
+  },
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",

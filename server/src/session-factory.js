@@ -20,8 +20,8 @@ import {
   getAgentDir,
 } from '@earendil-works/pi-coding-agent';
 
-import { config, resourceOptions } from './config.js';
-import { store } from './store.js';
+import { config as defaultConfig, resourceOptions } from './config.js';
+import { store as defaultStore } from './store.js';
 import { preferencesPromptLines } from './preferences.js';
 import { isDelegatingLead, isRoomLead, isReadonlyPolicy, toolsForRole, customToolsForRole, roleConfigurationKey } from './role-tools.js';
 import { executionModeOf } from './exec-mode.js';
@@ -77,6 +77,9 @@ export function pickModelAndThinking({
  */
 export function createSessionBuilder({
   runner, health, resolveModel, modelLabel,
+  config: scopedConfig = null,
+  store: scopedStore = null,
+  bus: scopedBus = null,
   sessionApi = {
     DefaultResourceLoader,
     SessionManager,
@@ -86,6 +89,9 @@ export function createSessionBuilder({
     getAgentDir,
   },
 }) {
+  const config = scopedConfig ?? runner?.config ?? defaultConfig;
+  const store = scopedStore ?? runner?.store ?? defaultStore;
+  const bus = scopedBus ?? runner?.bus ?? null;
   const {
     DefaultResourceLoader,
     SessionManager,
@@ -127,7 +133,8 @@ export function createSessionBuilder({
   }
 
   return async function buildSession(roomId, botId, opts = {}) {
-    const wantsReportTool = opts.reportTool === true;
+    const isTalkLane = opts.talkLane === true;
+    const wantsReportTool = !isTalkLane && opts.reportTool === true;
     const stored = store.getBot(botId);
     if (!stored) throw new Error(`找不到 bot ${botId}`);
 
@@ -142,20 +149,24 @@ export function createSessionBuilder({
     const bot = applyBotOverride(stored, store.botOverride(botId));
 
     const sessionDir = path.join(config.dataDir, 'sessions');
-    const savedFile = store.sessionFileFor(roomId, botId);
-    // 有历史文件就接着用（记忆/上下文都在里面），没有就开新的
-    const sessionManager =
-      savedFile && fs.existsSync(savedFile)
-        ? SessionManager.open(savedFile)
-        : SessionManager.create(config.workspace, sessionDir);
+    const savedFile = isTalkLane ? null : store.sessionFileFor(roomId, botId);
+    // 旁路 Talk 会话强制纯内存隔离，绝不与后台 Work 并发读写同一磁盘会话文件
+    const sessionManager = isTalkLane
+      ? (typeof SessionManager.inMemory === 'function'
+          ? SessionManager.inMemory(config.workspace)
+          : {})
+      : (savedFile && fs.existsSync(savedFile)
+          ? SessionManager.open(savedFile)
+          : SessionManager.create(config.workspace, sessionDir));
 
     const isChief = bot.role === 'main';
     const room = store.getRoom(roomId);
     const isDeptLead = isDelegatingLead(room, bot);
     const policy = store.policy();
+    const effectivePolicy = isTalkLane ? { ...policy, dangerous: 'deny' } : policy;
     const roleKey = roleConfigurationKey(room, bot);
     // isMain 决定要不要给 ask_user（主控不给 —— 它直接跟用户对话，不弹卡片）
-    const commonTools = buildCommonTools({ runner, roomId, botId, isMain: isChief });
+    const commonTools = buildCommonTools({ runner, roomId, botId, isMain: isChief, store, config, bus });
     // ★ 受管阶段报告工具：真的注册进 SDK，模型才能调用。
     //   收集器由 runner 按「房间:Bot」挂，工具 execute 时取当前那个。
     const reportTools = wantsReportTool
@@ -183,13 +194,13 @@ export function createSessionBuilder({
     //
     //   能力边界在 git-ops.js 的白名单里（只有 status/diff/log/show/branches/add/commit），
     //   push/merge/reset/clean 在那张表里根本没有。
-    const gitTools = isChief || isDeptLead
-      ? buildGitTools({ runner, store, roomId, botId })
+    const gitTools = !isTalkLane && (isChief || isDeptLead)
+      ? buildGitTools({ runner, store, roomId, botId, config })
       : [];
 
     // ★ 接单工具：正式内部入口。默认关闭，不影响真实用户路径。
     const intakeTools =
-      isChief && intakeEnabled()
+      !isTalkLane && isChief && intakeEnabled()
         ? buildIntakeTools({
             runner, store, roomId, botId, health,
             requestScopeOf: () => runner.currentRequestScope?.(roomId, botId) ?? null,
@@ -197,83 +208,98 @@ export function createSessionBuilder({
         : [];
 
     // 自然进度/改版：主控在本轮理解里读任务权威状态或沿原任务升版。
-    const insightTools = isChief && intakeEnabled()
+    const insightTools = !isTalkLane && isChief && intakeEnabled()
       ? buildTaskInsightTools({ runner, store, roomId, botId })
       : [];
 
-    const customTools = customToolsForRole([
-      ...commonTools,
-      ...reportTools,
-      ...memberTools,
-      ...expertTools,
-      ...gitTools,
-      ...intakeTools,
-      ...insightTools,
-      ...(isChief ? buildChiefTools({ runner, health, roomId, botId }) : []),
-    ], { room, bot, policy });
+    const modelGroups = runner?.modelGroups ?? null;
+    const customTools = isTalkLane
+      ? []
+      : customToolsForRole([
+          ...commonTools,
+          ...reportTools,
+          ...memberTools,
+          ...expertTools,
+          ...gitTools,
+          ...intakeTools,
+          ...insightTools,
+          ...(isChief ? buildChiefTools({ runner, health, roomId, botId, store, config, bus, modelGroups }) : []),
+        ], { room, bot, policy });
 
 
-    // 角色能力与行为策略共同决定内置工具；单人部门保留执行能力。
-    const baseTools = toolsForRole({
+    // 角色能力与行为策略共同决定内置工具；旁路 Talk 仅保留只读查阅能力。
+    const rawBaseTools = toolsForRole({
       isChief,
       isDeptLead,
       chiefTools: config.chiefTools,
       leadTools: config.leadTools,
       memberTools: config.tools,
-      policy,
+      policy: effectivePolicy,
     });
+    const baseTools = isTalkLane
+      ? rawBaseTools.filter((t) => ['read', 'ls', 'find', 'grep'].includes(t))
+      : rawBaseTools;
 
-    // ★ 挂了 MCP 的 bot：把 bash / powershell 换成沙箱版（同名覆盖内置）。
-    //
-    //   审批能决定"要不要人点同意"，管不住命令能碰到什么 ——
-    //   一条被批准的 `cat ~/.ssh/id_ed25519` 照样读到私钥。
-    //   所以对有外部执行能力的 bot，命令本身也要受限。
-    //
-    //   没挂 MCP 的 bot 原样不动（保持既有行为）。
-    const shellTools = buildSandboxedShellTools({
-      bot,
-      workDir: config.workspace,
-      dataDir: config.dataDir,
-      tools: baseTools,
-      pi: { createBashTool, createPowerShellTool },
-    });
+    // 旁路 Talk 不起沙箱 shell 工具，避免任何命令执行开销
+    const shellTools = isTalkLane
+      ? []
+      : buildSandboxedShellTools({
+          bot,
+          workDir: config.workspace,
+          dataDir: config.dataDir,
+          tools: baseTools,
+          mcpCount: store.mcpServersFor(botId).length,
+          config,
+          pi: { createBashTool, createPowerShellTool },
+        });
 
     // ★ 执行模式（规格 §8）—— **必须在这里算**，因为只有这里知道
     //   命令工具到底换没换成沙箱版。算晚了（或者干脆不传）就变成
     //   “授权上写了 mode、运行时根本不看”，§8 整节形同虚设。
     const execMode = executionModeOf({ bot, sandboxedToolNames: shellTools.map((t) => t.name) });
 
+    const baseAppendPrompt = buildAppendSystemPrompt(bot, {
+      userName: store.userName(),
+      // ★ 用户的习惯（规格 spec-intent-and-habits-v1.md §3）：只放 strong、最多 5 条。
+      preferenceLines: preferencesPromptLines(store.preferences()),
+      // 部门规矩跟着会话走：工具集和提示都是建会话时定的，规矩变了会作废重建
+      policy: effectivePolicy,
+      // MCP 清单只给主控：它要知道有哪些能力可以派给成员。
+      mcpLines: !isTalkLane && isChief
+        ? [mcpSectionForPrompt({ store }), capabilityGuideForPrompt(store.mcpLibrary())]
+            .filter(Boolean)
+            .join('\n\n')
+        : '',
+
+      modelLines: !isTalkLane && isChief ? modelCatalogSection(menuEntries(modelGroups ?? undefined), health) : '',
+    });
+
+    const talkAppendPrompt = isTalkLane
+      ? `${baseAppendPrompt}\n\n## 全双工快速旁路通道规则\n` +
+        '当前处于「边干活边回话」的旁路只读通道：后台工作会话仍在继续执行，' +
+        '请直接结合实时工作台快照与上下文，用 1～4 句自然口吻快速回答用户问题或确认已记下补充要求；' +
+        '禁止在当前旁路里声称执行了写文件、跑命令或改任务状态，也不要生硬复述快照格式。'
+      : baseAppendPrompt;
+
     const resourceLoader = new DefaultResourceLoader({
       cwd: config.workspace,
       agentDir: getAgentDir(),
-      // 命令级规矩的拦截点：bash/powershell 调用前按部门规则判定
+      // 旁路 Talk 不挂载 MCP，保留策略钩子兜底只读
       extensionFactories: [
         createPolicyExtension({
           roomId,
           bot,
-          // ★ 授权网关：每个会话都拿到它，工具调用时逐次核（P0-1）。
-          //   runner 上没装（测试环境）时会给 null，扩展内部据此跳过，不改变行为。
           grantGate: runner.grantGate ?? null,
-          // ★ 执行模式（规格 §8）。不传的话网关那道 mode 过滤会直接短路，
-          //   一条 isolated 授权在 host 会话里也能过。
           mode: execMode,
+          talkLane: isTalkLane,
+          config,
+          store,
+          bus,
           managedContextOf: () => runner.currentTaskContext?.(roomId, bot.id) ?? null,
-          // ★ 把真实的策略阻塞告诉 runner：受管执行据此记录「我在等哪个真实审批」。
           onBlocked: (approval, info) => runner.notePolicyBlocked?.(roomId, bot.id, approval, info),
         }),
-        // ★ 用户在「设置 → MCP」里配的服务，按这个 bot 的选择逐个注册。
-        //   注意这跟 resourceOptions.noMcp 不冲突：那个开关关掉的是
-        //   pi 自己的 mcp.json（终端用户的外挂），这里挂的是 pi-bot 自己的服务库，
-        //   已经经过"库内启用 + bot 选中"两道门，默认一个都不连。
-        createMcpExtension({ botId, roomId }),
+        ...(isTalkLane ? [] : [createMcpExtension({ botId, roomId, store })]),
       ],
-      // ★ bot 会话不加载 pi 侧的任何"外挂"：扩展、MCP、skills、提示模板。
-      //
-      //   它们会起子进程（派子 agent / MCP 客户端 / 控制台窗口）、把工具塞进提示词，
-      //   而 bot 是长驻的、几十个并存 —— 全挂上会互相打架、把机器拖死。
-      //   开关见 config.js 的 resourceSwitches()（PI_BOT_EXTENSIONS / PI_BOT_MCP /
-      //   PI_BOT_SKILLS）。这里再按名字挡一遍 context-mode：万一有人手动开了扩展，
-      //   这个每会话拉 bun 子进程的家伙也不该进来。
       extensionsOverride: (base) => {
         const needles = (process.env.PI_BOT_DISABLED_EXTENSIONS ?? 'context-mode')
           .split(',')
@@ -288,27 +314,11 @@ export function createSessionBuilder({
           }),
         };
       },
-      appendSystemPrompt: buildAppendSystemPrompt(bot, {
-        userName: store.userName(),
-        // ★ 用户的习惯（规格 spec-intent-and-habits-v1.md §3）：只放 strong、最多 5 条。
-        preferenceLines: preferencesPromptLines(store.preferences()),
-        // 部门规矩跟着会话走：工具集和提示都是建会话时定的，规矩变了会作废重建
-        policy,
-        // MCP 清单只给主控：它要知道有哪些能力可以派给成员。
-        // 成员自己不拿这份清单 —— 它们要的是已经挂载的工具，不是能力目录。
-        //
-        // 两段一起给：上一段列「有哪些服务」，下一段回答「什么活配哪个」。
-        // 少了后一段，主控知道能力存在但派活时想不到去挂，等于白配。
-        mcpLines: isChief
-          ? [mcpSectionForPrompt(), capabilityGuideForPrompt(store.mcpLibrary())]
-              .filter(Boolean)
-              .join('\n\n')
-          : '',
-
-        modelLines: isChief ? modelCatalogSection(menuEntries(), health) : '',
-      }),
+      appendSystemPrompt: talkAppendPrompt,
       ...resourceOptions,
-      ...(isDeptLead || isReadonlyPolicy(policy) ? { noExtensions: true, noMcp: true } : {}),
+      ...(isTalkLane || isDeptLead || isReadonlyPolicy(effectivePolicy)
+        ? { noExtensions: true, noMcp: true }
+        : {}),
     });
     await resourceLoader.reload();
 
@@ -320,6 +330,10 @@ export function createSessionBuilder({
       safeLevel: (slug, level) => health?.safeLevel(slug, level),
       modelLabel: modelLabel(),
     });
+    if (isTalkLane && picked.thinking && picked.thinking !== 'off') {
+      const talkThinking = String(process.env.PI_BOT_TALK_THINKING ?? 'low').trim();
+      if (talkThinking) picked.thinking = talkThinking;
+    }
 
     const options = {
       cwd: config.workspace,
@@ -329,12 +343,6 @@ export function createSessionBuilder({
       tools: [...baseTools, ...customTools.map((t) => t.name), ...shellTools.map((t) => t.name)],
       customTools: [...customTools, ...shellTools],
       // ★★★ 把 runner 的 model runtime 传进去。
-      //
-      //   不传的话，pi 会**另造一个** runtime（默认只认 ~/.pi/agent/auth.json
-      //   和 models.json）—— 而用户在 App 里配的模型组（baseUrl + key + 模型名）
-      //   是**运行时注册到这个 runtime 上**的，那个新造的 runtime 根本不知道。
-      //   症状是"No API key found for local_cline."：探活和菜单（走这个
-      //   runtime）一直显示可用，一到真跑就找不到 key。
       modelRuntime: runner.modelRuntime,
     };
     // 容量覆盖：bot 上设过的 contextWindow / maxTokens 盖在模型自带值之上
@@ -344,16 +352,13 @@ export function createSessionBuilder({
     const { session, modelFallbackMessage } = await createAgentSession(options);
     if (modelFallbackMessage) log(`[${bot.name}] 模型回退：${modelFallbackMessage}`);
 
-    // 上下文预算：bot 自己设过的优先，其次全局默认，都没有就听 pi 的。
-    // 用 applyOverrides 而不是写 settings.json —— 那个是全局的，
-    // 而"每个 bot 一套预算"必须在会话级别生效。
     applyCompactionBudget(session, bot);
 
-    if (session.sessionFile && session.sessionFile !== savedFile) {
+    if (!isTalkLane && session.sessionFile && session.sessionFile !== savedFile) {
       store.setSessionFile(roomId, botId, session.sessionFile);
     }
     log(
-      `会话就绪 ${roomId} · ${bot.emoji ?? ''}${bot.name} → ` +
+      `${isTalkLane ? '[talk] ' : ''}会话就绪 ${roomId} · ${bot.emoji ?? ''}${bot.name} → ` +
         `${path.basename(session.sessionFile ?? '(内存)')}`,
     );
     return {

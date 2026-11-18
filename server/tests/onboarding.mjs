@@ -53,7 +53,7 @@ const HOUR = 3600_000;
 
 const MAIN = { id: 'b-main', name: '主 Bot', role: 'main' };
 const CODER = { id: 'b-code', name: '编码手', role: 'member' };
-const PROJECT = { id: 'p-quant', label: 'quant-all-in', path: 'D:/quant-all-in' };
+const PROJECT = { id: 'p-demo', label: 'orbis-demo', path: 'D:/projects/orbis-demo' };
 
 function grant(over = {}) {
   return {
@@ -61,7 +61,7 @@ function grant(over = {}) {
     source: 'user',
     subject: { botId: 'b-code', role: 'member' },
     actions: [ACTION.fileRead],
-    resources: [{ kind: 'path', ref: 'D:/quant-all-in' }],
+    resources: [{ kind: 'path', ref: 'D:/projects/orbis-demo' }],
     mode: MODE.project,
     createdAt: NOW - HOUR,
     ...over,
@@ -406,7 +406,7 @@ test('★ 主 Bot 的 host 模式 + 项目范围可以保留（host 就是它的
 });
 
 test('范围里含主机/凭据/桌面 → 不是项目授权', () => {
-  const g = grant({ resources: [{ kind: 'path', ref: 'D:/quant-all-in' }, { kind: 'host', ref: 'example.com' }] });
+  const g = grant({ resources: [{ kind: 'path', ref: 'D:/projects/orbis-demo' }, { kind: 'host', ref: 'example.com' }] });
   assert.match(retentionRefusal(g), /非项目资源/);
 });
 
@@ -476,7 +476,7 @@ test('一页里只有一步需要用户选（其余是告知与确认）', () =>
 test('推荐值是"最小可用"：项目 = 第一个可选项目，Git = 本地提交（不含远端）', () => {
   const plan = baseRun();
   const rec = plan.steps.find((s) => s.id === STEP.project).recommended;
-  assert.equal(rec.projectId, 'p-quant');
+  assert.equal(rec.projectId, 'p-demo');
   assert.equal(rec.gitScope, GIT_SCOPE.commit);
   assert.ok(!plan.steps.find((s) => s.id === STEP.project).options.gitScopes
     .find((s) => s.id === rec.gitScope).actions.includes(ACTION.gitPush));
@@ -523,7 +523,7 @@ test('探针失败（拿不到会话/调用挂了）按 denied 报，并进边�
 
 const applyBase = (over = {}) =>
   planFirstRunGrants({
-    projectId: 'p-quant',
+    projectId: 'p-demo',
     gitScope: GIT_SCOPE.commit,
     bots: [MAIN, CODER],
     projects: [PROJECT],
@@ -539,7 +539,7 @@ test('选完就得到每个 bot 一条项目范围的授权（来源只能是人
     assert.equal(g.source, 'user');
     assert.equal(g.canDelegate, false);
     assert.equal(g.expiresAt, null);
-    assert.deepEqual(g.resources, [{ kind: 'path', ref: 'D:/quant-all-in' }]);
+    assert.deepEqual(g.resources, [{ kind: 'path', ref: 'D:/projects/orbis-demo' }]);
   }
   // 动作 = 项目内读写 + 选的 Git 档位，没有多出来的
   assert.deepEqual(out.actions.sort(), ['file.read', 'file.write', 'git.commit', 'git.read']);
@@ -585,9 +585,9 @@ test('★ 不存在的项目宁可报错，不猜一个最近似的（否则授�
 });
 
 test('用路径当 id 也认（界面可能没有稳定 id）', () => {
-  const out = applyBase({ projectId: 'D:/quant-all-in' });
+  const out = applyBase({ projectId: 'D:/projects/orbis-demo' });
   assert.equal(out.ok, true);
-  assert.equal(out.project.path, 'D:/quant-all-in');
+  assert.equal(out.project.path, 'D:/projects/orbis-demo');
 });
 
 test('未知 Git 档位直接拒，不回落成默认值', () => {

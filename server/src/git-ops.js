@@ -582,8 +582,8 @@ export function runGit({
  * @param {string} [p.gitFile]
  * @returns {{ok:boolean, afterHead?:string, advanced?:boolean, error?:string}}
  */
-export function verifyCommitLanded({ beforeHead, repoDir, gitFile = null } = {}) {
-  const head = runGit({ repoDir, op: 'show', params: { ref: 'HEAD' }, gitFile });
+export function verifyCommitLanded({ beforeHead, repoDir, gitFile = null, trustRoots = null } = {}) {
+  const head = runGit({ repoDir, op: 'show', params: { ref: 'HEAD' }, gitFile, ...(trustRoots ? { trustRoots } : {}) });
   if (!head.ok) return { ok: false, error: head.error };
   const afterHead = (head.stdout || '').split('\n')[0].split(' ')[0] ?? '';
   if (!afterHead) return { ok: false, error: '读不出 HEAD' };

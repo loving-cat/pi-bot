@@ -433,13 +433,22 @@ export function createGrantGate({
    * 重复调用由 ensureForBots 自己幂等兑掉。不订 room/template 事件是因为
    * 它们最后都会落到 createBot 上，订一处就够。
    */
+  let startedListener = null;
+
   function start() {
-    if (!busSource || typeof busSource.on !== 'function' || !syncGrantsFn) return;
-    busSource.on('event', (ev) => {
+    if (startedListener || !busSource || typeof busSource.on !== 'function' || !syncGrantsFn) return;
+    startedListener = (ev) => {
       if (ev?.t !== 'bot.updated') return;
       const id = ev?.bot?.id;
       if (id) ensureForBots([id]);
-    });
+    };
+    busSource.on('event', startedListener);
+  }
+
+  function stop() {
+    if (!startedListener || !busSource?.off) return;
+    busSource.off('event', startedListener);
+    startedListener = null;
   }
 
   // 直接把 check 包一层：切面太多，统一入口最不容易漏。
@@ -478,6 +487,6 @@ export function createGrantGate({
     check: checkAndCatchUp,
     consume, add, revoke, list, recentAudit, actionForTool, targetsForTool, lookup,
     currentGeneration: currentGenerationId,
-    ensureForBots, start, setSyncGrants,
+    ensureForBots, start, stop, setSyncGrants,
   };
 }

@@ -293,6 +293,7 @@ export const TOOL_SPECS = Object.freeze({
   // ---------------- net.send
   send_image: { action: ACTION.netSend, target: { kind: 'path', fields: ['path'] } },
   message_bot: { action: ACTION.netSend, readonly: true, coordination: true },
+  dispatch_bot: { action: ACTION.netSend, readonly: true, coordination: true },
   reply_bot: { action: ACTION.netSend, readonly: true, coordination: true },
   announce: { action: ACTION.netSend },
   dispatch_to_department: { action: ACTION.netSend, readonly: true },
@@ -317,6 +318,17 @@ export const TOOL_SPECS = Object.freeze({
   task_report: { action: null, readonly: true, coordination: true },
   task_plan: { action: null, coordination: true },
   task_expert_review: { action: null, readonly: true, coordination: true },
+
+  // ---------------- 贾维斯（主控）对话式系统管家
+  list_automations: { action: null, readonly: true },
+  manage_automation: { action: null },
+  manage_user_profile: { action: null },
+  manage_department: { action: null },
+  manage_knowledge: { action: null },
+  import_local_capabilities: { action: ACTION.mcpAdd },
+  manage_mcp_server: { action: ACTION.mcpAdd },
+  manage_model_group: { action: null },
+  set_policy: { action: null },
 });
 
 // ---------------------------------------------------------------------------
@@ -394,8 +406,10 @@ export const OPAQUE_SCRIPT_TOOLS = Object.freeze(['ego_browser']);
  */
 export const SECURITY_CONFIG_TOOLS = Object.freeze([
   // MCP 库 / 挂载
-  'add_mcp_server', 'update_mcp_server', 'delete_mcp_server',
+  'add_mcp_server', 'manage_mcp_server', 'update_mcp_server', 'delete_mcp_server',
   'import_local_capabilities', 'import_local_mcp',
+  // 模型组 / 路由（含 API Key）
+  'manage_model_group',
   // 策略与规矩
   'set_policy', 'set_department_policy', 'set_room_policy',
   // hook / 命令规则
@@ -440,6 +454,28 @@ export function isIrreversible(action) {
 export function needsTarget(action) {
   const a = ACTIONS[String(action ?? '')];
   return a ? a.needsTarget === true : true;
+}
+
+/**
+ * 主控（贾维斯宿主模式）在非只读模式下唯一仍需弹出确认卡的极高危动作：
+ *   1. `git_destructive`
+ *   2. `manage_mcp_server` 从未启用状态开启（`op === 'enable'` 或 `enabled === true` 且尚未启用）
+ *   3. `import_local_capabilities` 导 MCP 时同时传 `enable: true`
+ */
+export function isJarvisApprovalCall(tool, input = null, { isMcpAlreadyEnabled = null } = {}) {
+  if (tool === 'git_destructive') return true;
+  if (tool === 'manage_mcp_server') {
+    const wantsEnable = input?.op === 'enable' || input?.enabled === true;
+    if (!wantsEnable) return false;
+    if (typeof isMcpAlreadyEnabled === 'function' && isMcpAlreadyEnabled(input)) {
+      return false;
+    }
+    return true;
+  }
+  if (tool === 'import_local_capabilities') {
+    return input?.kind === 'mcp' && input?.enable === true;
+  }
+  return false;
 }
 
 /** 迁移授权给谁能拿：`all` 全给，`chief` 只给主 Bot，`never` 不给。 */

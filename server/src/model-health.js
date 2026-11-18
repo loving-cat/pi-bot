@@ -10,12 +10,11 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { config } from './config.js';
+import { config as defaultConfig } from './config.js';
 import { log } from './util.js';
 import { requestWithProviderLease } from './model-request-lease.js';
 import { providerLeaseScope } from './provider-updates.js';
 
-const FILE = path.join(config.dataDir, 'model-health.json');
 const TTL_MS = 24 * 3600 * 1000;
 
 function textOf(message) {
@@ -31,8 +30,17 @@ function textOf(message) {
 }
 
 export class ModelHealth {
-  constructor(runner, { ttlMs = TTL_MS, autoProbe = config.autoProbe } = {}) {
+  constructor(
+    runner,
+    {
+      ttlMs = TTL_MS,
+      autoProbe = runner?.config?.autoProbe ?? defaultConfig.autoProbe,
+      dataDir = runner?.config?.dataDir ?? defaultConfig.dataDir,
+    } = {},
+  ) {
     this.runner = runner;
+    this.dataDir = dataDir;
+    this.file = path.join(this.dataDir, 'model-health.json');
     /** 探活结果多久算过期（提出来是为了能测：不然要等 24 小时） */
     this.ttlMs = ttlMs;
     /** 过期了要不要自己在后台重探（PI_BOT_PROBE=0 时不探） */
@@ -50,7 +58,7 @@ export class ModelHealth {
 
   load() {
     try {
-      this.results = JSON.parse(fs.readFileSync(FILE, 'utf8')) ?? {};
+      this.results = JSON.parse(fs.readFileSync(this.file, 'utf8')) ?? {};
     } catch {
       this.results = {};
     }
@@ -58,8 +66,8 @@ export class ModelHealth {
 
   save() {
     try {
-      fs.mkdirSync(path.dirname(FILE), { recursive: true });
-      fs.writeFileSync(FILE, JSON.stringify(this.results, null, 2));
+      fs.mkdirSync(path.dirname(this.file), { recursive: true });
+      fs.writeFileSync(this.file, JSON.stringify(this.results, null, 2));
     } catch (err) {
       log('⚠️  写 model-health.json 失败：', err?.message || err);
     }

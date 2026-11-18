@@ -569,4 +569,8 @@ export class ModelGroupStore {
   }
 }
 
-export const modelGroups = new ModelGroupStore();
+export function createModelGroupStore(opts = {}) {
+  return new ModelGroupStore(opts);
+}
+
+export const modelGroups = createModelGroupStore();

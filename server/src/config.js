@@ -1,13 +1,14 @@
 /**
- * pi-bot server 配置。
+ * Orbis server 配置。
  *
- * 全部可用环境变量覆盖；默认使用平台对应的用户数据目录。
+ * 全部可用环境变量覆盖（优先 `ORBIS_*`，兼容 `PI_BOT_*`）；默认使用平台对应的用户数据目录。
  */
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { BRAND_NAME, readBrandEnv } from './brand.js';
 import { migrateLegacyData, migratedWorkspace, repairSessionRefs, SERVER_BOOT } from './data-migration.js';
 
 const pkgRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -30,288 +31,158 @@ function userDataDir() {
   return path.join(base, 'pi-bot', 'data');
 }
 
-/** 本次启动是否执行了数据迁移（未迁移为 null） */
-let migratedFrom = null;
+/**
+ * 构造实例级配置（无模块级全局副作用，供 SDK / 多实例宿主使用）。
+ *
+ * `dataDir` / `workspace` 优先取显式入参，否则读 `env` 或平台用户数据目录。
+ * 只有显式传 `serverBoot: true` 且未指定 `dataDir` 时才做旧目录迁移与修复。
+ */
+export function createConfig(overrides = {}) {
+  const {
+    env = process.env,
+    serverBoot = false,
+    ensureDirs = true,
+    home: overrideHome,
+    dataDir: overrideDataDir,
+    workspace: overrideWorkspace,
+    ...scalarOverrides
+  } = overrides;
 
-const home = process.env.PI_BOT_HOME
-  ? path.resolve(process.env.PI_BOT_HOME)
-  : userDataDir();
+  /** 本次启动是否执行了数据迁移（未迁移为 null） */
+  let migratedFrom = null;
 
-// ⇩ 必须在 store 读 state.json 之前跑（store 在它自己的模块加载时就读）。
-//   迁移和修复都只是文件操作，失败不能挡住启动。
-//
-// ★ 只在「真的要起服务端」时动数据：index.js 在导入 server-main 之前调用 markServerBoot()。
-//   否则任何 import 了 config 的脚本（诊断、维护、一次性检查）都会改写用户的 state.json。
-//   用进程内的标记而不是环境变量：PI_BOT_* 会被子进程继承（见 child-env.js），
-//   bot 的 shell 里再跑一个导入 config 的脚本也会触发。
-const warn = (msg) => console.warn(msg);
-if (globalThis[SERVER_BOOT] === true) {
-  try {
-    if (!process.env.PI_BOT_HOME) {
-      const legacy = path.join(pkgRoot, 'data');
-      if (migrateLegacyData({ legacy, target: home, log: warn }).migrated) migratedFrom = legacy;
+  const home = overrideDataDir
+    ? path.resolve(overrideDataDir)
+    : overrideHome
+      ? path.resolve(overrideHome)
+      : readBrandEnv(env, 'HOME')
+        ? path.resolve(readBrandEnv(env, 'HOME'))
+        : userDataDir();
+
+  // ⇩ 必须在 store 读 state.json 之前跑（store 在它自己的模块加载时就读）。
+  //   迁移和修复都只是文件操作，失败不能挡住启动。
+  //
+  // ★ 只在「真的要起服务端」且未覆盖 dataDir 时动数据：
+  //   index.js 在导入 server-main 之前调用 markServerBoot()。
+  //   否则任何 import 了 config 的脚本（诊断、维护、一次性检查）都会改写用户的 state.json。
+  //   用进程内的标记而不是环境变量：ORBIS_* / PI_BOT_* 会被子进程继承（见 child-env.js），
+  //   bot 的 shell 里再跑一个导入 config 的脚本也会触发。
+  const warn = (msg) => console.warn(msg);
+  if (serverBoot === true && !overrideDataDir) {
+    try {
+      if (!readBrandEnv(env, 'HOME')) {
+        const legacy = path.join(pkgRoot, 'data');
+        if (migrateLegacyData({ legacy, target: home, log: warn }).migrated) migratedFrom = legacy;
+      }
+      // state.json 里指向数据目录之外的会话文件，每次启动改回 <数据目录>/sessions。
+      repairSessionRefs({ dataDir: home, log: warn });
+    } catch (err) {
+      console.warn('[config] 数据迁移/修复失败（继续启动，旧目录未动）：', err?.message || err);
     }
-    // state.json 里指向数据目录之外的会话文件，每次启动改回 <数据目录>/sessions。
-    repairSessionRefs({ dataDir: home, log: warn });
-  } catch (err) {
-    console.warn('[config] 数据迁移/修复失败（继续启动，旧目录未动）：', err?.message || err);
   }
-}
 
-const dataDir = home;
-// 优先级：环境变量 > 迁移时记下的旧工作目录（没复制，继续用）> <数据目录>/workspace
-const workspace = process.env.PI_BOT_WORKSPACE
-  ? path.resolve(process.env.PI_BOT_WORKSPACE)
-  : (migratedWorkspace(home) ?? path.join(home, 'workspace'));
+  const dataDir = home;
+  // 优先级：显式入参 > 环境变量 > 迁移时记下的旧工作目录（没复制，继续用）> <数据目录>/workspace
+  const wsEnv = readBrandEnv(env, 'WORKSPACE');
+  const workspace = overrideWorkspace
+    ? path.resolve(overrideWorkspace)
+    : wsEnv
+      ? path.resolve(wsEnv)
+      : (migratedWorkspace(home) ?? path.join(home, 'workspace'));
 
-for (const dir of [home, dataDir, workspace, path.join(dataDir, 'rooms'), path.join(dataDir, 'sessions')]) {
-  fs.mkdirSync(dir, { recursive: true });
-}
+  if (ensureDirs !== false) {
+    for (const dir of [home, dataDir, workspace, path.join(dataDir, 'rooms'), path.join(dataDir, 'sessions')]) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+  }
 
-const tools = (process.env.PI_BOT_TOOLS || 'read,write,edit,ls,find,grep,bash')
-  .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean);
-
-export const config = {
-  // 服务进程实例：客户端用它隔离旧连接/旧服务回包
-  serverInstanceId: randomUUID(),
-  pkgRoot,
-  home,
-  dataDir,
-  workspace,
-  /** 本次启动是否从旧目录迁移而来（未迁移为 null） */
-  migratedFrom,
-  host: process.env.PI_BOT_HOST || '0.0.0.0',
-  port: Number(process.env.PI_BOT_PORT || 8787),
-  serverName: process.env.PI_BOT_NAME || 'pi-bot',
-  /**
-   * 局域网发现（UDP 广播）：手机端「附近可配对的电脑」靠它。
-   *
-   * 关掉的理由只有一个：不想在这个网络里被看见（会议室/公共 Wi-Fi）。
-   * 关掉后手机仍然能手动填地址配对，只是不再自动出现在列表里。
-   */
-  discoveryEnabled: process.env.PI_BOT_DISCOVERY !== '0',
-  /**
-   * 加密监听（HTTPS + WSS）。默认开。
-   *
-   * 手机走 `https://<局域网IP>:<tlsPort>`：同一个 Wi-Fi 上抓包的人只能看到密文，
-   * token 和聊天内容都不会在空气里裸奔。桌面端仍然连本机 `http://127.0.0.1:port`
-   * （回环没有中间人，也就不必为它维护一张要跟网卡一起重签的证书）。
-   *
-   * 关掉（PI_BOT_TLS=0）只在排障时用 —— 关了之后手机端那条路就是明文，
-   * 客户端会在界面上提示"未加密"。
-   */
-  tlsEnabled: process.env.PI_BOT_TLS !== '0',
-  /** 加密监听的端口（和 HTTP 的 8787 并存） */
-  tlsPort: Number(process.env.PI_BOT_TLS_PORT || 8443),
-  /** 发现应答的 UDP 端口。改两边都要改（App 里硬编码 8788 作为默认探测端口） */
-  discoveryPort: Number(process.env.PI_BOT_DISCOVERY_PORT || 8788),
-  /** 固定 token：设了就跳过配对码（自用/服务器部署方便） */
-  staticToken: process.env.PI_BOT_TOKEN || null,
-  /**
-   * 本机请求免 token。
-   *
-   * 桌面端和服务端在同一台机器上，本机就是主人，默认免 token。
-   * 服务器部署（设了 PI_BOT_TOKEN）时默认关闭：反向代理和服务端在同一台机器上，
-   * 公网请求经代理转发后也是回环地址，免 token 就等于谁都能进。
-   * PI_BOT_TRUST_LOCAL=1 / 0 可以显式打开 / 关闭。
-   */
-  trustLocal: process.env.PI_BOT_TRUST_LOCAL
-    ? process.env.PI_BOT_TRUST_LOCAL === '1'
-    : !process.env.PI_BOT_TOKEN,
-  /**
-   * 额外允许的 Host（逗号分隔，不含端口）。反向代理保留原始 Host 时，
-   * 把你的域名填在这里，否则会被 DNS rebinding 防护拒掉（403 bad host）。
-   */
-  allowedHosts: (process.env.PI_BOT_ALLOWED_HOSTS || '')
+  const tools = (readBrandEnv(env, 'TOOLS') || 'read,write,edit,ls,find,grep,bash')
     .split(',')
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean),
-  /** 形如 provider/model-id；不设则用 pi 的默认模型 */
-  model: process.env.PI_BOT_MODEL || null,
-  thinking: process.env.PI_BOT_THINKING || 'medium',
-  tools,
-  /** 每个房间内存里保留的消息条数（落盘也按此裁剪） */
-  maxMessagesPerRoom: Number(process.env.PI_BOT_MAX_MESSAGES || 500),
-  /**
-   * 启动时后台把所有有凭证的模型探一遍（结果缓存 24h，过期每小时补探）。
-   * 默认开；PI_BOT_PROBE=0 关掉 —— 模型多、按量计费、或者不想一启动就发一堆请求时用。
-   */
-  autoProbe: process.env.PI_BOT_PROBE !== '0',
-  pairTtlMs: Number(process.env.PI_BOT_PAIR_TTL_MS || 10 * 60 * 1000),
-  /**
-   * 收尾复盘：一轮群聊结束后提炼候选经验（只进库，等用户启用才注入）。
-   * 默认开；PI_BOT_LESSON_REFLECT=0 关掉（关掉后零额外调用）。
-   */
-  lessonReflect: process.env.PI_BOT_LESSON_REFLECT !== '0',
-  /**
-   * 跑完后把这一轮产出的交付物（表格/文档/PDF/压缩包）自动发到群里。
-   * 图片一直是自动带的（PI_BOT_AUTO_ATTACH）；这个是给非图片产物的，
-   * PI_BOT_AUTO_ATTACH_FILES=0 关掉。
-   */
-  autoAttachArtifacts: process.env.PI_BOT_AUTO_ATTACH_FILES !== '0',
-  /** bot 跑完一轮后，自动把工作目录里新生成的图片附到消息上 */
-  autoAttachImages: process.env.PI_BOT_AUTO_ATTACH !== '0',
-  /**
-   * 群内派活遇到成员正忙时的最长等待时间（毫秒）。
-   * 超时后放弃等待，避免整轮被单个成员阻塞。
-   */
-  groupBusyWaitMs: Number(process.env.PI_BOT_GROUP_BUSY_WAIT_MS || 120_000),
-  /** 单轮最长多久没动静就算"断了"（毫秒） */
-  heartbeatMs: Number(process.env.PI_BOT_HEARTBEAT_MS || 15_000),
-  /**
-   * 多久没心跳就判为中断（毫秒）。任务中断时要让组长 / 部长级别知晓。
-   *
-   * 定得比较宽（6 分钟）是因为：推理型模型光"想"就能想好几分钟，
-   * 中间一个字节都不吐 —— 那不算断。真正要抓的是"卡死不动了"。
-   */
-  stallMs: Number(process.env.PI_BOT_STALL_MS || 360_000),
-  /**
-   * 部门里单次最多**来回几轮**（对话轮次，不是工具调用次数）。
-   *
-   * 一次 assistant 发言 = 一轮（里面可以带好几个工具调用）。
-   * 按工具调用算的话，模型连查带改跑十几个 bash 就把额度烧光了，活才刚开头。
-   */
-  /** 同时驻留的 agent 会话上限（每个 房间×bot 一个，各自占内存），超出按 LRU 释放 */
-  maxSessions: Number(process.env.PI_BOT_MAX_SESSIONS || 40),
-  /**
-   * 同时**开跑**的 agent 轮次数上限。
-   *
-   * 与 maxSessions 是两件事：那个管"驻留多少份上下文"，这个管"同时有几路在真跑"。
-   * 一个部门 @all 会同时开 N 路模型请求，N 大时宿主机被吃满、所有请求互相拖慢。
-   *
-   * **默认 0 = 不限**，行为和以前完全一致；想保护宿主机就填个数。
-   */
-  maxConcurrentRuns: Number(process.env.PI_BOT_MAX_CONCURRENT_RUNS || 0),
-  /** 给人额外保留的槽位（人发起的轮次用得上，不被机器挤掉） */
-  runSlotReserve: Number(process.env.PI_BOT_RUN_SLOT_RESERVE ?? 1),
-  /**
-   * 等槽位的硬超时（毫秒）。0 = 一直等。
-   *
-   * 不为 0 是为了让"排到天荒地老"变成一句看得见的结论：
-   * 超时就如实回报并在群里留痕，而不是让用户干等。
-   */
-  runSlotWaitMs: Number(process.env.PI_BOT_RUN_SLOT_WAIT_MS || 0),
-  /** 后台整理并发上限，默认 1；0 表示不限。 */
-  backgroundConcurrency: Number(process.env.PI_BOT_BACKGROUND_CONCURRENCY ?? 1),
-  /**
-   * 等后台槽位的硬超时（毫秒）。0 = 一直等。
-   *
-   * 默认最多等 30 秒；依赖压缩的前台任务还受本轮剩余时间约束。
-   */
-  backgroundSlotWaitMs: Number(process.env.PI_BOT_BACKGROUND_SLOT_WAIT_MS ?? 30_000),
-  /**
-   * 主控的内置文件工具。
-   *
-   * ★ 默认和成员一样 —— **能自己动手**。
-   *
-   *   原来这里是只读（`read,ls,grep,find`），理由是“它是调度者，不是干活的人”。
-   *   实测下来这条规则把一个只会拼写错的任务也变成了“造人 → 建部门 → 派活
-   *   → 等结果”四步，而字快不了多少。产品的目标是帮懒人推进任务，
-   *   不是让用户当调度中心。
-   *
-   *   行为上的区别靠提示词管（先派后干），不靠“能力上没有”。
-   *   想改回只读可以用环境变量覆盖。
-   */
-  chiefTools: (process.env.PI_BOT_CHIEF_TOOLS || 'read,write,edit,ls,find,grep,bash').split(',').map((s) => s.trim()).filter(Boolean),
-  /**
-   * 多人部门负责人的内置文件工具。
-   *
-   * ★ 同样默认和成员一样（能自己动手）。原来只给只读，结果是一旦部门
-   *   有两个以上的人，负责人就完全失去了执行能力 —— 用户对它说“你直接改吧”，
-   *   它也只能再派一次。现在能自己上，但默认仍然先派（见 group-prompt 的规矩）。
-   */
-  leadTools: (process.env.PI_BOT_LEAD_TOOLS || 'read,write,edit,ls,find,grep,bash').split(',').map((s) => s.trim()).filter(Boolean),
-  /**
-   * 联网搜索用什么接口。
-   * 不配也能用 —— 默认走搜索引擎的 HTML 端点（不需要 key）。
-   * 想更稳/更干净就填一个正式接口，URL 里用 {q} 占位：
-   *   PI_BOT_SEARCH_URL=https://api.search.brave.com/res/v1/web/search?q={q}&count=8
-   * 配了 key 就带上 Authorization: Bearer。
-   */
-  searchUrl: process.env.PI_BOT_SEARCH_URL || null,
-  searchKey: process.env.PI_BOT_SEARCH_KEY || null,
-  /**
-   * 上下文压缩的全局默认（null = 用 pi 自带的默认：reserve 16384 / keepRecent 20000）。
-   * 每个 bot 还能各自覆盖（App 的设置里改），所以这里只是"没单独设过时用多少"。
-   * 触发条件：contextTokens > contextWindow - reserveTokens。
-   */
-  reserveTokens: Number(process.env.PI_BOT_RESERVE_TOKENS || 0) || null,
-  /**
-   * 压缩时保留多少 token 的原文（默认 60000，pi 自带默认是 20000）。
-   *
-   * 为什么调高：压缩会把老对话总结成摘要，而摘要必然丢细节 ——
-   * 实测 pi 的摘要提示词虽要求"保留精确路径/函数名/错误信息"，
-   * 但工具结果超过 2000 字符的部分在进摘要前就被截掉了（pi 的
-   * TOOL_RESULT_MAX_CHARS），实测一个群 bot 的会话里 84% 是工具结果。
-   *
-   * 保留 6 万而不是 2 万：压缩后多留 4 万原文，代价是上下文大一点，
-   * 换来的是"最近做的事还能原样看到"——这比摘要里的概括可靠得多。
-   */
-  keepRecentTokens: Number(process.env.PI_BOT_KEEP_RECENT_TOKENS || 0) || 60_000,
-  /**
-   * 主动压缩阈值（0-1）。到这条线就先压缩成摘要，不等 pi 的 98% 触发线。
-   *
-   * ## 为什么自己做这一层
-   *
-   * pi 默认到 contextWindow - reserveTokens（1M 窗口下约 98%）才压，
-   * 压完只剩几个点余量 —— 群聊里读一份数据就回到 100%，又压，循环。
-   *
-   * ## 为什么是 0.6 而不是 0.8 或 0.4
-   *
-   *   0.8 —— 实测**几乎不会触发**：主控会话积到 40.8 万 token
-   *          （1M 窗口的 40.8%）就再也没涨过，离 80 万还差 39 万。
-   *          等于不压缩，白留着 40 万上下文每轮重算。
-   *
-   *   0.4 —— 能压，但触发得比需要更早。实测主控每轮上下文增长：
-   *          中位 390 / 平均 1,248 / P90 3,550 token。
-   *          压到 40% 后要涨回触发线约 302 轮，而压到 60% 约 461 轮。
-   *          压缩必然丢细节（工具结果超 2000 字符的部分进不了摘要），
-   *          所以能晚压就晚压。
-   *
-   *   0.6 —— 60 万 token 触发。真正撑不住之前压一次，
-   *          又不会在还很宽裕的时候就把细节收走。
-   */
-  compactAtPercent: Number(process.env.PI_BOT_COMPACT_AT_PERCENT || 0.6),
-  /** 关掉自动压缩（PI_BOT_AUTO_COMPACT=0）。关掉之后长会话会直接撞上下文上限 */
-  autoCompact: process.env.PI_BOT_AUTO_COMPACT !== '0',
-  /**
-   * 记忆摘要在已有摘要上递归更新（PI_BOT_MEMORY_RECURSIVE=0 关闭）。
-   *
-   * 开（默认）：把旧摘要一起给模型，让它增量并入新信息 —— 上一版里
-   *             仍然成立的结论不会被重写丢掉。
-   * 关：回到旧行为，只把当前窗口的对话交给模型重新总结一遍。
-   */
-  memoryRecursive: process.env.PI_BOT_MEMORY_RECURSIVE !== '0',
-  /** 单轮 agent 运行的硬超时（毫秒），0 = 不限 */
-  runTimeoutMs: Number(process.env.PI_BOT_RUN_TIMEOUT_MS || 10 * 60 * 1000),
-  hostname: os.hostname(),
-  /**
-   * 用户自己叫什么。
-   *
-   * 为什么要这个东西：bot 需要知道**在跟谁说话** —— 不然它只能从人设里猜，
-   * 或者干脆不称呼你。而且在群里，它得知道"哪条消息是人发的"。
-   * bot 是在跟你汇报工作，称呼对了，消息读起来才像团队而不是日志。
-   *
-   * 默认取系统用户名，用户可以在设置里改（改的是 store 那份，不是这里）。
-   */
-  userName: process.env.PI_BOT_USER_NAME || os.userInfo().username || '我',
-};
+    .map((s) => s.trim())
+    .filter(Boolean);
 
-export function describeConfig() {
+  const built = {
+    // 服务进程实例：客户端用它隔离旧连接/旧服务回包
+    serverInstanceId: randomUUID(),
+    pkgRoot,
+    home,
+    dataDir,
+    workspace,
+    /** 本次启动是否从旧目录迁移而来（未迁移为 null） */
+    migratedFrom,
+    host: readBrandEnv(env, 'HOST') || '0.0.0.0',
+    port: Number(readBrandEnv(env, 'PORT') || 8787),
+    serverName: readBrandEnv(env, 'NAME') || BRAND_NAME,
+    discoveryEnabled: readBrandEnv(env, 'DISCOVERY') !== '0',
+    tlsEnabled: readBrandEnv(env, 'TLS') !== '0',
+    tlsPort: Number(readBrandEnv(env, 'TLS_PORT') || 8443),
+    discoveryPort: Number(readBrandEnv(env, 'DISCOVERY_PORT') || 8788),
+    staticToken: readBrandEnv(env, 'TOKEN') || null,
+    trustLocal: readBrandEnv(env, 'TRUST_LOCAL')
+      ? readBrandEnv(env, 'TRUST_LOCAL') === '1'
+      : !readBrandEnv(env, 'TOKEN'),
+    allowedHosts: (readBrandEnv(env, 'ALLOWED_HOSTS') || '')
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean),
+    model: readBrandEnv(env, 'MODEL') || null,
+    thinking: readBrandEnv(env, 'THINKING') || 'medium',
+    tools,
+    maxMessagesPerRoom: Number(readBrandEnv(env, 'MAX_MESSAGES') || 500),
+    autoProbe: readBrandEnv(env, 'PROBE') !== '0',
+    pairTtlMs: Number(readBrandEnv(env, 'PAIR_TTL_MS') || 10 * 60 * 1000),
+    lessonReflect: readBrandEnv(env, 'LESSON_REFLECT') !== '0',
+    autoAttachArtifacts: readBrandEnv(env, 'AUTO_ATTACH_FILES') !== '0',
+    autoAttachImages: readBrandEnv(env, 'AUTO_ATTACH') !== '0',
+    groupBusyWaitMs: Number(readBrandEnv(env, 'GROUP_BUSY_WAIT_MS') || 120_000),
+    heartbeatMs: Number(readBrandEnv(env, 'HEARTBEAT_MS') || 15_000),
+    stallMs: Number(readBrandEnv(env, 'STALL_MS') || 360_000),
+    maxSessions: Number(readBrandEnv(env, 'MAX_SESSIONS') || 40),
+    maxConcurrentRuns: Number(readBrandEnv(env, 'MAX_CONCURRENT_RUNS') || 0),
+    runSlotReserve: Number(readBrandEnv(env, 'RUN_SLOT_RESERVE') ?? 1),
+    runSlotWaitMs: Number(readBrandEnv(env, 'RUN_SLOT_WAIT_MS') || 0),
+    backgroundConcurrency: Number(readBrandEnv(env, 'BACKGROUND_CONCURRENCY') ?? 1),
+    backgroundSlotWaitMs: Number(readBrandEnv(env, 'BACKGROUND_SLOT_WAIT_MS') ?? 30_000),
+    chiefTools: (readBrandEnv(env, 'CHIEF_TOOLS') || 'read,write,edit,ls,find,grep,bash').split(',').map((s) => s.trim()).filter(Boolean),
+    leadTools: (readBrandEnv(env, 'LEAD_TOOLS') || 'read,write,edit,ls,find,grep,bash').split(',').map((s) => s.trim()).filter(Boolean),
+    searchUrl: readBrandEnv(env, 'SEARCH_URL') || null,
+    searchKey: readBrandEnv(env, 'SEARCH_KEY') || null,
+    reserveTokens: Number(readBrandEnv(env, 'RESERVE_TOKENS') || 0) || null,
+    keepRecentTokens: Number(readBrandEnv(env, 'KEEP_RECENT_TOKENS') || 0) || 60_000,
+    compactAtPercent: Number(readBrandEnv(env, 'COMPACT_AT_PERCENT') || 0.6),
+    autoCompact: readBrandEnv(env, 'AUTO_COMPACT') !== '0',
+    fullDuplex: readBrandEnv(env, 'FULL_DUPLEX') !== '0',
+    jarvisMode: readBrandEnv(env, 'JARVIS') !== '0',
+    memoryRecursive: readBrandEnv(env, 'MEMORY_RECURSIVE') !== '0',
+    runTimeoutMs: Number(readBrandEnv(env, 'RUN_TIMEOUT_MS') || 10 * 60 * 1000),
+    hostname: os.hostname(),
+    userName: readBrandEnv(env, 'USER_NAME') || os.userInfo().username || '我',
+  };
+
+  for (const [k, v] of Object.entries(scalarOverrides)) {
+    if (v !== undefined) built[k] = v;
+  }
+  return built;
+}
+
+export const config = createConfig({
+  env: process.env,
+  serverBoot: globalThis[SERVER_BOOT] === true,
+});
+
+export function describeConfig(cfg = config) {
   return {
-    serverName: config.serverName,
-    port: config.port,
-    home: config.home,
-    dataDir: config.dataDir,
-    migratedFrom: config.migratedFrom,
-    workspace: config.workspace,
-    model: config.model ?? '(pi 默认)',
-    thinking: config.thinking,
-    tools: config.tools.join(','),
-    auth: config.staticToken ? 'static-token' : 'pairing-code',
-    trustLocal: config.trustLocal,
+    serverName: cfg.serverName,
+    port: cfg.port,
+    home: cfg.home,
+    dataDir: cfg.dataDir,
+    migratedFrom: cfg.migratedFrom,
+    workspace: cfg.workspace,
+    model: cfg.model ?? '(pi 默认)',
+    thinking: cfg.thinking,
+    tools: cfg.tools.join(','),
+    auth: cfg.staticToken ? 'static-token' : 'pairing-code',
+    trustLocal: cfg.trustLocal,
   };
 }
 
@@ -331,10 +202,10 @@ export function describeConfig() {
 export function resourceSwitches(env = process.env) {
   const on = (v) => v === '1';
   return {
-    noExtensions: !on(env.PI_BOT_EXTENSIONS),
-    noMcp: !on(env.PI_BOT_MCP),
-    noSkills: !on(env.PI_BOT_SKILLS),
-    noPromptTemplates: !on(env.PI_BOT_SKILLS),
+    noExtensions: !on(readBrandEnv(env, 'EXTENSIONS')),
+    noMcp: !on(readBrandEnv(env, 'MCP')),
+    noSkills: !on(readBrandEnv(env, 'SKILLS')),
+    noPromptTemplates: !on(readBrandEnv(env, 'SKILLS')),
   };
 }
 

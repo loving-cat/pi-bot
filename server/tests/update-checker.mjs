@@ -84,14 +84,19 @@ const okRelease = {
 
 await test('默认地址指向 GitHub 最新发布', () => {
   const { url } = updateEndpoint({});
-  assert.match(url, /api\.github\.com\/repos\/loving-cat\/pi-bot\/releases\/latest/);
+  assert.match(url, /api\.github\.com\/repos\/orbis-ai\/orbis\/releases\/latest/);
 });
 
-await test('可用环境变量覆盖地址', () => {
-  assert.equal(updateEndpoint({ PI_BOT_UPDATE_URL: 'https://mirror/x' }).url, 'https://mirror/x');
+await test('可用环境变量覆盖地址（ORBIS_* 与兼容 PI_BOT_*）', () => {
+  assert.equal(updateEndpoint({ ORBIS_UPDATE_URL: 'https://mirror/x' }).url, 'https://mirror/x');
+  assert.equal(updateEndpoint({ PI_BOT_UPDATE_URL: 'https://mirror/legacy' }).url, 'https://mirror/legacy');
   assert.match(
-    updateEndpoint({ PI_BOT_UPDATE_REPO: 'a/b' }).url,
+    updateEndpoint({ ORBIS_UPDATE_REPO: 'a/b' }).url,
     /repos\/a\/b\/releases\/latest/,
+  );
+  assert.match(
+    updateEndpoint({ PI_BOT_UPDATE_REPO: 'c/d' }).url,
+    /repos\/c\/d\/releases\/latest/,
   );
 });
 

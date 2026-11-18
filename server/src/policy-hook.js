@@ -8,12 +8,14 @@
  */
 import { noteGrant } from './grant-context.js';
 import crypto from 'node:crypto';
-import { store } from './store.js';
+import { config as defaultConfig } from './config.js';
+import { ACTION } from './grants.js';
+import { store as defaultStore } from './store.js';
 import { verdictForTool } from './shell-policy.js';
 import { log } from './util.js';
-import { bus } from './bus.js';
+import { bus as defaultBus } from './bus.js';
 import { loadHooks, applyHooks } from './hooks.js';
-import { readonlyBlockReason, opaqueScriptBlockReason, MUTATING_TOOLS, isSecurityConfigCall } from './role-tools.js';
+import { readonlyBlockReason, opaqueScriptBlockReason, MUTATING_TOOLS, isSecurityConfigCall, isJarvisApprovalCall } from './role-tools.js';
 import { isExternalMcpTool, externalApprovalSummary, mcpAccessSignature } from './mcp-access.js';
 import { mcpApprovalSummary } from './mcp-approval-summary.js';
 
@@ -95,22 +97,22 @@ ${JSON.stringify(input ?? {})}${scope ? `\n${JSON.stringify(scope)}` : ''}`)
  * 用途：挂了 MCP 的 bot，shell 类工具要逐次审批 —— 否则模型可以用 bash
  * 去起同一个 MCP（或任何别的程序），绕过 MCP 那一层的管控。
  */
-function botHasMcp(bot) {
+function botHasMcp(bot, st = defaultStore) {
   try {
     if (!bot?.id) return false;
     // 解析出真正会连上的服务（enabled 且被这个 bot 选中）
-    return store.mcpServersFor(bot.id).length > 0;
+    return st.mcpServersFor(bot.id).length > 0;
   } catch {
     return false;
   }
 }
 
-function mcpServerSecretKeys(tool) {
+function mcpServerSecretKeys(tool, st = defaultStore) {
   try {
     const parts = /^mcp__([A-Za-z0-9_-]{1,80})__/.exec(String(tool ?? ''));
     if (!parts) return [];
     const name = parts[1].toLowerCase();
-    const record = store.state.mcpServers?.find(
+    const record = st.state.mcpServers?.find(
       (s) => String(s?.name ?? '').toLowerCase() === name,
     );
     return Array.isArray(record?.credentialKeys)
@@ -123,6 +125,10 @@ function mcpServerSecretKeys(tool) {
 
 export function createPolicyExtension({
   roomId, bot, onBlocked = () => {}, managedContextOf = null, grantGate = null,
+  talkLane = false,
+  config: scopedConfig = null,
+  store: scopedStore = null,
+  bus: scopedBus = null,
   /**
    * 这个会话的执行模式（规格 §8）。由 `session-factory` 算好传进来 ——
    * 那里才知道命令工具换没换成沙箱版。
@@ -136,6 +142,9 @@ export function createPolicyExtension({
    */
   mode = null,
 }) {
+  const config = scopedConfig ?? defaultConfig;
+  const store = scopedStore ?? defaultStore;
+  const bus = scopedBus ?? defaultBus;
   /** 通知观察者：这次调用被某条 pending 审批挡住了。 */
   function notifyBlocked(approval, created) {
     if (typeof onBlocked !== 'function') return;
@@ -168,7 +177,9 @@ export function createPolicyExtension({
         // ★ 只读：默认拒绝。审批授权、命令白名单和会话里残留的工具都不能放行。
         const readonlyReason = readonlyBlockReason(policy, tool);
         if (readonlyReason) return { block: true, reason: readonlyReason };
-        const scriptReason = opaqueScriptBlockReason(policy, tool);
+        // 主控（贾维斯宿主模式）：非只读、非 Talk 旁路时享受宿主最高执行权限
+        const isJarvisHost = !talkLane && currentBot?.role === 'main' && config.jarvisMode !== false && policy?.dangerous !== 'deny';
+        const scriptReason = isJarvisHost ? null : opaqueScriptBlockReason(policy, tool);
         if (scriptReason) return { block: true, reason: scriptReason };
 
         // ★ 授权网关（P0-1）：**在执行边界逐次核**。
@@ -208,16 +219,35 @@ export function createPolicyExtension({
               });
             }
             if (!verdict.ok) {
-              log(
-                `⛔ ${currentBot?.name ?? bot?.id ?? 'bot'} 的动作被授权网关拒绝（${verdict.code}）` +
-                  `${mode ? `〔${mode} 模式〕` : ''}：` +
-                  `${tool} —— ${verdict.text}`,
-              );
-              return {
-                block: true,
-                reason: `这次操作没有被授权：${verdict.text}（${verdict.code}）。` +
-                  '不要换工具或换编码重试；如果确实需要，向用户说明要新增什么权限。',
-              };
+              if (isJarvisHost && mapped.action !== ACTION.gitDestructive && verdict.code !== 'revoked') {
+                noteGrant({
+                  botId: subject.botId,
+                  grantId: 'jarvis-host',
+                  action: mapped.action,
+                });
+                try {
+                  store.addAdminAction({
+                    action: mapped.action,
+                    level: 'defense',
+                    label: `主控宿主执行：${tool}`,
+                    method: 'TOOL',
+                    path: String(tool ?? ''),
+                    deviceId: subject.botId || 'chief',
+                    deviceName: currentBot?.name ?? '主控',
+                  });
+                } catch {}
+              } else {
+                log(
+                  `⛔ ${currentBot?.name ?? bot?.id ?? 'bot'} 的动作被授权网关拒绝（${verdict.code}）` +
+                    `${mode ? `〔${mode} 模式〕` : ''}：` +
+                    `${tool} —— ${verdict.text}`,
+                );
+                return {
+                  block: true,
+                  reason: `这次操作没有被授权：${verdict.text}（${verdict.code}）。` +
+                    '不要换工具或换编码重试；如果确实需要，向用户说明要新增什么权限。',
+                };
+              }
             }
           }
         }
@@ -232,8 +262,9 @@ export function createPolicyExtension({
           }
         }
 
-        // 命令规矩在审批之前：批准、临时放行都不能绕过黑名单/白名单。
-        const commandVerdict = verdictForTool(tool, event?.input, policy);
+        // 命令规矩在审批之前：批准、临时放行都不能绕过黑名单/白名单（主控豁免成员白名单）。
+        const commandPolicy = isJarvisHost ? { ...policy, allowCommands: [] } : policy;
+        const commandVerdict = verdictForTool(tool, event?.input, commandPolicy);
         if (commandVerdict && !commandVerdict.allowed) {
           const command = tool === 'write_stdin'
             ? (event?.input?.chars ?? '')
@@ -276,7 +307,7 @@ export function createPolicyExtension({
         //   没挂 MCP 的 bot 行为保持不变（allow 档不弹卡）。
         //   挂 MCP 时，**所有能执行/注入命令的工具**都逐次审批 ——
         //   包括 write_stdin（往已批准的后台 shell 里灌命令）。
-        const shellWithMcp = !externalMcp && SHELL_LIKE.has(tool) && botHasMcp(currentBot);
+        const shellWithMcp = !externalMcp && SHELL_LIKE.has(tool) && botHasMcp(currentBot, store);
 
         // ★ 改安全配置本身：有些工具**不论档位**都必须逐次审批。
         //
@@ -285,13 +316,23 @@ export function createPolicyExtension({
         //   新执行入口。这条链上每一步都不该让模型自己走完：
         //   它不是"做活"，是**改防线**。
         const securityConfig = isSecurityConfigCall(tool, event?.input);
+        const jarvisNeedsApproval = isJarvisHost && isJarvisApprovalCall(tool, event?.input, {
+          isMcpAlreadyEnabled: (inp) => {
+            const target = String(inp?.id ?? inp?.name ?? '').trim().toLowerCase();
+            if (!target) return false;
+            return store.mcpLibrary().some((s) =>
+              (s.id.toLowerCase() === target || s.name.toLowerCase() === target) && s.enabled === true);
+          },
+        });
 
         // ---- 第三档：每一次"会动手"的调用都要用户点批准 ----
         if (
-          securityConfig ||
-          externalMcp ||
-          shellWithMcp ||
-          (policy.dangerous === 'ask' && (MUTATING.has(tool) || isExternalMcpTool(tool)))
+          isJarvisHost
+            ? jarvisNeedsApproval
+            : (securityConfig ||
+               externalMcp ||
+               shellWithMcp ||
+               (policy.dangerous === 'ask' && (MUTATING.has(tool) || isExternalMcpTool(tool))))
         ) {
           const capabilityRevision = isExternalMcpTool(tool)
             ? mcpAccessSignature(currentBot, store.mcpLibrary()) : null;
@@ -310,7 +351,7 @@ export function createPolicyExtension({
           //     · securityConfig  改策略/挂 MCP —— 改的是防线本身
           //     · externalMcp     外部工具 —— 每次调用的实际效果都可能完全不同
           //     · shellWithMcp    bot 挂了 MCP 时的 shell —— 可以用它绕过 MCP 管控
-          if (!securityConfig && !externalMcp && !shellWithMcp && !managed &&
+          if (!securityConfig && !externalMcp && !shellWithMcp && !jarvisNeedsApproval && !managed &&
               store.hasApprovalGrant({ roomId, botId: bot?.id ?? null, capabilityRevision })) return undefined;
           const scope = capabilityRevision ? { roomId, botId: bot?.id ?? null, capabilityRevision } : null;
           const hash = approvalHash(tool, event?.input, scope);
@@ -339,7 +380,7 @@ export function createPolicyExtension({
           // MCP：把那个 server 已存的 env/header 键名交给摘要器，
           // 这样"模型把凭据当普通参数传"的情况也能遮住（光看键名判断不出来）。
           const mcpOpts = isExternalMcpTool(tool)
-            ? { secretKeys: mcpServerSecretKeys(tool) }
+            ? { secretKeys: mcpServerSecretKeys(tool, store) }
             : null;
           const summary = summarizeToolCall(tool, event?.input, mcpOpts);
           const approval = store.createApproval({

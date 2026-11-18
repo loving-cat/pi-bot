@@ -15,13 +15,13 @@ export const EMPTY_MENU_HINT = [
 ].join('\n');
 
 /** 当前可选的模型（每项：alias / label / use / slugs / tier） */
-export function menuEntries() {
-  return modelGroups.menuEntries();
+export function menuEntries(mg = modelGroups) {
+  return mg.menuEntries();
 }
 
 /** 菜单里所有合法 slug（去重） */
-export function menuSlugs() {
-  return [...new Set(menuEntries().flatMap((m) => m.slugs))];
+export function menuSlugs(mg = modelGroups) {
+  return [...new Set(menuEntries(mg).flatMap((m) => m.slugs))];
 }
 
 /** 完整标识优先；别名和裸后缀必须唯一，歧义不按目录顺序猜测。 */
@@ -93,13 +93,12 @@ export function renderMenu(entries, health) {
 }
 
 /** 菜单渲染成给主控看的文本 */
-export function menuText(health) {
-  return renderMenu(menuEntries(), health);
+export function menuText(health, entries = menuEntries()) {
+  return renderMenu(entries, health);
 }
 
 /** 默认模型：菜单里第一个探活可用的；都没有就退回菜单第一个 */
-export function defaultMenuSlug(health) {
-  const entries = menuEntries();
+export function defaultMenuSlug(health, entries = menuEntries()) {
   for (const entry of entries) {
     const r = resolveEntry(entry, health);
     if (r?.status === 'verified') return r.slug;
@@ -112,7 +111,7 @@ export function defaultMenuSlug(health) {
   return first ? (resolveEntry(first, health)?.slug ?? null) : null;
 }
 
-export function logMenu(health) {
+export function logMenu(health, entries = menuEntries()) {
   log('模型菜单（来自你自己配的模型组）：');
-  for (const line of menuText(health).split('\n')) log('   ' + line);
+  for (const line of menuText(health, entries).split('\n')) log('   ' + line);
 }

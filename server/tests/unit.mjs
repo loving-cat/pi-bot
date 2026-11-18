@@ -3,6 +3,7 @@
  *   node tests/unit.mjs
  */
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 
@@ -1632,7 +1633,7 @@ await test('拼输入：附件拿不到元数据就跳过，不炸', async () =>
 });
 
 await test('★ 自动附图：截图只认工作目录里的图，跳过 node_modules 和点目录', () => {
-  const root = 'D:\pi-bot\server\data\_unit_test\iwatch';
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'orbis-iwatch-'));
   fs.rmSync(root, { recursive: true, force: true });
   fs.mkdirSync(path.join(root, 'out'), { recursive: true });
   fs.mkdirSync(path.join(root, 'node_modules'), { recursive: true });
@@ -1649,7 +1650,7 @@ await test('★ 自动附图：截图只认工作目录里的图，跳过 node_m
 });
 
 await test('★ 自动附图：刚写出来的算新，没动过的算旧', () => {
-  const root = 'D:\pi-bot\server\data\_unit_test\iwatch2';
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'orbis-iwatch2-'));
   fs.rmSync(root, { recursive: true, force: true });
   fs.mkdirSync(root, { recursive: true });
   const oldFile = path.join(root, 'old.png');
@@ -1668,7 +1669,7 @@ await test('★ 自动附图：刚写出来的算新，没动过的算旧', () =
 });
 
 await test('自动附图：单张保存失败不影响其它张', () => {
-  const root = 'D:\pi-bot\server\data\_unit_test\iwatch3';
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'orbis-iwatch3-'));
   fs.rmSync(root, { recursive: true, force: true });
   fs.mkdirSync(root, { recursive: true });
   fs.writeFileSync(path.join(root, 'a.png'), 'x');

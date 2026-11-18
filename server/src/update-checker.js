@@ -7,11 +7,12 @@
  *   · 任何失败都返回 `{ok:false, reason}` 而不是抛错：检查更新失败不该影响主功能；
  *   · 只读不写，不下载、不安装（下载由 App 侧按用户确认后自己去做）。
  *
- * 环境变量：
- *   PI_BOT_UPDATE_URL   完整 URL（默认 GitHub API 的 latest release）
- *   PI_BOT_UPDATE_REPO  仓库 `owner/name`（拼默认 API 地址用）
+ * 环境变量（优先 `ORBIS_*`，兼容 `PI_BOT_*`）：
+ *   ORBIS_UPDATE_URL    完整 URL（默认 GitHub API 的 latest release）
+ *   ORBIS_UPDATE_REPO   仓库 `owner/name`（拼默认 API 地址用）
  */
 import { VERSION } from './version.js';
+import { DEFAULT_UPDATE_REPO, readBrandEnv } from './brand.js';
 import { buildUpdateInfo, pickAssetFor } from './update-check.js';
 import { publicFetch } from './net-guard.js';
 
@@ -21,7 +22,7 @@ const CACHE_MS = 30 * 60 * 1000;
 /** 单次请求超时（毫秒） */
 const TIMEOUT_MS = 8000;
 
-const DEFAULT_REPO = 'loving-cat/pi-bot';
+const DEFAULT_REPO = DEFAULT_UPDATE_REPO;
 
 /** @type {{at:number, info:object, source:string}|null} */
 let cache = null;
@@ -31,9 +32,9 @@ let cache = null;
  * @returns {{url:string, source:string}}
  */
 export function updateEndpoint(env = process.env) {
-  const custom = String(env.PI_BOT_UPDATE_URL ?? '').trim();
+  const custom = String(readBrandEnv(env, 'UPDATE_URL') ?? '').trim();
   if (custom) return { url: custom, source: 'env' };
-  const repo = String(env.PI_BOT_UPDATE_REPO ?? '').trim() || DEFAULT_REPO;
+  const repo = String(readBrandEnv(env, 'UPDATE_REPO') ?? '').trim() || DEFAULT_REPO;
   return {
     url: `https://api.github.com/repos/${repo}/releases/latest`,
     source: `github:${repo}`,
@@ -127,9 +128,9 @@ function decodeEntities(s) {
  * atom feed 的地址（跟 API 地址同源，同样可被环境变量覆盖）。
  */
 export function atomEndpoint(env = process.env) {
-  const custom = String(env.PI_BOT_UPDATE_URL ?? '').trim();
+  const custom = String(readBrandEnv(env, 'UPDATE_URL') ?? '').trim();
   if (custom) return null; // 自定义地址按原样用，不派生 atom
-  const repo = String(env.PI_BOT_UPDATE_REPO ?? '').trim() || DEFAULT_REPO;
+  const repo = String(readBrandEnv(env, 'UPDATE_REPO') ?? '').trim() || DEFAULT_REPO;
   return `https://github.com/${repo}/releases.atom`;
 }
 
@@ -151,7 +152,7 @@ async function fetchAssetsFromApi(apiUrl, fetchImpl) {
         signal: controller.signal,
         headers: {
           accept: 'application/vnd.github+json',
-          'user-agent': `pi-bot/${VERSION}`,
+          'user-agent': `orbis/${VERSION}`,
         },
       },
       { fetchImpl: typeof fetchImpl === 'function' ? fetchImpl : undefined, scope: 'user-config' },
@@ -186,7 +187,7 @@ async function fetchAtom(atomUrl, fetchImpl) {
         signal: controller.signal,
         headers: {
           accept: 'application/atom+xml, application/xml;q=0.9, */*;q=0.8',
-          'user-agent': `pi-bot/${VERSION}`,
+          'user-agent': `orbis/${VERSION}`,
         },
       },
       { fetchImpl: typeof fetchImpl === 'function' ? fetchImpl : undefined, scope: 'user-config' },
@@ -295,7 +296,7 @@ export async function checkForUpdate({
         signal: controller.signal,
         headers: {
           accept: 'application/vnd.github+json',
-          'user-agent': `pi-bot/${VERSION}`,
+          'user-agent': `orbis/${VERSION}`,
         },
       },
       { fetchImpl: typeof fetchImpl === 'function' ? fetchImpl : undefined, scope: 'user-config' },

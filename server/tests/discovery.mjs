@@ -45,7 +45,7 @@ function probe(port, payload, { timeout = 700 } = {}) {
   });
 }
 
-const announce = { name: '我的 Mac', hostname: 'xls-mbp', version: '1.4.1', port: 8787, pairing: true };
+const announce = { name: '我的 Mac', hostname: 'studio-mbp', version: '1.4.1', port: 8787, pairing: true };
 
 await test('探针格式：只认 {"t":"pibot.discover"}', () => {
   assert.equal(isProbe(Buffer.from(JSON.stringify({ t: PROBE_TYPE }))), true);
@@ -60,7 +60,7 @@ await test('应答字段：名字/机器名/版本/地址都在，且不含配�
   assert.equal(a.t, ANNOUNCE_TYPE);
   assert.equal(a.v, PROTOCOL_VERSION);
   assert.equal(a.name, '我的 Mac');
-  assert.equal(a.hostname, 'xls-mbp');
+  assert.equal(a.hostname, 'studio-mbp');
   assert.equal(a.version, '1.4.1');
   assert.equal(a.port, 8787);
   // urls 由网卡实际地址算出来，不靠传参：每一条都得是 http://<ip>:<port>

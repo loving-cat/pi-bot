@@ -13,21 +13,19 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { config } from './config.js';
-import { bus } from './bus.js';
+import { config as defaultConfig } from './config.js';
+import { bus as defaultBus } from './bus.js';
+import { DEFAULT_MAIN_BOT_EMOJI, DEFAULT_MAIN_BOT_NAME } from './brand.js';
 import { newId, now, readJson, writeJsonAtomic, insertionPoint, log } from './util.js';
 import { normalizeRules } from './shell-policy.js';
 import * as preferencesDomain from './preferences.js';
 import { sanitizeMemoryText } from './memory-sanitize.js';
+import { redactChatSecrets } from './chat-redact.js';
 import { TaskRunStore } from './tasks/task-run-store.js';
 import { channelSuffices, channelSufficesFor } from './confirm.js';
 import { normalizeOverride, checkOverrideBounds, resolve as resolveOverride } from './overrides.js';
 import { defaultWindowsInstanceDir, teardownWindowsInstance } from './sandbox-win.js';
 
-const STATE_FILE = path.join(config.dataDir, 'state.json');
-const ROOMS_DIR = path.join(config.dataDir, 'rooms');
-// ★ 持续任务独立存放：与任务板隔离，不受 500 条裁剪影响（批次 02）
-const TASKRUNS_DIR = path.join(config.dataDir, 'taskruns');
 const STATE_VERSION = 2;
 
 /** 正整数字符串/数字 → 正整数；其他（含空、null、负数、小数）→ null（= 用上层默认） */
@@ -359,8 +357,19 @@ export class Store {
     }
   }
 
-  constructor() {
-    const saved = readJson(STATE_FILE, null);
+  constructor(opts = {}) {
+    this.config = opts.config ?? defaultConfig;
+    this.bus = opts.bus ?? defaultBus;
+    this.dataDir = opts.dataDir ? path.resolve(opts.dataDir) : this.config.dataDir;
+    this.stateFile = path.join(this.dataDir, 'state.json');
+    this.roomsDir = path.join(this.dataDir, 'rooms');
+    // ★ 持续任务独立存放：与任务板隔离，不受 500 条裁剪影响（批次 02）
+    this.taskRunsDir = path.join(this.dataDir, 'taskruns');
+    for (const dir of [this.dataDir, this.roomsDir, path.join(this.dataDir, 'sessions')]) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+
+    const saved = readJson(this.stateFile, null);
     this.state = saved?.version === STATE_VERSION ? saved : this.#seed();
     if (!this.state.sessions) this.state.sessions = {};
     if (!Array.isArray(this.state.tasks)) this.state.tasks = [];
@@ -377,22 +386,23 @@ export class Store {
     }
     // ★ 持续任务存储：独立目录、独立写入器，不参与 state.json 的合并保存
     //   它自己管原子替换与单写入者，Store 只持有引用
-    this.taskRuns = new TaskRunStore({ dir: TASKRUNS_DIR });
+    this.taskRuns = new TaskRunStore({ dir: this.taskRunsDir });
     this.saveTimer = null;
     /** 有变更的房间 id —— 落盘时只写这些，不要全量重写 */
     this.dirtyRooms = new Set();
+    if (opts.secretsKey) this.useSecretsKey(opts.secretsKey);
   }
 
   #seed() {
     const chief = {
       id: MAIN_BOT_ID,
-      name: 'Pi',
-      emoji: 'π',
+      name: DEFAULT_MAIN_BOT_NAME,
+      emoji: DEFAULT_MAIN_BOT_EMOJI,
       role: 'main',
       persona: MAIN_PERSONA,
-      tagline: 'AI 团队总经理',
+      tagline: '全能主控与智能体团队中枢',
       model: null,
-      thinking: config.thinking,
+      thinking: this.config.thinking,
       enabled: true,
       createdAt: now(),
       createdBy: 'system',
@@ -409,7 +419,7 @@ export class Store {
     };
     return {
       version: STATE_VERSION,
-      serverName: config.serverName,
+      serverName: this.config.serverName,
       devices: {},
       bots: { [chief.id]: chief },
       rooms: { [dm.id]: dm },
@@ -418,8 +428,8 @@ export class Store {
   }
 
   #loadRoomMessages(roomId) {
-    const list = readJson(path.join(ROOMS_DIR, `${roomId}.json`), []);
-    return Array.isArray(list) ? list.slice(-config.maxMessagesPerRoom) : [];
+    const list = readJson(path.join(this.roomsDir, `${roomId}.json`), []);
+    return Array.isArray(list) ? list.slice(-this.config.maxMessagesPerRoom) : [];
   }
 
   // ---------- 持久化 ----------
@@ -444,7 +454,7 @@ export class Store {
   flushNow() {
     try {
       assertMcpCredentialsSealed(this.state.mcpServers ?? []);
-      writeJsonAtomic(STATE_FILE, this.state);
+      writeJsonAtomic(this.stateFile, this.state);
     } catch (err) {
       return { ok: false, text: `state.json 写入失败：${err?.message || err}` };
     }
@@ -452,7 +462,7 @@ export class Store {
     const failed = [];
     for (const roomId of [...this.dirtyRooms]) {
       try {
-        writeJsonAtomic(path.join(ROOMS_DIR, `${roomId}.json`), this.messages.get(roomId) ?? []);
+        writeJsonAtomic(path.join(this.roomsDir, `${roomId}.json`), this.messages.get(roomId) ?? []);
         this.dirtyRooms.delete(roomId);
       } catch (err) {
         failed.push(`${roomId}: ${err?.message || err}`);
@@ -467,7 +477,7 @@ export class Store {
   saveNow() {
     try {
       assertMcpCredentialsSealed(this.state.mcpServers ?? []);
-      writeJsonAtomic(STATE_FILE, this.state);
+      writeJsonAtomic(this.stateFile, this.state);
     } catch (err) {
       log('⚠️  写 state.json 失败（进程继续跑）：', err?.message || err);
     }
@@ -476,12 +486,21 @@ export class Store {
     // 逐房间独立处理：单个房间写入失败不影响其他房间，失败的保留在 dirty 中重试。
     for (const roomId of [...this.dirtyRooms]) {
       try {
-        writeJsonAtomic(path.join(ROOMS_DIR, `${roomId}.json`), this.messages.get(roomId) ?? []);
+        writeJsonAtomic(path.join(this.roomsDir, `${roomId}.json`), this.messages.get(roomId) ?? []);
         this.dirtyRooms.delete(roomId);
       } catch (err) {
         log(`⚠️  写房间 ${roomId} 失败（下次重试）：`, err?.message || err);
       }
     }
+  }
+
+  /** 释放定时保存器并把脏盘写净（SDK 实例退出前调用）。 */
+  dispose() {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+    }
+    this.saveNow();
   }
 
   /** 删文件（房间/会话）：失败不算错，最多是磁盘上多留一份 */
@@ -557,7 +576,7 @@ export class Store {
     //   授权的绑定对象是 `subject.botId`，不是设备。同一个人可以有多台
     //   已配对设备，撤掉其中一台不该让 bot 失去权限 —— 那等于"换了手机号
     //   就要重新授权所有能力"。规格 §6.1 的授权身份里没有设备这一维。
-    bus.emit('event', { t: 'device.revoked', id: device?.id ?? null });
+    this.bus.emit('event', { t: 'device.revoked', id: device?.id ?? null });
     return true;
   }
 
@@ -605,7 +624,7 @@ export class Store {
       avatarShape: Number.isInteger(patch.avatarShape) ? patch.avatarShape : null,
       avatarColor: normalizeHex(patch.avatarColor),
       model: patch.model || null,
-      thinking: patch.thinking || config.thinking,
+      thinking: patch.thinking || this.config.thinking,
       // 技能（SOP）。会拼进系统提示词，让 bot 真的"学会"。
       // 造开发类 bot 时，create_bot 会塞一条"工程基线"进来（coding-baseline.js）。
       skills: normalizeSkills(patch.skills),
@@ -615,7 +634,7 @@ export class Store {
       // 群聊轮次预算（全局一份，用户可在设置里改）
       groupLimits: { ...GROUP_LIMITS_DEFAULT },
       // 用户自己是谁（bot 要知道在跟谁说话）
-      userName: config.userName,
+      userName: this.config.userName,
       // 上下文预算：null = 用全局默认（config.reserveTokens / keepRecentTokens），
       // 而全局默认是 null 时就用 pi 自带的 16384 / 20000。
       reserveTokens: null,
@@ -632,7 +651,7 @@ export class Store {
     this.scheduleSave();
     // 像加好友一样：造出来的 bot 自动开一个私聊窗口
     this.ensureDm(bot.id);
-    bus.emit('event', { t: 'bot.updated', bot });
+    this.bus.emit('event', { t: 'bot.updated', bot });
     return bot;
   }
 
@@ -663,7 +682,7 @@ export class Store {
     if (patch.maxTokens !== undefined)
       next.maxTokens = positiveOrNull(patch.maxTokens);
     if (patch.model !== undefined) next.model = patch.model || null;
-    if (patch.thinking !== undefined) next.thinking = patch.thinking || config.thinking;
+    if (patch.thinking !== undefined) next.thinking = patch.thinking || this.config.thinking;
     if (patch.enabled !== undefined) next.enabled = Boolean(patch.enabled);
     this.state.bots[id] = next;
 
@@ -671,7 +690,7 @@ export class Store {
     for (const room of Object.values(this.state.rooms)) {
       if (room.kind === 'dm' && room.botIds[0] === id) {
         room.name = next.name;
-        bus.emit('event', { t: 'room.updated', room: this.roomSummary(room) });
+        this.bus.emit('event', { t: 'room.updated', room: this.roomSummary(room) });
       }
     }
     this.scheduleSave();
@@ -695,12 +714,12 @@ export class Store {
       }
       if (revokedHost.length) {
         this.scheduleSave();
-        bus.emit('event', { t: 'grants.revoked', botId: id, grantIds: revokedHost });
+        this.bus.emit('event', { t: 'grants.revoked', botId: id, grantIds: revokedHost });
         log(`🔒 ${next.name ?? id} 不再是主 Bot，回收 host 授权 ${revokedHost.length} 条`);
       }
     }
 
-    bus.emit('event', { t: 'bot.updated', bot: next });
+    this.bus.emit('event', { t: 'bot.updated', bot: next });
     return next;
   }
 
@@ -713,12 +732,12 @@ export class Store {
         delete this.state.rooms[room.id];
         this.messages.delete(room.id);
         this.dirtyRooms.delete(room.id);
-        this.#removeFile(path.join(ROOMS_DIR, `${room.id}.json`));
-        bus.emit('event', { t: 'room.deleted', roomId: room.id });
+        this.#removeFile(path.join(this.roomsDir, `${room.id}.json`));
+        this.bus.emit('event', { t: 'room.deleted', roomId: room.id });
       } else if (room.botIds.includes(id)) {
         room.botIds = room.botIds.filter((b) => b !== id);
         if (room.leadBotId === id) room.leadBotId = room.botIds[0] ?? null;
-        bus.emit('event', { t: 'room.updated', room: this.roomSummary(room) });
+        this.bus.emit('event', { t: 'room.updated', room: this.roomSummary(room) });
       }
     }
     for (const key of Object.keys(this.state.sessions)) {
@@ -769,9 +788,9 @@ export class Store {
       }
     }
     this.scheduleSave();
-    bus.emit('event', { t: 'bot.deleted', botId: id });
+    this.bus.emit('event', { t: 'bot.deleted', botId: id });
     if (revokedGrants.length) {
-      bus.emit('event', { t: 'grants.revoked', botId: id, grantIds: revokedGrants });
+      this.bus.emit('event', { t: 'grants.revoked', botId: id, grantIds: revokedGrants });
     }
     // ★ Windows 沙箱的收尾：撤销这个实例工作目录上的 ACE，并删掉它的
     //   AppContainer profile。不在这里做的话，用户删掉的 bot 会在
@@ -782,7 +801,7 @@ export class Store {
     //   selfcheck。不过 **工作目录是全局的**（config.workspace），所以
     //   这里不能 revoke 它（别的 bot 还在用），只删 profile。
     try {
-      const instanceDir = defaultWindowsInstanceDir(config.dataDir, id);
+      const instanceDir = defaultWindowsInstanceDir(this.dataDir, id);
       const r = teardownWindowsInstance({ instanceDir });
       if (!r.ok && !r.skipped) {
         log('sandbox', `实例清理未完全成功 bot=${id}: ${JSON.stringify(r.steps)}`);
@@ -802,19 +821,35 @@ export class Store {
    */
   userName() {
     const v = String(this.state.userName ?? '').trim();
-    return v || config.userName;
+    return v || this.config.userName;
   }
 
   updateUserName(name) {
     const v = String(name ?? '').trim().slice(0, 40);
     this.state.userName = v;
     this.scheduleSave();
-    bus.emit('event', { t: 'user.updated', user: this.userSummary() });
+    this.bus.emit('event', { t: 'user.updated', user: this.userSummary() });
     return this.userSummary();
   }
 
   userSummary() {
     return { name: this.userName() };
+  }
+
+  // ---------- 全局默认模型 ----------
+
+  defaultModel() {
+    const v = String(this.state.defaultModel ?? '').trim();
+    return v || null;
+  }
+
+  setDefaultModel(slug) {
+    const v = String(slug ?? '').trim().slice(0, 200);
+    if (v) this.state.defaultModel = v;
+    else delete this.state.defaultModel;
+    this.scheduleSave();
+    this.bus.emit('event', { t: 'models.changed', defaultModel: this.defaultModel() });
+    return this.defaultModel();
   }
 
   // ---------- 用户习惯（规格 `spec-intent-and-habits-v1.md` §3） ----------
@@ -840,7 +875,7 @@ export class Store {
     if (!merged.added && !merged.superseded.length) return { added: null, superseded: [], promoted: false };
     this.state.preferences = merged.list;
     this.scheduleSave();
-    bus.emit('event', { t: 'preferences.updated', preferences: merged.list });
+    this.bus.emit('event', { t: 'preferences.updated', preferences: merged.list });
     return merged;
   }
 
@@ -852,7 +887,7 @@ export class Store {
     hit.status = 'retired';
     hit.retiredAt = Date.now();
     this.scheduleSave();
-    bus.emit('event', { t: 'preferences.updated', preferences: list });
+    this.bus.emit('event', { t: 'preferences.updated', preferences: list });
     return hit;
   }
 
@@ -924,7 +959,7 @@ export class Store {
     };
     this.state.desktop = next;
     this.scheduleSave();
-    bus.emit('event', { t: 'desktop.settings', settings: next });
+    this.bus.emit('event', { t: 'desktop.settings', settings: next });
     return next;
   }
 
@@ -958,7 +993,7 @@ export class Store {
     const next = { ...this.onboarding(), ...(patch ?? {}) };
     this.state.onboarding = next;
     this.scheduleSave();
-    bus.emit('event', { t: 'onboarding.updated', onboarding: next });
+    this.bus.emit('event', { t: 'onboarding.updated', onboarding: next });
     return next;
   }
 
@@ -984,7 +1019,7 @@ export class Store {
       this.state.groupLimits = { ...out };
       this.state.groupLimitsMigrated = true;
       this.scheduleSave();
-      bus.emit('event', { t: 'groupLimits.updated', limits: { ...out } });
+      this.bus.emit('event', { t: 'groupLimits.updated', limits: { ...out } });
     }
     return out;
   }
@@ -998,7 +1033,7 @@ export class Store {
     }
     this.state.groupLimits = next;
     this.scheduleSave();
-    bus.emit('event', { t: 'groupLimits.updated', limits: next });
+    this.bus.emit('event', { t: 'groupLimits.updated', limits: next });
     return next;
   }
 
@@ -1022,7 +1057,7 @@ export class Store {
       password: this.secretsKey && s.password ? encrypt(s.password, this.secretsKey) : s.password,
     }));
     this.scheduleSave();
-    bus.emit('event', { t: 'sites.updated' });
+    this.bus.emit('event', { t: 'sites.updated' });
   }
 
   siteList() {
@@ -1112,7 +1147,7 @@ export class Store {
     list.push(skill);
     this.state.skills = normalizeSkillList(list);
     this.scheduleSave();
-    bus.emit('event', { t: 'skills.updated', skills: this.skillLibrary() });
+    this.bus.emit('event', { t: 'skills.updated', skills: this.skillLibrary() });
     return { skill };
   }
 
@@ -1132,7 +1167,7 @@ export class Store {
     list[idx] = merged;
     this.state.skills = list;
     this.scheduleSave();
-    bus.emit('event', { t: 'skills.updated', skills: list });
+    this.bus.emit('event', { t: 'skills.updated', skills: list });
     return { skill: merged };
   }
 
@@ -1143,7 +1178,7 @@ export class Store {
     if (next.length === list.length) return { error: '技能不存在' };
     this.state.skills = next;
     this.scheduleSave();
-    bus.emit('event', { t: 'skills.updated', skills: next });
+    this.bus.emit('event', { t: 'skills.updated', skills: next });
     return { ok: true };
   }
 
@@ -1173,7 +1208,7 @@ export class Store {
     if (imported.length) {
       this.state.skills = normalizeSkillList(list);
       this.scheduleSave();
-      bus.emit('event', { t: 'skills.updated', skills: this.skillLibrary() });
+      this.bus.emit('event', { t: 'skills.updated', skills: this.skillLibrary() });
     }
     return { imported, skipped };
   }
@@ -1193,7 +1228,7 @@ export class Store {
 
   /** 收尾复盘是否开启（关掉之后不会再产生新候选，已有经验照常注入） */
   lessonsEnabled() {
-    return config.lessonReflect !== false;
+    return this.config.lessonReflect !== false;
   }
 
   /** 加一条经验（同房间 + 同情境只能有一条，避免刷屏） */
@@ -1212,7 +1247,7 @@ export class Store {
     list.push(lesson);
     this.state.lessons = normalizeLessonList(list);
     this.scheduleSave();
-    bus.emit('event', { t: 'lessons.updated', lessons: this.lessonLibrary() });
+    this.bus.emit('event', { t: 'lessons.updated', lessons: this.lessonLibrary() });
     return { lesson };
   }
 
@@ -1239,7 +1274,7 @@ export class Store {
     list[idx] = lesson;
     this.state.lessons = list;
     this.scheduleSave();
-    bus.emit('event', { t: 'lessons.updated', lessons: list });
+    this.bus.emit('event', { t: 'lessons.updated', lessons: list });
     return { lesson };
   }
 
@@ -1250,7 +1285,7 @@ export class Store {
     if (next.length === list.length) return { error: '经验不存在' };
     this.state.lessons = next;
     this.scheduleSave();
-    bus.emit('event', { t: 'lessons.updated', lessons: next });
+    this.bus.emit('event', { t: 'lessons.updated', lessons: next });
     return { ok: true };
   }
 
@@ -1338,17 +1373,17 @@ export class Store {
 
   /** 加一个 MCP 服务 */
   addMcpServer(raw = {}) {
-    return mcpLibraryDomain.addMcpServer(this, raw, (event) => bus.emit('event', event));
+    return mcpLibraryDomain.addMcpServer(this, raw, (event) => this.bus.emit('event', event));
   }
 
   /** 改一个 MCP 服务 */
   updateMcpServer(id, patch = {}) {
-    return mcpLibraryDomain.updateMcpServer(this, id, patch, (event) => bus.emit('event', event));
+    return mcpLibraryDomain.updateMcpServer(this, id, patch, (event) => this.bus.emit('event', event));
   }
 
   /** 删一个 MCP 服务 */
   removeMcpServer(id) {
-    return mcpLibraryDomain.removeMcpServer(this, id, (event) => bus.emit('event', event));
+    return mcpLibraryDomain.removeMcpServer(this, id, (event) => this.bus.emit('event', event));
   }
 
   /**
@@ -1384,7 +1419,7 @@ export class Store {
       this.state.policy = { ...this.state.policy, requireProof: true };
       this.state.requireProofMigrated = true;
       this.scheduleSave();
-      bus.emit('event', { t: 'policy.updated', policy: normalizePolicy(this.state.policy, POLICY_DEFAULT) });
+      this.bus.emit('event', { t: 'policy.updated', policy: normalizePolicy(this.state.policy, POLICY_DEFAULT) });
     }
     return normalizePolicy(this.state.policy ?? {}, POLICY_DEFAULT);
   }
@@ -1408,7 +1443,7 @@ export class Store {
     // ★ 先算变更再说广播：调用方（例如派活侧）要拿这个结论去决定
     //   "哪些在飞的活该收到"规矩变了"的通知"，不能等事件发出去再回头查旧值。
     const change = policyChange(prev, next);
-    bus.emit('event', { t: 'policy.updated', policy: next, change });
+    this.bus.emit('event', { t: 'policy.updated', policy: next, change });
     return next;
   }
 
@@ -1486,7 +1521,7 @@ export class Store {
     };
     this.state.decision = stored;
     this.scheduleSave();
-    bus.emit('event', { t: 'decision.updated', enabled: next.enabled });
+    this.bus.emit('event', { t: 'decision.updated', enabled: next.enabled });
     return next;
   }
 
@@ -1510,7 +1545,7 @@ export class Store {
       this.state.denials.splice(0, this.state.denials.length - 200);
     }
     this.scheduleSave();
-    bus.emit('event', { t: 'policy.denied', denial });
+    this.bus.emit('event', { t: 'policy.denied', denial });
     return denial;
   }
 
@@ -1541,7 +1576,7 @@ export class Store {
       this.state.confirmations.splice(0, this.state.confirmations.length - 200);
     }
     this.scheduleSave();
-    bus.emit('event', { t: 'confirmation.created', confirmation });
+    this.bus.emit('event', { t: 'confirmation.created', confirmation });
     return confirmation;
   }
 
@@ -1606,7 +1641,7 @@ export class Store {
     c.decidedByDeviceId = device?.id ?? null;
     c.decidedByDeviceName = device?.name ?? '';
     this.scheduleSave();
-    bus.emit('event', { t: 'confirmation.decided', confirmation: c });
+    this.bus.emit('event', { t: 'confirmation.decided', confirmation: c });
     return c;
   }
 
@@ -1652,7 +1687,7 @@ export class Store {
       this.state.adminAudit.splice(0, this.state.adminAudit.length - 300);
     }
     this.scheduleSave();
-    bus.emit('event', { t: 'admin.action', entry });
+    this.bus.emit('event', { t: 'admin.action', entry });
     return entry;
   }
 
@@ -1723,7 +1758,7 @@ export class Store {
     this.messages.set(room.id, []);
     this.dirtyRooms.add(room.id);
     this.scheduleSave();
-    bus.emit('event', { t: 'room.created', room: this.roomSummary(room) });
+    this.bus.emit('event', { t: 'room.created', room: this.roomSummary(room) });
     return room;
   }
 
@@ -1754,7 +1789,7 @@ export class Store {
     this.state.rooms[room.id] = room;
     this.messages.set(room.id, []);
     this.scheduleSave();
-    bus.emit('event', { t: 'room.created', room: this.roomSummary(room) });
+    this.bus.emit('event', { t: 'room.created', room: this.roomSummary(room) });
     return room;
   }
 
@@ -1773,7 +1808,7 @@ export class Store {
       if (!room.botIds.includes(room.leadBotId)) room.leadBotId = room.botIds[0] ?? null;
     }
     this.scheduleSave();
-    bus.emit('event', { t: 'room.updated', room: this.roomSummary(room) });
+    this.bus.emit('event', { t: 'room.updated', room: this.roomSummary(room) });
     return room;
   }
 
@@ -1787,7 +1822,7 @@ export class Store {
     this.messages.delete(id);
     // 同步删除磁盘文件，并从 dirty 集合移除，避免下次落盘重新写出空数组。
     this.dirtyRooms.delete(id);
-    this.#removeFile(path.join(ROOMS_DIR, `${id}.json`));
+    this.#removeFile(path.join(this.roomsDir, `${id}.json`));
     for (const key of Object.keys(this.state.sessions)) {
       if (key.startsWith(`${id}:`)) {
         this.#removeFile(this.state.sessions[key]);
@@ -1795,7 +1830,7 @@ export class Store {
       }
     }
     this.scheduleSave();
-    bus.emit('event', { t: 'room.deleted', roomId: id });
+    this.bus.emit('event', { t: 'room.deleted', roomId: id });
     return { id };
   }
 
@@ -1928,7 +1963,7 @@ export class Store {
       this.state.approvals.splice(0, this.state.approvals.length - 200);
     }
     this.scheduleSave();
-    bus.emit('event', { t: 'approval.created', approval });
+    this.bus.emit('event', { t: 'approval.created', approval });
     return approval;
   }
 
@@ -1938,7 +1973,7 @@ export class Store {
     a.status = approved ? 'approved' : 'denied';
     a.updatedAt = now();
     this.scheduleSave();
-    bus.emit('event', { t: 'approval.decided', approval: a });
+    this.bus.emit('event', { t: 'approval.decided', approval: a });
     return a;
   }
 
@@ -2020,7 +2055,7 @@ export class Store {
     };
     this.state.automations.push(automation);
     this.scheduleSave();
-    bus.emit('event', { t: 'automation.updated', automation });
+    this.bus.emit('event', { t: 'automation.updated', automation });
     return automation;
   }
 
@@ -2049,7 +2084,7 @@ export class Store {
     if (patch.enabled !== undefined) a.enabled = Boolean(patch.enabled);
     if (patch.nextRunAt !== undefined) a.nextRunAt = Number(patch.nextRunAt) || 0;
     this.scheduleSave();
-    bus.emit('event', { t: 'automation.updated', automation: a });
+    this.bus.emit('event', { t: 'automation.updated', automation: a });
     return a;
   }
 
@@ -2068,7 +2103,7 @@ export class Store {
     if (idx < 0) return false;
     list.splice(idx, 1);
     this.scheduleSave();
-    bus.emit('event', { t: 'automation.deleted', id });
+    this.bus.emit('event', { t: 'automation.deleted', id });
     return true;
   }
 
@@ -2132,7 +2167,7 @@ export class Store {
       if (done.length > 0) log(`任务板已到 500 条上限，淘汰了较早的 ${done.length} 条已完成任务`);
     }
     this.scheduleSave();
-    bus.emit('event', { t: 'task.updated', task });
+    this.bus.emit('event', { t: 'task.updated', task });
     return task;
   }
 
@@ -2157,7 +2192,7 @@ export class Store {
     if (patch.read) task.unreadAt = 0;
     task.updatedAt = now();
     this.scheduleSave();
-    bus.emit('event', { t: 'task.updated', task });
+    this.bus.emit('event', { t: 'task.updated', task });
     return task;
   }
 
@@ -2167,7 +2202,7 @@ export class Store {
     if (idx < 0) return false;
     list.splice(idx, 1);
     this.scheduleSave();
-    bus.emit('event', { t: 'task.deleted', taskId: id });
+    this.bus.emit('event', { t: 'task.deleted', taskId: id });
     return true;
   }
 
@@ -2274,7 +2309,7 @@ export class Store {
       task.detail = [task.detail, note].filter(Boolean).join('\n').slice(0, 2000);
       task.updatedAt = now();
       n++;
-      bus.emit('event', { t: 'task.updated', task });
+      this.bus.emit('event', { t: 'task.updated', task });
     }
     if (n) this.scheduleSave();
     return n;
@@ -2299,7 +2334,7 @@ export class Store {
     task.unreadAt = 0;
     task.updatedAt = now();
     this.scheduleSave();
-    bus.emit('event', { t: 'task.updated', task });
+    this.bus.emit('event', { t: 'task.updated', task });
     return task;
   }
 
@@ -2311,7 +2346,7 @@ export class Store {
     task.unreadAt = ok ? now() : 0;
     task.updatedAt = now();
     this.scheduleSave();
-    bus.emit('event', { t: 'task.updated', task });
+    this.bus.emit('event', { t: 'task.updated', task });
     return task;
   }
 
@@ -2376,7 +2411,7 @@ export class Store {
     };
     this.state.templates = [...kept, tpl];
     this.scheduleSave();
-    bus.emit('event', { t: 'templates.updated', templates: this.state.templates });
+    this.bus.emit('event', { t: 'templates.updated', templates: this.state.templates });
     return { template: tpl };
   }
 
@@ -2386,7 +2421,7 @@ export class Store {
     if (next.length === list.length) return { error: '没有这个模板' };
     this.state.templates = next;
     this.scheduleSave();
-    bus.emit('event', { t: 'templates.updated', templates: next });
+    this.bus.emit('event', { t: 'templates.updated', templates: next });
     return { ok: true };
   }
 
@@ -2422,7 +2457,7 @@ export class Store {
     else list.push(next);
     this.state.botOverrides = list;
     this.scheduleSave();
-    bus.emit('event', { t: 'bot.override.updated', botId: next.botId, override: next });
+    this.bus.emit('event', { t: 'bot.override.updated', botId: next.botId, override: next });
     return { ok: true, override: next };
   }
 
@@ -2433,7 +2468,7 @@ export class Store {
     if (next.length === list.length) return { ok: true, noop: true };
     this.state.botOverrides = next;
     this.scheduleSave();
-    bus.emit('event', { t: 'bot.override.cleared', botId });
+    this.bus.emit('event', { t: 'bot.override.cleared', botId });
     return { ok: true, cleared: botId };
   }
 
@@ -2586,7 +2621,7 @@ export class Store {
     // 插队：落在"正在写的那条"之前；没有正在写的就按普通追加
     const at = beforeStreaming ? insertionPoint(list) : list.length;
     list.splice(at, 0, msg);
-    if (list.length > config.maxMessagesPerRoom) list.splice(0, list.length - config.maxMessagesPerRoom);
+    if (list.length > this.config.maxMessagesPerRoom) list.splice(0, list.length - this.config.maxMessagesPerRoom);
     this.dirtyRooms.add(roomId);
     const room = this.state.rooms[roomId];
     if (room) room.lastMessageAt = msg.createdAt;
@@ -2595,7 +2630,7 @@ export class Store {
       // 落点要一起告诉客户端 —— 不然它按"追加"放到最后，
       // 本地看到的顺序和重新加载后的顺序就不一样了。
       const insertBefore = at < list.length - 1 ? list[at + 1].id : null;
-      bus.emit('event', { t: 'msg.new', msg, insertBefore });
+      this.bus.emit('event', { t: 'msg.new', msg, insertBefore });
     }
     return msg;
   }
@@ -2629,7 +2664,7 @@ export class Store {
     this.dirtyRooms.add(roomId);
     this.scheduleSave();
     // 带上消息本体：客户端要按新的 createdAt 重建这条
-    bus.emit('event', { t: 'msg.moved', roomId, msgId, afterId: afterMsgId, msg });
+    this.bus.emit('event', { t: 'msg.moved', roomId, msgId, afterId: afterMsgId, msg });
     return msg;
   }
 
@@ -2639,7 +2674,7 @@ export class Store {
     Object.assign(msg, patch, { updatedAt: now() });
     this.dirtyRooms.add(roomId);
     this.scheduleSave();
-    if (!silent) bus.emit('event', { t: 'msg.updated', msg });
+    if (!silent) this.bus.emit('event', { t: 'msg.updated', msg });
     return msg;
   }
 
@@ -2760,8 +2795,31 @@ export class Store {
     }
     this.dirtyRooms.add(roomId);
     this.scheduleSave();
-    bus.emit('event', { t: 'msg.deleted', roomId, msgId: messageId });
+    this.bus.emit('event', { t: 'msg.deleted', roomId, msgId: messageId });
     return true;
+  }
+
+  /**
+   * 扫描并原地打码房间最近若干条消息中的明文 API Key / Token。
+   * 通过 updateMessage 触发 msg.updated，使桌面/手机客户端气泡同步变成掩码。
+   */
+  redactRoomSecrets(roomId, extraSecrets = [], { limit = 20 } = {}) {
+    const list = this.messages.get(roomId);
+    if (!Array.isArray(list) || !list.length) return 0;
+    const cap = Math.max(1, Math.min(Number(limit) || 20, 200));
+    const slice = list.slice(-cap);
+    let updated = 0;
+    for (const msg of slice) {
+      if (!msg || typeof msg.text !== 'string' || !msg.text) continue;
+      const nextText = redactChatSecrets(msg.text, extraSecrets);
+      if (nextText === msg.text) continue;
+      this.updateMessage(roomId, msg.id, {
+        text: nextText,
+        meta: { ...(msg.meta ?? {}), secretRedacted: true },
+      });
+      updated += 1;
+    }
+    return updated;
   }
 
   stats() {
@@ -2776,4 +2834,40 @@ export class Store {
   }
 }
 
-export const store = new Store();
+export function createStore(opts = {}) {
+  return new Store(opts);
+}
+
+let _defaultStore = null;
+function getDefaultStore() {
+  return (_defaultStore ??= new Store());
+}
+
+export function hasDefaultStore() {
+  return _defaultStore !== null;
+}
+
+/** 默认单例延迟到首次属性访问才初始化，纯 SDK 导入零磁盘副作用。 */
+export const store = new Proxy({}, {
+  get(_target, prop) {
+    const instance = getDefaultStore();
+    const val = Reflect.get(instance, prop, instance);
+    return typeof val === 'function' ? val.bind(instance) : val;
+  },
+  set(_target, prop, value) {
+    const instance = getDefaultStore();
+    return Reflect.set(instance, prop, value, instance);
+  },
+  has(_target, prop) {
+    return Reflect.has(getDefaultStore(), prop);
+  },
+  ownKeys() {
+    return Reflect.ownKeys(getDefaultStore());
+  },
+  getOwnPropertyDescriptor(_target, prop) {
+    return Reflect.getOwnPropertyDescriptor(getDefaultStore(), prop);
+  },
+  getPrototypeOf() {
+    return Store.prototype;
+  },
+});

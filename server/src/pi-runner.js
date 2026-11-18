@@ -4,7 +4,7 @@
  * 会话按 (房间, bot) 维度缓存并持久化：同一个 bot 在不同的群里互不干扰，
  * 重启服务端后接着之前的上下文继续。
  *
- * 组织架构（学 ds-bot）：
+ * 组织架构（主控调度 + 部门异步收件箱模型）：
  *   主控 = 总经理，直接对用户负责，可以往任何部门下达任务
  *   群   = 部门，有部门老大（leadBotId）
  *   用户往部门里发消息 → 部门老大先接，拆任务后用 @同事 派下去
@@ -18,9 +18,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
-import { config } from './config.js';
-import { bus } from './bus.js';
-import { store, toolsForPolicy } from './store.js';
+import { config as defaultConfig } from './config.js';
+import { createBus, bus as defaultBus } from './bus.js';
+import { store as defaultStore, toolsForPolicy } from './store.js';
 import {
   dmOpeningPrompt,
   shouldMirrorProgress,
@@ -28,7 +28,7 @@ import {
   MIRROR_SKIPPED_NO_DM,
 } from './dm.js';
 import { loadExtraProviders, settingsDefaultModel } from './providers.js';
-import { modelGroups, rotateCursor } from './model-groups.js';
+import { modelGroups as defaultModelGroups, rotateCursor } from './model-groups.js';
 import { ProviderUpdates, providerLeaseScope } from './provider-updates.js';
 import { settleRetryMessage } from './retry-messages.js';
 import { assistantFailure, fallbackModels, modelFailure, recoverModelReply } from './model-reply.js';
@@ -86,7 +86,15 @@ import {
   readContext,
   withCapacity,
 } from './context-budget.js';
-import { disposeAll, disposeMatching, evictIdle } from './session-pool.js';
+import { disposeAll, disposeMatching, evictIdle, releaseEntry } from './session-pool.js';
+import { routeBusyInput, DUPLEX_KIND } from './duplex-router.js';
+import {
+  buildLiveWorkSnapshot,
+  formatLiveWorkSnapshotPrompt,
+  buildGroupWorkSnapshot,
+  formatGroupWorkSnapshotPrompt,
+} from './live-work-snapshot.js';
+import { shells } from './shells.js';
 import { createWatchdog, stallCleanup } from './watchdog.js';
 import { createEscalator } from './escalation.js';
 import { modelLabel, resolveModel, syncModelGroups } from './model-registry.js';
@@ -209,18 +217,34 @@ function throttle(fn, ms) {
   return wrapped;
 }
 /** 把一个会话的上下文占用推给界面（每轮结束、以及压缩前后都会调） */
-function emitContext(roomId, botId, session) {
+function emitContext(roomId, botId, session, evBus = defaultBus) {
   const u = readContext(session);
   if (!u) return;
-  bus.emit('event', { t: 'context', roomId, botId, ...u });
+  evBus.emit('event', { t: 'context', roomId, botId, ...u });
 }
 
 
 
 export class PiRunner {
-  constructor() {
+  #onBusEvent = null;
+
+  constructor(opts = {}) {
+    this.config = opts.config ?? defaultConfig;
+    this.store = opts.store ?? defaultStore;
+    this.bus = opts.bus ?? defaultBus ?? createBus();
+    this.modelGroups = opts.modelGroups ?? defaultModelGroups;
+    this.sessionApi = opts.sessionApi ?? null;
+    this.modelRuntimeFactory = opts.modelRuntimeFactory ?? null;
+    this.inheritHostProviders = opts.inheritHostProviders
+      ?? (opts.modelRuntimeFactory == null && (opts.modelGroups == null || opts.modelGroups === defaultModelGroups));
     /** 07 接单功能开关：关闭时新 App 的合法 requestId 只走普通聊天，不要求 accept_task。 */
     this.taskIntakeEnabled = process.env.PI_BOT_TASK_INTAKE === '1';
+    /** 全双工边干边聊总开关（可通过 config 或实例字段在测试里热切）。 */
+    this.fullDuplexEnabled = this.config.fullDuplex !== false;
+    /** 旁路 Talk 单飞运行表：key = roomId:botId。 */
+    this.talkInflight = new Map();
+    /** 旁路问答结束后沉淀的短备忘，供下一次持久 Work 会话消费后清空。 */
+    this.pendingSideContext = new Map();
     /** @type {Map<string, {session:any, bot:any, busy:boolean, unsubscribe?:Function, pending?:Promise<any>}>} */
     this.sessions = new Map();
     this.modelRuntime = null;
@@ -281,18 +305,18 @@ export class PiRunner {
      * 默认不改变现有行为，想限制就在设置里填并发上限。
      */
     this.runSlots = new RunSlots({
-      capacity: config.maxConcurrentRuns,
-      reserve: config.runSlotReserve,
+      capacity: this.config.maxConcurrentRuns,
+      reserve: this.config.runSlotReserve,
     });
 
     /** 压缩、记忆摘要和复盘共用的后台并发配额。 */
     this.backgroundSlots = new RunSlots({
-      capacity: config.backgroundConcurrency,
+      capacity: this.config.backgroundConcurrency,
       reserve: 0,
     });
 
     /** 有界本地运行统计，不保存提示词或凭据。 */
-    this.stats = new RunStats({ file: path.join(config.dataDir, 'run-stats.json') });
+    this.stats = new RunStats({ file: path.join(this.config.dataDir, 'run-stats.json') });
 
     /**
      * 连发消息的合并队列（只在它空闲时用）。
@@ -315,7 +339,7 @@ export class PiRunner {
    * 再写一条"合并后的"会让聊天记录出现重复。
    */
   async #deliverMerged(roomId, merged) {
-    const room = store.getRoom(roomId);
+    const room = this.store.getRoom(roomId);
     if (!room) return;
     const botId = room.leadBotId ?? room.botIds?.[0];
     if (!botId) return;
@@ -351,10 +375,10 @@ export class PiRunner {
    * 用户是最高权威，不该等一个成员把手上的活磨完（那可能是几分钟）。
    */
   async #answerUserNow(roomId, leadBot, files) {
-    const room = store.getRoom(roomId);
+    const room = this.store.getRoom(roomId);
     if (!room) return;
-    const { members, leadId } = departmentOf(room);
-    const fresh = transcriptFor(roomId, leadBot.id);
+    const { members, leadId } = departmentOf(room, this.store);
+    const fresh = transcriptFor(roomId, leadBot.id, undefined, { store: this.store });
     const prompt = composeGroupPrompt(room, leadBot, fresh, {
       isLead: leadBot.id === leadId,
       reason: '用户在群里刚说了话，先回应用户',
@@ -368,6 +392,495 @@ export class PiRunner {
       // 用户刚说话，这是回应他的人 → 人的保底槽
       human: true,
     });
+  }
+
+  // ---------------------------------------------------------------- 全双工边干边聊（Work / Talk 双轨）
+
+  #recordSideContext(roomId, botId, userText, replyText) {
+    const key = this.#key(roomId, botId);
+    const list = this.pendingSideContext.get(key) ?? [];
+    list.push({
+      userText: String(userText ?? '').replace(/\s+/g, ' ').trim().slice(0, 140),
+      replyText: String(replyText ?? '').replace(/\s+/g, ' ').trim().slice(0, 220),
+      ts: Date.now(),
+    });
+    while (list.length > 6) list.shift();
+    let total = list.reduce((n, item) => n + item.userText.length + item.replyText.length, 0);
+    while (list.length > 1 && total > 1200) {
+      const drop = list.shift();
+      total -= drop.userText.length + drop.replyText.length;
+    }
+    this.pendingSideContext.set(key, list);
+  }
+
+  #consumeSideContext(roomId, botId) {
+    const key = this.#key(roomId, botId);
+    const items = this.pendingSideContext.get(key) ?? [];
+    this.pendingSideContext.delete(key);
+    if (!items.length) return { items: [], promptBlock: '' };
+    const lines = [
+      '【此前后台干活期间的旁路沟通备忘】',
+      ...items.map((x) => `- 用户问「${x.userText}」→ 你当时回答「${x.replyText}」`),
+    ];
+    return { items, promptBlock: lines.join('\n') };
+  }
+
+  #restoreSideContext(roomId, botId, items) {
+    if (!Array.isArray(items) || !items.length) return;
+    const key = this.#key(roomId, botId);
+    const current = this.pendingSideContext.get(key) ?? [];
+    this.pendingSideContext.set(key, [...items, ...current].slice(-6));
+  }
+
+  #abortTalkEntry(key, inflight) {
+    const split = key.indexOf(':');
+    const roomId = split >= 0 ? key.slice(0, split) : '';
+    const botId = split >= 0 ? key.slice(split + 1) : '';
+    inflight.aborted = true;
+    try {
+      inflight.turnController?.abort(Object.assign(new Error('已终止'), { name: 'AbortError' }));
+    } catch {}
+    try {
+      inflight.session?.abort?.().catch(() => {});
+    } catch {}
+    if (inflight.next?.scope) {
+      this.requestLifecycle?.close?.(inflight.next.scope, null, 'answer');
+    }
+    inflight.next = null;
+    if (roomId && botId) {
+      this.bus.emit('event', { t: 'typing', roomId, botId, active: false, lane: 'talk' });
+    }
+    return Boolean(roomId);
+  }
+
+  #markTalkStreamingAborted(roomId, botId = null) {
+    for (const msg of this.store.listMessages(roomId, { limit: 200 })) {
+      if (msg.status !== 'streaming') continue;
+      if (msg.meta?.duplex !== DUPLEX_KIND.sideReply) continue;
+      if (botId && msg.authorId !== botId) continue;
+      this.store.updateMessage(
+        roomId,
+        msg.id,
+        { status: 'aborted', error: '已按你的要求终止' },
+        { silent: false },
+      );
+    }
+  }
+
+  #abortTalkFor(roomId, botId) {
+    const key = this.#key(roomId, botId);
+    this.pendingSideContext.delete(key);
+    const inflight = this.talkInflight.get(key);
+    this.#markTalkStreamingAborted(roomId, botId);
+    if (!inflight) return false;
+    return this.#abortTalkEntry(key, inflight);
+  }
+
+  #abortTalkInRoom(roomId) {
+    let any = false;
+    const prefix = `${roomId}:`;
+    for (const key of [...this.pendingSideContext.keys()]) {
+      if (key.startsWith(prefix)) this.pendingSideContext.delete(key);
+    }
+    for (const [key, inflight] of [...this.talkInflight.entries()]) {
+      if (!key.startsWith(prefix)) continue;
+      if (this.#abortTalkEntry(key, inflight)) any = true;
+    }
+    this.#markTalkStreamingAborted(roomId, null);
+    return any;
+  }
+
+  #collectLiveSnapshot(roomId, botId) {
+    const entry = this.sessions.get(this.#key(roomId, botId));
+    const bot = this.store.getBot(botId);
+    const roomShells = shells.list({ roomId });
+    const activeShells = roomShells
+      .filter((s) => s.running)
+      .slice(0, 3)
+      .map((s) => ({
+        id: s.id,
+        command: s.command,
+        running: s.running,
+        tail: shells.output(s.id) ?? '',
+      }));
+    const taskId = entry?.managedContext?.taskRunId ?? null;
+    let activeTaskRun = null;
+    if (taskId) {
+      const readRes = this.store.taskRuns?.read?.(taskId);
+      if (readRes?.status === 'found') activeTaskRun = readRes.taskRun;
+    }
+    const draftText = typeof entry?.liveDraft === 'function' ? entry.liveDraft() : '';
+    return buildLiveWorkSnapshot({
+      roomId,
+      botId,
+      botName: bot?.name ?? botId,
+      goalText: entry?.goalText ?? '',
+      workMsgId: entry?.liveMsgId ?? null,
+      workStartedAt: entry?.startedAt ?? 0,
+      nowMs: Date.now(),
+      recentSteps: entry?.liveSteps ?? [],
+      draftText,
+      activeShells,
+      sideNotes: entry?.turnAmends ?? [],
+      activeTaskRun,
+    });
+  }
+
+  #collectGroupSnapshot(room) {
+    const memberSnapshots = [];
+    for (const bid of room?.botIds ?? []) {
+      const entry = this.sessions.get(this.#key(room.id, bid));
+      if (!entry?.busy) continue;
+      memberSnapshots.push(this.#collectLiveSnapshot(room.id, bid));
+    }
+    return buildGroupWorkSnapshot({
+      roomName: room?.name ?? room?.id ?? '',
+      leadName: this.store.getBot(room?.leadBotId)?.name ?? '',
+      memberSnapshots,
+      queuedCount: this.roundQueue.has(room?.id) ? 1 : 0,
+    });
+  }
+
+  async #routeBusyMessage({
+    roomId,
+    botId,
+    text,
+    hasAttachments = false,
+    duplexMode = 'auto',
+    mode = 'steer',
+    roomKind = 'dm',
+    workSnapshot = null,
+  }) {
+    const askJev = async () => {
+      const settings = (() => {
+        try { return this.store.decisionRoute(); } catch { return {}; }
+      })();
+      if (!shouldUseJev('busy-intent', settings).use) return null;
+      const decision = await decidePoint('busy-intent', {
+        message: text,
+        goal: workSnapshot?.goalExcerpt ?? '',
+        phase: workSnapshot?.phase ?? '',
+      }, settings);
+      if (!decision?.ok) return null;
+      return {
+        ok: true,
+        kind: decision.values?.intent,
+        confidence: decision.confidences?.intent,
+        reason: decision.why,
+      };
+    };
+    return routeBusyInput(
+      {
+        text,
+        hasAttachments,
+        explicitMode: duplexMode,
+        mode,
+        workSnapshot,
+        roomKind,
+      },
+      { askJev },
+    );
+  }
+
+  #ensureTalkBuilder() {
+    this.__buildSession ??= createSessionBuilder({
+      runner: this,
+      health: this.health,
+      resolveModel: (slug) => this.resolveModel(slug),
+      modelLabel: () => this.modelLabel(),
+      config: this.config,
+      store: this.store,
+      bus: this.bus,
+      ...(this.sessionApi ? { sessionApi: this.sessionApi } : {}),
+    });
+    return this.__buildTalkSession ?? ((roomId, botId, opts = {}) =>
+      this.__buildSession(roomId, botId, { ...opts, talkLane: true }));
+  }
+
+  async #executeTalkItem(item, inflight) {
+    const { roomId, botId, userMessage, cleanText, snapshotPrompt, duringMsgId, scope } = item;
+    const bot = this.store.getBot(botId);
+    if (!bot) {
+      this.requestLifecycle?.close?.(scope, new Error('找不到 bot'), null);
+      return;
+    }
+
+    let slotTicket = null;
+    let talkEntry = null;
+    let talkMsg = null;
+    let talkErr = null;
+    let unsubscribe = null;
+    let pushDelta = null;
+
+    try {
+      if (inflight.aborted || this.aborting.has(roomId)) return;
+      slotTicket = await this.#acquireRunSlot({
+        roomId,
+        botId,
+        human: true,
+        signal: inflight.turnController.signal,
+        timeoutMs: 5000,
+      });
+      if (slotTicket && !slotTicket.ok) {
+        throw new Error('旁路对话等待运行槽位超时');
+      }
+      if (inflight.aborted || this.aborting.has(roomId)) return;
+
+      talkMsg = this.store.appendMessage({
+        roomId,
+        authorType: 'bot',
+        authorId: bot.id,
+        authorName: bot.name,
+        authorEmoji: bot.emoji,
+        text: '',
+        status: 'streaming',
+        meta: {
+          duplex: DUPLEX_KIND.sideReply,
+          duringMsgId: duringMsgId ?? null,
+          re: userMessage?.id ?? null,
+        },
+      });
+      this.bus.emit('event', {
+        t: 'typing',
+        roomId,
+        botId: bot.id,
+        active: true,
+        lane: 'talk',
+        msgId: talkMsg.id,
+      });
+
+      const buildTalk = this.#ensureTalkBuilder();
+      talkEntry = await buildTalk(roomId, botId, { talkLane: true, snapshotPrompt });
+      if (!talkEntry?.session) throw new Error('旁路会话初始化失败');
+      inflight.session = talkEntry.session;
+      if (inflight.aborted || this.aborting.has(roomId)) return;
+
+      let committed = [];
+      let buffer = '';
+      let usage = null;
+      let responseFailure = null;
+      const meter = new RunUsage();
+      const render = () => {
+        const parts = [...committed];
+        if (buffer) parts.push(buffer);
+        return parts.join('\n\n');
+      };
+      pushDelta = throttle(() => {
+        if (inflight.aborted || !talkMsg) return;
+        this.bus.emit('event', { t: 'msg.delta', roomId, msgId: talkMsg.id, text: render() });
+      }, 80);
+
+      unsubscribe = talkEntry.session.subscribe?.((event) => {
+        switch (event.type) {
+          case 'message_start':
+            if (event.message?.role === 'assistant') buffer = '';
+            break;
+          case 'message_update':
+            if (event.assistantMessageEvent?.type === 'text_delta') {
+              buffer += event.assistantMessageEvent.delta;
+              pushDelta?.();
+            }
+            break;
+          case 'message_end':
+            if (event.message?.role === 'assistant') {
+              meter.add(event.message.usage);
+              usage = meter.snapshot();
+              const failure = assistantFailure(event.message);
+              if (failure) {
+                responseFailure = failure;
+                buffer = '';
+                pushDelta?.flush?.();
+                break;
+              }
+              responseFailure = null;
+              const finalText = textOf(event.message) || buffer;
+              if (finalText.trim()) committed.push(finalText.trim());
+              buffer = '';
+              pushDelta?.flush?.();
+            }
+            break;
+          default:
+            break;
+        }
+      }) ?? null;
+
+      const memText = String(this.store.memorySummaryFor(roomId, botId)?.text ?? '').trim().slice(0, 600);
+      const recentDone = this.store.listMessages(roomId, { limit: 12 })
+        .filter((m) => m.authorType !== 'system' && m.status === 'done' && m.id !== userMessage?.id && m.id !== talkMsg.id)
+        .slice(-8)
+        .map((m) => `${m.authorName || (m.authorType === 'user' ? '用户' : bot.name)}：${String(m.text ?? '').replace(/\s+/g, ' ').trim().slice(0, 160)}`)
+        .filter(Boolean);
+
+      const promptParts = [
+        memText ? `【历史记忆摘要】\n${memText}` : '',
+        recentDone.length ? `【近期对话片段】\n${recentDone.join('\n')}` : '',
+        snapshotPrompt || '',
+        `用户刚问：\n${cleanText}\n\n请直接结合上面的实时工作台快照与上下文，用 1～4 句自然口吻回答用户。`,
+      ].filter(Boolean);
+      const talkPrompt = promptParts.join('\n\n');
+
+      const providerScope = providerLeaseScope(talkEntry.session.model, this.model);
+      await this.providerUpdates.withLease(
+        () => talkEntry.session.prompt(talkPrompt),
+        providerScope,
+      );
+
+      if (inflight.aborted || this.aborting.has(roomId)) {
+        const msg = this.store.updateMessage(
+          roomId,
+          talkMsg.id,
+          { status: 'aborted', error: '已按你的要求终止' },
+          { silent: true },
+        );
+        this.bus.emit('event', { t: 'msg.updated', roomId, msgId: talkMsg.id, msg });
+        return;
+      }
+
+      if (responseFailure) throw new Error(responseFailure.error);
+      const finalText = render().trim() || '后台正在推进当前任务，稍后给你同步最新进展。';
+      const msg = this.store.updateMessage(
+        roomId,
+        talkMsg.id,
+        { text: finalText, status: 'done', usage },
+        { silent: true },
+      );
+      this.bus.emit('event', { t: 'msg.done', msg });
+      this.#recordSideContext(roomId, botId, cleanText, finalText);
+    } catch (err) {
+      talkErr = err;
+      if (talkMsg) {
+        const cancelled = inflight.aborted || this.aborting.has(roomId) || err?.name === 'AbortError';
+        const message = cancelled ? '已按你的要求终止' : modelFailure(err).error;
+        const msg = this.store.updateMessage(
+          roomId,
+          talkMsg.id,
+          { status: cancelled ? 'aborted' : 'error', error: message },
+          { silent: true },
+        );
+        this.bus.emit('event', {
+          t: cancelled ? 'msg.updated' : 'msg.error',
+          roomId,
+          msgId: talkMsg.id,
+          error: message,
+          msg,
+        });
+      }
+    } finally {
+      try { unsubscribe?.(); } catch {}
+      inflight.session = null;
+      try { releaseEntry(talkEntry); } catch {}
+      try { slotTicket?.release?.(); } catch {}
+      this.bus.emit('event', {
+        t: 'typing',
+        roomId,
+        botId: bot.id,
+        active: false,
+        lane: 'talk',
+        msgId: talkMsg?.id ?? null,
+      });
+      this.requestLifecycle?.close?.(scope, talkErr, talkErr ? null : 'answer');
+    }
+  }
+
+  async #runTalkTurn(item) {
+    const key = this.#key(item.roomId, item.botId);
+    const existing = this.talkInflight.get(key);
+    if (existing) {
+      if (existing.next?.scope) {
+        this.requestLifecycle?.close?.(existing.next.scope, null, 'answer');
+      }
+      existing.next = item;
+      return existing.promise;
+    }
+
+    const inflight = {
+      aborted: false,
+      turnController: new AbortController(),
+      next: null,
+      promise: null,
+    };
+    const promise = (async () => {
+      let current = item;
+      try {
+        while (current) {
+          inflight.turnController = new AbortController();
+          await this.#executeTalkItem(current, inflight);
+          if (inflight.aborted || this.aborting.has(item.roomId) || !inflight.next) break;
+          current = inflight.next;
+          inflight.next = null;
+        }
+      } finally {
+        if (inflight.next?.scope) {
+          this.requestLifecycle?.close?.(inflight.next.scope, null, 'answer');
+        }
+        if (this.talkInflight.get(key) === inflight) {
+          this.talkInflight.delete(key);
+        }
+      }
+    })();
+    inflight.promise = promise;
+    this.talkInflight.set(key, inflight);
+    return promise;
+  }
+
+  async #replaceDmWorkTurn({ roomId, botId, clean, files, userMessage, request, mode, deliveryEpoch }) {
+    const deadline = Date.now() + 5000;
+    while (
+      this.isBusy(roomId, botId) &&
+      Date.now() < deadline &&
+      !this.aborting.has(roomId) &&
+      (this.directDeliveryEpochs.get(roomId) ?? 0) === deliveryEpoch
+    ) {
+      await sleep(25);
+    }
+    if (this.aborting.has(roomId) || (this.directDeliveryEpochs.get(roomId) ?? 0) !== deliveryEpoch) {
+      if (request?.scope) {
+        this.requestLifecycle?.close?.(request.scope, new Error('已终止'), null);
+      }
+      return;
+    }
+    const effective = mode === 'followUp' ? 'followUp' : 'steer';
+    let scopeSettled = false;
+    try {
+      await deliverDirectInput({
+        prepare: () => this.#buildInput(clean, files, roomId),
+        run: async ({ promptText }) => {
+          const execute = () => this.run(roomId, botId, promptText, {
+            skipUserMessage: true, attachments: files, human: true,
+          });
+          if (!request) return execute();
+          try {
+            return await this.#withRequestEnvelope(request, roomId, botId, execute);
+          } finally {
+            scopeSettled = true;
+            void this.#drainRequestQueue(roomId, botId);
+          }
+        },
+        getEntry: () => this.sessions.get(this.#key(roomId, botId)),
+        isCancelled: () => this.aborting.has(roomId)
+          || (this.directDeliveryEpochs.get(roomId) ?? 0) !== deliveryEpoch,
+        queue: (session, { promptText }) => session[effective](promptText, files.map(readForModel).filter(Boolean)),
+        accepted: (queued) => {
+          this.store.updateMessage(roomId, userMessage.id, {
+            meta: { ...(userMessage.meta ?? {}), queued: effective, queuedState: queued ?? 'queued' },
+          });
+          this.bus.emit('event', { t: 'steer.accepted', roomId, mode: effective, text: clean, messageId: userMessage.id });
+          if (request?.scope && !this.taskIntakeEnabled) {
+            scopeSettled = true;
+            this.requestLifecycle?.close?.(request.scope, null, 'answer');
+          }
+        },
+      });
+    } catch (err) {
+      if (request?.scope && !scopeSettled) {
+        this.requestLifecycle?.close?.(request.scope, err, null);
+      }
+      if (err?.name !== 'AbortError') {
+        const error = modelFailure(err).error;
+        const msg = this.store.updateMessage(roomId, userMessage.id, { status: 'error', error });
+        this.bus.emit('event', { t: 'msg.error', roomId, msgId: userMessage.id, error, msg });
+      }
+    }
   }
 
   #dispatchGroupRound(roomId, text, files) {
@@ -392,7 +905,7 @@ export class PiRunner {
     //     否则两个 runRound 会同时在同一个房间里派活，消息会乱。
     if (this.roundLocks.has(roomId) || this.isRoomBusy(roomId)) {
       log(
-        `【${store.getRoom(roomId)?.name ?? roomId}】用户插话 → 打断进行中的一轮，按新要求重来`,
+        `【${this.store.getRoom(roomId)?.name ?? roomId}】用户插话 → 打断进行中的一轮，按新要求重来`,
       );
       this.#interruptRoundForUser(roomId);
       // 旧轮攒着还没派的内容属于旧需求，丢掉
@@ -450,10 +963,10 @@ export class PiRunner {
     }
 
     if (botIds.length) {
-      for (const msg of store.listMessages(roomId, { limit: 200 })) {
+      for (const msg of this.store.listMessages(roomId, { limit: 200 })) {
         if (msg.status !== 'streaming') continue;
         if (!botIds.includes(msg.authorId)) continue;
-        store.updateMessage(
+        this.store.updateMessage(
           roomId,
           msg.id,
           {
@@ -467,7 +980,7 @@ export class PiRunner {
         );
       }
       for (const id of botIds) {
-        bus.emit('event', { t: 'typing', roomId, botId: id, active: false });
+        this.bus.emit('event', { t: 'typing', roomId, botId: id, active: false });
       }
     }
 
@@ -508,9 +1021,9 @@ export class PiRunner {
   startWatchdog() {
     this.watchdog ??= createWatchdog({
       sessions: this.sessions,
-      heartbeatMs: config.heartbeatMs,
-      stallMs: config.stallMs,
-      emit: (ev) => bus.emit('event', ev),
+      heartbeatMs: this.config.heartbeatMs,
+      stallMs: this.config.stallMs,
+      emit: (ev) => this.bus.emit('event', ev),
       onStall: (info) => {
         const cleaned = this.#stallCleanup(info);
         if (!cleaned) return;
@@ -528,7 +1041,7 @@ export class PiRunner {
   /** 收尾：捣掉这一轮 + 把它正在写的消息结掉（不收的话客户端永远转圈） */
   #stallCleanup(info) {
     info.entry?.turnController?.abort();
-    return stallCleanup({ store })(info);
+    return stallCleanup({ store: this.store })(info);
   }
 
   /**
@@ -566,7 +1079,7 @@ export class PiRunner {
       }
     }
     this.__escalator ??= createEscalator({
-      store,
+      store: this.store,
       run: (roomId, botId, text, opts) => this.run(roomId, botId, text, opts),
       onError: (what, err) => log(`${what}：`, err?.message || err),
     });
@@ -574,17 +1087,24 @@ export class PiRunner {
   }
 
   async init() {
-    this.modelRuntime = await ModelRuntime.create();
+    this.modelRuntime = this.modelRuntime
+      ?? (typeof this.modelRuntimeFactory === 'function'
+        ? await this.modelRuntimeFactory({ config: this.config, modelGroups: this.modelGroups })
+        : await ModelRuntime.create());
     // 收尾复盘器：每次新建一个"无工具"的一次性会话，不污染 bot 的聊天记录
-    this.reflect = createLessonReflector({ runner: this });
+    this.reflect = createLessonReflector({ runner: this, config: this.config, store: this.store });
     // 心跳看门狗：发现的“卡死不动”由它负责收尾 + 上报
     this.startWatchdog();
     // 部门规矩变了 → 作废空闲会话（工具集和系统提示是建会话时定的，不重建不生效）
-    bus.on('event', (ev) => {
-      if (ev?.t === 'policy.updated') this.applyPolicyChange();
-    });
+    if (!this.#onBusEvent) {
+      this.#onBusEvent = (ev) => {
+        if (ev?.t === 'policy.updated') this.applyPolicyChange();
+      };
+      this.bus.on('event', this.#onBusEvent);
+    }
 
-    for (const [providerId, providerConfig] of Object.entries(loadExtraProviders())) {
+    const agentDir = typeof this.sessionApi?.getAgentDir === 'function' ? this.sessionApi.getAgentDir() : null;
+    for (const [providerId, providerConfig] of Object.entries(loadExtraProviders({ config: this.config, modelGroups: this.modelGroups, agentDir, includeHost: this.inheritHostProviders }))) {
       try {
         this.modelRuntime.registerProvider(providerId, providerConfig);
       } catch (err) {
@@ -596,7 +1116,7 @@ export class PiRunner {
     this.registeredGroups = new Set();
     this.syncModelGroups();
 
-    const candidates = [config.model, settingsDefaultModel()].filter(Boolean);
+    const candidates = [this.store.defaultModel(), this.config.model, settingsDefaultModel({ agentDir, includeHost: this.inheritHostProviders })].filter(Boolean);
     for (const slug of candidates) {
       const found = this.resolveModel(slug);
       if (found) {
@@ -611,12 +1131,12 @@ export class PiRunner {
 
     // 默认模型：菜单里第一个活的（优先 deepseek v4.1 flash）
     if (!this.model) {
-      const fallback = defaultMenuSlug(this.health);
+      const fallback = defaultMenuSlug(this.health, this.modelGroups.menuEntries());
       if (fallback) this.model = this.resolveModel(fallback) ?? null;
     }
 
     // 群消息路由用的便宜模型（现在只做兜底判断）
-    const routerSlug = resolveMenu('glm-5.3-flash', this.health)?.slug ?? defaultMenuSlug(this.health);
+    const routerSlug = resolveMenu('glm-5.3-flash', this.health, this.modelGroups.menuEntries())?.slug ?? defaultMenuSlug(this.health, this.modelGroups.menuEntries());
     this.routerModel = routerSlug ? this.resolveModel(routerSlug) : null;
 
     if (this.model) {
@@ -625,18 +1145,18 @@ export class PiRunner {
       this.initNote = '没有可用模型，请先配置 pi 的 provider';
       log('⚠️ ', this.initNote);
     }
-    logMenu(this.health);
+    logMenu(this.health, this.modelGroups.menuEntries());
 
     // 后台探活：结果缓存 24h，菜单按它自动切到活着的线路。
     //   首次启动会对每个有凭证的模型真发一次请求（会花钱、也会占满并发）。
     //   PI_BOT_PROBE=0 关掉：菜单照样有，只是不自动探、也不按探活结果切线路，
     //   要探可以让主控手动调 probe_model。
-    if (config.autoProbe) {
+    if (this.config.autoProbe) {
       this.health.runAll({ concurrency: 6 }).catch((err) => log('模型探活出错：', err?.message || err));
 
       // 菜单里那些模型的「档位矩阵」：找出会静默返回空的组合（思考等级 × 模型）
       this.health
-        .runLevelMatrix(menuSlugs())
+        .runLevelMatrix(menuSlugs(this.modelGroups))
         .catch((err) => log('档位矩阵出错：', err?.message || err));
     } else {
       log('模型探活已关闭（PI_BOT_PROBE=0）：不自动探活');
@@ -705,7 +1225,7 @@ export class PiRunner {
     this.registeredGroups = syncModelGroups(
       this.modelRuntime,
       this.registeredGroups,
-      modelGroups.toProviderConfigs(),
+      this.modelGroups.toProviderConfigs(),
       {
         onLog: log,
         onError: (_id, err) => log('模型组同步失败：', modelFailure(err).error),
@@ -715,7 +1235,7 @@ export class PiRunner {
 
   /** 改完模型组：重新注册 + 刷新列表，然后广播一声让 App 更新 */
   async applyModelGroupChange(groupId = null) {
-    const configs = modelGroups.toProviderConfigs();
+    const configs = this.modelGroups.toProviderConfigs();
     const ids = groupId ? [groupId] : [...new Set([
       ...(this.registeredGroups ?? []), ...Object.keys(configs),
     ])];
@@ -746,13 +1266,15 @@ export class PiRunner {
       if (n) log(`🔁 模型组 ${groupId} 的凭证变了，清掉 ${n} 条旧探活结论`);
     }
     await this.refreshAvailableModels();
-    this.model = this.resolveModel(this.modelLabel()) ?? this.resolveModel(config.model)
-      ?? this.resolveModel(defaultMenuSlug(this.health)) ?? null;
+    const persistedDefault = this.store.defaultModel();
+    this.model = (persistedDefault ? this.resolveModel(persistedDefault) : null)
+      ?? this.resolveModel(this.modelLabel()) ?? this.resolveModel(this.config.model)
+      ?? this.resolveModel(defaultMenuSlug(this.health, this.modelGroups.menuEntries())) ?? null;
     this.routerModel = this.model;
     this.initNote = this.model ? null : '没有可用模型，请先配置模型组';
     invalidateSessions(this.sessions, (_key, entry) =>
-      modelChangeAffectsSession(entry, groupId, store.getBot(entry.bot?.id) ?? entry.bot));
-    bus.emit('event', { t: 'models.changed' });
+      modelChangeAffectsSession(entry, groupId, this.store.getBot(entry.bot?.id) ?? entry.bot));
+    this.bus.emit('event', { t: 'models.changed' });
     return this.availableModels?.length ?? 0;
   }
 
@@ -768,28 +1290,51 @@ export class PiRunner {
       const names = Array.isArray(entry.bot?.mcpServers) ? entry.bot.mcpServers : [];
       return names.length > 0;
     });
-    bus.emit('event', { t: 'mcp.changed' });
+    this.bus.emit('event', { t: 'mcp.changed' });
   }
 
   // ---------------------------------------------------------------- 核心：跑一轮
 
   providerForBot(botId) {
-    const bot = store.getBot(botId);
+    const bot = this.store.getBot(botId);
     if (!bot?.model) return this.model?.provider ?? null;
     return this.resolveModel(bot.model)?.provider ?? String(bot.model).split('/')[0];
   }
 
   refreshDefaultModel() {
-    this.model = this.resolveModel(this.modelLabel()) ?? this.resolveModel(config.model)
-      ?? this.resolveModel(defaultMenuSlug(this.health)) ?? null;
+    const persistedDefault = this.store.defaultModel();
+    this.model = (persistedDefault ? this.resolveModel(persistedDefault) : null)
+      ?? this.resolveModel(this.modelLabel()) ?? this.resolveModel(this.config.model)
+      ?? this.resolveModel(defaultMenuSlug(this.health, this.modelGroups.menuEntries())) ?? null;
     this.routerModel = this.model;
+  }
+
+  /** 对话内切换全局默认模型：写入持久状态并重建未固定模型的空闲会话。 */
+  async setDefaultModel(slug = '') {
+    const clean = String(slug ?? '').trim();
+    if (!clean) {
+      this.store.setDefaultModel(null);
+      this.refreshDefaultModel();
+    } else {
+      const found = this.resolveModel(clean);
+      if (!found) {
+        return { ok: false, error: `找不到可用模型：${clean}` };
+      }
+      const canonical = `${found.provider}/${found.id}`;
+      this.store.setDefaultModel(canonical);
+      this.model = found;
+      this.routerModel = this.routerModel ?? found;
+    }
+    invalidateSessions(this.sessions, (_key, entry) =>
+      !entry.busy && !(this.store.getBot(entry.bot?.id)?.model));
+    return { ok: true, model: this.modelLabel() };
   }
 
   flushProviderUpdates() {
     const applied = this.providerUpdates.flush();
     if (applied.length) {
       void this.refreshAvailableModels().then(() => {
-        bus.emit('event', { t: 'models.changed' });
+        this.bus.emit('event', { t: 'models.changed' });
       }).catch((error) => log('模型目录刷新失败：', modelFailure(error).error));
     }
   }
@@ -819,6 +1364,10 @@ export class PiRunner {
       health: this.health,
       resolveModel: (slug) => this.resolveModel(slug),
       modelLabel: () => this.modelLabel(),
+      config: this.config,
+      store: this.store,
+      bus: this.bus,
+      ...(this.sessionApi ? { sessionApi: this.sessionApi } : {}),
     });
     // ★ 报告工具**固定注册**给所有会话。
     //
@@ -854,7 +1403,7 @@ export class PiRunner {
    * 房间一多内存会一直涨。超过上限就释放最久没用且不忙的那些。
    */
   #evictSessions() {
-    const released = evictIdle(this.sessions, config.maxSessions);
+    const released = evictIdle(this.sessions, this.config.maxSessions);
     if (released) log(`会话 LRU 释放 ${released} 个（当前 ${this.sessions.size}）`);
   }
 
@@ -867,10 +1416,10 @@ export class PiRunner {
    * 返回 null 表示本轮**不需要**槽位（不限并发且没开保底位），
    * 调用方不要把它当成失败。
    */
-  async #acquireRunSlot({ roomId, botId, human, signal, timeoutMs = config.runSlotWaitMs }) {
+  async #acquireRunSlot({ roomId, botId, human, signal, timeoutMs = this.config.runSlotWaitMs }) {
     const slots = this.runSlots;
     if (!slots || slots.unlimited) return null;
-    const name = `${store.getRoom(roomId)?.name ?? roomId} / ${store.getBot(botId)?.name ?? botId}`;
+    const name = `${this.store.getRoom(roomId)?.name ?? roomId} / ${this.store.getBot(botId)?.name ?? botId}`;
     const ticket = await slots.acquire({
       priority: human ? PRIORITY.human : PRIORITY.normal,
       name,
@@ -885,7 +1434,7 @@ export class PiRunner {
   /**
    * 按实测偏差校准 keepRecentTokens，让"保留 N 万"是真实 token 而非估算。
    *
-   * ## 两档（Xiao 定）
+   * ## 两档上下文保留策略
    *
    *   · 工程档（**默认**）：保留 200000 真实 token，触发 0.6 × 窗口。
    *     做工程调研、读大量资料、写代码都用这档 —— 材料完整比延迟重要。
@@ -930,7 +1479,7 @@ export class PiRunner {
     if (Boolean(item?.fromId) || isOpening) return true;
 
     const settings = (() => {
-      try { return store.decisionRoute(); } catch { return {}; }
+      try { return this.store.decisionRoute(); } catch { return {}; }
     })();
     const gate = shouldUseJev('should-reply', settings);
     const throttleKey = `${roomId}:${bot.id}:${item?.sourceMessageId ?? ''}`;
@@ -961,14 +1510,14 @@ export class PiRunner {
   async #askShouldReply({ room, roomId, item, bot }) {
     const throttleKey = `${roomId}:${bot.id}:${item?.sourceMessageId ?? ''}`;
     const settings = (() => {
-      try { return store.decisionRoute(); } catch { return {}; }
+      try { return this.store.decisionRoute(); } catch { return {}; }
     })();
 
     let decision;
     try {
       decision = await decidePoint('should-reply', {
         message: String(item?.fromText || item?.reason || '').slice(0, 2000),
-        recent: store.listMessages(roomId, { limit: 8 })
+        recent: this.store.listMessages(roomId, { limit: 8 })
           .filter((m) => m.authorType !== 'system')
           .map((m) => `${m.authorName || '用户'}：${String(m.text ?? '').slice(0, 300)}`),
         botName: bot.name,
@@ -1037,8 +1586,8 @@ export class PiRunner {
           contextWindow: cw,
           // 传一个足够大的值，让 capRecentTokens 只受窗口约束、不受 keep 约束
           keepRecentTokens: Number.MAX_SAFE_INTEGER,
-          reserveTokens: existing.reserveTokens ?? config.reserveTokens ?? 16384,
-          threshold: config.compactAtPercent ?? 0.6,
+          reserveTokens: existing.reserveTokens ?? this.config.reserveTokens ?? 16384,
+          threshold: this.config.compactAtPercent ?? 0.6,
           // ★ 必须和 applyCompactionBudget 一样扣掉固定开销。
           //
           //   不扣的话这里算出的「窗口最多能留多少原文」偏大 ——
@@ -1056,7 +1605,7 @@ export class PiRunner {
         //   折算成真实 token 后理论上不会超窗口 —— 但 ratio 是估出来的，
         //   有误差；而且 128k 窗口上"20 万真实"这个目标本身就不可能达成。
         //   所以再夹一次 min(窗口触发线, 目标)，保证物理上放得下。
-        const triggerReal = Math.min(cw, Math.floor(cw * (config.compactAtPercent ?? 0.6)));
+        const triggerReal = Math.min(cw, Math.floor(cw * (this.config.compactAtPercent ?? 0.6)));
         maxReal = Math.min(target, Math.round(maxEstInWindow * ratio), triggerReal);
         keep = Math.min(rawKeep, Math.max(1, Math.round(maxReal / ratio)));
       }
@@ -1092,7 +1641,7 @@ export class PiRunner {
 
   #recordRun({ roomId, botId, startedAt, ok, usage, taskRunId = '', attemptIndex = 1, sdkRetries = 0, kind = '' }) {
     try {
-      const bot = store.getBot(botId);
+      const bot = this.store.getBot(botId);
       const model = bot?.model ? String(bot.model) : (this.model?.id ?? '');
       this.stats?.record({
         roomId,
@@ -1124,7 +1673,7 @@ export class PiRunner {
     }
   }
 
-  async #acquireBackgroundSlot({ name = '', signal = null, timeoutMs = config.backgroundSlotWaitMs } = {}) {
+  async #acquireBackgroundSlot({ name = '', signal = null, timeoutMs = this.config.backgroundSlotWaitMs } = {}) {
     const slots = this.backgroundSlots;
     if (signal?.aborted) return { ok: false, reason: 'aborted' };
     if (!slots || slots.unlimited) return null;
@@ -1143,7 +1692,7 @@ export class PiRunner {
    * 取不到就返回 null —— 调用方按"没有熔断"处理，绝不让它挡住正常流程。
    */
   breakerFor(botId) {
-    const bot = store.getBot(botId);
+    const bot = this.store.getBot(botId);
     const slug = String(bot?.model ?? '').trim();
     if (!slug.includes('/')) return null;
     const groupId = slug.slice(0, slug.indexOf('/'));
@@ -1182,7 +1731,7 @@ export class PiRunner {
     const next = breakerFail(found.breaker, { kind, status, now: Date.now() });
     this.breakers.set(found.groupId, next);
     if (next.state === BREAKER_STATE.open) {
-      const group = modelGroups.get(found.groupId);
+      const group = this.modelGroups.get(found.groupId);
       const name = group?.name ?? found.groupId;
       // ★ 熔断的那条路可能只是其中一条端点 —— 有备用就立刻切过去。
       //
@@ -1213,7 +1762,7 @@ export class PiRunner {
    */
   #tryRotateEndpoint(groupId) {
     if (this.providerUpdates.has(groupId)) return null;
-    const group = modelGroups.get(groupId);
+    const group = this.modelGroups.get(groupId);
     const eps = group?.endpoints ?? [];
     if (eps.length < 2) return null;
     const prevIdx = this.endpointCursors.get(groupId) ?? 0;
@@ -1377,13 +1926,13 @@ export class PiRunner {
         accepted: () => {},
       });
       if (result?.ok !== false) {
-        const msg = store.updateMessage(roomId, item.messageId, { meta: { queued: false } });
-        if (msg) bus.emit('event', { t: 'msg.updated', roomId, msg });
+        const msg = this.store.updateMessage(roomId, item.messageId, { meta: { queued: false } });
+        if (msg) this.bus.emit('event', { t: 'msg.updated', roomId, msg });
       }
     } catch (err) {
       const error = modelFailure(err).error;
-      const msg = store.updateMessage(roomId, item.messageId, { status: 'error', error });
-      bus.emit('event', { t: 'msg.error', roomId, msgId: item.messageId, error, msg });
+      const msg = this.store.updateMessage(roomId, item.messageId, { status: 'error', error });
+      this.bus.emit('event', { t: 'msg.error', roomId, msgId: item.messageId, error, msg });
     } finally {
       if ((this.requestQueues.get(roomId)?.length ?? 0) > 0) {
         setTimeout(() => { void this.#drainRequestQueue(roomId, botId); }, 0);
@@ -1411,7 +1960,7 @@ export class PiRunner {
 
   /** Bot 是否确属该房间（受管 DM 执行前核对，不靠上下文自证）。 */
   roomHasBot(roomId, botId) {
-    const room = store.getRoom(roomId);
+    const room = this.store.getRoom(roomId);
     if (!room) return false;
     if (Array.isArray(room.botIds)) return room.botIds.includes(botId);
     return Boolean(room.botId && room.botId === botId);
@@ -1456,7 +2005,7 @@ export class PiRunner {
   /** 目标 bot：DM 就是唯一成员；群就是部门老大 */
   targetBotFor(room) {
     if (room.kind === 'dm') return room.botIds[0] ?? null;
-    const { leadId } = departmentOf(room);
+    const { leadId } = departmentOf(room, this.store);
     return leadId ?? room.botIds[0] ?? null;
   }
 
@@ -1469,7 +2018,7 @@ export class PiRunner {
    */
   #buildInput(clean, files, roomId = '') {
     this.__buildInput ??= createBuildInput({
-      workspace: config.workspace,
+      workspace: this.config.workspace,
       metaFor,
       inboxPath,
       attachmentBlock,
@@ -1481,10 +2030,10 @@ export class PiRunner {
   }
 
   sendImage({ roomId, botId, filePath, caption }) {
-    const bot = store.getBot(botId);
+    const bot = this.store.getBot(botId);
     const meta = saveFromPath(filePath);
     const attachment = { id: meta.id, name: meta.name, mime: meta.mime, kind: meta.kind, size: meta.size };
-    const msg = store.appendMessage({
+    const msg = this.store.appendMessage({
       roomId,
       authorType: 'bot',
       authorId: botId,
@@ -1514,17 +2063,17 @@ export class PiRunner {
    * 因为用户可能连着点两下，或者上次开场跑到一半被中断。
    */
   async greetDm(roomId, botId) {
-    const room = store.getRoom(roomId);
+    const room = this.store.getRoom(roomId);
     if (!room || room.kind !== 'dm') return { ok: false, skipped: 'not-dm' };
     if (room.greetedAt) return { ok: false, skipped: 'already-greeted' };
-    if (store.listMessages(roomId, { limit: 1 }).length) {
+    if (this.store.listMessages(roomId, { limit: 1 }).length) {
       return { ok: false, skipped: 'not-empty' };
     }
-    const bot = store.getBot(botId);
+    const bot = this.store.getBot(botId);
     if (!bot) return { ok: false, skipped: 'no-bot' };
     if (this.isBusy(roomId, botId)) return { ok: false, skipped: 'busy' };
 
-    store.markRoomGreeted(roomId);
+    this.store.markRoomGreeted(roomId);
     return this.run(roomId, botId, dmOpeningPrompt(bot), {
       skipUserMessage: true,
       meta: { opening: true },
@@ -1536,7 +2085,7 @@ export class PiRunner {
    */
   #mirrorProgress(progress) {
     try {
-      const result = mirrorProgress({ store, ...progress });
+      const result = mirrorProgress({ store: this.store, ...progress });
       // ★ 区分「写成功」和「因为没有私聊会话而跳过」。
       //
       //   后者原来是完全无声的：负责人 @ 了成员、成员干完活了，
@@ -1620,17 +2169,17 @@ export class PiRunner {
     kickoff = false,
   } = {}) {
     const roomId = room.id;
-    const bot = store.getBot(botId);
+    const bot = this.store.getBot(botId);
     if (!bot) {
       return { ok: false, code: 'MANAGED_TARGET_MISSING', error: '受管目标 Bot 不存在', stop: STOP.failed };
     }
 
-    const fresh = transcriptFor(roomId, botId);
+    const fresh = transcriptFor(roomId, botId, undefined, { store: this.store });
     const prompt = composeGroupPrompt(room, bot, fresh, {
-      isLead: botId === (departmentOf(room).leadId ?? null),
+      isLead: botId === (departmentOf(room, this.store).leadId ?? null),
       reason: kickoff ? '部门刚成立，先由你安排' : openerBotId ? openerName + ' 叫了你' : '用户发了新消息',
-      members: departmentOf(room).members,
-      leadId: departmentOf(room).leadId,
+      members: departmentOf(room, this.store).members,
+      leadId: departmentOf(room, this.store).leadId,
       order: { index: 1 },
     });
 
@@ -1695,9 +2244,9 @@ export class PiRunner {
       managedContext = null,
     } = {},
   ) {
-    const room = store.getRoom(roomId);
+    const room = this.store.getRoom(roomId);
     if (!room || room.kind !== 'group') return;
-    const { members, leadId } = departmentOf(room);
+    const { members, leadId } = departmentOf(room, this.store);
     if (!members.length) return;
 
     // ★ 与 run 保持同一套拒绝语义：显式给了非法上下文就在**派活之前**拒绝。
@@ -1712,8 +2261,8 @@ export class PiRunner {
       //   actualBotId 留 null，让 resolver 只做记录/状态/尝试/授权核对；
       //   执行者归属由下面按真实成员集合判断。
       const probe = resolveManagedContext(managedContext, {
-        loadTaskRun: (id) => store.taskRuns.read(id),
-        loadRootTaskRun: (id) => store.taskRuns.read(id),
+        loadTaskRun: (id) => this.store.taskRuns.read(id),
+        loadRootTaskRun: (id) => this.store.taskRuns.read(id),
       });
       if (probe.kind === MANAGED.invalid) {
         return {
@@ -1765,19 +2314,19 @@ export class PiRunner {
     const epoch = this.#roundEpoch(roomId);
     const stale = () => this.#roundEpoch(roomId) !== epoch;
 
-    const opening = openingSpeakers(room, { text: openerText, openerBotId, kickoff });
+    const opening = openingSpeakers(room, { text: openerText, openerBotId, kickoff , store: this.store });
     // 首发名单做成集合：should-reply 用它判断"这个 bot 是不是被点名开跑的"。
     // 是的话直接开跑，不浪费一次模型判断。
     const openingSet = new Set(opening);
     if (!opening.length) return;
 
     // 轮次预算从 store 读（用户可在设置里改），config 只是默认值
-    const limits = store.groupLimits();
+    const limits = this.store.groupLimits();
     const budget = (botId) => (botId === leadId ? limits.leadTurns : limits.memberTurns);
     const used = new Map();
     // 本轮里被叫到过的人（含首发和后来被 @ 进队列的）。收尾推游标时要跟「没被叫到的」区分开
     const called = new Set(opening);
-    const chiefId = store.mainBot()?.id ?? null;
+    const chiefId = this.store.mainBot()?.id ?? null;
     const queue = opening.map((botId) => ({
       botId,
       reason: kickoff ? '部门刚成立，先由你安排' : openerBotId ? `${openerName} 叫了你` : '用户发了新消息',
@@ -1789,7 +2338,7 @@ export class PiRunner {
 
     log(
       `【${room.name}】${openerBotId ? `${openerName} 发言` : '用户发言'} → 首发：${opening
-        .map((id) => store.getBot(id)?.name ?? id)
+        .map((id) => this.store.getBot(id)?.name ?? id)
         .join('、')}`,
     );
 
@@ -1801,9 +2350,9 @@ export class PiRunner {
     //   满 500 后它会卡在 499，导致老大发言位置恒 ≤ 497，收尾永不触发。
     //   收尾判定改用 roundStartMsgId（消息 id 不受裁剪影响）。
     //
-    //   reflect 那边本批不动（L11/D12 待 Xiao 决定），所以保留下标语义。
-    const roundStartIndex = lastDoneIndexAll(roomId);
-    const roundStartMsgId = lastMessageId(roomId);
+    //   reflect 那边本批不动（L11/D12 待后续版本评估），所以保留下标语义。
+    const roundStartIndex = lastDoneIndexAll(roomId, this.store);
+    const roundStartMsgId = lastMessageId(roomId, this.store);
     const participants = [leadId, ...members.map((m) => m.id)].filter(Boolean);
 
     let runs = 0;
@@ -1813,7 +2362,7 @@ export class PiRunner {
     //   一个一个 `await this.run(...)` 来的话，组长一次 @ 了六个人，
     //   实际就是六倍时长，界面上永远是“只有一个在跑，其他 bot 呢？”。
     //
-    //   这也正是 ds-bot 的做法（groups.js 开头那句）：
+    //   采用异步轮次推进策略：
     //     "Work does not hold a round up" —— 谁还在忙就让这一轮往下走，
     //     它干完自己发。每个成员都被告知自己是第几个（You are number N of M）。
     //
@@ -1841,7 +2390,7 @@ export class PiRunner {
             voided
               ? `【${room.name}】⏹ ${stop.why}，剩下的 ${queue.length} 个人不再派`
               : `【${room.name}】⚠️ ${stop.why}，还有 ${queue.length} 个人没轮到：` +
-                  leftBehind(queue, (id) => store.getBot(id)?.name ?? id).join('、'),
+                  leftBehind(queue, (id) => this.store.getBot(id)?.name ?? id).join('、'),
           );
         }
         if (voided) queue.length = 0;
@@ -1852,7 +2401,7 @@ export class PiRunner {
         continue;
       }
       const item = queue.shift();
-      const bot = store.getBot(item.botId);
+      const bot = this.store.getBot(item.botId);
       if (!bot) continue;
       const done = used.get(item.botId) ?? 0;
       const busyNow = this.isBusy(roomId, bot.id);
@@ -1892,7 +2441,7 @@ export class PiRunner {
         //     用户只知道"我叫了它，它没反应"。这条路径恰恰是最需要解释的。
         {
           const byUser = !item.fromId;
-          store.appendMessage({
+          this.store.appendMessage({
             roomId,
             authorType: 'system',
             authorName: '调度提示',
@@ -1944,7 +2493,7 @@ export class PiRunner {
                 ? `【${room.name}】用户新需求 → 叫停 ${bot.name}（旧活作废，按新的重来）`
                 : `【${room.name}】上级改主意了 → 叫停 ${bot.name}（它正忙，让它先报进度再接新要求）`,
             );
-            store.appendMessage(
+            this.store.appendMessage(
               {
                 roomId,
                 authorType: 'system',
@@ -1970,7 +2519,7 @@ export class PiRunner {
         log(`【${room.name}】${bot.name} 还在忙 → 等它空下来再派（${item.reason}）`);
         // ★ 同级同事 @ 它：不打断，但**消息必须送到**。
         //
-        //   这是学 ds-bot 的做法（`groups.js` 那句 "the call waits in its inbox →
+        //   采用异步收件箱投递策略（"the call waits in its inbox →
         //   and is answered after that"）：忙就不等，把话投进它的 inbox，
         //   它手上的活做完自己会看到。比"死等两分钟"快，也不会等到一半就丢掉。
         if (entry?.session?.followUp) {
@@ -1981,7 +2530,7 @@ export class PiRunner {
                 '你手上那件做完之后再处理这条（不急，但也别忘了）。',
             );
             log(`【${room.name}】把话投进 ${bot.name} 的 inbox（它在忙，忙完自己看）`);
-            store.appendMessage(
+            this.store.appendMessage(
               {
                 roomId,
                 authorType: 'system',
@@ -1999,7 +2548,7 @@ export class PiRunner {
           }
         }
         // 投递也失败 → 退回等待，再不行就上报（绝不静默丢掉）
-        const deadline = Date.now() + config.groupBusyWaitMs;
+        const deadline = Date.now() + this.config.groupBusyWaitMs;
         while (this.isBusy(roomId, bot.id) && Date.now() < deadline) {
           await new Promise((r) => setTimeout(r, 2000));
         }
@@ -2008,7 +2557,7 @@ export class PiRunner {
           this.escalate({
             roomId,
             fromBotId: bot.id,
-            reason: `要派给${bot.name}的活一直没派出去（它忙了 ${Math.round(config.groupBusyWaitMs / 1000)} 秒以上）`,
+            reason: `要派给${bot.name}的活一直没派出去（它忙了 ${Math.round(this.config.groupBusyWaitMs / 1000)} 秒以上）`,
             prefer: 'lead',
           }).catch((err) => log('上报失败：', err?.message || err));
           continue;
@@ -2021,7 +2570,7 @@ export class PiRunner {
       const dispatchKey = this.#key(roomId, bot.id);
       this.dispatching.add(dispatchKey);
 
-      const fresh = transcriptFor(roomId, bot.id);
+      const fresh = transcriptFor(roomId, bot.id, undefined, { store: this.store });
       let prompt = composeGroupPrompt(room, bot, fresh, {
         isLead: bot.id === leadId,
         reason: item.reason,
@@ -2046,7 +2595,7 @@ export class PiRunner {
               dispatchId: newId('dispatch_'),
               sourceMessageId: item.sourceMessageId ?? null,
               fromId: item.fromId ?? null,
-              fromName: item.fromName || (item.fromId ? (store.getBot(item.fromId)?.name ?? '') : ''),
+              fromName: item.fromName || (item.fromId ? (this.store.getBot(item.fromId)?.name ?? '') : ''),
             };
             // ★ 不再写"接到活"回执。
             //   它对用户不是新信息，却要占一条消息，还会把真正的结论挤下去。
@@ -2087,7 +2636,7 @@ export class PiRunner {
             // 部门里"别人派给它"的活 → 任务板上登记一条（跑完再收尾）
             // ★ 受管执行不登记旧任务板：它的状态由 TaskRun 归约器负责。
             const taskId = item.fromId && !isManagedRound
-              ? store.upsertDispatchTask({
+              ? this.store.upsertDispatchTask({
                   roomId,
                   ownerBotId: bot.id,
                   title: item.fromText || item.reason,
@@ -2125,7 +2674,7 @@ export class PiRunner {
                 text: '',
                 ms: 0,
                 error: breakerNote(gate.breaker, {
-                  groupName: modelGroups.get(gate.groupId)?.name ?? '',
+                  groupName: this.modelGroups.get(gate.groupId)?.name ?? '',
                 }),
                 status: 503,
                 messageId: '',
@@ -2226,7 +2775,7 @@ export class PiRunner {
                 kind: decision.kind,
                 switchModel: decision.switchModel === true,
               });
-              settleRetryMessage(store, roomId, res, { willRetry: true });
+              settleRetryMessage(this.store, roomId, res, { willRetry: true });
               res = await this.run(roomId, bot.id, hinted + prompt, {
                 groupTurn: true,
                 retryManaged: true,
@@ -2253,7 +2802,7 @@ export class PiRunner {
             //   不重试、不留“失败回执”、不上报负责人、不推进游标 ——
             //   否则用户会看到旧任务的红字和"XX 没能完成"，而他刚说过"按新的来"。
             if (stale()) {
-              settleRetryMessage(store, roomId, res, { aborted: true });
+              settleRetryMessage(this.store, roomId, res, { aborted: true });
               // ★ 批次 03：受管 TaskRun 不走 finishTask(res.ok)。
               //   它的完成由归约器 + 验收决定；这里只处理旧任务板。
               if (taskId && !itemManaged) {
@@ -2265,21 +2814,21 @@ export class PiRunner {
                 //   · finishTask 成功时会把 unreadAt 写成当前时间，
                 //     于是每作废一条任务板上就多一个红点，用户以为有结果要看。
                 //   作废没有结果要确认，所以用专门的 voidTask（done + 不提醒）。
-                store.voidTask(taskId);
+                this.store.voidTask(taskId);
               }
               log(`【${room.name}】用户插话 → ${bot.name} 这一条作废（不重试、不上报）`);
               return;
             }
 
             // 按最终结果结束重试状态，保留成功正文。
-            settleRetryMessage(store, roomId, res, res.ok
+            settleRetryMessage(this.store, roomId, res, res.ok
               ? { succeeded: true }
               : { error: lastError, aborted: this.aborting.has(roomId) });
             // ★ 批次 03：受管 TaskRun 的完成必须经过验收，
             //   不能用「这一轮 ok」直接判完成 ——
             //   步数到上限时 ok 也是 true，但那只是让出。
             if (taskId && !itemManaged) {
-              store.finishTask(taskId, {
+              this.store.finishTask(taskId, {
                 ok: res.ok,
                 text: res.ok ? res.text : `失败 ${attempt} 次：${lastError}`,
               });
@@ -2295,9 +2844,9 @@ export class PiRunner {
             //   实时看着还是两段孤立发言，"谁在接谁的话"等于没做。
             if (res.messageId && progressSource.sourceMessageId) {
               try {
-                store.updateMessage(roomId, res.messageId, {
+                this.store.updateMessage(roomId, res.messageId, {
                   meta: {
-                    ...(store.getMessage(roomId, res.messageId)?.meta ?? {}),
+                    ...(this.store.getMessage(roomId, res.messageId)?.meta ?? {}),
                     re: progressSource.sourceMessageId,
                     reFrom: progressSource.fromId ?? null,
                   },
@@ -2329,14 +2878,14 @@ export class PiRunner {
                 ...progressSource,
               });
             }
-          store.setCursor(roomId, bot.id, lastMessageId(roomId));
+          this.store.setCursor(roomId, bot.id, lastMessageId(roomId, this.store));
 
           // 重试用完还是没成 → 群里留痕 + 上报负责人（让它按顺序处理，别自己悄悄接手）
           if (!res.ok) {
             log(
               `【${room.name}】${bot.name} 最终没跑成（试了 ${attempt} 次）：${lastError}`,
             );
-            store.appendMessage({
+            this.store.appendMessage({
               roomId,
               authorType: 'system',
               authorId: bot.id,
@@ -2370,7 +2919,7 @@ export class PiRunner {
           // PASS 的删除也收在这里 —— 上面已经判过 isPass 并跳过 mirror，
           // 这里负责把那条「[PASS]」从群里真删掉（否则用户看到一条空的群消息）。
           if (isPass) {
-            store.deleteMessage(roomId, res.messageId);
+            this.store.deleteMessage(roomId, res.messageId);
             log(`${bot.name} PASS`);
             return;
           }
@@ -2428,7 +2977,7 @@ export class PiRunner {
     //      "收尾 run 置 busy"之间的空档里，用户消息会并发起一轮，
     //      把收尾总结挤到用户回复之后 —— 正是这功能要修的那个毛病。
     if (!this.aborting.has(roomId) && leadId) {
-      const lead = store.getBot(leadId);
+      const lead = this.store.getBot(leadId);
       const closing = lead
         ? planClosing({
             // ★ 也必须用**严格**大于（和 memberSpokeAfterLead 同理）。
@@ -2441,16 +2990,15 @@ export class PiRunner {
             //   原来的口径是 `lastLeadIndex > roundStartIndex`，相等不算。
             //   空房间时 roundStartMsgId 为 null，两个函数都给 false ——
             //   与原来 -1 > -1 === false 一致。
-            leadSpokeThisRound: isStrictlyAfter(
-              roomId, roundStartMsgId, lastDoneIdOf(roomId, [leadId]),
-            ),
+            leadSpokeThisRound: isStrictlyAfter(roomId, roundStartMsgId, lastDoneIdOf(roomId, [leadId], this.store), this.store),
             // ★ 必须用**严格**大于。
             //   participants 含老大，老大最后发言时两个 id 是同一条消息 ——
             //   用 >= 会判成"成员在老大之后说过话"，已经收口还要再收一轮。
             memberSpokeAfterLead: isStrictlyAfter(
               roomId,
-              lastDoneIdOf(roomId, [leadId]),
-              lastDoneIdOf(roomId, participants),
+              lastDoneIdOf(roomId, [leadId], this.store),
+              lastDoneIdOf(roomId, participants, this.store),
+              this.store,
             ),
           })
         : { needed: false, why: '找不到老大' };
@@ -2461,7 +3009,7 @@ export class PiRunner {
         this.dispatching.add(leadKey);
         try {
           log(`【${room.name}】🗣 ${closing.why} → 叫 ${lead.name} 收尾`);
-          const prompt = composeGroupPrompt(room, lead, transcriptFor(roomId, leadId), {
+          const prompt = composeGroupPrompt(room, lead, transcriptFor(roomId, leadId, undefined, { store: this.store }), {
             isLead: true,
             reason: '大家交完了，给用户一个最终结论',
             members,
@@ -2477,14 +3025,14 @@ export class PiRunner {
             if (found.length) {
               log(
                 `【${room.name}】⚠️ 收尾轮又 @ 了 ${found
-                  .map((id) => store.getBot(id)?.name ?? id)
+                  .map((id) => this.store.getBot(id)?.name ?? id)
                   .join('、')}，但本轮已收口，这些活留到下次`,
               );
             }
           } else {
             log(`【${room.name}】收尾没跑成：${res.error ?? '空回复'}`);
           }
-          store.setCursor(roomId, lead.id, lastMessageId(roomId));
+          this.store.setCursor(roomId, lead.id, lastMessageId(roomId, this.store));
         } catch (err) {
           // 收尾失败不能让 runRound 抛出去（房间锁在 finally 里释放）
           log(`【${room.name}】收尾异常：`, err?.message || err);
@@ -2497,15 +3045,15 @@ export class PiRunner {
     // 没被叫到的成员也算「看过这条了」，避免下次一次性倒一堆旧账。
     // ★ 被 @ 过、排进了队列但没轮到的人除外（本轮预算用完或被跳过）：
     //   推了它的游标，派给它的那条活就落在游标之前，下次被叫到只剩一句「X 叫了你」。
-    const lastId = lastMessageId(roomId);
+    const lastId = lastMessageId(roomId, this.store);
     for (const m of members) {
       if (used.has(m.id) || called.has(m.id)) continue;
-      store.setCursor(roomId, m.id, lastId);
+      this.store.setCursor(roomId, m.id, lastId);
     }
 
     // 收尾复盘：从这一轮里提炼候选经验（只进库，不进提示词）。
     // 放后台跑 —— 用户不该等复盘；失败只写日志，不影响这一轮已经交付的结果。
-    if (roundStartIndex >= 0 && store.lessonsEnabled()) {
+    if (roundStartIndex >= 0 && this.store.lessonsEnabled()) {
       void this.reflect?.({ roomId, sinceIndex: roundStartIndex }).catch((err) =>
         log(`【${room.name}】复盘异常：`, err?.message || err),
       );
@@ -2520,8 +3068,12 @@ export class PiRunner {
    * - 群（部门）：交给部门老大先接，老大用 @ 往下派
    * - 正在跑：不报错，而是插话引导（steer）或排队（followUp）
    */
-  async send(roomId, text, { mode = 'steer', attachments = [], flushMerge = true, request = null } = {}) {
-    const room = store.getRoom(roomId);
+  async send(
+    roomId,
+    text,
+    { mode = 'steer', attachments = [], flushMerge = true, request = null, groupScope = null, duplexMode = 'auto' } = {},
+  ) {
+    const room = this.store.getRoom(roomId);
     if (!room) throw Object.assign(new Error('会话不存在'), { code: 'NO_ROOM' });
     const clean = String(text ?? '').trim();
     const files = (attachments ?? []).filter(Boolean);
@@ -2529,7 +3081,7 @@ export class PiRunner {
 
     const botId = this.targetBotFor(room);
     if (!botId) throw Object.assign(new Error('这个会话里没有 bot'), { code: 'NO_BOT' });
-    const bot = store.getBot(botId);
+    const bot = this.store.getBot(botId);
     if (request) {
       this.#assertRequestEnvelope(request);
       // 群聊轮次的身份绑定尚未接入：明确拒绝，不把请求默默降级成 legacy 执行
@@ -2538,73 +3090,272 @@ export class PiRunner {
       }
     }
 
-    // 正在跑：新的独立请求按信封排队，不把身份借给当前轮次
-    if (this.isBusy(roomId, botId) && request) {
-      const userMessage = store.appendMessage({
-        roomId, authorType: 'user', authorName: '我', text: clean, status: 'done',
-        meta: { queued: 'request', requestId: request.scope.requestId },
-        attachments: hydrate(files),
-      });
-      this.#enqueueRequest(roomId, { request, text: clean, files, messageId: userMessage.id });
-      bus.emit('event', { t: 'request.queued', roomId, requestId: request.scope.requestId, requesterId: request.scope.requesterId, messageId: userMessage.id });
-      return { userMessage, bot, queued: true, requestId: request.scope.requestId };
+    // ---------------------------------------------------------------- 私聊忙碌：全双工三路分流 / 兼容队列
+    if (room.kind !== 'group' && this.isBusy(roomId, botId)) {
+      const snapshot = this.fullDuplexEnabled ? this.#collectLiveSnapshot(roomId, botId) : null;
+      const decision = this.fullDuplexEnabled
+        ? await this.#routeBusyMessage({
+            roomId,
+            botId,
+            text: clean,
+            hasAttachments: files.length > 0,
+            duplexMode,
+            mode,
+            roomKind: 'dm',
+            workSnapshot: snapshot,
+          })
+        : { kind: DUPLEX_KIND.amend, decidedBy: 'rules', confidence: 1, reason: 'duplex_disabled' };
+
+      // 决策期间若后台刚好跑完释放了，不再硬走忙时分支，直接落入下方正常发送
+      if (this.isBusy(roomId, botId)) {
+        const entry = this.sessions.get(this.#key(roomId, botId));
+
+        if (this.fullDuplexEnabled && decision.kind === DUPLEX_KIND.sideReply) {
+          this.aborting.delete(roomId);
+          const userMessage = this.store.appendMessage({
+            roomId,
+            authorType: 'user',
+            authorName: '我',
+            text: clean,
+            status: 'done',
+            meta: {
+              duplex: DUPLEX_KIND.sideReply,
+              decidedBy: decision.decidedBy,
+              duringMsgId: snapshot?.workMsgId ?? entry?.liveMsgId ?? null,
+              ...(request ? { requestId: request.scope.requestId } : {}),
+            },
+            attachments: hydrate(files),
+          });
+          this.store.answerPendingAsk(roomId, clean);
+          this.bus.emit('event', {
+            t: 'duplex.routed',
+            roomId,
+            messageId: userMessage.id,
+            requestId: request?.scope?.requestId ?? null,
+            kind: DUPLEX_KIND.sideReply,
+            decidedBy: decision.decidedBy,
+            duringMsgId: snapshot?.workMsgId ?? entry?.liveMsgId ?? null,
+          });
+          void this.#runTalkTurn({
+            roomId,
+            botId,
+            userMessage,
+            cleanText: clean,
+            snapshotPrompt: formatLiveWorkSnapshotPrompt(snapshot),
+            duringMsgId: snapshot?.workMsgId ?? entry?.liveMsgId ?? null,
+            scope: request?.scope ?? null,
+          });
+          return { userMessage, bot, duplex: DUPLEX_KIND.sideReply, scopeHandled: Boolean(request?.scope) };
+        }
+
+        if (this.fullDuplexEnabled && decision.kind === DUPLEX_KIND.abortReplace) {
+          this.aborting.delete(roomId);
+          const deliveryEpoch = this.directDeliveryEpochs.get(roomId) ?? 0;
+          const liveMsgId = entry?.liveMsgId;
+          if (liveMsgId) {
+            const cur = this.store.getMessage(roomId, liveMsgId);
+            if (cur?.status === 'streaming') {
+              this.store.updateMessage(
+                roomId,
+                liveMsgId,
+                {
+                  status: 'aborted',
+                  error: '已按你的要求终止',
+                  steps: (cur.steps ?? []).map((s) =>
+                    s?.status === 'running' ? { ...s, status: 'error', error: '已终止' } : s,
+                  ),
+                },
+                { silent: false },
+              );
+            }
+          }
+          entry?.turnController?.abort(Object.assign(new Error('已按你的要求终止'), { name: 'AbortError' }));
+          entry?.session?.abort?.().catch(() => {});
+          this.#abortTalkFor(roomId, botId);
+
+          const userMessage = this.store.appendMessage({
+            roomId,
+            authorType: 'user',
+            authorName: '我',
+            text: clean,
+            status: 'done',
+            meta: {
+              duplex: DUPLEX_KIND.abortReplace,
+              decidedBy: decision.decidedBy,
+              ...(request ? { requestId: request.scope.requestId } : {}),
+            },
+            attachments: hydrate(files),
+          });
+          this.store.answerPendingAsk(roomId, clean);
+          this.bus.emit('event', {
+            t: 'duplex.routed',
+            roomId,
+            messageId: userMessage.id,
+            requestId: request?.scope?.requestId ?? null,
+            kind: DUPLEX_KIND.abortReplace,
+            decidedBy: decision.decidedBy,
+            duringMsgId: snapshot?.workMsgId ?? liveMsgId ?? null,
+          });
+          void this.#replaceDmWorkTurn({
+            roomId,
+            botId,
+            clean,
+            files,
+            userMessage,
+            request,
+            mode,
+            deliveryEpoch,
+          });
+          return { userMessage, bot, duplex: DUPLEX_KIND.abortReplace, scopeHandled: Boolean(request?.scope) };
+        }
+
+        // amend（或关全双工）：受管接单模式继续入 requestQueues；普通模式不再死排队，立即 steer + 收口回执
+        if (request && this.taskIntakeEnabled) {
+          const userMessage = this.store.appendMessage({
+            roomId, authorType: 'user', authorName: '我', text: clean, status: 'done',
+            meta: { queued: 'request', requestId: request.scope.requestId },
+            attachments: hydrate(files),
+          });
+          this.#enqueueRequest(roomId, { request, text: clean, files, messageId: userMessage.id });
+          this.bus.emit('event', {
+            t: 'request.queued', roomId, requestId: request.scope.requestId,
+            requesterId: request.scope.requesterId, messageId: userMessage.id,
+          });
+          return { userMessage, bot, queued: true, requestId: request.scope.requestId };
+        }
+
+        if (!entry?.session) {
+          throw Object.assign(new Error('会话还没就绪，稍后再发'), { code: 'NOT_READY' });
+        }
+        const effective = mode === 'followUp' ? 'followUp' : 'steer';
+        let queued;
+        try {
+          const { promptText } = await this.#buildInput(clean, files, roomId);
+          if (this.aborting.has(roomId)) throw Object.assign(new Error('已终止'), { name: 'AbortError' });
+          queued = await entry.session[effective](promptText, files.map(readForModel).filter(Boolean));
+        } catch (err) {
+          throw Object.assign(new Error(`插话失败：${modelFailure(err).error}`), { code: 'STEER_FAILED' });
+        }
+        if (entry.turnAmends) entry.turnAmends.push(clean.slice(0, 160));
+        const userMessage = this.store.appendMessage(
+          {
+            roomId,
+            authorType: 'user',
+            authorName: '我',
+            text: clean,
+            status: 'done',
+            meta: {
+              queued: effective,
+              queuedState: queued ?? 'queued',
+              ...(this.fullDuplexEnabled ? {
+                duplex: DUPLEX_KIND.amend,
+                decidedBy: decision.decidedBy,
+                duringMsgId: entry.liveMsgId ?? null,
+              } : {}),
+              ...(request ? { requestId: request.scope.requestId } : {}),
+            },
+            attachments: hydrate(files),
+          },
+          {},
+        );
+        this.bus.emit('event', {
+          t: 'steer.accepted',
+          roomId,
+          mode: effective,
+          text: clean,
+          messageId: userMessage.id,
+        });
+        if (this.fullDuplexEnabled) {
+          this.bus.emit('event', {
+            t: 'duplex.routed',
+            roomId,
+            messageId: userMessage.id,
+            requestId: request?.scope?.requestId ?? null,
+            kind: DUPLEX_KIND.amend,
+            decidedBy: decision.decidedBy,
+            duringMsgId: entry.liveMsgId ?? null,
+          });
+        } else {
+          const liveMsgId = entry.liveMsgId;
+          if (liveMsgId && liveMsgId !== userMessage.id) {
+            this.store.moveMessageAfter(roomId, liveMsgId, userMessage.id, { touch: true });
+          }
+        }
+        if (request?.scope) {
+          this.requestLifecycle?.close?.(request.scope, null, 'answer');
+        }
+        return {
+          userMessage,
+          bot,
+          steered: effective,
+          ...(this.fullDuplexEnabled ? { duplex: DUPLEX_KIND.amend } : {}),
+          scopeHandled: Boolean(request?.scope),
+        };
+      }
     }
 
-    // 正在跑：插话 / 排队
-    if (this.isBusy(roomId, botId)) {
-      const entry = this.sessions.get(this.#key(roomId, botId));
-      if (!entry?.session) {
-        throw Object.assign(new Error('会话还没就绪，稍后再发'), { code: 'NOT_READY' });
-      }
-      const effective = mode === 'followUp' ? 'followUp' : 'steer';
-      let queued;
-      try {
-        const { promptText } = await this.#buildInput(clean, files, roomId);
-        if (this.aborting.has(roomId)) throw Object.assign(new Error('已终止'), { name: 'AbortError' });
-        queued = await entry.session[effective](promptText, files.map(readForModel).filter(Boolean));
-      } catch (err) {
-        throw Object.assign(new Error(`插话失败：${modelFailure(err).error}`), { code: 'STEER_FAILED' });
-      }
-      const userMessage = store.appendMessage(
-        {
+    // ---------------------------------------------------------------- 群聊忙碌旁路问答：只唤醒负责人，不掐断在跑成员
+    if (room.kind === 'group' && this.fullDuplexEnabled && (this.roundLocks.has(roomId) || this.isRoomBusy(roomId))) {
+      const groupSnap = this.#collectGroupSnapshot(room);
+      const decision = await this.#routeBusyMessage({
+        roomId,
+        botId,
+        text: clean,
+        hasAttachments: files.length > 0,
+        duplexMode,
+        mode,
+        roomKind: 'group',
+        workSnapshot: groupSnap.members[0] ?? null,
+      });
+      if ((this.roundLocks.has(roomId) || this.isRoomBusy(roomId)) && decision.kind === DUPLEX_KIND.sideReply) {
+        this.aborting.delete(roomId);
+        const userMessage = this.store.appendMessage({
           roomId,
           authorType: 'user',
           authorName: '我',
           text: clean,
           status: 'done',
-          meta: { queued: effective, queuedState: queued ?? 'queued' },
+          meta: {
+            duplex: DUPLEX_KIND.sideReply,
+            decidedBy: decision.decidedBy,
+            ...(groupScope ? { requestId: groupScope.requestId } : {}),
+          },
           attachments: hydrate(files),
-        },
-        // ★ 用户的消息**就落在最新**。
-        //   如果插在“它正在写的那条回复”之前 —— 那样读起来因果更顺，
-        //   但那个回复可能是几分钟前开始的，一插就插到聊天记录中间去了，
-        //   用户找不到自己刚说的话。所以直接追加到底部。
-        {},
-      );
-      bus.emit('event', {
-        t: 'steer.accepted',
-        roomId,
-        mode: effective,
-        text: clean,
-        messageId: userMessage.id,
-      });
-
-      // ★ 插话后模型重新想的回复，要排在用户这句话**后面**。
-      //   botMsg 是插话之前创建的（位置在用户消息上面）；模型被打断后
-      //   重新思考，新内容继续写进同一条 —— 不挪的话用户看到的是
-      //   "答案排在问题前面"（插话后顺序乱）。
-      //   touch=true：内容在重新生成，时间戳也跟着挪到现在。
-      const liveMsgId = entry.liveMsgId;
-      if (liveMsgId && liveMsgId !== userMessage.id) {
-        store.moveMessageAfter(roomId, liveMsgId, userMessage.id, { touch: true });
+        });
+        this.store.answerPendingAsk(roomId, clean);
+        const duringMsgId = groupSnap.members[0]?.workMsgId ?? null;
+        this.bus.emit('event', {
+          t: 'duplex.routed',
+          roomId,
+          messageId: userMessage.id,
+          requestId: groupScope?.requestId ?? null,
+          kind: DUPLEX_KIND.sideReply,
+          decidedBy: decision.decidedBy,
+          duringMsgId,
+        });
+        void this.#runTalkTurn({
+          roomId,
+          botId,
+          userMessage,
+          cleanText: clean,
+          snapshotPrompt: formatGroupWorkSnapshotPrompt(groupSnap),
+          duringMsgId,
+          scope: groupScope ?? null,
+        });
+        return {
+          userMessage,
+          bot,
+          group: true,
+          duplex: DUPLEX_KIND.sideReply,
+          scopeHandled: Boolean(groupScope),
+        };
       }
-      return { userMessage, bot, steered: effective };
     }
 
     // 新消息 = 新一轮：把上一轮的"已终止"标记清掉，
     // 否则这个房间会一直停在终止状态，之后发什么都被跳过。
     this.aborting.delete(roomId);
-    const userMessage = store.appendMessage({
+    const userMessage = this.store.appendMessage({
       roomId,
       authorType: 'user',
       authorName: '我',
@@ -2614,61 +3365,20 @@ export class PiRunner {
     });
 
     // ★ 用户回话了 → 那张“问你”卡片就该收起来。
-    //   卡片是 bot 停下来等回话的地方；用户点了选项/自己说了一句，
-    //   事情已经往下走了，卡片还能再点第二次只会让人怀疑自己点没点上。
-    //   把回答也存进去，历史里能看出当时选的是哪个。
-    store.answerPendingAsk(roomId, clean);
+    this.store.answerPendingAsk(roomId, clean);
 
     if (room.kind === 'group') {
-      // ★ 用户说话 = 这一轮作废，全部停下重来。
-      //
-      //   语义：**打断所有正在跑的会话，丢掉旧队列，由负责人带新 query
-      //   重新想、重新派**。用户是唯一决策者，让他等旧活干完没有意义 ——
-      //   等来的结果基于已经被推翻的需求。
-      //
-      //   不能只让组长另开一个会话当场回一句：用户看到有人回了，
-      //   但群里的活还是按旧需求在干，产出对不上。
-      //   也不能房间忙就排队等下一轮：用户看到"它下一步会看到"，
-      //   但成员还在跑旧需求，用户的话等于没生效。
-      //
-      //   打断动作在 #dispatchGroupRound 里做（那里能同时清掉 roundQueue），
-      //   这里只负责把新的一轮发起来。
       this.#dispatchGroupRound(roomId, clean, files).catch((err) =>
         log('runRound 异常：', err?.stack || err),
       );
     } else {
-      // ★ 私聊且**它当前空闲** → 先攒一下，把"连发的几条"合成一段再投递。
-      //
-      //   为什么不干脆每条都立刻投：用户说话像打字，「帮我看下这个系统」
-      //   「https://xxx.com」「账号 admin 密码 123」是三条消息，
-      //   逐条投递时 agent 第一条只看到半句就开始瞎猜，后面只能靠 steer 纠偏，
-      //   三份互相打架的理解叠在一起。合并成一段它一次就能看懂完整意图。
-      //
-      //   正在跑的时候**不能合并**：那是"中断/插队"，必须立刻送进去让它改计划，
-      //   等 700ms 反而让它多跑错一段。
       const idle = !this.isBusy(roomId, botId);
 
-      // ★ 合并只在"真的在连发"时才启动，绝不给正常发送加延迟。
-      //
-      //   两条路径：
-      //     · flushMerge=true（默认，= 用户明确按了发送键）
-      //       → **立刻投递**。如果之前因为连发攒了几条，一起带上去，
-      //         体感是"咔一下全部生效"。
-      //     · flushMerge=false（前端判定"用户还在打字"，见 app_state 的
-      //       flushMerge 参数）
-      //       → 攒 700ms 静默窗口，把"想到一句发一句"合成一段再给模型。
-      //
-      //   为什么必须区分：逐条投递时 agent 第一条只看到半句话就开始瞎猜，
-      //   后面只能靠 steer 纠偏，三份打架的理解叠在一起。
-      //   但反过来，正常发一句也要等 700ms 就是卡顿 —— 两个都不能接受。
-      //
-      //   正在跑的时候**绝不合并**：那是中断/插队，必须立刻送进去。
       if (idle && !files.length && !flushMerge) {
         this.mergeQueue.push(roomId, clean);
         return { userMessage, bot, group: false, merging: true };
       }
       if (flushMerge && this.mergeQueue.hasPending(roomId)) {
-        // 有攒着的：把这条也放进去，然后立刻全部发出
         this.mergeQueue.push(roomId, clean);
         await this.mergeQueue.flushAll();
         return { userMessage, bot, group: false, merging: false };
@@ -2676,16 +3386,16 @@ export class PiRunner {
 
       const effective = mode === 'followUp' ? 'followUp' : 'steer';
       const deliveryEpoch = this.directDeliveryEpochs.get(roomId) ?? 0;
+      let scopeSettled = false;
       deliverDirectInput({
         prepare: () => this.#buildInput(clean, files, roomId),
-        // DM 里的每一轮都是用户直接说话 → 走人的保底槽
-        // 首次接单请求：作用域在真正取得执行权时激活、本轮真正结束时收尾
         run: async ({ promptText }) => {
           const execute = () => this.run(roomId, botId, promptText, { skipUserMessage: true, attachments: files, human: true });
           if (!request) return execute();
           try {
             return await this.#withRequestEnvelope(request, roomId, botId, execute);
           } finally {
+            scopeSettled = true;
             void this.#drainRequestQueue(roomId, botId);
           }
         },
@@ -2694,20 +3404,28 @@ export class PiRunner {
           || (this.directDeliveryEpochs.get(roomId) ?? 0) !== deliveryEpoch,
         queue: (session, { promptText }) => session[effective](promptText, files.map(readForModel).filter(Boolean)),
         accepted: (queued) => {
-          store.updateMessage(roomId, userMessage.id,
+          this.store.updateMessage(roomId, userMessage.id,
             { meta: { ...(userMessage.meta ?? {}), queued: effective, queuedState: queued ?? 'queued' } });
-          bus.emit('event', { t: 'steer.accepted', roomId, mode: effective, text: clean, messageId: userMessage.id });
-          // 同 send() 的 busy 分支：插话后把正在写的那条挪到用户这句话后面
-          const racing = this.sessions.get(this.#key(roomId, botId));
-          const liveMsgId = racing?.liveMsgId;
-          if (liveMsgId && liveMsgId !== userMessage.id) {
-            store.moveMessageAfter(roomId, liveMsgId, userMessage.id, { touch: true });
+          this.bus.emit('event', { t: 'steer.accepted', roomId, mode: effective, text: clean, messageId: userMessage.id });
+          if (!this.fullDuplexEnabled) {
+            const racing = this.sessions.get(this.#key(roomId, botId));
+            const liveMsgId = racing?.liveMsgId;
+            if (liveMsgId && liveMsgId !== userMessage.id) {
+              this.store.moveMessageAfter(roomId, liveMsgId, userMessage.id, { touch: true });
+            }
+          }
+          if (request?.scope && !this.taskIntakeEnabled) {
+            scopeSettled = true;
+            this.requestLifecycle?.close?.(request.scope, null, 'answer');
           }
         },
       }).catch((err) => {
+        if (request?.scope && !scopeSettled) {
+          this.requestLifecycle?.close?.(request.scope, err, null);
+        }
         const error = modelFailure(err).error;
-        const msg = store.updateMessage(roomId, userMessage.id, { status: 'error', error });
-        bus.emit('event', { t: 'msg.error', roomId, msgId: userMessage.id, error, msg });
+        const msg = this.store.updateMessage(roomId, userMessage.id, { status: 'error', error });
+        this.bus.emit('event', { t: 'msg.error', roomId, msgId: userMessage.id, error, msg });
       });
     }
     return { userMessage, bot, group: room.kind === 'group' };
@@ -2729,8 +3447,8 @@ export class PiRunner {
   maybeAutoSummarize(roomId, botId) {
     if (this.memoryAutoDisabled) return;
     try {
-      const all = store.listMessages(roomId, { limit: PiRunner.MEMORY_WINDOW });
-      const summary = store.memorySummaryFor(roomId, botId);
+      const all = this.store.listMessages(roomId, { limit: PiRunner.MEMORY_WINDOW });
+      const summary = this.store.memorySummaryFor(roomId, botId);
       const { conversation, newMessages, totalTurns } = memoryProgress(all, summary);
       if (!conversation.length || !newMessages.length) return;
       const verdict = shouldAutoSummarize({
@@ -2778,13 +3496,13 @@ export class PiRunner {
   }
 
   async #summarizeMemoryNow(roomId, botId, { force = false, lease = null } = {}) {
-    const room = store.getRoom(roomId);
+    const room = this.store.getRoom(roomId);
     if (!room) return { error: '会话不存在' };
-    const bot = store.getBot(botId);
+    const bot = this.store.getBot(botId);
     if (!bot) return { error: 'bot 不存在' };
 
-    const all = store.listMessages(roomId, { limit: PiRunner.MEMORY_WINDOW });
-    const cached = store.memorySummaryFor(roomId, botId);
+    const all = this.store.listMessages(roomId, { limit: PiRunner.MEMORY_WINDOW });
+    const cached = this.store.memorySummaryFor(roomId, botId);
     const { conversation, newMessages, lastId, totalTurns } = memoryProgress(all, cached);
     if (!conversation.length) return { text: '', at: null, count: 0, stale: false, lastId };
     if (!force && cached && cached.lastId === lastId) return cached;
@@ -2796,7 +3514,7 @@ export class PiRunner {
     //
     //   首次（没有 cached.text）仍然对整窗口 digest。
     const cachedText = String(cached?.text ?? '').trim();
-    const recursive = config.memoryRecursive !== false && Boolean(cachedText);
+    const recursive = this.config.memoryRecursive !== false && Boolean(cachedText);
     // newMessages 为空（只有 force 才会走到这里）时退回整窗口，别把空材料发出去
     const digestMessages = recursive && newMessages.length ? newMessages : all;
     const digest = buildMemoryDigest(digestMessages);
@@ -2841,7 +3559,7 @@ export class PiRunner {
           stale: true,
         };
       }
-      return store.setMemorySummary(roomId, botId, {
+      return this.store.setMemorySummary(roomId, botId, {
         text,
         lastId,
         // 累计窗口内已确认的轮数；增量边界由 lastId 保存。
@@ -2966,13 +3684,13 @@ export class PiRunner {
     // 下限 0.2 而不是 0.5：默认值是 0.6（见 config.compactAtPercent），
     // 夹在 0.5 虽然不影响默认值，但会把用户主动调低的 0.3/0.4 悄悄改成一半 ——
     // 用户以为改了，实际没生效。
-    const threshold = Math.min(0.95, Math.max(0.2, config.compactAtPercent || 0.6)) * 100;
+    const threshold = Math.min(0.95, Math.max(0.2, this.config.compactAtPercent || 0.6)) * 100;
     const plan = PiRunner.planCompaction({
       percent: typeof usage?.percent === 'number' ? usage.percent : null,
       threshold,
       retryAfter: entry.compactRetryAfter ?? 0,
       compacting: Boolean(session.isCompacting),
-      autoCompact: config.autoCompact,
+      autoCompact: this.config.autoCompact,
     });
     if (!plan.compact) {
       // 冷却中不是错误：用户不需要知道，但排查时值得留一条
@@ -2984,7 +3702,7 @@ export class PiRunner {
 
     // 压缩共用后台配额；排队同时受用户取消与本轮剩余时间约束。
     const remaining = deadline ? Math.max(1, deadline - Date.now()) : 0;
-    const configuredWait = config.backgroundSlotWaitMs;
+    const configuredWait = this.config.backgroundSlotWaitMs;
     const waitMs = remaining && configuredWait > 0 ? Math.min(remaining, configuredWait) : remaining || configuredWait;
     const bgTicket = await this.#acquireBackgroundSlot({
       name: `压缩 · ${bot.name}`, signal, timeoutMs: waitMs,
@@ -3006,7 +3724,7 @@ export class PiRunner {
     //
     //   依赖里的 estimateTokens 是 chars/4，对中文低估约 4 倍
     //   （中文约 1 字 1 token）。而切保留点用的正是它 ——
-    //   名义"保留 6 万"实际留了 25–29 万原文（Xiao 实测：压缩前 60.5 万、
+    //   名义"保留 6 万"实际留了 25–29 万原文（实测基准：压缩前 60.5 万、
     //   压缩请求 input 32–36 万，正是这个比例）。
     //
     //   这里测出偏差系数 r，把 keepRecentTokens 设成 目标/r，
@@ -3038,7 +3756,7 @@ export class PiRunner {
           const compactStartedAt = Date.now();
           // ★ 接住返回值：压缩本身是一次真实的 LLM 调用，有 usage 和耗时。
           //   原来直接 await 丢掉了 —— 于是 run-stats 里压缩的 cost 全是 0，
-          //   用户看到的开销比实际少一截（Xiao 的用量里压缩 input 有 32–36 万，
+          //   用户看到的开销比实际少一截（实测长会话里压缩 input 有 32–36 万，
           //   cacheRead 几乎为 0，这部分此前完全没入账）。
           //
           //   注意从**返回值**取 usage，不要从 session/entry 上取：
@@ -3112,7 +3830,7 @@ export class PiRunner {
     );
     // 压缩失败仍要告诉用户：否则他看到的是"上下文一直 90%+"，
     // 却不知道系统试过并且暂时放弃了
-    if (roomId) bus.emit('event', {
+    if (roomId) this.bus.emit('event', {
       t: 'bot.compactFailed',
       roomId,
       botId: bot.id,
@@ -3196,15 +3914,15 @@ export class PiRunner {
    *   候选来自 Store，不由模型自报，也不读解析器没给的字段。
    */
   #candidateDepartmentIds(roomId, botId) {
-    const current = store.getRoom(roomId);
+    const current = this.store.getRoom(roomId);
     const departmentId = current?.departmentId ?? null;
     const ids = [];
-    for (const room of store.listRooms?.() ?? []) {
+    for (const room of this.store.listRooms?.() ?? []) {
       if (room.kind !== 'group') continue;
       // 不能把当前正在跑的群当成候选交给自己
       if (room.id === roomId) continue;
       if (departmentId && room.departmentId === departmentId) continue;
-      const lead = room.leadBotId ? store.getBot(room.leadBotId) : null;
+      const lead = room.leadBotId ? this.store.getBot(room.leadBotId) : null;
       if (!lead) continue;
       ids.push(room.id);
     }
@@ -3282,7 +4000,7 @@ export class PiRunner {
       const id = String(waitFor.approvalId ?? waitFor.ref ?? '').trim();
       if (!id) return { ok: false, why: 'need_approval 缺少 approvalId' };
 
-      const approval = (store.state.approvals ?? []).find((a) => a.id === id);
+      const approval = (this.store.state.approvals ?? []).find((a) => a.id === id);
       if (!approval) {
         return { ok: false, why: '找不到审批 ' + id + ' —— 不能凭空生成等待' };
       }
@@ -3319,7 +4037,7 @@ export class PiRunner {
     if (phase === 'waiting_dependency') {
       const depId = String(waitFor.dependencyTaskId ?? waitFor.ref ?? '').trim();
       if (!depId) return { ok: false, why: 'waiting_dependency 缺少 dependencyTaskId' };
-      const loaded = store.taskRuns.read(depId);
+      const loaded = this.store.taskRuns.read(depId);
       if (loaded.status !== 'found' || !loaded.taskRun) {
         return { ok: false, why: '找不到依赖任务 ' + depId + ' —— 不能凭空生成等待' };
       }
@@ -3358,8 +4076,8 @@ export class PiRunner {
    */
   async #runInScope(roomId, botId, prompt, options = {}) {
     const managed = resolveManagedContext(options.managedContext, {
-      loadTaskRun: (id) => store.taskRuns.read(id),
-      loadRootTaskRun: (id) => store.taskRuns.read(id),
+      loadTaskRun: (id) => this.store.taskRuns.read(id),
+      loadRootTaskRun: (id) => this.store.taskRuns.read(id),
       actualBotId: botId,
     });
     // ★ 这里只**准备**收集器，不激活 scope。
@@ -3375,7 +4093,7 @@ export class PiRunner {
     botId,
     prompt,
     {
-      timeoutMs = config.runTimeoutMs,
+      timeoutMs = this.config.runTimeoutMs,
       meta = null,
       skipUserMessage = false,
       attachments = [],
@@ -3406,7 +4124,7 @@ export class PiRunner {
     // ★ 记录本轮开始时的待批准集合，跑完据此判断「这一轮是不是停在等审批」。
     //   真实创建了 pending 审批时，这一轮不是「正常说完」，而是 waiting。
     const approvalsAtStart = new Set(
-      (store.state.approvals ?? []).filter((a) => a.status === 'pending').map((a) => a.id),
+      (this.store.state.approvals ?? []).filter((a) => a.status === 'pending').map((a) => a.id),
     );
 
     // ★ 受管上下文三态：未提供（旧调用）/ 核对通过（受管）/ 提供但非法（拒绝）。
@@ -3414,9 +4132,9 @@ export class PiRunner {
     //   核对用**真实存储记录**，不用命名约定也不信自报布尔。
     //   执行者必须就是这次要跑的 botId —— 否则会出现「实际跑 A、事件署名 B」。
     const managed = resolveManagedContext(managedContext, {
-      loadTaskRun: (id) => store.taskRuns.read(id),
+      loadTaskRun: (id) => this.store.taskRuns.read(id),
       // ★ 执行必须花掉一份**已经预留并开始**的额度，所以要读根记录核对授权
-      loadRootTaskRun: (id) => store.taskRuns.read(id),
+      loadRootTaskRun: (id) => this.store.taskRuns.read(id),
       actualBotId: botId,
     });
 
@@ -3524,7 +4242,7 @@ export class PiRunner {
      *   归属必须由 room + bot 共同确定。
      */
     const firstNewApproval = () => {
-      const pending = (store.state.approvals ?? []).filter(
+      const pending = (this.store.state.approvals ?? []).filter(
         (a) =>
           a.status === 'pending' &&
           !approvalsAtStart.has(a.id) &&
@@ -3551,13 +4269,13 @@ export class PiRunner {
         .filter((a) => typeof a === 'string' && a.trim())
         .slice(0, 200);
 
-    const capMs = store.groupLimits().turnMaxMs;
+    const capMs = this.store.groupLimits().turnMaxMs;
     const effectiveTimeout = groupTurn ? Math.min(timeoutMs || capMs, capMs) : timeoutMs;
     const deadline = effectiveTimeout > 0 ? started + effectiveTimeout : 0;
     // ★ 本轮是否因**运行超时**被中断。与用户取消是两回事：
     //   超时是运行失败/可重试事实，取消是用户意图。
     let timedOut = false;
-    const room = store.getRoom(roomId);
+    const room = this.store.getRoom(roomId);
     if (!room) {
       // ★ 有效受管尝试也要如实报告停止原因，否则调用方拿不到任何结论
       return withAttempt({
@@ -3573,9 +4291,9 @@ export class PiRunner {
     }
     if (this.providerUpdates.has(this.providerForBot(botId))) {
       const error = '模型组正在处理配置切换，本次任务未执行。请稍后重试，或检查模型组配置。';
-      const msg = store.appendMessage({
+      const msg = this.store.appendMessage({
         roomId, authorType: 'bot', authorId: botId,
-        authorName: store.getBot(botId)?.name ?? botId,
+        authorName: this.store.getBot(botId)?.name ?? botId,
         text: '', status: 'error', error,
       });
       return withAttempt({
@@ -3596,11 +4314,11 @@ export class PiRunner {
         }, {});
       }
       const message = modelFailure(err).error;
-      store.appendMessage({
+      this.store.appendMessage({
         roomId,
         authorType: 'bot',
         authorId: botId,
-        authorName: store.getBot(botId)?.name ?? botId,
+        authorName: this.store.getBot(botId)?.name ?? botId,
         text: '',
         status: 'error',
         error: `起不来：${message}`,
@@ -3675,7 +4393,7 @@ export class PiRunner {
     //   用户侧表现就是「这个 bot 突然不回话了，重启才好」。
     let botMsg;
     try {
-      botMsg = store.appendMessage({
+      botMsg = this.store.appendMessage({
         roomId,
         authorType: 'bot',
         authorId: bot.id,
@@ -3702,8 +4420,9 @@ export class PiRunner {
       }, {});
     }
     entry.liveMsgId = botMsg.id;
+    entry.goalText = String(prompt ?? '').slice(0, 600);
     beat();
-    bus.emit('event', { t: 'typing', roomId, botId: bot.id, active: true });
+    this.bus.emit('event', { t: 'typing', roomId, botId: bot.id, active: true, lane: 'work', msgId: botMsg.id });
 
     const committed = [];
     let buffer = '';
@@ -3717,19 +4436,22 @@ export class PiRunner {
       if (buffer) parts.push(buffer);
       return parts.join('\n\n');
     };
+    entry.liveSteps = steps;
+    entry.liveDraft = render;
+    entry.turnAmends = [];
     const pushDelta = throttle(() => {
       beat();
-      bus.emit('event', { t: 'msg.delta', roomId, msgId: botMsg.id, text: render() });
+      this.bus.emit('event', { t: 'msg.delta', roomId, msgId: botMsg.id, text: render() });
     }, 80);
     const pushSteps = () => {
       beat();
-      bus.emit('event', { t: 'msg.steps', roomId, msgId: botMsg.id, steps: [...steps] });
-      store.updateMessage(roomId, botMsg.id, { steps: [...steps] }, { silent: true });
+      this.bus.emit('event', { t: 'msg.steps', roomId, msgId: botMsg.id, steps: [...steps] });
+      this.store.updateMessage(roomId, botMsg.id, { steps: [...steps] }, { silent: true });
     };
 
     let stepCapHit = false;
     // 部门里"最多来回几轮"（对话轮次，不是工具调用次数）
-    const turnCap = groupTurn ? store.groupLimits().maxSteps : 0;
+    const turnCap = groupTurn ? this.store.groupLimits().maxSteps : 0;
     let turns = 0;
 
     const onEvent = (event) => {
@@ -3737,7 +4459,7 @@ export class PiRunner {
         // ★ 上下文撞阈值，pi 正在把老消息总结掉。必须告诉用户 ——
         //   不告诉的话，界面上就是"bot 突然不动了"，看着像卡死。
         case 'compaction_start':
-          bus.emit('event', {
+          this.bus.emit('event', {
             t: 'bot.compacting',
             roomId,
             botId: bot.id,
@@ -3747,7 +4469,7 @@ export class PiRunner {
           log(`[${bot.name}] 上下文压缩开始（${event.reason}）`);
           break;
         case 'compaction_end': {
-          bus.emit('event', {
+          this.bus.emit('event', {
             t: 'bot.compacting',
             roomId,
             botId: bot.id,
@@ -3769,7 +4491,7 @@ export class PiRunner {
             const saved = res.tokensBefore
               ? Math.max(0, res.tokensBefore - (res.estimatedTokensAfter ?? 0))
               : null;
-            store.appendMessage(
+            this.store.appendMessage(
               {
                 roomId,
                 authorType: 'system',
@@ -3862,7 +4584,7 @@ export class PiRunner {
           break;
         }
         case 'queue_update':
-          bus.emit('event', {
+          this.bus.emit('event', {
             t: 'queue',
             roomId,
             botId: bot.id,
@@ -3882,7 +4604,7 @@ export class PiRunner {
     const changes = () => {
       if (!beforeFiles) return null;
       try {
-        const diff = diffSnapshots(beforeFiles, snapshotWorkspace(config.workspace));
+        const diff = diffSnapshots(beforeFiles, snapshotWorkspace(this.config.workspace));
         return diff.total ? summarizeChanges(diff) : null;
       } catch {
         return null;
@@ -3908,15 +4630,15 @@ export class PiRunner {
         if (img) images.push(img);
       }
       // bot 自己画图：记下开跑前的快照，跑完把新出现的图自动带上
-      const beforeImages = config.autoAttachImages ? snapshotImages(config.workspace) : null;
+      const beforeImages = this.config.autoAttachImages ? snapshotImages(this.config.workspace) : null;
       // 这一轮改了哪些文件：跑之前拍一张，跑完比一次
       const watchChanges = process.env.PI_BOT_WATCH_CHANGES !== '0';
-      beforeFiles = watchChanges ? snapshotWorkspace(config.workspace) : null;
+      beforeFiles = watchChanges ? snapshotWorkspace(this.config.workspace) : null;
       checkCancelled();
       // 槽位：超时就如实回报并在群里留痕，不静默干等
       const remainingMs = deadline ? Math.max(1, deadline - Date.now()) : 0;
-      const slotWaitMs = remainingMs && config.runSlotWaitMs > 0
-        ? Math.min(remainingMs, config.runSlotWaitMs) : remainingMs || config.runSlotWaitMs;
+      const slotWaitMs = remainingMs && this.config.runSlotWaitMs > 0
+        ? Math.min(remainingMs, this.config.runSlotWaitMs) : remainingMs || this.config.runSlotWaitMs;
       const slotTicket = await this.#acquireRunSlot({
         roomId, botId, human, signal: turnController.signal, timeoutMs: slotWaitMs,
       });
@@ -3938,7 +4660,7 @@ export class PiRunner {
 
       const withSkills = (text) => {
         try {
-          const library = store.skillLibrary();
+          const library = this.store.skillLibrary();
           if (!library.length) return text;
           // 用「本轮 prompt + 用户消息原文」一起匹配：prompt 含大量模板文字，
           // 纯靠它会稀释信号，所以两段都喂进去。
@@ -3986,14 +4708,14 @@ export class PiRunner {
       const withLessons = (text) => {
         try {
           if (bot?.role !== 'main') return text;
-          const library = store.lessonLibrary();
+          const library = this.store.lessonLibrary();
           if (!library.length) return text;
           const task = text + "\n" + String(meta?.text ?? "");
           const picked = selectLessonsFor(library, task, { roomId });
           const lines = lessonsPromptLines(picked);
           if (!lines.length) return text;
           try {
-            store.touchLessons(picked.map((l) => l.id));
+            this.store.touchLessons(picked.map((l) => l.id));
           } catch {
             // 记命中失败不能影响这一轮
           }
@@ -4005,14 +4727,16 @@ export class PiRunner {
         }
       };
 
+      const consumedSide = !isManaged && !meta?.opening
+        ? this.#consumeSideContext(roomId, botId)
+        : { items: [], promptBlock: '' };
+
       const startTurn = async () => {
         // ★ finalPrompt 必须在 try **外面**计算。
-        //
-        //   withSkills / withLessons 是同步的纯加工，不会抛「already processing」；
-        //   把它写在 try 里再用 const 声明，catch 里就引用不到 ——
-        //   那是块级作用域，兜底路径会在 followUp 之前直接 ReferenceError，
-        //   随后被外层当成"投递失败"，本轮技能登记白清一场。
-        const finalPrompt = withLessons(withSkills(prompt));
+        const promptWithSide = consumedSide.promptBlock
+          ? `${consumedSide.promptBlock}\n\n${prompt}`
+          : prompt;
+        const finalPrompt = withLessons(withSkills(promptWithSide));
         try {
           return images.length
             ? await entry.session.prompt(finalPrompt, { images })
@@ -4021,33 +4745,16 @@ export class PiRunner {
           const msg = String(err?.message || err);
           if (!/already processing/i.test(msg) || !entry.session.followUp) throw err;
           log(`${bot.name} 那一轮还没完，这条改成排队投递（followUp）`);
-          // ★ 兜底投递**加工过**的提示词和图片，不能投原始 prompt。
-          //
-          //   finalPrompt 里已经拼进了技能正文和经验，而 withSkills 里
-          //   **当场就把这些技能登记成"已给过"**（entry.skillsInjected.add）。
-          //   如果这里投回裸 prompt：
-          //     · 技能正文和经验没跟着走 —— 这一轮的 bot 拿不到它们；
-          //     · 而它们已经被记成"给过"，下一轮也不会再给。
-          //   等于这批技能和经验被永久吞掉一次。
-          //
-          //   图片同理：原来 followUp(prompt) 把 images 丢了，
-          //   用户发的截图在兜底路径上就消失了。
-          //   followUp(text, images?, options?) 是支持图片的。
           try {
             return images.length
               ? await entry.session.followUp(finalPrompt, images)
               : await entry.session.followUp(finalPrompt);
           } catch (followErr) {
-            // ★ 投递失败只回滚**本轮**新增的技能登记。
-            //
-            //   不能整表清空（entry.skillsInjected = null）：
-            //   那会丢掉此前各轮已经成功投递过的登记，下次唤醒把它们
-            //   重新注入一遍 —— 正是 skillsInjected 这套机制要避免的
-            //   上下文膨胀 + 缓存失效。
             if (entry.skillsInjected && skillsAddedThisTurn.length) {
               for (const fp of skillsAddedThisTurn) entry.skillsInjected.delete(fp);
             }
             skillsAddedThisTurn = [];
+            this.#restoreSideContext(roomId, botId, consumedSide.items);
             throw followErr;
           }
         }
@@ -4117,7 +4824,7 @@ export class PiRunner {
       checkCancelled();
 
       const produced = beforeImages
-        ? collectNewImages(config.workspace, beforeImages, {
+        ? collectNewImages(this.config.workspace, beforeImages, {
             save: saveFromPath,
             onError: (err) => log('自动附图失败：', err?.message || err),
           })
@@ -4126,9 +4833,9 @@ export class PiRunner {
       // ★ 跑完后把交付物（表格 / 文档 / PDF / 压缩包）也直接发到群里。
       //   只认这一轮新增或改过的文件，源码不算（那是 changed_files 的事）；
       //   图片已经在上面处理过，这里排掉避免重复附件。
-      if (config.autoAttachArtifacts !== false && beforeFiles) {
+      if (this.config.autoAttachArtifacts !== false && beforeFiles) {
         try {
-          for (const item of collectArtifacts(config.workspace, beforeFiles)) {
+          for (const item of collectArtifacts(this.config.workspace, beforeFiles)) {
             try {
               produced.push(saveFromPath(item.file));
             } catch (err) {
@@ -4151,7 +4858,7 @@ export class PiRunner {
               .map((s) => `- \`${s.tool}\` ${s.detail ?? ''}`)
               .join('\n')}`
           : '';
-        const msg = store.updateMessage(
+        const msg = this.store.updateMessage(
           roomId,
           botMsg.id,
           {
@@ -4164,7 +4871,7 @@ export class PiRunner {
           },
           { silent: true },
         );
-        bus.emit('event', { t: 'msg.error', roomId, msgId: botMsg.id, error: msg.error, msg });
+        this.bus.emit('event', { t: 'msg.error', roomId, msgId: botMsg.id, error: msg.error, msg });
         this.#recordRun({ roomId, botId, startedAt: started, ok: false, usage: meter.snapshot(),
           taskRunId, attemptIndex, sdkRetries: meter.retries, kind: 'empty' });
         return withAttempt({
@@ -4180,7 +4887,7 @@ export class PiRunner {
       if (emptyRecovered) finalText = `${finalText}\n\n_（原模型首次没出内容，已自动重试）_`;
 
       const changed = changes();
-      const msg = store.updateMessage(
+      const msg = this.store.updateMessage(
         roomId,
         botMsg.id,
         {
@@ -4195,7 +4902,7 @@ export class PiRunner {
         },
         { silent: true },
       );
-      bus.emit('event', { t: 'msg.done', msg });
+      this.bus.emit('event', { t: 'msg.done', msg });
       this.#recordRun({
         roomId, botId, startedAt: started, ok: true, usage: meter.snapshot(),
         taskRunId, attemptIndex, sdkRetries: meter.retries,
@@ -4218,7 +4925,7 @@ export class PiRunner {
     } catch (err) {
       const failure = cancelled() ? modelFailure(turnController.signal.reason ?? { name: 'AbortError' })
         : responseFailure ?? modelFailure(err);
-      const current = store.getMessage(roomId, botMsg.id);
+      const current = this.store.getMessage(roomId, botMsg.id);
       const previousError = current?.error;
       const message = failure.aborted && previousError === '已按你的要求终止' ? previousError : failure.error;
       // ★ abort() / 用户插话已经把这条消息标成 aborted 了 —— 这里必须保持。
@@ -4229,7 +4936,7 @@ export class PiRunner {
       // ★ 步数上限是**运行器自己**发起的 abort，不是用户取消。
       //   用 !cancelled() 判断会把这种让出误判成失败。
       if (stepCapHit) {
-        const msg = store.updateMessage(
+        const msg = this.store.updateMessage(
           roomId,
           botMsg.id,
           {
@@ -4240,7 +4947,7 @@ export class PiRunner {
           },
           { silent: true },
         );
-        bus.emit('event', { t: 'msg.done', msg });
+        this.bus.emit('event', { t: 'msg.done', msg });
         this.#recordRun({ roomId, botId, startedAt: started, ok: true, usage: meter.snapshot(),
           taskRunId, attemptIndex, sdkRetries: meter.retries, kind: 'step-cap' });
         return withAttempt({
@@ -4265,7 +4972,7 @@ export class PiRunner {
       //   真到放弃时才写 error —— 一次红字足够说明问题。
       const recoverable = retryManaged && !keepAborted && !cancelled()
         && isRecoverableFailure({ error: message, status: failure.status ?? null });
-      const msg = store.updateMessage(
+      const msg = this.store.updateMessage(
         roomId,
         botMsg.id,
         {
@@ -4289,7 +4996,7 @@ export class PiRunner {
       );
       // 保持 aborted 时发 msg.updated（客户端认得，会把气泡收掉）；
       // 可恢复的失败也走 msg.updated（不标红），只有真出错才发 msg.error。
-      bus.emit('event', {
+      this.bus.emit('event', {
         t: keepAborted || recoverable ? 'msg.updated' : 'msg.error',
         roomId,
         msgId: botMsg.id,
@@ -4342,16 +5049,23 @@ export class PiRunner {
       entry.turnController = null;
       entry.liveMsgId = null;
       entry.startedAt = null;
+      entry.goalText = '';
+      entry.liveSteps = null;
+      entry.liveDraft = null;
+      entry.turnAmends = null;
       // ★ 槽位必须在 finally 里还 —— 成功、出错、被终止都会走到这里。
       //   漏掉任何一条路径，槽位就永远少一个，最后整个服务端等于停摆。
       entry.slotTicket?.release?.();
       entry.slotTicket = null;
-      bus.emit('event', { t: 'typing', roomId, botId: bot.id, active: false });
+      this.bus.emit('event', { t: 'typing', roomId, botId: bot.id, active: false, lane: 'work', msgId: botMsg?.id ?? null });
       // 每轮结束报一次上下文占用 —— 放在 finally 里，成功/出错都会报，
       // 否则出错那轮的数字会一直停在旧值上。
-      emitContext(roomId, bot.id, entry.session);
+      emitContext(roomId, bot.id, entry.session, this.bus);
       // ★ 每一轮跑完都问一次“该不该自动总结记忆”（策略在 memory-policy.js）。
       //   放 finally：不管这轮成功还是出错，对话都已经推进了。
+      if (bot.role === 'main') {
+        try { this.store.redactRoomSecrets(roomId, [], { limit: 8 }); } catch {}
+      }
       this.maybeAutoSummarize(roomId, bot.id);
     }
   }
@@ -4359,7 +5073,7 @@ export class PiRunner {
   /** ask_bot 用：让某个 bot 在某个会话里独立跑一轮 */
   async runBotOnce({ roomId, botId, prompt, timeoutMs, meta }) {
     if (this.isBusy(roomId, botId)) {
-      return { ok: false, text: '', ms: 0, error: `${store.getBot(botId)?.name ?? botId} 正在忙` };
+      return { ok: false, text: '', ms: 0, error: `${this.store.getBot(botId)?.name ?? botId} 正在忙` };
     }
     return this.run(roomId, botId, prompt, { timeoutMs, meta });
   }
@@ -4371,13 +5085,13 @@ export class PiRunner {
    * 让它把同一件事再做一次 —— 同一次调用的指纹已经放行，这次能过去。
    */
   async resumeAfterApproval(approval) {
-    const bot = store.getBot(approval.botId);
+    const bot = this.store.getBot(approval.botId);
     if (!bot) return { ok: false, error: 'bot 不存在' };
     const prompt =
       `用户已经批准了这次操作：${approval.tool} ${approval.summary}
 ` +
       '请继续把刚才没做完的事做完（同样的事情直接执行，不用再问）。';
-    store.appendMessage({
+    this.store.appendMessage({
       roomId: approval.roomId,
       authorType: 'system',
       authorName: '审批',
@@ -4396,12 +5110,12 @@ export class PiRunner {
    * 群里交给组长接（和用户发消息同一条路径），私聊直接跑那个 bot。
    */
   async runAutomation(automation) {
-    const room = store.getRoom(automation?.roomId);
+    const room = this.store.getRoom(automation?.roomId);
     if (!room) return { ok: false, error: '会话不存在' };
     const botId = automation.botId ?? this.targetBotFor(room);
     if (!botId) return { ok: false, error: '这个会话里没有 bot' };
 
-    store.appendMessage({
+    this.store.appendMessage({
       roomId: room.id,
       authorType: 'system',
       authorName: '定时任务',
@@ -4422,10 +5136,10 @@ export class PiRunner {
 
   /** 总经理（主控）往部门下达任务：以主控身份发帖，然后触发一轮部门响应 */
   async dispatchToGroup({ roomId, text, fromBotId = null }) {
-    const room = store.getRoom(roomId);
+    const room = this.store.getRoom(roomId);
     if (!room) return { ok: false, error: '部门不存在' };
-    const chief = fromBotId ? store.getBot(fromBotId) : store.mainBot();
-    const msg = store.appendMessage({
+    const chief = fromBotId ? this.store.getBot(fromBotId) : this.store.mainBot();
+    const msg = this.store.appendMessage({
       roomId,
       authorType: 'bot',
       authorId: chief?.id ?? 'chief',
@@ -4445,60 +5159,62 @@ export class PiRunner {
     return { ok: true, messageId: msg.id };
   }
 
-  async abort(roomId) {
-    this.directDeliveryEpochs.set(roomId, (this.directDeliveryEpochs.get(roomId) ?? 0) + 1);
-    // 用户按了停止：排队中的轮次一并清掉，不然它会在当前这轮结束后自己接着跑
-    this.roundQueue.delete(roomId);
-    // ★ 同理，连发合并队列里攥着的也要丢 ——
-    //   用户按了停止，接着再冒出一条刚攒好的消息，看起来就像"停不住"。
-    this.mergeQueue.drop(roomId);
-    // ★ 还要告诉**正在跑的那轮**别再往下派人了。
-    //
-    //   只 abort 当前这个 session 的话，用户点终止之后"还要等很久"——
-    //   群聊那一轮是个循环（组长→成员→成员…），当前这个被捣掉之后，
-    //   循环接着把下一个成员派出去。从用户角度看就是"点了没反应"。
-    this.aborting.add(roomId);
-    let aborted = false;
-    const live = [];
-    for (const [key, entry] of this.sessions) {
-      if (key.startsWith(`${roomId}:`) && entry.session && entry.busy) {
-        live.push({ key, entry });
-        entry.turnController?.abort();
-        entry.session.abort().catch(() => {});
-        aborted = true;
+  async abort(roomId, { scope = 'all' } = {}) {
+    const cleanScope = scope === 'work' || scope === 'talk' ? scope : 'all';
+    if (cleanScope !== 'talk') {
+      this.directDeliveryEpochs.set(roomId, (this.directDeliveryEpochs.get(roomId) ?? 0) + 1);
+      // 用户按了停止：排队中的轮次一并清掉，不然它会在当前这轮结束后自己接着跑
+      this.roundQueue.delete(roomId);
+      // ★ 同理，连发合并队列里攥着的也要丢 ——
+      //   用户按了停止，接着再冒出一条刚攒好的消息，看起来就像"停不住"。
+      this.mergeQueue.drop(roomId);
+      // 全量终止才写房间级 aborting 锁；仅停后台 work 保留前台 Talk 通道可继续沟通
+      if (cleanScope === 'all') {
+        this.aborting.add(roomId);
+      } else {
+        this.roundEpochs.set(roomId, this.#roundEpoch(roomId) + 1);
       }
     }
-    // ★ 不等 session 那边慢慢收尾（它可能还卡在一个长命令里）——
-    //   先把界面上的"正在写"当场结掉：用户按了停止，界面必须马上停。
-    const botIds = live.map((x) => x.key.slice(roomId.length + 1));
-    const stamp = Date.now();
-    for (const msg of store.listMessages(roomId, { limit: 200 })) {
-      if (msg.status !== 'streaming') continue;
-      if (!botIds.includes(msg.authorId)) continue;
-      store.updateMessage(
-        roomId,
-        msg.id,
-        {
-          // ★ 用 'aborted' 而不是 'error'：用户主动按 Esc 不是"出错"。
-          //   渲染成红色错误气泡会让人以为程序坏了 —— 而在 pi agent 里
-          //   按 Esc 终止就是终止，界面不留痕。
-          //   前端据这个 status 直接不画气泡（见 chat_screen 的 isAborted）。
-          //
-          //   error 文本保留：上层（run 的返回值、日志）还要用它区分原因；
-          //   只是前端拿到 status='aborted' 就不再渲染这一条。
-          status: 'aborted',
-          error: '已按你的要求终止',
-          steps: (msg.steps ?? []).map((s) =>
-            s?.status === 'running' ? { ...s, status: 'error', error: '已终止' } : s,
-          ),
-        },
-        { silent: false },
-      );
+
+    let aborted = false;
+    const live = [];
+    if (cleanScope !== 'talk') {
+      for (const [key, entry] of this.sessions) {
+        if (key.startsWith(`${roomId}:`) && entry.session && entry.busy) {
+          live.push({ key, entry });
+          entry.turnController?.abort();
+          entry.session.abort().catch(() => {});
+          aborted = true;
+        }
+      }
+      const botIds = live.map((x) => x.key.slice(roomId.length + 1));
+      for (const msg of this.store.listMessages(roomId, { limit: 200 })) {
+        if (msg.status !== 'streaming') continue;
+        if (!botIds.includes(msg.authorId)) continue;
+        if (cleanScope === 'work' && msg.meta?.duplex === DUPLEX_KIND.sideReply) continue;
+        this.store.updateMessage(
+          roomId,
+          msg.id,
+          {
+            status: 'aborted',
+            error: '已按你的要求终止',
+            steps: (msg.steps ?? []).map((s) =>
+              s?.status === 'running' ? { ...s, status: 'error', error: '已终止' } : s,
+            ),
+          },
+          { silent: false },
+        );
+      }
+      for (const id of botIds) {
+        this.bus.emit('event', { t: 'typing', roomId, botId: id, active: false, lane: 'work' });
+      }
     }
-    for (const id of botIds) {
-      bus.emit('event', { t: 'typing', roomId, botId: id, active: false });
+
+    if (cleanScope !== 'work') {
+      if (this.#abortTalkInRoom(roomId)) aborted = true;
     }
-    log(`⏹ 收到终止：${roomId}（停了 ${live.length} 个在跑的，${stamp ? '' : ''}队列也清了）`);
+
+    log(`⏹ 收到终止（${cleanScope}）：${roomId}（停了 ${live.length} 个后台会话）`);
     return { aborted };
   }
 
@@ -4513,7 +5229,7 @@ export class PiRunner {
    */
   reloadSessionForBot(botId) {
     const n = invalidateSessions(this.sessions, (key) => key.endsWith(`:${botId}`));
-    if (n) log(`${store.getBot(botId)?.name ?? botId} 的会话已按新预算重建（历史保留）`);
+    if (n) log(`${this.store.getBot(botId)?.name ?? botId} 的会话已按新预算重建（历史保留）`);
     return n;
   }
 
@@ -4536,10 +5252,10 @@ export class PiRunner {
     const removed = disposeMatching(this.sessions, (key) => key.endsWith(`:${botId}`));
     for (const key of removed) {
       const [roomId] = key.split(':');
-      store.clearSessionFile(roomId, botId);
+      this.store.clearSessionFile(roomId, botId);
     }
     // 记忆都没了，摘要也必须作废 —— 否则「记忆」页还显示旧内容
-    store.clearMemorySummariesForBot(botId);
+    this.store.clearMemorySummariesForBot(botId);
     return removed.length;
   }
 
@@ -4561,14 +5277,21 @@ export class PiRunner {
   resetRoomSessions(roomId) {
     const removed = disposeMatching(this.sessions, (key) => key.startsWith(`${roomId}:`));
     for (const key of removed) {
-      store.clearSessionFile(roomId, key.slice(roomId.length + 1));
+      this.store.clearSessionFile(roomId, key.slice(roomId.length + 1));
     }
     // 开新会话 = 清记忆：这个房间的记忆摘要一起作废
-    store.clearMemorySummariesForRoom(roomId);
+    this.store.clearMemorySummariesForRoom(roomId);
     return removed.length;
   }
 
   disposeAll() {
+    this.watchdog?.stop?.();
+    this.health?.stop?.();
+    this.mergeQueue?.clearAll?.();
+    if (this.#onBusEvent) {
+      this.bus.off('event', this.#onBusEvent);
+      this.#onBusEvent = null;
+    }
     disposeAll(this.sessions);
   }
 }

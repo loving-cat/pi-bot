@@ -159,6 +159,11 @@ export class MergeQueue {
     this.pending.delete(roomId);
   }
 
+  /** 清理全部未投递定时器（实例释放时用）。 */
+  clearAll() {
+    for (const roomId of [...this.pending.keys()]) this.drop(roomId);
+  }
+
   async #fire(roomId) {
     const slot = this.pending.get(roomId);
     if (!slot || slot.flushing) return;

@@ -5,21 +5,15 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { config } from './config.js';
-import { jevProbe } from './jev-client.js';
-import { modelGroups, testModelGroup } from './model-groups.js';
+import { config as defaultConfig } from './config.js';
+import { modelGroups as defaultModelGroups } from './model-groups.js';
 import {
   THINKING_FORMATS,
   THINKING_LEVELS,
   THINKING_PRESETS,
   THINKING_UPSTREAM_VALUES,
-  availableThinkingLevels,
 } from './model-thinking.js';
-import { capacityError } from './model-capacity.js';
-import { resolveBotModelSelection } from './model-dispatch.js';
-import { store } from './store.js';
-import { policyChange } from './policy-version.js';
-import { ensureLegacyGrant } from './migration-grants.js';
+import { store as defaultStore } from './store.js';
 import { normalizeGrant } from './grants.js';
 import { planGrantsFromRequest } from './grant-request.js';
 import {
@@ -42,33 +36,25 @@ import { createPairRequests } from './pair-requests.js';
 import { activeTls } from './tls.js';
 import { describeConfirmation } from './confirm.js';
 import { shells } from './shells.js';
-import { computeNextRun, validateSchedule } from './automations.js';
 import { VERSION } from './version.js';
-import { checkForUpdate, clearUpdateCache } from './update-checker.js';
-import { parseSkillMarkdown } from './skills.js';
+import { checkForUpdate } from './update-checker.js';
 import {
   selectLessonsFor,
   lessonsPromptLines,
   LESSON_LIMITS,
 } from './lessons.js';
 import {
-  scanLocalCapabilities,
-  localSkillToLibrary,
-  localMcpToLibrary,
-} from './local-capabilities.js';
-import {
   MCP_LIMITS,
   MCP_TYPES,
   MCP_EXPOSURES,
 } from './mcp.js';
-import { bus } from './bus.js';
+import { bus as defaultBus } from './bus.js';
 import { createConnections } from './connections.js';
 import { createTaskRunRoutes } from './task-routes.js';
 import { createRequestResultService, createTerminalPublisher } from './tasks/task-request-result.js';
 import { openRequest, createRequestLifecycle, resumeAdmitted } from './coordination/task-request-gate.js';
 import { createRequestReceipts } from './tasks/task-request-receipts.js';
 import { routeConnections } from './connections-http.js';
-import { publicMcpCredentials } from './mcp-credentials.js';
 import { probeLogin } from './site-probe.js';
 import { createSiteRuntime } from './site-runtime.js';
 import { planFirstRun, planFirstRunGrants, desktopStatusOf } from './onboarding.js';
@@ -76,6 +62,7 @@ import { desktopInputPlatform } from './desktop-input-session.js';
 import { publicSite } from './sites.js';
 import { UploadSessions } from './upload-sessions.js';
 import { loadHooks, saveHooks, validateHook } from './hooks.js';
+import { createServices, publicDecision } from './services/index.js';
 
 /// 返回带稳定错误码的失败响应。
 ///
@@ -87,17 +74,6 @@ import { loadHooks, saveHooks, validateHook } from './hooks.js';
 /// @param {string} message 人读兜底文案
 function fail(res, status, code, message, extra = null) {
   return send(res, status, { error: message, code, ...(extra ?? {}) });
-}
-
-/**
- * 对外的决策设置：**抹掉 key**。
- *
- * 只回一个"配没配"的布尔，不回密文也不回明文 ——
- * 密文出现在界面上没有意义，明文更不该经网络再传一次。
- */
-function publicDecision(d = {}) {
-  const { apiKey, ...rest } = d;
-  return { ...rest, hasApiKey: Boolean(String(apiKey || '').trim()) };
 }
 
 function send(res, status, body) {
@@ -135,12 +111,12 @@ let desktopProbeCache = { at: 0, value: null };
  * 凭空造一个会让用户选到不存在的路径。多项目等真有了再加 ——
  * 而且到时候 `planFirstRunGrants` 已经在拿同一份列表做校验，不用改两处。
  */
-function onboardingProjects() {
+function onboardingProjects(cfg = defaultConfig) {
   return [
     {
       id: 'workspace',
-      label: path.basename(config.workspace) || 'workspace',
-      path: config.workspace,
+      label: path.basename(cfg.workspace) || 'workspace',
+      path: cfg.workspace,
     },
   ];
 }
@@ -194,10 +170,13 @@ function extractToken(req, url) {
  */
 let _localTokenCache;
 
-export function localToken() {
-  if (_localTokenCache !== undefined) return _localTokenCache;
-  _localTokenCache = readLocalToken(config.dataDir);
-  return _localTokenCache;
+export function localToken(dataDir = defaultConfig.dataDir) {
+  if (dataDir === defaultConfig.dataDir) {
+    if (_localTokenCache !== undefined) return _localTokenCache;
+    _localTokenCache = readLocalToken(dataDir);
+    return _localTokenCache;
+  }
+  return readLocalToken(dataDir);
 }
 
 /** 测试用：重置缓存（服务端换 token 或测试里换数据目录时调）。 */
@@ -210,40 +189,20 @@ export function resetLocalTokenCache() {
  *
  * 用 timingSafeEqual 比对，避免按字节比较泄漏信息。
  */
-function isLocalTokenValid(req, url) {
-  return isLocalToken(extractToken(req, url));
+function isLocalTokenValid(req, url, dataDir = defaultConfig.dataDir) {
+  return isLocalToken(extractToken(req, url), dataDir);
 }
 
 /** 这个 token 是不是本次启动签发的本机 token（WS 侧也用它）。 */
-export function isLocalToken(provided) {
+export function isLocalToken(provided, dataDir = defaultConfig.dataDir) {
   if (!provided) return false;
-  const expected = localToken();
+  const expected = localToken(dataDir);
   if (!expected) return false;
   return timingSafeEqual(provided, expected);
 }
 
-/**
- * 是不是本机发来的请求。
- *
- * PC 端 App 就跑在本机上，它就是宿主，不应该还要配对。
- * 所以 loopback 来的请求直接信任（本机用户就是主人）。
- * 远程设备（手机）仍然必须带 token。
- *
- * ★ 但"回环 = 主人"这个前提有个致命缺陷：**本机任何进程**都能往
- *   127.0.0.1 发请求，不需要任何权限提升。一个跑在同一台机器上的
- *   恶意脚本就能直接调审批、改策略、挂 MCP。
- *   x-pi-bot-client 头挡不住它 —— 那个头防的是浏览器跨站伪造
- *   （自定义头要过 CORS 预检），本机进程可以随便加。
- *
- *   所以现在本机免 token 只给**带着本次启动 token** 的请求
- *   （由 server-main 写进 0600 文件，桌面端读出来带上）。
- *   见 localTrustAllowed 的处置。
- *
- * 服务器部署时不信任本机（config.trustLocal = false）：反向代理转发过来的
- * 公网请求在这里看也是回环地址。
- */
-export function isLoopback(req) {
-  if (!config.trustLocal) return false;
+export function isLoopback(req, cfg = defaultConfig) {
+  if (!cfg.trustLocal) return false;
   // 中转进来的请求物理上也是回环，但代表远程设备，不能当主人
   if (req.headers?.['x-pi-relay']) return false;
   const raw = req.socket?.remoteAddress ?? '';
@@ -264,6 +223,7 @@ export const LOCAL_DEVICE = {
  * 所以恶意网页伪造不了它（text/plain 表单、no-cors fetch 都带不上）。
  */
 export const CLIENT_HEADER = 'x-pi-bot-client';
+export const ORBIS_CLIENT_HEADER = 'x-orbis-client';
 const STATE_CHANGING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 /** content-type 的媒体类型（; 前面那段）必须严格是 application/json，参数（charset 等）不管。 */
@@ -276,7 +236,7 @@ export function isJsonContentType(value) {
  * Origin 是否就是本服务自己（同协议族、同 host、同端口）。
  * 和 ws.js 的握手校验同一个思路：浏览器页面只有同源才算自己人。
  */
-export function isSameOrigin(req) {
+export function isSameOrigin(req, cfg = defaultConfig) {
   const origin = req.headers?.origin;
   if (!origin) return false;
   let o;
@@ -287,17 +247,17 @@ export function isSameOrigin(req) {
   }
   if (o.protocol !== 'http:' && o.protocol !== 'https:') return false;
   const host = String(req.headers?.host ?? '').trim().toLowerCase();
-  return Boolean(host) && o.host.toLowerCase() === host && hostAllowed(o.host);
+  return Boolean(host) && o.host.toLowerCase() === host && hostAllowed(o.host, cfg);
 }
 
 /**
  * 本机免 token 只给原生客户端（不带 Origin）和本服务自己的页面（同源 Origin）。
  * 其它网页即使跑在本机浏览器里、请求来自回环地址，也一律要 token。
  */
-export function localTrustAllowed(req) {
-  if (!isLoopback(req)) return false;
+export function localTrustAllowed(req, cfg = defaultConfig) {
+  if (!isLoopback(req, cfg)) return false;
   if (!req.headers?.origin) return true;
-  return isSameOrigin(req);
+  return isSameOrigin(req, cfg);
 }
 
 /** 浏览器明确声明是跨站发起的请求：不管带不带 token 都不处理。 */
@@ -305,30 +265,20 @@ export function isCrossSiteFetch(req) {
   return String(req.headers?.['sec-fetch-site'] ?? '').trim().toLowerCase() === 'cross-site';
 }
 
-function authenticate(req, url) {
+function authenticate(req, url, { config = defaultConfig, store = defaultStore } = {}) {
   const token = extractToken(req, url);
   if (token) {
     if (config.staticToken && timingSafeEqual(token, config.staticToken)) {
       return { id: 'static', name: 'static-token', createdAt: 0, lastSeenAt: Date.now(), isStatic: true };
     }
-    // ★ 本机 token：服务端每次启动随机生成、写在 0600 文件里。
-    //   桌面端读它并带在请求上 —— 这才是"本机用户 = 主人"的可靠凭据。
-    if (config.trustLocal && isLocalTokenValid(req, url)) {
+    if (config.trustLocal && isLocalTokenValid(req, url, config.dataDir)) {
       return { ...LOCAL_DEVICE, lastSeenAt: Date.now(), viaLocalToken: true };
     }
     const device = store.findDeviceByToken(token);
     if (device) store.touchDevice(token);
     return device;
   }
-  // 没带 token：只有**明确允许免 token 的路径**才给主人身份。
-  //
-  // 改状态的接口（approvals / hooks / mcp / policy …）一律不走这条路，
-  // 见 isTokenFreePath。原来这里是无条件放行回环请求，
-  // 于是本机任意进程都成了主人。
-  if (isTokenFreePath(req, url) && localTrustAllowed(req)) {
-    // ★ 打上通过标记：这是"还没拿到 token"的兜底身份，
-    //   只能看"需配对"这类公开事实，**不能**读到配对码。
-    //   /pair 页和 /api/pairing 都靠这个标记决定给不给 code。
+  if (isTokenFreePath(req, url) && localTrustAllowed(req, config)) {
     return { ...LOCAL_DEVICE, lastSeenAt: Date.now(), viaLocalFallback: true };
   }
   return null;
@@ -402,7 +352,7 @@ export function fileResponseHeaders(meta) {
   };
 }
 
-export function hostAllowed(hostHeader) {
+export function hostAllowed(hostHeader, cfg = defaultConfig) {
   const host = String(hostHeader ?? '').trim();
   if (!host) return false;
   const name = host.startsWith('[')
@@ -410,8 +360,8 @@ export function hostAllowed(hostHeader) {
     : host.split(':')[0];
   const lower = name.toLowerCase();
   if (lower === '127.0.0.1' || lower === 'localhost' || lower === '::1') return true;
-  if (config.hostname && lower === String(config.hostname).toLowerCase()) return true;
-  if (config.allowedHosts?.includes(lower)) return true;
+  if (cfg.hostname && lower === String(cfg.hostname).toLowerCase()) return true;
+  if (cfg.allowedHosts?.includes(lower)) return true;
   return lanAddresses().some((a) => String(a.address).toLowerCase() === lower);
 }
 
@@ -423,29 +373,11 @@ export function hostAllowed(hostHeader) {
  * 维护一张要跟网卡 IP 一起重签的证书）。两条链路不能各写一份路由。
  */
 export function createRequestHandler({ runner, pairing, sites = createSiteRuntime({ log }) }) {
-  /**
-   * 规矩变更后重发迁移授权。
-   *
-   * 为什么必须在这里做：迁移授权的 `policyRevision` 钉在签发那一刻的规矩上，
-   * 规矩一变网关就会按 `policy_changed` 拒掉一切 —— 用户把危险动作改成
-   * 「只读」之后连读文件都不行了（实测过）。
-   *
-   * 重发成「新规矩允许的那一组」是合法的：这次规矩变更是**用户在 App 里
-   * 亲手改的**，符合规格 §6.1「授权根只能来自已认证用户交互」。
-   * 它不扩权 —— 新授权描述的就是新规矩本身。
-   */
-  function refreshLegacyGrantsForPolicy() {
-    return ensureLegacyGrant({
-      store,
-      policy: store.policy(),
-      policyRevision: store.policyVersion(),
-      botIds: store.listBots().map((b) => b.id),
-      chiefBotId: store.mainBot()?.id ?? null,
-      // 世代要跟着发：网关校验时拿当前世代去比，签发时不写就永远不会过期
-      // （规格 §6.3 要求重启后旧批准不续命，两边都得有值才成立）。
-      generation: typeof runner?.grantGeneration === 'function' ? runner.grantGeneration() : null,
-    });
-  }
+  const config = runner?.config ?? defaultConfig;
+  const store = runner?.store ?? defaultStore;
+  const bus = runner?.bus ?? defaultBus;
+  const modelGroups = runner?.modelGroups ?? defaultModelGroups;
+  const services = runner?.services ?? createServices({ config, store, bus, runner, modelGroups });
 
   const taskRunRoutes = createTaskRunRoutes({ store, runner });
   const httpRequestReceipts = createRequestReceipts({ dir: path.join(config.dataDir, 'task-requests') });
@@ -472,7 +404,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
 
     // ★ Host 必须是本机名/本机 IP：防 DNS rebinding ——
     //   恶意域名解析到 127.0.0.1 时，Host 会是那个域名，这里直接拒。
-    if (!hostAllowed(req.headers.host)) {
+    if (!hostAllowed(req.headers.host, config)) {
       return send(res, 403, { error: 'bad host' });
     }
 
@@ -573,19 +505,14 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
 
       // ---------- 身份 ----------
       // 主人 = 本机回环请求（桌面端）或携带合法 token 的已配对设备。
-      const device = authenticate(req, url);
+      const device = authenticate(req, url, { config, store });
 
       // ---------- 网页版配对页 ----------
       // 页面公开（地址不是秘密），配对码只返回给已鉴权的请求。
       if (pathname === '/pair' && req.method === 'GET') {
-        // ★ withCode 只认**真正带了凭据**的调用方。
-        //
-        //   免 token 路径也会拿到 LOCAL_DEVICE，若直接 Boolean(device)，
-        //   本机任意进程打开 /pair 就能读到配对码 —— 等于绕过整个 token 机制。
-        //   这里要求 device 不是"本机免 token"兜底身份。
         const trustedForCode = Boolean(device) && !device.viaLocalFallback;
         const snap = config.staticToken ? null : pairing.snapshot({ withCode: trustedForCode });
-        const html = pairPage(snap);
+        const html = pairPage(snap, config);
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
         return res.end(html);
       }
@@ -593,7 +520,10 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
       if (!device) return send(res, 401, { error: 'unauthorized' });
 
       // ★ 改状态的请求（含上传、删除）必须带客户端自定义头：跨站网页带不上它。
-      if (STATE_CHANGING_METHODS.has(req.method) && !String(req.headers[CLIENT_HEADER] ?? '').trim()) {
+      if (
+        STATE_CHANGING_METHODS.has(req.method) &&
+        !String(req.headers[ORBIS_CLIENT_HEADER] ?? req.headers[CLIENT_HEADER] ?? '').trim()
+      ) {
         return send(res, 403, { error: `缺少 ${CLIENT_HEADER} 请求头` });
       }
 
@@ -646,7 +576,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
           //
           //   校验点集中在这里之后，各路由**不再自己消费** ——
           //   两处都消费会让第二次必然失败。
-          const check = consumeNonce(req.headers['x-pi-bot-nonce'], adminPlan.nonce);
+          const check = consumeNonce(req.headers['x-orbis-nonce'] ?? req.headers['x-pi-bot-nonce'], adminPlan.nonce);
           if (!check.ok) {
             log(`🔒 ${adminPlan.label} 被拒：${check.reason}（${req.method} ${pathname}）`);
             return fail(
@@ -790,28 +720,17 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
       }
       if (pathname === '/api/desktop-settings' && req.method === 'PATCH') {
         const body = await readBody(req);
-        const next = store.setDesktopSettings(body ?? {});
+        const { settings: next } = services.policy.updateDesktopSettings(body ?? {});
         log(`🖱 桌面设置已更新：信任合成输入=${next.trustPhantomInput ? '开' : '关'}`);
         return send(res, 200, { settings: next });
       }
 
-      // ---------- 首次授权页（规格 §13.2）----------
-      //
-      // 只读：算“该说什么、该让用户选什么”，**不创建任何授权**。
-      // 所以不要 nonce、不写管理审计（和 /api/grants 同一档）。
-      //
-      // ★ 桌面权限是真探一次的（`desktopProbe()`），不拿“平台支持表”顶上：
-      //   规格 §13.2-1 / -4 要的是**实际**权限与失败原因。探针失败就报失败，
-      //   不自动换成更宽的模式——那个判断在 `onboarding.js` 里，不在路由里。
-      //
-      // `projects` 现在只有一个候选（服务端的工作目录）：仓库里还没有“项目列表”
-      // 这个东西，凭空造一个会让用户选到不存在的路径。多项目等真有了再加。
       if (pathname === '/api/onboarding' && req.method === 'GET') {
         return send(res, 200, {
           ...planFirstRun({
             policy: store.policy(),
             bots: store.listBots(),
-            projects: onboardingProjects(),
+            projects: onboardingProjects(config),
             grants: store.state.grants ?? [],
             desktop: desktopStatusOf(desktopProbe()),
             mcpServerCount: store.mcpLibrary().length,
@@ -822,14 +741,6 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
         });
       }
 
-      // 首启页的"开始"：把用户的选择变成一个**授权根**（规格 §6.1）。
-      //
-      // 这是整个流程里唯一写权限的地方，所以三件事缺一不可：
-      //   · 过管理门（`http-admin` 表里标 defense + policy nonce + 审计）——
-      //     建授权等于改防线，冒充者拿到 local-token 就能自己给自己发权限；
-      //   · 只建“算好的那批”（`planFirstRunGrants`），不在路由里手写动作清单；
-      //   · 先把**上一次首启建的**回收掉，否则每选一次就多一堆积压，
-      //     而界面上看不出哪条才是当前有效的。
       if (pathname === '/api/onboarding/apply' && req.method === 'POST') {
         const gate = runner.grantGate;
         if (!gate) return fail(res, 503, 'NO_GATE', '网关未启用');
@@ -838,7 +749,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
           projectId: body?.projectId,
           gitScope: body?.gitScope,
           bots: store.listBots(),
-          projects: onboardingProjects(),
+          projects: onboardingProjects(config),
         });
         if (!plan.ok) return fail(res, 400, plan.code.toUpperCase(), plan.text);
 
@@ -938,9 +849,10 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
         return send(res, 200, { confirmations: store.pendingConfirmations({ roomId }) });
       }
 
-      // 客户端自报通道：桌面端带 x-pi-bot-channel: local，手机端带 device。
+      // 客户端自报通道：桌面端带 x-orbis-channel / x-pi-bot-channel: local，手机端带 device。
       // 不信任头本身 —— 用它只是"降权"，声称 local 只会让确认更难通过。
-      const clientChannel = String(req.headers['x-pi-bot-channel'] ?? '').toLowerCase() === 'device'
+      const rawChannel = req.headers['x-orbis-channel'] ?? req.headers['x-pi-bot-channel'] ?? '';
+      const clientChannel = String(rawChannel).toLowerCase() === 'device'
         && !device?.isLocal
         ? 'device'
         : 'local';
@@ -1073,15 +985,12 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
       // ---------- 定时任务 ----------
       if (pathname === '/api/automations' && req.method === 'GET') {
         const roomId = url.searchParams.get('roomId');
-        return send(res, 200, { automations: store.listAutomations({ roomId }) });
+        return send(res, 200, { automations: services.automations.list({ roomId }) });
       }
 
       if (pathname === '/api/automations' && req.method === 'POST') {
         const body = await readBody(req);
-        const problem = validateSchedule(body);
-        if (problem) return send(res, 400, { error: problem });
-        if (!store.getRoom(body.roomId)) return fail(res, 400, 'ROOM_NOT_FOUND', '会话不存在');
-        const automation = store.createAutomation({
+        const r = services.automations.create({
           roomId: body.roomId,
           title: body.title,
           prompt: body.prompt,
@@ -1090,33 +999,29 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
           dailyAt: body.dailyAt ?? null,
           enabled: body.enabled !== false,
           createdBy: device.id,
-          nextRunAt: computeNextRun(body) ?? 0,
         });
-        if (!automation) return fail(res, 400, 'AUTOMATION_INVALID', '任务要有标题和内容');
-        return send(res, 200, { automation });
+        if (!r.ok) {
+          return r.code === 'SCHEDULE_INVALID'
+            ? send(res, 400, { error: r.error })
+            : fail(res, r.status, r.code, r.error);
+        }
+        return send(res, 200, { automation: r.automation });
       }
 
       const autoMatch = pathname.match(/^\/api\/automations\/([^/]+)$/);
       if (autoMatch && req.method === 'PATCH') {
         const body = await readBody(req);
-        const patch = { ...body };
-        // 改了排期就重算下一次
-        if (body.everyMinutes !== undefined || body.dailyAt !== undefined) {
-          const current = store.getAutomation(autoMatch[1]);
-          const merged = {
-            everyMinutes: body.everyMinutes ?? current?.everyMinutes,
-            dailyAt: body.dailyAt ?? current?.dailyAt,
-          };
-          const problem = validateSchedule(merged);
-          if (problem) return send(res, 400, { error: problem });
-          patch.nextRunAt = computeNextRun(merged) ?? 0;
+        const r = services.automations.update(autoMatch[1], body);
+        if (!r.ok) {
+          return r.code === 'SCHEDULE_INVALID'
+            ? send(res, 400, { error: r.error })
+            : fail(res, r.status, r.code, r.error);
         }
-        const automation = store.updateAutomation(autoMatch[1], patch);
-        if (!automation) return fail(res, 404, 'AUTOMATION_NOT_FOUND', '定时任务不存在');
-        return send(res, 200, { automation });
+        return send(res, 200, { automation: r.automation });
       }
       if (autoMatch && req.method === 'DELETE') {
-        return send(res, 200, { deleted: store.deleteAutomation(autoMatch[1]) });
+        const { deleted } = services.automations.remove(autoMatch[1]);
+        return send(res, 200, { deleted });
       }
 
       const autoRunMatch = pathname.match(/^\/api\/automations\/([^/]+)\/run$/);
@@ -1316,78 +1221,27 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
       if (await routeConnections({ req, res, pathname, connections, readBody, send })) return;
 
       // ---------- 本机已装能力（只读扫描，不碰用户的 pi 配置）----------
-      // 用户在终端里早就装了一堆 skill / MCP，这里让他一键导入，不用手抄。
       if (pathname === '/api/local-capabilities' && req.method === 'GET') {
-        const found = scanLocalCapabilities({
-          existingSkills: store.skillLibrary(),
-          existingMcp: store.mcpLibrary(),
-        });
-        return send(res, 200, { ...found, mcpServers: found.mcpServers.map(publicMcpCredentials) });
+        return send(res, 200, services.capabilities.scanLocal({ sanitizeMcp: true }));
       }
 
-      // 一键导入：传 kind + 名字列表。同名的不重复导，返回明细。
       if (pathname === '/api/local-capabilities/import' && req.method === 'POST') {
         const body = await readBody(req);
-        const kind = String(body.kind ?? '');
-        const wanted = new Set(
-          (Array.isArray(body.names) ? body.names : []).map((n) => String(n).toLowerCase()),
-        );
-        if (!wanted.size) return fail(res, 400, 'IMPORT_NOTHING_SELECTED', '没选要导入的条目');
-
-        const found = scanLocalCapabilities({
-          existingSkills: store.skillLibrary(),
-          existingMcp: store.mcpLibrary(),
+        const r = await services.capabilities.importLocal({
+          kind: String(body.kind ?? ''),
+          names: Array.isArray(body.names) ? body.names : [],
+          all: body.all === true,
+          enable: false,
         });
-        const imported = [];
-        const skipped = [];
-
-        if (kind === 'skill') {
-          for (const entry of found.skills) {
-            if (!wanted.has((entry.title || '').toLowerCase())) continue;
-            if (entry.imported) {
-              skipped.push({ title: entry.title, reason: '已经导入过了' });
-              continue;
-            }
-            const skill = localSkillToLibrary(entry);
-            if (!skill) {
-              skipped.push({ title: entry.title, reason: '内容不合法' });
-              continue;
-            }
-            const r = store.addSkill(skill);
-            if (r.error) skipped.push({ title: entry.title, reason: r.error });
-            else imported.push(r.skill.title);
-          }
-        } else if (kind === 'mcp') {
-          for (const entry of found.mcpServers) {
-            if (!wanted.has((entry.name || '').toLowerCase())) continue;
-            if (entry.imported) {
-              skipped.push({ title: entry.name, reason: '已经导入过了' });
-              continue;
-            }
-            const server = localMcpToLibrary(entry);
-            if (!server) {
-              skipped.push({ title: entry.name, reason: '配置不合法' });
-              continue;
-            }
-            const r = store.addMcpServer(server);
-            if (r.error) skipped.push({ title: entry.name, reason: r.error });
-            else imported.push(r.server.name);
-          }
-        } else {
-          return fail(res, 400, 'INVALID_KIND', 'kind 只能是 skill 或 mcp');
-        }
-
-        if (imported.length && kind === 'mcp') await runner.applyMcpChange?.();
-        log(`📥 从本机导入 ${imported.length} 个 ${kind}${skipped.length ? `，跳过 ${skipped.length} 个` : ''}`);
-        return send(res, 200, { imported, skipped });
+        if (!r.ok) return fail(res, r.status, r.code, r.error);
+        log(`📥 从本机导入 ${r.imported.length} 个 ${r.kind}${r.skipped.length ? `，跳过 ${r.skipped.length} 个` : ''}`);
+        return send(res, 200, { imported: r.imported, skipped: r.skipped });
       }
 
       // ---------- MCP 服务库（全局，所有 bot 共享） ----------
-      // 跟技能库不一样的地方：这里配的服务会**真去起子进程/连远端**，
-      // 所以默认 enabled=false，而且还要 bot 自己选中才挂载。
       if (pathname === '/api/mcp' && req.method === 'GET') {
         return send(res, 200, {
-          servers: store.mcpLibrary(),
+          servers: services.capabilities.listMcp(),
           limits: {
             types: MCP_TYPES,
             exposures: MCP_EXPOSURES,
@@ -1397,46 +1251,26 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
         });
       }
 
-      // MCP 库的增删改：除了 token 还要一次性 nonce。
-      // 挡的是读到本地 token 的同用户进程直接挂一个 MCP —— 那是往 bot 里加执行入口，等同于改防线。
-      //   ★ 注意返回一个**真值**标记：send() 本身返回 undefined，
-      //     直接 return send(...) 会让调用方的 if (denied) 判假，
-      //     于是响应已经发出 403、代码却继续往下执行副作用。
-      // MCP 的 nonce 现在由统一的 admin 中间件消费（见上面的 planAdminRoute），
-      // 这里保留一个恒返回"已通过"的钩子，避免改动各路由的分支结构。
-      const requireMcpNonce = () => null;
-
       if (pathname === '/api/mcp' && req.method === 'POST') {
-        const denied = requireMcpNonce();
-        if (denied) return denied;
         const body = await readBody(req);
-        const r = store.addMcpServer(body);
-        if (r.error) return send(res, 400, { error: r.error });
-        // 改了服务库，挂着它的会话要重建才能拿到新工具
-        await runner.applyMcpChange?.();
+        const r = await services.capabilities.addMcp(body, { applyChange: true });
+        if (!r.ok) return send(res, 400, { error: r.error });
         return send(res, 200, { server: r.server });
       }
 
       const mcpMatch = pathname.match(/^\/api\/mcp\/([^/]+)$/);
       if (mcpMatch && req.method === 'PATCH') {
-        const denied = requireMcpNonce();
-        if (denied) return denied;
         const body = await readBody(req);
-        const r = store.updateMcpServer(decodeURIComponent(mcpMatch[1]), body);
-        if (r.error) return send(res, 404, { error: r.error });
-        await runner.applyMcpChange?.();
+        const r = await services.capabilities.updateMcp(decodeURIComponent(mcpMatch[1]), body);
+        if (!r.ok) return send(res, 404, { error: r.error });
         return send(res, 200, { server: r.server });
       }
       if (mcpMatch && req.method === 'DELETE') {
-        const denied = requireMcpNonce();
-        if (denied) return denied;
-        const r = store.removeMcpServer(decodeURIComponent(mcpMatch[1]));
-        if (r.error) return send(res, 404, { error: r.error });
-        await runner.applyMcpChange?.();
+        const r = await services.capabilities.removeMcp(decodeURIComponent(mcpMatch[1]));
+        if (!r.ok) return send(res, 404, { error: r.error });
         return send(res, 200, { ok: true });
       }
 
-      // 草稿只做协议验证，不保存配置；已保存凭据在服务端合并。
       if (pathname === '/api/mcp/test' && req.method === 'POST') {
         const body = await readBody(req);
         return send(res, 200, await connections.testDraft(body));
@@ -1444,59 +1278,45 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
 
       // ---------- 技能库（全局，所有 bot 共享） ----------
       if (pathname === '/api/skills' && req.method === 'GET') {
-        return send(res, 200, { skills: store.skillLibrary() });
+        return send(res, 200, { skills: services.capabilities.listSkills() });
       }
 
       if (pathname === '/api/skills' && req.method === 'POST') {
         const body = await readBody(req);
-        const r = store.addSkill({
+        const r = services.capabilities.addSkill({
           title: body.title,
           summary: body.summary,
           howto: body.howto,
           tags: body.tags,
         });
-        if (r.error) return send(res, 400, { error: r.error });
+        if (!r.ok) return send(res, 400, { error: r.error });
         return send(res, 200, { skill: r.skill });
       }
 
       const skillMatch = pathname.match(/^\/api\/skills\/([^/]+)$/);
       if (skillMatch && req.method === 'PATCH') {
         const body = await readBody(req);
-        const r = store.updateSkill(decodeURIComponent(skillMatch[1]), body);
-        if (r.error) return send(res, 404, { error: r.error });
+        const r = services.capabilities.updateSkill(decodeURIComponent(skillMatch[1]), body);
+        if (!r.ok) return send(res, 404, { error: r.error });
         return send(res, 200, { skill: r.skill });
       }
       if (skillMatch && req.method === 'DELETE') {
-        const r = store.removeSkill(decodeURIComponent(skillMatch[1]));
-        if (r.error) return send(res, 404, { error: r.error });
+        const r = services.capabilities.removeSkill(decodeURIComponent(skillMatch[1]));
+        if (!r.ok) return send(res, 404, { error: r.error });
         return send(res, 200, { ok: true });
       }
 
-      // 导入：客户端把 SKILL.md 的正文读出来发给这里，服务端负责解析
-      // （放在服务端解析是为了让导入规则只有一份，和手动添加走同一套规范化）
       if (pathname === '/api/skills/import' && req.method === 'POST') {
         const body = await readBody(req);
-        const files = Array.isArray(body.files) ? body.files : [];
-        const parsed = [];
-        const unparsed = [];
-        for (const f of files.slice(0, 100)) {
-          const skill = parseSkillMarkdown(f?.text, f?.name);
-          if (skill) parsed.push(skill);
-          else unparsed.push({ name: String(f?.name ?? ''), reason: '解析不出内容' });
-        }
-        const r = store.importSkills(parsed);
-        return send(res, 200, {
-          imported: r.imported,
-          skipped: [...r.skipped, ...unparsed],
-        });
+        const r = services.capabilities.importSkillMarkdown(body?.files);
+        return send(res, 200, { imported: r.imported, skipped: r.skipped });
       }
 
       // ---------- 经验库（主控派活前按任务挑 1~3 条注入） ----------
-      // 注意：preview 必须放在 /api/lessons/:id 之前，否则会被当成 id="preview"。
       if (pathname === '/api/lessons/preview' && req.method === 'GET') {
         const task = String(url.searchParams.get('task') || '');
         const roomId = String(url.searchParams.get('roomId') || '');
-        const picked = selectLessonsFor(store.lessonLibrary(), task, { roomId });
+        const picked = selectLessonsFor(services.capabilities.listLessons(), task, { roomId });
         const lines = lessonsPromptLines(picked);
         return send(res, 200, {
           lines,
@@ -1508,14 +1328,14 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
 
       if (pathname === '/api/lessons' && req.method === 'GET') {
         return send(res, 200, {
-          lessons: store.lessonLibrary(),
+          lessons: services.capabilities.listLessons(),
           limits: LESSON_LIMITS,
         });
       }
 
       if (pathname === '/api/lessons' && req.method === 'POST') {
         const body = await readBody(req);
-        const r = store.addLesson({
+        const r = services.capabilities.addLesson({
           roomId: body.roomId,
           dept: body.dept,
           cue: body.cue,
@@ -1524,20 +1344,20 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
           verdict: body.verdict,
           status: body.status,
         });
-        if (r.error) return send(res, 400, { error: r.error });
+        if (!r.ok) return send(res, 400, { error: r.error });
         return send(res, 200, { lesson: r.lesson });
       }
 
       const lessonMatch = pathname.match(/^\/api\/lessons\/([^/]+)$/);
       if (lessonMatch && req.method === 'PATCH') {
         const body = await readBody(req);
-        const r = store.updateLesson(decodeURIComponent(lessonMatch[1]), body);
-        if (r.error) return send(res, 404, { error: r.error });
+        const r = services.capabilities.updateLesson(decodeURIComponent(lessonMatch[1]), body);
+        if (!r.ok) return send(res, 404, { error: r.error });
         return send(res, 200, { lesson: r.lesson });
       }
       if (lessonMatch && req.method === 'DELETE') {
-        const r = store.removeLesson(decodeURIComponent(lessonMatch[1]));
-        if (r.error) return send(res, 404, { error: r.error });
+        const r = services.capabilities.removeLesson(decodeURIComponent(lessonMatch[1]));
+        if (!r.ok) return send(res, 404, { error: r.error });
         return send(res, 200, { ok: true });
       }
 
@@ -1685,59 +1505,32 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
 
       // ---------- Bot ----------
       if (pathname === '/api/bots' && req.method === 'GET') {
-        return send(res, 200, { bots: store.listBots() });
+        return send(res, 200, { bots: services.bots.list() });
       }
 
       if (pathname === '/api/bots' && req.method === 'POST') {
         const body = await readBody(req);
-        if (!body.name) return fail(res, 400, 'NAME_REQUIRED', '需要 name');
-        const bot = store.createBot({ ...body, createdBy: device.id });
-        // ★ 建完就让 bot 主动来打招呼，而不是等用户去侧边栏点它。
-        //
-        //   只建了空会话、什么都不说的话，用户面对的是一个空白私聊，
-        //   不知道这 bot 能干什么。让它自己开口 + 递一张询问卡片，
-        //   才是「刚认识一个同事」该有的样子。
-        //
-        //   不 await：开场要跑一轮模型（可能十几秒），
-        //   不能让创建接口一直挂着；失败也不该让建档失败。
-        const dm = store.findDm(bot.id);
-        if (dm) {
-          runner.greetDm(dm.id, bot.id).catch((err) =>
-            log('新建 bot 开场失败：', err?.message || err),
-          );
-        }
-        return send(res, 200, { bot });
+        const r = services.bots.create(body, { createdBy: device.id, greet: true });
+        if (!r.ok) return fail(res, r.status, r.code, r.error);
+        return send(res, 200, { bot: r.bot });
       }
 
       const botMatch = pathname.match(/^\/api\/bots\/([^/]+)$/);
       if (botMatch && req.method === 'PATCH') {
         const body = await readBody(req);
-        const previous = store.getBot(botMatch[1]);
-        if (!previous) return fail(res, 404, 'BOT_NOT_FOUND', 'bot 不存在');
-        let selected;
-        if (Object.hasOwn(body, 'model')) {
-          const checked = resolveBotModelSelection(body.model, {
-            entries: modelGroups.menuEntries(), groups: modelGroups.list(),
-            availableModels: runner.availableModels ?? [], resolveModel: (slug) => runner.resolveModel?.(slug),
-          });
-          if (checked.error) return send(res, 400, { error: checked.error });
-          body.model = checked.model;
-          selected = checked.resolved ?? runner.model;
+        const r = services.bots.update(botMatch[1], body, { checkModel: 'resolve', checkCapacity: true });
+        if (!r.ok) {
+          return r.code === 'BOT_NOT_FOUND'
+            ? fail(res, 404, r.code, r.error)
+            : send(res, r.status, { error: r.error });
         }
-        const model = Object.hasOwn(body, 'model') ? selected ?? {}
-          : runner.resolveModel?.(previous.model) ?? runner.model ?? {};
-        const capacityProblem = capacityError({ ...previous, ...body }, model, { allowNull: true });
-        if (capacityProblem) return send(res, 400, { error: capacityProblem });
-        const bot = store.updateBot(botMatch[1], body);
-        if (!bot) return fail(res, 404, 'BOT_NOT_FOUND', 'bot 不存在');
-        if (['model', 'thinking', 'contextWindow', 'maxTokens', 'reserveTokens', 'keepRecentTokens', 'mcpServers']
-          .some((key) => body[key] !== undefined)) runner.reloadSessionForBot(bot.id);
-        return send(res, 200, { bot });
+        return send(res, 200, { bot: r.bot });
       }
       if (botMatch && req.method === 'DELETE') {
-        const r = store.deleteBot(botMatch[1]);
-        if (!r) return fail(res, 400, 'CANNOT_DELETE_MAIN_BOT', '删不了（不存在或它是主控）');
-        return send(res, 200, r);
+        const r = services.bots.remove(botMatch[1]);
+        if (!r.ok) return fail(res, 400, r.code, r.error);
+        const { ok: _ok, ...rest } = r;
+        return send(res, 200, rest);
       }
 
       // ---------- 用户身份 ----------
@@ -1747,10 +1540,6 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
       if (pathname === '/api/user' && req.method === 'PATCH') {
         const body = await readBody(req);
         const user = store.updateUserName(body.name);
-        // 名字是拼进系统提示的，而提示只在建会话时构造 —— 不重建会话的话
-        // 改名只对以后新开的会话生效，正在用的那些还记着旧名字。
-        // 改名要立刻通知到所有会话，所以这里把内存里的会话全丢掉重建
-        // （reload 而不是 reset：对话历史保留）。
         const n = runner.reloadAllSessions();
         log(`👤 用户改名叫：${user.name}（已重建 ${n} 个会话，下一轮起生效）`);
         return send(res, 200, { user });
@@ -1758,44 +1547,31 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
 
       // ---------- 群聊轮次预算 ----------
       if (pathname === '/api/group-limits' && req.method === 'GET') {
-        return send(res, 200, { limits: store.groupLimits() });
+        return send(res, 200, { limits: services.rooms.groupLimits() });
       }
       // ---------- 快速决策路由（Jev）----------
       if (pathname === '/api/decision' && req.method === 'GET') {
-        return send(res, 200, { decision: publicDecision(store.decision()) });
+        return send(res, 200, { decision: services.models.getDecision() });
       }
       if (pathname === '/api/decision' && req.method === 'PATCH') {
         const body = await readBody(req);
-        const decision = store.updateDecision(body);
+        const { decision, raw } = services.models.updateDecision(body);
         log(
-          `⚙️  快速决策（Jev）${decision.enabled ? '已打开' : '已关闭'}` +
-            (decision.enabled && decision.baseUrl ? `，端点 ${decision.baseUrl}` : ''),
+          `⚙️  快速决策（Jev）${raw.enabled ? '已打开' : '已关闭'}` +
+            (raw.enabled && raw.baseUrl ? `，端点 ${raw.baseUrl}` : ''),
         );
-        return send(res, 200, { decision: publicDecision(decision) });
+        return send(res, 200, { decision });
       }
       if (pathname === '/api/decision/probe' && req.method === 'POST') {
-        // 设置页的"测一下"：只读模型列表，不产生推理费用
         const body = await readBody(req);
-        const cfg = store.decision();
-        const mode = body.mode === 'custom' || cfg.mode === 'custom' ? 'custom' : 'typesafe';
-        const probe = await jevProbe({
-          // 官方模式地址固定；自定义用用户填的
-          baseUrl: mode === 'custom' ? String(body.baseUrl || cfg.baseUrl || '') : 'https://api.typesafe.ai',
-          apiKey: body.apiKey || cfg.apiKey,
-        });
+        const probe = await services.models.probeDecision(body ?? {});
         return send(res, 200, { probe });
       }
 
       // ---------- 部门规矩（危险动作 / 交付要附证据）----------
       if (pathname === '/api/policy' && req.method === 'GET') {
-        // 带上版本号：App 可以把它展示出来，也方便排查"这条活按哪套规矩跑的"
         return send(res, 200, { policy: store.policy(), policyVersion: store.policyVersion() });
       }
-      // ---------- 一次性 nonce（改安全配置用）----------
-      //
-      // ★ 界面在用户**实际点击**时申请一个，然后带着它调下面的接口。
-      //   服务端无法验证"背后真的有人点了按钮"，那是界面的责任 ——
-      //   界面必须把这一步放在 onClick 里，不能在启动或定时任务里预先申请。
       if (pathname === '/api/local-nonce' && req.method === 'POST') {
         const body = await readBody(req);
         const purpose = String(body?.purpose ?? '');
@@ -1806,40 +1582,30 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
       }
 
       if (pathname === '/api/policy' && req.method === 'PATCH') {
-        // nonce 由统一的 admin 中间件消费，这里不再重复
         const body = await readBody(req);
-        const policy = store.updatePolicy(body);
-        // ★ 规矩改了 → 迁移授权要跟着重发（否则网关会按旧规矩拒掉一切）。
-        //
-        //   这个动作有副作用（会撤掉旧授权、发新的），所以只在这里做，
-        //   不在每次 check 里做 —— 规矩没变的时候一分钱都不该多花。
-        try {
-          const refreshed = refreshLegacyGrantsForPolicy();
-          if (refreshed.revoked.length || refreshed.created.length) {
-            log(
-              `🔑 规矩变更 → 重发 ${refreshed.created.length} 条迁移授权` +
-                (refreshed.revoked.length ? `（撤掉 ${refreshed.revoked.length} 条旧的）` : ''),
-            );
-          }
-        } catch (err) {
-          log('重发迁移授权失败（网关将按新规矩 fail-closed）：', err?.message || err);
+        const resPolicy = services.policy.updatePolicy(body);
+        if (resPolicy.refreshError) {
+          log('重发迁移授权失败（网关将按新规矩 fail-closed）：', resPolicy.refreshError);
+        } else if (resPolicy.refreshed && (resPolicy.refreshed.revoked.length || resPolicy.refreshed.created.length)) {
+          log(
+            `🔑 规矩变更 → 重发 ${resPolicy.refreshed.created.length} 条迁移授权` +
+              (resPolicy.refreshed.revoked.length ? `（撤掉 ${resPolicy.refreshed.revoked.length} 条旧的）` : ''),
+          );
         }
-        // ★ 规矩变了 → 通知仍在跑的活，但**不中断**。
-        //   只在授权相关字段真的变了才通知（改 requireProof 之类不扰人）。
-        const change = policyChange(store.policy(), policy);
-        const notified = change.isChange
-          ? store.notifyPolicyChanged({ version: change.to, changed: change.changed })
-          : 0;
         log(
-          `⚙️  部门规矩改为：危险动作 ${policy.dangerous === 'deny' ? '只读（不给改文件/跑命令的工具）' : '允许'} / ` +
-            `交付${policy.requireProof ? '必须附证据' : '不强求证据'}` +
-            (notified ? `；已通知 ${notified} 条在跑的活（不中断）` : ''),
+          `⚙️  部门规矩改为：危险动作 ${resPolicy.policy.dangerous === 'deny' ? '只读（不给改文件/跑命令的工具）' : '允许'} / ` +
+            `交付${resPolicy.policy.requireProof ? '必须附证据' : '不强求证据'}` +
+            (resPolicy.notified ? `；已通知 ${resPolicy.notified} 条在跑的活（不中断）` : ''),
         );
-        return send(res, 200, { policy, policyChange: change, notified });
+        return send(res, 200, {
+          policy: resPolicy.policy,
+          policyChange: resPolicy.policyChange,
+          notified: resPolicy.notified,
+        });
       }
       if (pathname === '/api/group-limits' && req.method === 'PATCH') {
         const body = await readBody(req);
-        const limits = store.updateGroupLimits(body);
+        const { limits } = services.rooms.updateGroupLimits(body);
         log(
           `⚙️  群聊轮次改为：老大 ${limits.leadTurns} 轮 / 成员 ${limits.memberTurns} 轮 / ` +
             `单条消息最多 ${limits.maxRuns} 次`,
@@ -1847,9 +1613,6 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
         return send(res, 200, { limits });
       }
 
-      // ---------- 模型组（用户自己配的 baseUrl/key/模型）----------
-      // 思考强度的可选值集中由服务端给出：Windows 与 Mac 共用同一套枚举，
-      // 升级只改一处，不会出现一端能选、另一端是死值。
       if (pathname === '/api/model-thinking/options' && req.method === 'GET') {
         return send(res, 200, {
           levels: THINKING_LEVELS,
@@ -1865,52 +1628,30 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
 
       if (pathname === '/api/model-groups' && req.method === 'POST') {
         const body = await readBody(req);
-        const r = modelGroups.upsert(body);
-        if (r.error) return send(res, 400, { error: r.error });
-        // 运行时热注册，加完不用重启
-        const total = await runner.applyModelGroupChange(r.group.id);
-        log(`🔌 新增模型组：${r.group.name}（${r.group.models.length} 个模型），可用模型 ${total} 个`);
-        return send(res, 200, { group: r.group.toPublic() });
+        const r = await services.models.upsertGroup(body, { awaitRefresh: true });
+        if (!r.ok) return send(res, 400, { error: r.error });
+        log(`🔌 新增模型组：${r.group.name}（${r.group.models.length} 个模型），可用模型 ${r.total ?? 0} 个`);
+        return send(res, 200, { group: r.group });
       }
 
-      // 连通性测试：还没保存也能测（用户在编辑器里填完想先试一下）
       if (pathname === '/api/model-groups/test' && req.method === 'POST') {
         const body = await readBody(req);
-        // 有 id 就用存着的那份补全（key 打了码，不能拿它当值提交）
-        const saved = body.id ? modelGroups.get(body.id) : null;
-        const r = await testModelGroup({
-          baseUrl: body.baseUrl || saved?.baseUrl,
-          apiKey: body.apiKey || saved?.apiKey,
-          api: body.api || saved?.api,
-          model: body.model || saved?.models?.[0]?.id,
-        });
+        const r = await services.models.testGroup(body ?? {});
         return send(res, 200, r);
       }
 
       const groupMatch = pathname.match(/^\/api\/model-groups\/([^/]+)$/);
       if (groupMatch && req.method === 'PATCH') {
         const body = await readBody(req);
-        const r = modelGroups.upsert({ ...body, id: groupMatch[1] });
-        if (r.error) return send(res, 400, { error: r.error });
-        // 同 DELETE：刷新含真实网络请求（checkAuth），不等它 ——
-        // 否则 baseUrl 不通时保存也卡死。配置已落盘，后台同步菜单即可。
-        runner
-          .applyModelGroupChange(r.group.id)
-          .catch((err) => log(`保存后刷新失败（不影响保存本身）：${err?.message ?? err}`));
-        return send(res, 200, { group: r.group.toPublic() });
+        const r = await services.models.upsertGroup({ ...body, id: groupMatch[1] }, { awaitRefresh: false });
+        if (!r.ok) return send(res, 400, { error: r.error });
+        return send(res, 200, { group: r.group });
       }
       if (groupMatch && req.method === 'DELETE') {
-        const ok2 = modelGroups.remove(groupMatch[1]);
-        if (!ok2) return fail(res, 404, 'MODEL_GROUP_NOT_FOUND', '模型组不存在');
-        // ★ 删除不等刷新完成就回 —— 刷新要对每个 provider 做真实网络请求
-        //   （checkAuth），baseUrl 挂了的话会卡到超时（几十秒），
-        //   用户看到的就是“删不掉”。
-        //   删除本身已经落盘了，刷新只是同步内存里的菜单，后台跑完自然生效。
-        runner
-          .applyModelGroupChange(groupMatch[1])
-          .then(() => log(`🔌 删除模型组：${groupMatch[1]}`))
-          .catch((err) => log(`删除后刷新失败（不影响删除本身）：${err?.message ?? err}`));
-        return send(res, 200, { id: groupMatch[1] });
+        const r = await services.models.removeGroup(groupMatch[1], { awaitRefresh: false });
+        if (!r.ok) return fail(res, 404, 'MODEL_GROUP_NOT_FOUND', '模型组不存在');
+        log(`🔌 删除模型组：${groupMatch[1]}`);
+        return send(res, 200, { id: r.id });
       }
 
       // ---------- 部门模板 ----------
@@ -2053,6 +1794,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
           const result = await runner.send(roomId, body.text, {
             mode: body.mode,
             attachments: body.attachments,
+            duplexMode: body?.duplexMode,
           });
           return send(res, 200, { ok: true, message: result.userMessage, steered: result.steered ?? null });
         }
@@ -2080,16 +1822,23 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
         const scope = opened.scope;
         const room = store.getRoom(roomId);
         if (room?.kind === 'group') {
-          // 普通群聊保持原行为：requestId 只做同键去重，不进入首次接单
+          // 群聊旁路 Talk 异步回答时把 scope 交给 runner 收口，其余同步路径在 finally 收口
           let failure = null;
+          let handledAsync = false;
           try {
-            const result = await runner.send(roomId, body.text, { mode: body.mode, attachments: body.attachments, requestId });
+            const result = await runner.send(roomId, body.text, {
+              mode: body.mode, attachments: body.attachments, requestId,
+              groupScope: scope, duplexMode: body?.duplexMode,
+            });
+            handledAsync = result?.scopeHandled === true;
             return send(res, 200, { ok: true, message: result.userMessage, steered: result.steered ?? null, requestId });
           } catch (err) {
             failure = err;
             throw err;
           } finally {
-            runner.requestLifecycle?.close?.(scope, failure, failure ? null : 'answer');
+            if (!handledAsync) {
+              runner.requestLifecycle?.close?.(scope, failure, failure ? null : 'answer');
+            }
           }
         }
         try {
@@ -2099,6 +1848,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
             attachments: body.attachments,
             requestId,
             request: { scope },
+            duplexMode: body?.duplexMode,
           });
           const status = result.queued === true ? 202 : 200;
           return send(res, status, {
@@ -2113,7 +1863,8 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
 
       const abortMatch = pathname.match(/^\/api\/rooms\/([^/]+)\/abort$/);
       if (abortMatch && req.method === 'POST') {
-        return send(res, 200, await runner.abort(abortMatch[1]));
+        const body = await readBody(req);
+        return send(res, 200, await runner.abort(abortMatch[1], { scope: body?.scope ?? 'all' }));
       }
 
       const resetMatch = pathname.match(/^\/api\/rooms\/([^/]+)\/reset$/);
@@ -2149,18 +1900,19 @@ export function createHttpServer(options) {
 }
 
 export function serverInfo(runner) {
+  const cfg = runner?.config ?? defaultConfig;
   return {
     version: VERSION,
-    serverInstanceId: config.serverInstanceId,
+    serverInstanceId: cfg.serverInstanceId,
     // 加密监听的端口与证书指纹（null = 这条链路是明文）。App 用它显示校验码。
     tls: activeTls(),
-    hostname: config.hostname,
-    workspace: config.workspace,
+    hostname: cfg.hostname,
+    workspace: cfg.workspace,
     // 数据目录也回给 App：这是用户最该知道、也最不该被“神秘换掉”的东西
-    dataDir: config.dataDir,
+    dataDir: cfg.dataDir,
     model: runner.modelLabel(),
     note: runner.initNote,
-    tools: config.tools,
+    tools: cfg.tools,
     models: runner.availableModels.length,
   };
 }
@@ -2168,7 +1920,7 @@ export function serverInfo(runner) {
 /**
  * 网页版配对页：展示地址；配对码仅对已鉴权的请求渲染。
  */
-function pairPage(snap) {
+function pairPage(snap, config = defaultConfig) {
   const addresses = lanAddresses()
     .map(({ name, address }) => `http://${address}:${config.port}  <span class="dim">(${name})</span>`)
     .join('<br>');
@@ -2176,20 +1928,20 @@ function pairPage(snap) {
   if (!snap) {
     return `<!doctype html><html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>pi-bot 配对</title>${pairStyles()}</head><body>
+<title>Orbis 配对</title>${pairStyles()}</head><body>
 <div class="card">
-  <div class="logo">π</div>
+  <div class="logo">◉</div>
   <h1>${config.serverName}</h1>
-  <p class="dim">服务端配的是固定 token（PI_BOT_TOKEN），不需要配对码。</p>
+  <p class="dim">服务端配的是固定 token（ORBIS_TOKEN / PI_BOT_TOKEN），不需要配对码。</p>
   <p class="dim">在 App 的「固定 token」页填入服务端 .env 里的那个 token 就行。</p>
 </div></body></html>`;
   }
 
   return `<!doctype html><html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>pi-bot 配对</title>${pairStyles()}</head><body>
+<title>Orbis 配对</title>${pairStyles()}</head><body>
 <div class="card">
-  <div class="logo">π</div>
+  <div class="logo">◉</div>
   <h1>${config.serverName}</h1>
   <p class="dim">在 App 的配对页填下面两项</p>
   <p class="dim">地址</p>

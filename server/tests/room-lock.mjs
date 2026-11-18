@@ -203,7 +203,7 @@ await test('★ 同级 @ 忙碌成员 → 不打断；等不到就上报（不�
   PiRunner.prototype.run = ORIGINAL_RUN;
 
   assert.equal(steered.length, 0, '同级不该打断（否则群里会互相掐断）');
-  // 学 ds-bot：忙就不等，把话投进它的 inbox（说好"忙完再看"）
+  // 异步收件箱：忙就不等，把话投进它的 inbox（说好"忙完再看"）
   assert.equal(followed.length, 1, `★ 忙成员的对话必须被投递，实际 ${followed.length}`);
   assert.match(followed[0], /找你/, '投递的话要说清是谁找它');
   const added = store.listMessages(room.id).slice(before);

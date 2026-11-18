@@ -14,9 +14,9 @@ import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import fs from 'node:fs';
 import path from 'node:path';
-import { bus } from './bus.js';
-import { config } from './config.js';
-import { store } from './store.js';
+import { bus as defaultBus } from './bus.js';
+import { config as defaultConfig } from './config.js';
+import { store as defaultStore } from './store.js';
 import { menuText, menuEntries } from './model-menu.js';
 import { recommendModel } from './model-recommend.js';
 import { extractText } from './extract.js';
@@ -34,13 +34,13 @@ import { buildResearchBrowserTools } from './research-browser-tools.js';
 import { mirrorDelegatedResult } from './delegated-delivery.js';
 import { verdictForTool, commitStdin, resetStdin } from './shell-policy.js';
 import { readonlyBlockReason, opaqueScriptBlockReason, isLeadOfRoom } from './role-tools.js';
-import { log, now, isBusyError, planDispatchRetry } from './util.js';
-import { CODING_BASELINE_TITLE, CODING_BASELINE_HOWTO, isCodingRole } from './coding-baseline.js';
-import { scanLocalCapabilities } from './local-capabilities.js';
+import { log, now, newId, isBusyError, planDispatchRetry } from './util.js';
 import { siteDrafts, describeDraftForConfirm, draftConfirmOptions } from './site-draft.js';
 import { readManagedSubmission, SUBMISSION } from './coordination/task-context.js';
-import { makeSpecPreparer, checkAssignableModel } from './coordination/department-spec.js';
+import { makeSpecPreparer } from './coordination/department-spec.js';
 import { handleIntake, ACTION } from './coordination/intake.js';
+import { createServices } from './services/index.js';
+import { buildJarvisTools } from './jarvis-tools.js';
 
 // 单次 bot 间对话的最长时间。轮次不设上限（任务没完成前的往返是必要的），
 // 这条只是防止两个 bot 互相 reply 到天荒地老。
@@ -153,9 +153,9 @@ const ok = (text, details = {}) => ({ content: [{ type: 'text', text }], details
 const fail = (text, details = {}) => ({ content: [{ type: 'text', text }], details, isError: true });
 
 /** 相对工作目录解析路径，越界就拒绝 */
-function insideWorkspace(input) {
-  const full = path.resolve(config.workspace, String(input ?? ''));
-  const rel = path.relative(config.workspace, full);
+function insideWorkspace(input, cfg = defaultConfig) {
+  const full = path.resolve(cfg.workspace, String(input ?? ''));
+  const rel = path.relative(cfg.workspace, full);
   if (rel.startsWith('..') || path.isAbsolute(rel)) return null;
   return full;
 }
@@ -167,13 +167,13 @@ function modelError(slug, suggestions) {
   );
 }
 
-function botLine(bot) {
-  const depts = store
+function botLine(bot, st = defaultStore) {
+  const depts = st
     .listRooms()
     .filter((r) => r.kind === 'group' && r.botIds.includes(bot.id))
     .map((r) => `${r.name}${r.leadBotId === bot.id ? '(负责)' : ''}`);
   // ★ 末尾 «» 里是内部参数，只给模型自己挑模型用。
-  //   不能直接裸拼在行里：模型会原样念给用户听（"他用 ctyun/glm-5.3-oc，thinking high"），
+  //   不能直接裸拼在行里：模型会原样念给用户听（"他用 custom-gw/glm-5.3，thinking high"），
   //   而在用户眼里它该是个同事，不是一份配置清单。
   const internal = [
     bot.model ?? '默认模型',
@@ -184,19 +184,25 @@ function botLine(bot) {
   return `${bot.id}  ${bot.emoji ?? ''}${bot.name}${duty ? `  ${duty}` : ''}  «${internal.join(' / ')}»`;
 }
 
-function deptLine(room) {
+function deptLine(room, st = defaultStore) {
   const names = room.botIds.map((id) => {
-    const b = store.getBot(id);
+    const b = st.getBot(id);
     return b ? `${b.emoji ?? ''}${b.name}` : id;
   });
-  return `${room.id}  ${room.name}${room.topic ? ` —— ${room.topic}` : ''}\n    成员：${names.join('、') || '（空）'}\n    «对接人：${store.getBot(room.leadBotId)?.name ?? '（未指定）'}»`;
+  return `${room.id}  ${room.name}${room.topic ? ` —— ${room.topic}` : ''}\n    成员：${names.join('、') || '（空）'}\n    «对接人：${st.getBot(room.leadBotId)?.name ?? '（未指定）'}»`;
 }
 
 // ---------------------------------------------------------------------------
 // 所有 bot 都能用
 // ---------------------------------------------------------------------------
 
-export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
+export function buildCommonTools({
+  runner, roomId, botId, isMain = false,
+  store: scopedStore = null, config: scopedConfig = null, bus: scopedBus = null,
+}) {
+  const store = scopedStore ?? runner?.store ?? defaultStore;
+  const config = scopedConfig ?? runner?.config ?? defaultConfig;
+  const bus = scopedBus ?? runner?.bus ?? defaultBus;
   /**
    * 派活真没送出去 → **报给主控**，让主控重试或重新派人（至少重试 3 次）。
    *
@@ -215,6 +221,85 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
       why,
       prefer: 'chief',
     });
+  }
+
+  function validateDelegationTarget({ targetId, task }) {
+    const target = store.getBot(targetId);
+    if (!target) return { error: `找不到 bot ${targetId}` };
+    if (target.id === botId) return { error: '不能给自己发私信' };
+    // 群里给同部门同事派活必须用 @：用户要看得见谁领了什么活。
+    const here = roomId ? store.getRoom(roomId) : null;
+    if (here?.kind === 'group' && (here.botIds ?? []).includes(target.id)) {
+      return {
+        error:
+          `${target.name} 就在这个部门里：直接在群里写「@${target.name}」把活派给它，` +
+          '用户要看得见谁领了什么活。跨部门派活请找别的部门的人。',
+      };
+    }
+    if (task.length > MAX_TASK_CHARS) {
+      return {
+        error:
+          `任务描述太长（${task.length} 字，上限 ${MAX_TASK_CHARS} 字）。` +
+          '请压成一份自包含的工作说明书：做什么、要交回什么、有哪些约束。' +
+          '不要靠截断 —— 分两次派也行。',
+      };
+    }
+    const dm = store.ensureDm(target.id);
+    if (!dm) return { error: '开不了私信会话' };
+    return { target, dm };
+  }
+
+  async function executeDelegatedRun({ target, dm, task, timeoutMs, via, extraMeta = {} }) {
+    let result = null;
+    let waitedMs = 0;
+    let lastWhy = '';
+    const startedAt = Date.now();
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      result = await runner.runBotOnce({
+        roomId: dm.id,
+        botId: target.id,
+        prompt: task,
+        timeoutMs: timeoutMs ?? 300_000,
+        meta: { via, from: botId, attempt, ...extraMeta },
+      });
+      if (result.ok) break;
+      const plan = planDispatchRetry({
+        attempt,
+        error: result.error,
+        waitedMs,
+      });
+      lastWhy = plan.why;
+      if (!plan.retry) break;
+      const deadline = Date.now() + plan.waitMs;
+      log(`${target.name} 还在忙，等它空下来再派（第 ${attempt + 1} 次，最多等 ${Math.round(plan.waitMs / 1000)}s）`);
+      while (runner.isBusy(dm.id, target.id) && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      waitedMs += Date.now() - (deadline - plan.waitMs);
+    }
+
+    if (!result?.ok) {
+      const reason = result?.error || '没跑成';
+      reportDispatchFailure({
+        targetName: target.name,
+        task,
+        reason,
+        attempts: 3,
+        why: lastWhy,
+      });
+      return { ok: false, reason, lastWhy };
+    }
+
+    const mirrored = mirrorDelegatedResult({
+      store,
+      callerRoomId: roomId,
+      workerRoomId: dm.id,
+      worker: target,
+      callerId: botId,
+      since: startedAt,
+      finalText: result.text,
+    });
+    return { ok: true, result, mirrored };
   }
 
   return [
@@ -728,7 +813,7 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
       parameters: Type.Object({}),
       execute: async () => {
         const bots = store.listBots();
-        return ok(bots.map(botLine).join('\n'), { count: bots.length });
+        return ok(bots.map((b) => botLine(b, store)).join('\n'), { count: bots.length });
       },
     }),
 
@@ -740,7 +825,7 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
       execute: async () => {
         const groups = store.listRooms().filter((r) => r.kind === 'group');
         if (!groups.length) return ok('还没有部门');
-        return ok(groups.map(deptLine).join('\n\n'));
+        return ok(groups.map((g) => deptLine(g, store)).join('\n\n'));
       },
     }),
 
@@ -773,7 +858,7 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
       description:
         '直接给某个 bot 发一条私信，让它独立干一件事并把结果回给你。\n' +
         '★ 在部门里派活请**直接用 @名字**（用户要看得到谁领了什么活）；群里私信同部门同事会被拒绝。\n' +
-        '这个工具只用于：跨部门找人、或者在私聊里找别的 bot 帮忙。',
+        '这个工具只用于：跨部门找人、或者在私聊里找别的 bot 帮忙。如果是耗时任务且希望边派活边继续和用户聊，优先用 dispatch_bot。',
       parameters: Type.Object({
         botId: Type.String({ description: '对方的 bot id（先 list_bots）' }),
         task: Type.String({
@@ -789,108 +874,67 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
         timeoutMs: Type.Optional(Type.Number({ description: '超时毫秒，默认 300000' })),
       }),
       execute: async (_toolCallId, params) => {
-        const target = store.getBot(params.botId);
-        if (!target) return fail(`找不到 bot ${params.botId}`);
-        if (target.id === botId) return fail('不能给自己发私信');
-        // 群里给同部门同事派活必须用 @：用户要看得见谁领了什么活。
-        // 提示词里早就这么要求，但工具照样放行，模型就会绕开群去私信。
-        // 只拦同部门：跨部门找人是这个工具正经的用途。
-        const here = roomId ? store.getRoom(roomId) : null;
-        if (here?.kind === 'group' && (here.botIds ?? []).includes(target.id)) {
-          return fail(
-            `${target.name} 就在这个部门里：直接在群里写「@${target.name}」把活派给它，` +
-              '用户要看得见谁领了什么活。message_bot 只用于找别的部门的人。',
-          );
-        }
-        // 超长直接退回，不截断：截断会把「约束 / 禁止项 / 要报批」悄悄切掉，
-        // 对方拿着缺约束的活去干比不收更危险；宁可让它分两次派。
-        if (params.task.length > MAX_TASK_CHARS) {
-          return fail(
-            `任务描述太长（${params.task.length} 字，上限 ${MAX_TASK_CHARS} 字）。` +
-              '请压成一份自包含的工作说明书：做什么、要交回什么、有哪些约束。' +
-              '不要靠截断 —— 分两次派也行。',
-          );
-        }
-        const dm = store.ensureDm(target.id);
-        if (!dm) return fail('开不了私信会话');
+        const checked = validateDelegationTarget({ targetId: params.botId, task: params.task });
+        if (checked.error) return fail(checked.error);
+        const { target, dm } = checked;
 
-        // ★ 排一下队，而不是一碰“正忙”就宣布“这条路不通”。
-        //
-        //   不能立刻失败：三个成员同时在群里干活时，第二个私信会被直接打回，
-        //   主控看到“私聊派活这条路也不通”就会自己上手 —— 其实对方只是还在忙。
-        //   这里先重试 3 次，仍不通再报给主控重新派人。
-        let result = null;
-        let waitedMs = 0;
-        let lastWhy = '';
-        // ★ 本次执行的起点：交付物只认这个时间点之后的消息，
-        //   免得把上一轮留下的旧答复又搬一遍。
-        const startedAt = Date.now();
-        for (let attempt = 1; attempt <= 3; attempt++) {
-          result = await runner.runBotOnce({
-            roomId: dm.id,
-            botId: target.id,
-            prompt: params.task,
-            timeoutMs: params.timeoutMs ?? 300_000,
-            meta: { via: 'message_bot', from: botId, attempt },
-          });
-          if (result.ok) break;
-          const plan = planDispatchRetry({
-            attempt,
-            error: result.error,
-            waitedMs,
-          });
-          lastWhy = plan.why;
-          if (!plan.retry) break;
-          // ★ 不是"睡固定时长再看"，而是**等它真的空下来** ——
-          //   它那一轮可能还要跑好几分钟，睡 5 秒醒来当然还是忙。
-          const deadline = Date.now() + plan.waitMs;
-          log(`${target.name} 还在忙，等它空下来再派（第 ${attempt + 1} 次，最多等 ${Math.round(plan.waitMs / 1000)}s）`);
-          while (runner.isBusy(dm.id, target.id) && Date.now() < deadline) {
-            await new Promise((r) => setTimeout(r, 2000));
-          }
-          waitedMs += Date.now() - (deadline - plan.waitMs);
-        }
-
-        if (!result?.ok) {
-          const reason = result?.error || '没跑成';
-          // 真没派出去 → 报给主控（而不是让派活的那个 bot 自己上手）：
-          // 不通就往上抬，让主控重新派人。
-          reportDispatchFailure({
-            targetName: target.name,
-            task: params.task,
-            reason,
-            attempts: 3,
-            why: lastWhy,
-          });          return fail(
-            `${target.name} 没跑成：${reason}（已重试 3 次：${lastWhy}）。` +
+        const out = await executeDelegatedRun({
+          target,
+          dm,
+          task: params.task,
+          timeoutMs: params.timeoutMs,
+          via: 'message_bot',
+        });
+        if (!out.ok) {
+          return fail(
+            `${target.name} 没跑成：${out.reason}（已重试 3 次：${out.lastWhy}）。` +
               '我已经把这件事报给主控了，**你不用自己上手** —— 主控会重新派人。',
           );
         }
-
-        // ★ 交付物落到**派活房间**（产品决定 2026-11-16）。
-        //
-        //   以前是"在来源房间留一个小气泡，点进去看成员私聊"。结果是同一件事
-        //   用户看两遍，而且成员私聊那边没有上下文（那里没有用户说的话）。
-        //
-        //   现在：把"它说了什么 + 它发的文件"搬到你正在看的这个房间，
-        //   作者是干活的那个人；成员那边那一份标成 internal（还在，但不推给你）。
-        const mirrored = mirrorDelegatedResult({
-          store,
-          callerRoomId: roomId,
-          workerRoomId: dm.id,
-          worker: target,
-          callerId: botId,
-          since: startedAt,
-          finalText: result.text,
-        });
-
-        return ok(`【${target.name} 的回复】\n${result.text}`, {
+        return ok(`【${target.name} 的回复】\n${out.result.text}`, {
           botId: target.id,
-          ms: result.ms,
+          ms: out.result.ms,
           deliveredRoomId: roomId,
-          delivered: mirrored.messageId,
-          attachments: mirrored.attachments,
+          delivered: out.mirrored.messageId,
+          attachments: out.mirrored.attachments,
         });
+      },
+    }),
+
+    defineTool({
+      name: 'dispatch_bot',
+      label: '异步派活给某个 bot',
+      description:
+        '把耗时活异步派给某个跨部门同事并**立即返回**（不阻塞你继续陪用户聊天）。\n' +
+        '对方在后台跑完后，成果与附件会自动投递回当前会话。同部门请直接在群里 @名字。',
+      parameters: Type.Object({
+        botId: Type.String({ description: '对方的 bot id（先 list_bots）' }),
+        task: Type.String({
+          description: `自包含的工作说明书（目标、交付物、验收与约束），不超过 ${MAX_TASK_CHARS} 字`,
+        }),
+        timeoutMs: Type.Optional(Type.Number({ description: '后台运行超时毫秒，默认 300000' })),
+      }),
+      execute: async (_toolCallId, params) => {
+        const checked = validateDelegationTarget({ targetId: params.botId, task: params.task });
+        if (checked.error) return fail(checked.error);
+        const { target, dm } = checked;
+        const dispatchId = newId('dsp_');
+
+        void executeDelegatedRun({
+          target,
+          dm,
+          task: params.task,
+          timeoutMs: params.timeoutMs,
+          via: 'dispatch_bot',
+          extraMeta: { dispatchId },
+        }).catch((err) => {
+          log(`异步派活失败（${target.name} / ${dispatchId}）：`, err?.message || err);
+        });
+
+        return ok(
+          `已异步派给「${target.name}」（单号 ${dispatchId}），对方完成后会把结果直接发回当前会话；你现在可以继续和用户交流。`,
+          { dispatchId, botId: target.id, status: 'dispatched' },
+        );
       },
     }),
 
@@ -1031,7 +1075,7 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
         maxChars: Type.Optional(Type.Number({ description: '最多返回多少字，默认 8 万（上限也是 8 万）' })),
       }),
       execute: async (_toolCallId, { path: inputPath, maxChars }) => {
-        const full = insideWorkspace(inputPath);
+        const full = insideWorkspace(inputPath, config);
         if (!full) return fail('只能读工作目录里的文件');
         const result = await extractText(full, maxChars ? { maxChars } : undefined);
         if (!result.ok) return fail(result.error);
@@ -1050,7 +1094,7 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
         caption: Type.Optional(Type.String({ description: '配一句话说明' })),
       }),
       execute: async (_toolCallId, { path: inputPath, caption }) => {
-        const full = insideWorkspace(inputPath);
+        const full = insideWorkspace(inputPath, config);
         if (!full) return fail('只能发工作目录里的文件');
         try {
           const { meta } = runner.sendImage({ roomId, botId, filePath: full, caption });
@@ -1096,8 +1140,16 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
           return fail(verdict.message);
         }
 
-        const dir = cwd ? insideWorkspace(cwd) : config.workspace;
-        if (!dir) return fail('工作目录必须在工作区里');
+        let dir;
+        if (isMain && config.jarvisMode !== false) {
+          dir = cwd ? path.resolve(config.workspace, String(cwd).trim()) : config.workspace;
+          if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
+            return fail(`工作目录不存在或不是目录：${dir}`);
+          }
+        } else {
+          dir = cwd ? insideWorkspace(cwd, config) : config.workspace;
+          if (!dir) return fail('工作目录必须在工作区里');
+        }
 
         // 记上 taskId：任务结束/取消时按它回收（否则只能靠模型自己记得 kill）
         const bgTaskId = runner.currentTaskContext?.(roomId, botId)?.taskRunId ?? null;
@@ -1290,7 +1342,16 @@ export function buildCommonTools({ runner, roomId, botId, isMain = false }) {
 // 只有总经理（主控）能用
 // ---------------------------------------------------------------------------
 
-export function buildChiefTools({ runner, health, roomId, botId }) {
+export function buildChiefTools({
+  runner, health, roomId, botId,
+  store: scopedStore = null, config: scopedConfig = null, bus: scopedBus = null, modelGroups: scopedModelGroups = null,
+}) {
+  const store = scopedStore ?? runner?.store ?? defaultStore;
+  const config = scopedConfig ?? runner?.config ?? defaultConfig;
+  const bus = scopedBus ?? runner?.bus ?? defaultBus;
+  const modelGroups = scopedModelGroups ?? runner?.modelGroups ?? undefined;
+  const services = runner?.services ?? createServices({ config, store, bus, runner, modelGroups });
+
   return [
     // ★ 加技能 / 加 MCP：主控的权力仅次于用户。
     //
@@ -1312,13 +1373,13 @@ export function buildChiefTools({ runner, health, roomId, botId }) {
         tags: Type.Optional(Type.Array(Type.String(), { description: '几个关键词，用于按任务匹配' })),
       }),
       execute: async (_toolCallId, params) => {
-        const r = store.addSkill({
+        const r = services.capabilities.addSkill({
           title: params.title,
           summary: params.summary ?? '',
           howto: params.howto,
           tags: params.tags ?? [],
         });
-        if (r.error) return fail(r.error);
+        if (!r.ok) return fail(r.error);
         return ok(`已加进技能库：${r.skill.title}（所有 bot 都能用上）`);
       },
     }),
@@ -1338,17 +1399,9 @@ export function buildChiefTools({ runner, health, roomId, botId }) {
         command: Type.Optional(Type.String({ description: 'stdio 的启动命令，如 npx' })),
         args: Type.Optional(Type.Array(Type.String(), { description: 'stdio 的命令参数' })),
         url: Type.Optional(Type.String({ description: 'http 的服务地址' })),
-        // ★ 没有 enabled 参数。
-        //
-        //   原来这里允许模型传 enabled:true 直接启用一个自带 command/args 的
-        //   本地 MCP —— 等于让模型自行安装并以自己的权限拉起任意进程，
-        //   而且 add_mcp_server 不在 MUTATING_TOOLS 里，ask 档也不弹审批。
-        //
-        //   启用是**用户的决定**：只能由用户在「设置 → MCP」里打开开关。
-        //   模型侧只负责"登记"，登记完告诉用户去点开关。
       }),
       execute: async (_toolCallId, params) => {
-        const r = store.addMcpServer({
+        const r = await services.capabilities.addMcp({
           name: params.name,
           type: params.type ?? 'stdio',
           description: params.description ?? '',
@@ -1357,8 +1410,8 @@ export function buildChiefTools({ runner, health, roomId, botId }) {
           url: params.url,
           // 模型侧恒定不启用：不管它传什么，都只登记不激活
           enabled: false,
-        });
-        if (r.error) return fail(r.error);
+        }, { applyChange: false });
+        if (!r.ok) return fail(r.error);
         return ok(
           `已加进 MCP 库：${r.server.name}（已登记，未启用）。` +
             '启用必须由用户在「设置 → MCP」里打开它的开关 —— 那会起一个本地进程，' +
@@ -1376,10 +1429,7 @@ export function buildChiefTools({ runner, health, roomId, botId }) {
         '避免重复造一遍。',
       parameters: Type.Object({}),
       execute: async () => {
-        const found = scanLocalCapabilities({
-          existingSkills: store.skillLibrary(),
-          existingMcp: store.mcpLibrary(),
-        });
+        const found = services.capabilities.scanLocal();
         const lines = [];
         if (found.skills.length) {
           lines.push('本机已装的技能：');
@@ -1575,6 +1625,14 @@ export function buildChiefTools({ runner, health, roomId, botId }) {
         name: Type.String({ description: '名字，2-8 个字，一眼看出职责，如「爬虫工程师」「法务顾问」' }),
         persona: Type.String({ description: '人设/职责：干什么、交付物、输出风格、禁忌。越具体干得越准' }),
         emoji: Type.Optional(Type.String({ description: '头像 emoji，如 🕷️ 📊 ⚖️' })),
+        avatarShape: Type.Optional(Type.Union([
+          Type.Number({
+            description:
+              '几何形象编号 0..15（0圆润/1方软垫/2水滴/3六角/4八角/5胶囊/6星芒/7菱晶/8云朵/9盾牌/10猫耳/11机甲头盔/12像素块/13花瓣/14三角棱镜/15心形），传 -1 或 null 恢复按 id 自动分配',
+          }),
+          Type.Null(),
+        ])),
+        avatarColor: Type.Optional(Type.String({ description: '头像主色（如 #6C5CE7），传空字符串恢复自动' })),
         tagline: Type.String({
           description:
             '给用户看的一句话简介，8-16 字，说清它负责什么（如「接口设计与实现」「需求拆解与验收」）。' +
@@ -1593,51 +1651,35 @@ export function buildChiefTools({ runner, health, roomId, botId }) {
         ),
       }),
       execute: async (_toolCallId, params) => {
-        const check = checkAssignableModel({ runner, slug: params.model, health });
-        if (!check.ok) return modelError(params.model, check.suggestions);
-        const existing = store.listBots().find((b) => b.name === params.name);
-        if (existing) {
-          return fail(`已经有一个叫「${params.name}」的了（id=${existing.id}）。用 update_bot 改它，或者换个名字。`, {
-            botId: existing.id,
-            duplicated: true,
-          });
+        const res = services.bots.create(
+          {
+            name: params.name,
+            persona: params.persona,
+            emoji: params.emoji,
+            avatarShape: params.avatarShape,
+            avatarColor: params.avatarColor,
+            tagline: params.tagline,
+            model: params.model,
+            thinking: params.thinking,
+            skills: params.skills ?? [],
+          },
+          { uniqueName: true, autoBaseline: true, validateModel: true, createdBy: 'chief', health },
+        );
+        if (!res.ok) {
+          if (res.code === 'MODEL_INVALID') return modelError(params.model, res.suggestions ?? []);
+          if (res.code === 'BOT_DUPLICATE') {
+            return fail(`已经有一个叫「${params.name}」的了（id=${res.botId}）。用 update_bot 改它，或者换个名字。`, {
+              botId: res.botId,
+              duplicated: true,
+            });
+          }
+          return fail(res.error);
         }
-        // ★ 造"开发类"bot 时**自动挂上工程基线**。
-        //
-        //   开发类 bot 必须带上这类 skill。靠主控每次记得手写是不现实的 —— 它一忙就忘。
-        //   所以在这里一刀切：命中就是开发类，基线必须带。
-        const skills = [...(params.skills ?? [])];
-        const coding = isCodingRole({
-          name: params.name,
-          persona: params.persona,
-          tagline: params.tagline ?? '',
-        });
-        if (coding && !skills.some((k) => k?.title === CODING_BASELINE_TITLE)) {
-          skills.unshift({ title: CODING_BASELINE_TITLE, howto: CODING_BASELINE_HOWTO });
-        }
-        const bot = store.createBot({
-          name: params.name,
-          persona: params.persona,
-          emoji: params.emoji,
-          tagline: params.tagline,
-          model: check.resolved ?? null,
-          thinking: params.thinking ?? undefined,
-          createdBy: 'chief',
-          skills,
-        });
+        const { bot, coding } = res;
         log(
           `chief 招了：${bot.emoji} ${bot.name} (${bot.model ?? '默认'}/${bot.thinking})` +
             (coding ? ' ＋工程基线' : ''),
         );
-        // ★ 招完让它主动去和用户打招呼（自我介绍 + 询问卡片），
-        //   而不是等用户自己去侧边栏找到它、点开一个空白私聊。
-        //   不 await：开场要跑一轮模型，不能让招人这个动作卡住。
-        const dm = store.findDm(bot.id);
-        if (dm) {
-          runner.greetDm(dm.id, bot.id).catch((err) =>
-            log('新建 bot 开场失败：', err?.message || err),
-          );
-        }
         return ok(`已招到 ${bot.emoji} ${bot.name}（id=${bot.id}）。«内部：${bot.model ?? '默认'}/${bot.thinking}，不要写进给用户看的话»`, {
           botId: bot.id,
         });
@@ -1648,7 +1690,7 @@ export function buildChiefTools({ runner, health, roomId, botId }) {
       name: 'update_bot',
       label: '调整某人',
       description:
-        '改某个 bot 的名字/人设/模型/思考等级/emoji，以及给它配 MCP 服务。' +
+        '改某个 bot 的名字/人设/模型/思考等级/emoji/几何形象/颜色/专属技能，以及给它配 MCP 服务。' +
         '换了模型或改了 MCP 会自动重开会话。',
       parameters: Type.Object({
         botId: Type.String(),
@@ -1656,8 +1698,25 @@ export function buildChiefTools({ runner, health, roomId, botId }) {
         persona: Type.Optional(Type.String()),
         tagline: Type.Optional(Type.String()),
         emoji: Type.Optional(Type.String()),
+        avatarShape: Type.Optional(Type.Union([
+          Type.Number({
+            description:
+              '几何形象编号 0..15（0圆润/1方软垫/2水滴/3六角/4八角/5胶囊/6星芒/7菱晶/8云朵/9盾牌/10猫耳/11机甲头盔/12像素块/13花瓣/14三角棱镜/15心形），传 -1 或 null 恢复自动',
+          }),
+          Type.Null(),
+        ])),
+        avatarColor: Type.Optional(Type.String({ description: '头像主色 #RRGGBB；传空字符串恢复自动' })),
         model: Type.Optional(Type.String({ description: '模型；传空字符串表示回到默认' })),
         thinking: Type.Optional(Type.String({ description: THINKING_LEVELS.join(' / ') })),
+        skills: Type.Optional(
+          Type.Array(
+            Type.Object({
+              title: Type.String({ description: '技能名' }),
+              howto: Type.String({ description: '具体怎么做' }),
+            }),
+            { description: '完整更新该 bot 自带的专属技能列表' },
+          ),
+        ),
         mcpServers: Type.Optional(
           Type.Array(Type.String(), {
             description:
@@ -1668,50 +1727,20 @@ export function buildChiefTools({ runner, health, roomId, botId }) {
       }),
       execute: async (_toolCallId, params) => {
         const { botId: target, ...patch } = params;
-        let modelWarning = null;
-        if (patch.model !== undefined && patch.model !== '') {
-          const check = checkAssignableModel({ runner, slug: patch.model, health });
-          if (!check.ok) return modelError(patch.model, check.suggestions);
-          patch.model = check.resolved;
-          if (check.warning) modelWarning = check.warning;
-        }
-        // MCP 名字必须真在库里存在，否则配上去也连不上，模型会以为配好了
-        if (Array.isArray(patch.mcpServers) && patch.mcpServers.length) {
-          const known = new Map(store.mcpLibrary().map((s) => [s.name.toLowerCase(), s]));
-          const missing = patch.mcpServers.filter((n) => !known.has(String(n).toLowerCase()));
-          if (missing.length) {
-            return fail(
-              `没有这些 MCP 服务：${missing.join('、')}。` +
-                `先让用户在「设置 → MCP」里加，或者看提示词里列出的可用清单。`,
-            );
+        const res = services.bots.update(target, patch, {
+          checkModel: 'assignable',
+          verifyMcp: true,
+          resetOnModelChange: true,
+          health,
+        });
+        if (!res.ok) {
+          if (res.code === 'MODEL_INVALID') return modelError(patch.model, res.suggestions ?? []);
+          if (res.code === 'MCP_MISSING') {
+            return fail(`${res.error}。先让用户在「设置 → MCP」里加，或者看提示词里列出的可用清单。`);
           }
-          const disabled = patch.mcpServers.filter(
-            (n) => known.get(String(n).toLowerCase())?.enabled !== true,
-          );
-          if (disabled.length) {
-            return fail(
-              `${disabled.join('、')} 还没启用（在设置里打开开关才行）—— ` +
-                '没启用的服务不会真的去连，配上去也没用。',
-            );
-          }
+          return fail(res.code === 'BOT_NOT_FOUND' ? `找不到 bot ${target}` : res.error);
         }
-        const bot = store.updateBot(target, patch);
-        if (!bot) return fail(`找不到 bot ${target}`);
-        if (patch.model !== undefined || patch.thinking !== undefined) {
-          // 换模型 / 改思考档：这两个确实该让会话作废重来（reset 会清会话文件）。
-          runner.resetSessionForBot(bot.id);
-        } else if (patch.mcpServers !== undefined) {
-          // ★ 挂/换 MCP 只 reload，不 reset。
-          //
-          //   工具集是在**建会话时**定下来的，所以必须让会话重建才能拿到新工具；
-          //   但挂个 MCP 不该让这个 bot 把刚才聊的全忘了 ——
-          //   用户的意思是"给它加个能力"，不是"重新开始"。
-          //
-          //   resetSessionForBot 会 clearSessionFile + clearMemorySummariesForBot，
-          //   那是给"换模型/开新会话"用的；reloadSessionForBot 只丢内存里的会话，
-          //   会话文件和记忆摘要都留着，下次开跑按新配置重建。
-          runner.reloadSessionForBot(bot.id);
-        }
+        const { bot, warning: modelWarning } = res;
         const mcpNote = Array.isArray(bot.mcpServers) && bot.mcpServers.length
           ? `，MCP：${bot.mcpServers.join(', ')}`
           : '';
@@ -1775,8 +1804,8 @@ export function buildChiefTools({ runner, health, roomId, botId }) {
       description: '删除一个成员 bot（总经理删不掉）。',
       parameters: Type.Object({ botId: Type.String() }),
       execute: async (_toolCallId, { botId: target }) => {
-        const r = store.deleteBot(target);
-        return r ? ok(`已删除 ${target}`) : fail(`删不了：${target} 不存在，或者它是总经理`);
+        const r = services.bots.remove(target);
+        return r.ok ? ok(`已删除 ${target}`) : fail(`删不了：${target} 不存在，或者它是总经理`);
       },
     }),
 
@@ -1788,13 +1817,15 @@ export function buildChiefTools({ runner, health, roomId, botId }) {
         '只能从这里选，写别名或完整 slug 都行。' +
         '★=实测可用，?=未验证但可选择，✗=实测不可用。创建新团队前查看当前菜单。',
       parameters: Type.Object({}),
-      execute: async () =>
-        ok(
+      execute: async () => {
+        const entries = menuEntries(modelGroups);
+        return ok(
           '可选模型（只能从这里选）：\n' +
-            menuText(health) +
+            menuText(health, entries) +
             '\n\n按任务、上下文容量、用户指定和已知健康状态选择；不要仅按列表顺序，也不要把未验证当作不可用。',
-          { menu: menuEntries().map((m) => m.alias) },
-        ),
+          { menu: entries.map((m) => m.alias) },
+        );
+      },
     }),
 
     defineTool({
@@ -2242,13 +2273,15 @@ export function buildChiefTools({ runner, health, roomId, botId }) {
         ),
       }),
       execute: async (_toolCallId, { title, howto, summary, tags }) => {
-        const res = store.addSkill({ title, howto, summary, tags });
-        if (res.error) return fail(res.error);
+        const res = services.capabilities.addSkill({ title, howto, summary, tags });
+        if (!res.ok) return fail(res.error);
         return ok(`已存进技能库：「${res.skill.title}」（id=${res.skill.id}）`, {
           skillId: res.skill.id,
         });
       },
     }),
+
+    ...buildJarvisTools({ runner, store, roomId, botId, modelGroups }),
   ];
 }
 import { publicMcpTarget } from './mcp-credentials.js';
