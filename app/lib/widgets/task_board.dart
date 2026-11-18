@@ -5,559 +5,181 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../app_state.dart';
 import '../l10n/l10n.dart';
 import '../models.dart';
-import '../ime_guard.dart';
-import '../text_utils.dart';
+import '../task_kanban_model.dart';
 import '../theme.dart';
 import 'floating_menu.dart';
-import 'md_text.dart';
+import 'task_run_card.dart';
+import 'task_run_sheet.dart';
 
-/// 任务板：一个房间里"要做什么 / 在做 / 做完"的清单。
+/// 房间顶栏的「任务」浮层 —— **只读 TaskRun，不再有旧的 TaskItem 双轨。**
 ///
-/// 只负责展示与交互回调，数据与请求在 AppState 里（这样能单测）。
-class TaskBoardSheet extends StatefulWidget {
-  const TaskBoardSheet({
-    super.key,
-    required this.roomName,
-    required this.tasks,
-    required this.onToggleDone,
-    required this.onTogglePin,
-    required this.onDelete,
-    required this.onCreate,
-  });
+/// ## 为什么整块换掉
+///
+/// 原来这里是一套独立的 `TaskItem` 清单：能加行、能勾完成、能置顶，数据源是
+/// `state.tasks`（`/api/tasks`）。而全局看板读的是 `TaskRun`（受管任务的真实账本）。
+/// 同一件事在两个地方有两份状态，于是出现「看板显示在跑、房间清单显示没做」这类打架。
+///
+/// 现在统一到 `TaskRun`：
+///   · 列表 = 本房间的根任务（子任务在根卡的 childrenSummary 里看）；
+///   · 勾选/置顶这些「手工状态」没有对应概念 —— 受管任务是模型+账本推进的，
+///     用户能做的是 pause / resume / cancel / 批准 / 回答，全部在任务详情里；
+///   · 因此「加一条任务」的输入框一并撤掉：派活走对话（主控 accept_task 建单），
+///     这也是 spec 里「淘汰旧 TaskItem 独立维护链路」的落地。
+class TaskBoardSheet extends StatelessWidget {
+  const TaskBoardSheet({super.key, required this.roomName, required this.state, required this.roomId});
 
   final String roomName;
-  final List<TaskItem> tasks;
-  final ValueChanged<TaskItem> onToggleDone;
-  final ValueChanged<TaskItem> onTogglePin;
-  final ValueChanged<TaskItem> onDelete;
-  final ValueChanged<String> onCreate;
-
-  @override
-  State<TaskBoardSheet> createState() => _TaskBoardSheetState();
-}
-
-class _TaskBoardSheetState extends State<TaskBoardSheet> {
-  final _input = TextEditingController();
-  bool _showDone = false;
-
-  @override
-  void dispose() {
-    _input.dispose();
-    super.dispose();
-  }
-
-  void _add() {
-    final title = _input.text.trim();
-    if (title.isEmpty) return;
-    widget.onCreate(title);
-    _input.clear();
-    setState(() {});
-  }
+  final AppState state;
+  final String roomId;
 
   @override
   Widget build(BuildContext context) {
-    final strings = L10n.s(context);
-    // 全部都要：用户自己加的和系统派活记录。
-    //
-    // ★ 之前我一度过滤掉 createdBy=='dispatch'，结果整块板全空了 ——
-    //   因为历史上这 300 条**全部**是 dispatch 标记的（系统把每次派活
-    //   都记成一条），于是「过滤噪音」变成了「过滤掉一切」。
-    //   这个过滤已撤回；真正要解决的是「已完成 130」这个统计口径，
-    //   以及这块板与真实 TaskRun 的关系（另见右侧任务区）。
-    final doing = widget.tasks.where((t) => t.isDoing).toList();
-    final open = widget.tasks.where((t) => !t.isDone && !t.isDoing).toList();
-    final done = widget.tasks.where((t) => t.isDone).toList();
-
+    final s = L10n.s(context);
     return SafeArea(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 14, 20, 18),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+        padding: const EdgeInsets.fromLTRB(18, 14, 18, 16),
+        child: ListenableBuilder(
+          listenable: state.taskRuns,
+          builder: (context, _) {
+            final cards = buildKanbanCards(
+              state.taskRuns.forRoom(roomId),
+              nameOf: (id) => state.botById(id)?.name ?? '',
+            );
+            final open = cards.where((c) => c.column != KanbanColumn.done).length;
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Icon(
-                  LucideIcons.listChecks,
-                  size: 16,
-                  color: PB.textSecondary,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  strings.tf('task.title', {'room': widget.roomName}),
-                  style: TextStyle(
-                    fontSize: PB.fsLg,
-                    fontWeight: FontWeight.w600,
-                    color: PB.textPrimary,
-                  ),
-                ),
-                const Spacer(),
-                Text(
-                  strings.tf('task.openCount', {
-                    'n': doing.length + open.length,
-                  }),
-                  style: TextStyle(
-                    fontSize: PB.fsXs,
-                    color: PB.textQuaternary,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            // 新任务输入
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _input,
-                    style: const TextStyle(fontSize: PB.fsSm),
-                    onSubmitted: submitUnlessComposing(_input, _add),
-                    decoration: InputDecoration(
-                      hintText: strings.t('task.newHint'),
-                      hintStyle: TextStyle(
-                        fontSize: PB.fsXs,
-                        color: PB.textQuaternary,
-                      ),
-                      isDense: true,
-                      filled: true,
-                      fillColor: PB.bgApp,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(PB.rLg),
-                        borderSide: BorderSide(color: PB.borderTertiary),
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                IconButton(
-                  onPressed: _add,
-                  icon: const Icon(LucideIcons.plus, size: 18),
-                  tooltip: strings.t('common.add'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Flexible(
-              child: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                Row(
                   children: [
-                    if (doing.isEmpty && open.isEmpty && done.isEmpty)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 18),
-                        child: Text(
-                          strings.t('task.empty'),
-                          style: TextStyle(
-                            fontSize: PB.fsXs,
-                            color: PB.textQuaternary,
-                          ),
-                        ),
-                      ),
-                    if (doing.isNotEmpty) ...[
-                      _section(strings.t('task.doing')),
-                      ..._grouped(doing),
-                      const SizedBox(height: 8),
-                    ],
-                    if (open.isNotEmpty) ...[
-                      _section(strings.t('task.todo')),
-                      ..._grouped(open),
-                      const SizedBox(height: 8),
-                    ],
-                    if (done.isNotEmpty) ...[
-                      InkWell(
-                        onTap: () => setState(() => _showDone = !_showDone),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 6),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                _showDone
-                                    ? LucideIcons.chevronUp
-                                    : LucideIcons.chevronDown,
-                                size: 13,
-                                color: PB.textQuaternary,
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                strings.tf('task.doneCount', {
-                                  'n': done.length,
-                                }),
-                                style: TextStyle(
-                                  fontSize: PB.fsXs,
-                                  color: PB.textTertiary,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                      if (_showDone) ..._grouped(done),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// 点开一条任务看全文（二级视图）。
-  ///
-  /// 列表里只能放两三行，而模型的原始内容经常是整段带 Markdown 的正文 ——
-  /// 截断之后用户根本没法读到关键结论。这里给一个居中浮层：全文 + 执行者 +
-  /// 状态，Markdown 正常渲染。
-  void _showTaskDetail(BuildContext context, TaskItem task) {
-    final strings = L10n.s(context);
-    showDialog<void>(
-      context: context,
-      barrierColor: const Color(0x99000000),
-      builder: (dialogContext) => Dialog(
-        backgroundColor: PB.bgPane,
-        insetPadding: const EdgeInsets.all(24),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(PB.rXl),
-          side: BorderSide(color: PB.borderTertiary),
-        ),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 620, maxHeight: 640),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(18, 14, 12, 6),
-                child: Row(
-                  children: [
+                    Icon(LucideIcons.listChecks, size: 16, color: PB.textSecondary),
+                    const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        task.isDone
-                            ? strings.t('task.done')
-                            : task.isDoing
-                                ? strings.t('task.doing')
-                                : strings.t('task.todo'),
+                        s.tf('task.title', {'room': roomName}),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          fontSize: PB.fsXs,
-                          color: PB.textTertiary,
+                          fontSize: PB.fsLg,
                           fontWeight: FontWeight.w600,
+                          color: PB.textPrimary,
                         ),
                       ),
                     ),
-                    if (task.ownerName != null && task.ownerName!.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: Text(
-                          task.ownerName!,
-                          style: TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
-                        ),
-                      ),
-                    IconButton(
-                      // ★ 用弹窗自己的 context 关：
-                      //   外层的 context 属于一个 OverlayEntry，它没有自己的 Navigator，
-                      //   拿它去 pop 不一定能命中刚弹出的那个路由。
-                      visualDensity: VisualDensity.compact,
-                      onPressed: () => Navigator.of(dialogContext).pop(),
-                      icon: Icon(LucideIcons.x, size: 16, color: PB.textTertiary),
+                    Text(
+                      s.tf('task.openCount', {'n': open}),
+                      style: TextStyle(fontSize: PB.fsXs, color: PB.textQuaternary),
                     ),
                   ],
                 ),
-              ),
-              Divider(height: 1, color: PB.borderTertiary),
-              Flexible(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(18, 12, 18, 18),
-                  child: MdText(
-                    task.detail.isNotEmpty ? task.detail : task.title,
-                    style: TextStyle(fontSize: PB.fsSm, color: PB.textSecondary),
+                const SizedBox(height: 10),
+                if (cards.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 26),
+                    child: Column(
+                      children: [
+                        Text(
+                          s.t('task.empty'),
+                          style: TextStyle(fontSize: PB.fsSm, color: PB.textSecondary),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          s.t('task.emptyHint'),
+                          textAlign: TextAlign.center,
+                          style: TextStyle(fontSize: PB.fsXs, color: PB.textQuaternary, height: 1.6),
+                        ),
+                      ],
+                    ),
+                  )
+                else
+                  Flexible(
+                    child: SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          for (final card in cards)
+                            _Row(
+                              card: card,
+                              onOpen: () => showTaskRunSheet(context, state, card.run),
+                            ),
+                        ],
+                      ),
+                    ),
                   ),
-                ),
-              ),
-            ],
-          ),
+              ],
+            );
+          },
         ),
-      ),
-    );
-  }
-
-  Widget _section(String title) => Padding(
-    padding: const EdgeInsets.only(top: 4, bottom: 4),
-    child: Text(
-      title,
-      style: TextStyle(
-        fontSize: PB.fsXxs,
-        fontWeight: FontWeight.w600,
-        letterSpacing: 0.4,
-        color: PB.textTertiary,
-      ),
-    ),
-  );
-
-  /// 同一条指令派给多个人时，板上会出现 N 行一模一样的话。
-  /// 按标题合并成一行（副标题列出执行者），比刷 5 条重复的更像"一个任务"。
-  List<Widget> _grouped(List<TaskItem> list) {
-    final byTitle = <String, List<TaskItem>>{};
-    for (final t in list) {
-      byTitle.putIfAbsent(t.title, () => []).add(t);
-    }
-    return [
-      for (final group in byTitle.values)
-        group.length == 1 ? _row(group.first) : _multiRow(group),
-    ];
-  }
-
-  /// 一个任务、多个执行者
-  Widget _multiRow(List<TaskItem> group) {
-    final strings = L10n.s(context);
-    final first = group.first;
-    final color = first.isDone
-        ? PB.textQuaternary
-        : first.isDoing
-        ? PB.colors(context).accent
-        : PB.textSecondary;
-    final owners = group
-        .map((t) => t.ownerName)
-        .whereType<String>()
-        .where((n) => n.isNotEmpty)
-        .toList();
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: Row(
-        children: [
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
-            onPressed: () {
-              for (final t in group) {
-                widget.onToggleDone(t);
-              }
-            },
-            tooltip: strings.tf(
-              first.isDone ? 'task.markOpenAll' : 'task.markDoneAll',
-              {'n': group.length},
-            ),
-            icon: first.isDoing && !first.isDone
-                // 进行中就让它真的转起来
-                ? _SpinningIcon(icon: LucideIcons.loader, size: 16, color: color)
-                : Icon(
-                    first.isDone ? LucideIcons.circleCheck : LucideIcons.circle,
-                    size: 16,
-                    color: color,
-                  ),
-          ),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                InkWell(
-                  onTap: () => _showTaskDetail(context, first),
-                  borderRadius: BorderRadius.circular(4),
-                  child: Text(
-                    stripMarkdown(first.title),
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: PB.fsSm,
-                      color: color,
-                      decoration: first.isDone
-                          ? TextDecoration.lineThrough
-                          : null,
-                    ),
-                  ),
-                ),
-                Text(
-                  strings.tf('task.owners', {
-                    'n': group.length,
-                    'names': owners.join(strings.t('misc.listSeparator')),
-                  }),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: PB.fsXxs,
-                    color: PB.textQuaternary,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
-            onPressed: () {
-              for (final t in group) {
-                widget.onDelete(t);
-              }
-            },
-            tooltip: strings.tf('task.deleteAll', {'n': group.length}),
-            icon: Icon(
-              LucideIcons.trash2,
-              size: 14,
-              color: PB.textQuaternary,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _row(TaskItem task) {
-    final strings = L10n.s(context);
-    final color = task.isDone
-        ? PB.textQuaternary
-        : task.isDoing
-        ? PB.colors(context).accent
-        : PB.textSecondary;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: Row(
-        children: [
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
-            onPressed: () => widget.onToggleDone(task),
-            tooltip: strings.t(task.isDone ? 'task.markOpen' : 'task.markDone'),
-            icon: task.isDoing && !task.isDone
-                ? _SpinningIcon(icon: LucideIcons.loader, size: 16, color: color)
-                : Icon(
-                    task.isDone ? LucideIcons.circleCheck : LucideIcons.circle,
-                    size: 16,
-                    color: color,
-                  ),
-          ),
-          if (task.isUnread && !task.isDone)
-            Container(
-              width: 5,
-              height: 5,
-              margin: const EdgeInsets.only(right: 6),
-              decoration: BoxDecoration(
-                color: PB.colors(context).accent,
-                shape: BoxShape.circle,
-              ),
-            ),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // 列表里必须压成纯文本：模型给的常是整段带 **加粗** 的正文，
-                // 直接塞 Text 会露出裸星号；MdText 又不支持 maxLines 截断。
-                // 所以列表走 stripMarkdown + 截断，完整内容点开看（见 _showTaskDetail）。
-                InkWell(
-                  onTap: () => _showTaskDetail(context, task),
-                  borderRadius: BorderRadius.circular(4),
-                  child: Text(
-                    stripMarkdown(task.title),
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: PB.fsSm,
-                      color: color,
-                      decoration: task.isDone ? TextDecoration.lineThrough : null,
-                    ),
-                  ),
-                ),
-                if (task.ownerName != null)
-                  Text(
-                    task.ownerName!,
-                    style: TextStyle(
-                      fontSize: PB.fsXxs,
-                      color: PB.textQuaternary,
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
-            onPressed: () => widget.onTogglePin(task),
-            tooltip: strings.t(task.isPinned ? 'task.unpin' : 'task.pin'),
-            icon: Icon(
-              task.isPinned ? LucideIcons.pin : LucideIcons.pinOff,
-              size: 14,
-              color: task.isPinned
-                  ? PB.colors(context).accentBright
-                  : PB.textQuaternary,
-            ),
-          ),
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
-            onPressed: () => widget.onDelete(task),
-            tooltip: strings.t('common.delete'),
-            icon: Icon(
-              LucideIcons.trash2,
-              size: 14,
-              color: PB.textQuaternary,
-            ),
-          ),
-        ],
       ),
     );
   }
 }
 
-/// 打开某个房间的任务板（装配放在这里，聊天页只留一行调用）。
-///
-/// [anchorKey] 是触发按钮：浮层贴着它弹出，而不是从屏幕底部滑上来。
-/// 底部弹层是移动端手势范式，桌面上它和按钮隔着大半个屏幕，很不自然。
-/// 没传锚点时退回居中弹出（窄屏/手机仍然合适）。
+class _Row extends StatelessWidget {
+  const _Row({required this.card, required this.onOpen});
+
+  final KanbanCard card;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // 卡片本体复用看板/详情用同一个组件，状态色与图标不会再飘
+        TaskRunCard(task: card.run, compact: true, onOpen: onOpen),
+        Padding(
+          padding: const EdgeInsets.only(left: 6, right: 6, bottom: 6),
+          child: Row(
+            children: [
+              Icon(LucideIcons.userRound, size: 11, color: PB.textQuaternary),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  card.leadName.isEmpty
+                      ? L10n.s(context).t('kanban.unassigned')
+                      : card.leadName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
+                ),
+              ),
+              if (card.cancelled)
+                Text(
+                  L10n.s(context).t('kanban.cancelled'),
+                  style: TextStyle(fontSize: PB.fsXxs, color: PB.textTertiary),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// 打开房间任务浮层（锚定在顶栏那颗按钮上）。
 Future<void> showTaskBoard(
   BuildContext context,
   AppState state,
   Room room, {
   GlobalKey? anchorKey,
-  /// 弹层真正开出去后把“关闭它”的手柄交给调用方，
-  /// 让顶栏那颗按钮能做到“再点一下就关掉”。
   void Function(VoidCallback close)? onHandle,
-  /// 弹层被任意方式关掉（点外面 / Esc / 手柄）时回调，用来清掉手柄。
   VoidCallback? onClosed,
 }) async {
-  // ★ 先在 await 之前把定位需要的东西取完。
-  //
-  //   refreshTasks 是异步的；回来之后再用 context 找 Overlay / 量尺寸，
-  //   既可能拿到已经失效的 context，也会触发 use_build_context_synchronously。
-  //   浮层的落点只取决于「按钮在哪 + 屏幕多大」，这两样现在就能拿到。
+  // 会话标识与名字在 await 之前先取出来（避免 await 后用已失效的 context）。
+  final roomId = room.id;
+  final roomName = room.name;
   final box = anchorKey?.currentContext?.findRenderObject() as RenderBox?;
   final boxReady = box != null && box.attached;
   final anchor = boxReady ? box.localToGlobal(Offset.zero) : null;
-  // 按钮的实际高度：往下开时从它的底边算起，浮层才不会盖住按钮本身
   final anchorHeight = boxReady ? box.size.height : 0.0;
   final overlay = Overlay.maybeOf(context);
   final overlayBox = overlay?.context.findRenderObject() as RenderBox?;
-  final ready =
-      overlayBox != null && overlayBox.attached && overlayBox.hasSize;
+  final ready = overlayBox != null && overlayBox.attached && overlayBox.hasSize;
 
-  await state.refreshTasks();
-  if (!context.mounted) return;
-
-  Widget build() => ListenableBuilder(
-    listenable: state,
-    builder: (context, child) => TaskBoardSheet(
-      roomName: room.name,
-      tasks: state.tasksFor(room.id),
-      onToggleDone: (t) => state.updateTask(t.id, {
-        'status': t.isDone ? 'open' : 'done',
-        'read': true,
-      }),
-      onTogglePin: (t) => state.updateTask(t.id, {'pinned': !t.isPinned}),
-      onDelete: (t) => state.deleteTask(t.id),
-      onCreate: (title) => state.createTask(roomId: room.id, title: title),
-    ),
-  );
+  Widget build() => TaskBoardSheet(roomName: roomName, state: state, roomId: roomId);
 
   if (anchorKey == null || anchor == null || overlay == null) {
-    // 没有锚点：居中的浮层卡片，仍然比底部弹层合适
     onHandle?.call(() => Navigator.of(context, rootNavigator: true).pop());
     await showDialog<void>(
       context: context,
@@ -570,7 +192,7 @@ Future<void> showTaskBoard(
           side: BorderSide(color: PB.borderTertiary),
         ),
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 560, maxHeight: 560),
+          constraints: const BoxConstraints(maxWidth: 520, maxHeight: 560),
           child: build(),
         ),
       ),
@@ -581,7 +203,6 @@ Future<void> showTaskBoard(
 
   final local = ready ? overlayBox.globalToLocal(anchor) : anchor;
   final screen = ready ? overlayBox.size : const Size(800, 600);
-
   const width = 420.0;
   final spot = menuPlacement(
     anchor: local,
@@ -602,7 +223,7 @@ Future<void> showTaskBoard(
   }
 
   entry = OverlayEntry(
-    builder: (_) => _TaskBoardPopover(
+    builder: (_) => _RoomTaskPopover(
       left: spot.left,
       top: spot.top,
       bottom: spot.bottom,
@@ -618,19 +239,16 @@ Future<void> showTaskBoard(
   onHandle?.call(close);
 }
 
-class _TaskBoardPopover extends StatefulWidget {
-  const _TaskBoardPopover({
+class _RoomTaskPopover extends StatefulWidget {
+  const _RoomTaskPopover({
     required this.left,
     required this.top,
     required this.bottom,
     required this.width,
     required this.onClose,
-    this.anchorRect,
     required this.child,
+    this.anchorRect,
   });
-
-  /// 锚点（顶栏那颗按钮）的屏幕矩形。点它也算“再点一下”。
-  final Rect? anchorRect;
 
   final double left;
   final double? top;
@@ -639,15 +257,16 @@ class _TaskBoardPopover extends StatefulWidget {
   final VoidCallback onClose;
   final Widget child;
 
+  /// 锚点（顶栏那颗按钮）的屏幕矩形：点它也算"再点一下"。
+  final Rect? anchorRect;
+
   @override
-  State<_TaskBoardPopover> createState() => _TaskBoardPopoverState();
+  State<_RoomTaskPopover> createState() => _RoomTaskPopoverState();
 }
 
-class _TaskBoardPopoverState extends State<_TaskBoardPopover> {
-  /// 量浮层自己的真实矩形。
-  ///   不能用 left/top/bottom 算：向下弹出时 bottom == null，
-  ///   原来那套判定会把浮层正下方一直到窗口底都当成“里面”，
-  ///   点那一条空白关不掉。
+class _RoomTaskPopoverState extends State<_RoomTaskPopover> {
+  /// 量浮层自己的真实矩形。不能用 left/top/bottom 推演：向下弹出时 bottom 为空，
+  /// 那套判定会把浮层正下方一直到窗口底都当成"里面"，点那儿关不掉。
   final GlobalKey _sheetKey = GlobalKey();
 
   @override
@@ -663,8 +282,7 @@ class _TaskBoardPopoverState extends State<_TaskBoardPopover> {
   }
 
   bool _onKey(KeyEvent event) {
-    if (event is KeyDownEvent &&
-        event.logicalKey == LogicalKeyboardKey.escape) {
+    if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.escape) {
       widget.onClose();
       return true;
     }
@@ -675,57 +293,19 @@ class _TaskBoardPopoverState extends State<_TaskBoardPopover> {
   Widget build(BuildContext context) {
     return Stack(
       children: [
-        // 点空白处关闭：用 Listener 而非 GestureDetector。
-        //
-        // Listener 只旁听指针按下，不进入手势竞技场，
-        // 所以滚轮/拖拽照常穿透到下面的消息列表 —— 而 GestureDetector
-        // （无论 opaque 还是 translucent）都会吃掉 PointerSignal。
         Listener(
           behavior: HitTestBehavior.translucent,
           onPointerDown: (event) {
-            final sheetBox =
-                _sheetKey.currentContext?.findRenderObject() as RenderBox?;
+            final sheetBox = _sheetKey.currentContext?.findRenderObject() as RenderBox?;
             if (sheetBox != null && sheetBox.attached && sheetBox.hasSize) {
-              final rect =
-                  sheetBox.localToGlobal(Offset.zero) & sheetBox.size;
+              final rect = sheetBox.localToGlobal(Offset.zero) & sheetBox.size;
               final inSheet = rect.contains(event.position);
-              // 点同一颗锚点按钮也当“再点一下”
-              final onAnchor =
-                  widget.anchorRect?.contains(event.position) ?? false;
+              final onAnchor = widget.anchorRect?.contains(event.position) ?? false;
               if (!inSheet || onAnchor) widget.onClose();
-              return;
             }
-            // 点同一颗按钮 = 再点一下：直接关。
-            //   遮罩会先拦住这一下，所以不能指望按钮自己受理。
-            if (widget.anchorRect?.contains(event.position) == true) {
-              widget.onClose();
-              return;
-            }
-            final box = context.findRenderObject() as RenderBox?;
-            if (box == null) return;
-            final local = box.globalToLocal(event.position);
-            final withinX = local.dx >= widget.left
-                && local.dx <= widget.left + widget.width;
-            final withinY = widget.top != null
-                ? local.dy >= widget.top!
-                : true;
-            final aboveBottom = widget.bottom == null
-                ? true
-                : local.dy <= box.size.height - widget.bottom!;
-            if (!(withinX && withinY && aboveBottom)) widget.onClose();
           },
           child: const SizedBox.expand(),
         ),
-        // ★ 这层只为"点外面关闭"，必须对滚动手势完全透明。
-        //
-        //   原来是 Positioned.fill + GestureDetector(opaque)：铺满全屏、
-        //   对所有指针事件都不透明，任务板一打开主对话就滚不动。
-        //   改成 translucent 也不够 —— GestureDetector 仍会参与
-        //   PointerSignal（滚轮）的命中测试，滚轮照样被吞。
-        //
-        //   现在用 IgnorePointer 彻底不参与命中测试，
-        //   关闭改用下面浮层自身的「失焦点击」——见 _TaskBoardPopover
-        //   外层的 Listener 处理，滚动与拖拽全部穿透到消息列表。
         Positioned(
           left: widget.left,
           top: widget.top,
@@ -740,59 +320,13 @@ class _TaskBoardPopoverState extends State<_TaskBoardPopover> {
                 color: PB.bgPane,
                 borderRadius: BorderRadius.circular(PB.rXl),
                 border: Border.all(color: PB.borderTertiary),
-                boxShadow: PB.shadow(y: 8, blur: 28, alpha: 0.45),
+                boxShadow: PB.shadow(y: 12, blur: 32, alpha: 0.45),
               ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(PB.rXl),
-                child: SingleChildScrollView(child: widget.child),
-              ),
+              child: widget.child,
             ),
           ),
         ),
       ],
-    );
-  }
-}
-
-/// 正在进行的任务：图标真的转起来。
-///
-/// 之前用静态的 LucideIcons.loader —— 那形状像个转轮，但它不动，
-/// 用户看到的是"卡在那里的一个图标"，分不出是在跑还是死了。
-class _SpinningIcon extends StatefulWidget {
-  const _SpinningIcon({required this.icon, required this.size, required this.color});
-
-  final IconData icon;
-  final double size;
-  final Color color;
-
-  @override
-  State<_SpinningIcon> createState() => _SpinningIconState();
-}
-
-class _SpinningIconState extends State<_SpinningIcon>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _c;
-
-  @override
-  void initState() {
-    super.initState();
-    _c = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 900),
-    )..repeat();
-  }
-
-  @override
-  void dispose() {
-    _c.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return RotationTransition(
-      turns: _c,
-      child: Icon(widget.icon, size: widget.size, color: widget.color),
     );
   }
 }

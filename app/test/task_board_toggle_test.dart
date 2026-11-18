@@ -8,6 +8,7 @@ import 'package:pi_bot/screens/chat_screen.dart';
 import 'package:pi_bot/scope.dart';
 import 'package:pi_bot/widgets/blob_avatar.dart';
 import 'package:pi_bot/widgets/task_board.dart';
+import 'package:pi_bot/widgets/task_run_sheet.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// 任务板交互：
@@ -89,20 +90,43 @@ void main() {
     expect(find.byType(TaskBoardSheet), findsNothing, reason: '开着的状态下再点应该关掉');
   });
 
-  testWidgets('任务详情弹窗的叉能关掉', (tester) async {
-    await pump(tester);
+  testWidgets('任务浮层里点任务卡会打开 TaskRun 详情，X 能关掉', (tester) async {
+    final state = await pump(tester);
+    // 统一数据源后，浮层读的是 TaskRun：先喂一条本房间的根任务
+    state.taskRuns.applyHello({
+      'taskRuns': [
+        {
+          'id': 'tr1',
+          'roomId': 'r1',
+          'rootTaskId': 'tr1',
+          'revision': 1,
+          'sequence': 1,
+          'storeVersion': 1,
+          'state': 'running',
+          'title': '补一条验证',
+          'scope': '验证一下',
+          'deliverables': <String>[],
+          'updatedAt': 1000,
+          'leadBotId': 'b1',
+          'leadBotName': '技术分析员',
+          'phase': 'active',
+        },
+      ],
+    });
+
     await tester.tap(find.byIcon(LucideIcons.checkCircle2));
     await tester.pumpAndSettle();
+    expect(find.text('补一条验证'), findsWidgets);
 
-    // 点任务行打开详情
     await tester.tap(find.text('补一条验证').first);
     await tester.pumpAndSettle();
-    expect(find.text('上次运行被中断，已放回待办'), findsOneWidget);
+    expect(find.byType(TaskRunSheet), findsOneWidget);
 
-    await tester.tap(find.byIcon(LucideIcons.x).last);
+    await tester.tap(find.byIcon(Icons.close).last);
     await tester.pumpAndSettle();
-    expect(find.text('上次运行被中断，已放回待办'), findsNothing, reason: '点叉必须关得掉');
+    expect(find.byType(TaskRunSheet), findsNothing, reason: '点叉必须关得掉');
   });
+
   testWidgets('向下弹出时，浮层正下方的空白也能关掉', (tester) async {
     await pump(tester);
     await tester.tap(find.byIcon(LucideIcons.checkCircle2));
