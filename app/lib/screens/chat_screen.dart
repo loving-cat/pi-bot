@@ -3621,10 +3621,13 @@ class _BubbleQuickActionsState extends State<_BubbleQuickActions> {
     _bar = OverlayEntry(
       builder: (ctx) {
         final screen = MediaQuery.sizeOf(ctx);
+        // ★ 贴在气泡右上角外侧：底边跟气泡顶边齐平（留 2px 缝），
+        //   右边与气泡右边缘对齐 —— 像贴在气泡上的一个小面板，
+        //   而不是飘在行头另一侧。用 bottom 锚定就不用猜条子高度。
+        final rightGap = math.max(8.0, screen.width - rect.right);
         return Positioned(
-          top: math.max(4.0, rect.top - 32),
-          left: widget.isUser ? null : rect.left,
-          right: widget.isUser ? math.max(8.0, screen.width - rect.right) : null,
+          bottom: math.max(4.0, screen.height - rect.top + 2),
+          right: rightGap,
           child: MouseRegion(
             onEnter: (_) {
               _hideTimer?.cancel();
