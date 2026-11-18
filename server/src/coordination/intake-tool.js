@@ -9,13 +9,15 @@
  *
  * 残缺的受管上下文直接拒绝，**不回退**到首次准入或 legacy。
  *
- * ## 关闭状态
+ * ## 开关控制
  *
- * 功能开关默认关闭（PI_BOT_TASK_INTAKE=1 才注册），真实用户路径不受影响。
+ * 默认开启（优先读取 `ORBIS_TASK_INTAKE`，兼容 `PI_BOT_TASK_INTAKE`；设 `'0'` / `'false'` / `'off'` 关闭）。
+ * SDK 轻量模式由 `createOrbisRuntime` 显式传 `taskIntake: false` 隔离。
  */
 import path from 'node:path';
 import { Type } from 'typebox';
 import { defineTool } from '@earendil-works/pi-coding-agent';
+import { readBrandEnv } from '../brand.js';
 import { parseIntake } from '../tasks/task-run-factory.js';
 import { handleIntake, ACTION, INTAKE_OUTCOME } from './intake.js';
 import { makeSpecPreparer } from './department-spec.js';
@@ -24,14 +26,17 @@ import { admitFirstTask, admissionBudget } from './task-admission.js';
 import { createRequestReceipts } from '../tasks/task-request-receipts.js';
 import { config } from '../config.js';
 
-/** 环境开关：默认关闭，避免未完成闭环影响真实用户。 */
+/** 环境开关：默认开启，可通过 ORBIS_TASK_INTAKE=0 / PI_BOT_TASK_INTAKE=0 显式关闭。 */
 export function intakeEnabled(env = process.env) {
-  return env.PI_BOT_TASK_INTAKE === '1';
+  const raw = readBrandEnv(env, 'TASK_INTAKE');
+  if (raw === undefined || raw === null || String(raw).trim() === '') return true;
+  const v = String(raw).trim().toLowerCase();
+  return v !== '0' && v !== 'false' && v !== 'off';
 }
 
-/** 请求回执目录（小文件，原子写；不引入数据库）。 */
-export function requestReceipts() {
-  return createRequestReceipts({ dir: path.join(config.dataDir, 'task-requests') });
+/** 请求回执目录（小文件，原子写；优先使用当前运行时实例的 dataDir）。 */
+export function requestReceipts(dataDir = config.dataDir) {
+  return createRequestReceipts({ dir: path.join(dataDir, 'task-requests') });
 }
 
 /**
@@ -159,7 +164,7 @@ export function buildIntakeTools({
         const out = await admitFirstTask({
           store,
           taskRuns: store.taskRuns,
-          receipts: receipts ?? requestReceipts(),
+          receipts: receipts ?? requestReceipts(runner?.config?.dataDir ?? config.dataDir),
           scope,
           proposal: params,
           prepareSpec: makeSpecPreparer({ store, runner, health }),

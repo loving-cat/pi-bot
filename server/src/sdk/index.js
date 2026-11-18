@@ -26,6 +26,8 @@ import { createGrantGate } from '../grant-gate.js';
 import { ensureLegacyGrant } from '../migration-grants.js';
 import { createAutomationScheduler } from '../automations.js';
 import { createServices } from '../services/index.js';
+import { createTaskHost } from '../bootstrap/task-host.js';
+import { createTaskCommands } from '../tasks/task-commands.js';
 import { ACTION } from '../grants.js';
 import { ACTIONS, TOOL_SPECS, auditCapabilities } from '../capabilities.js';
 import {
@@ -64,6 +66,7 @@ export async function createOrbisRuntime(options = {}) {
   }
 
   const generation = `sdk-${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+  const taskIntake = Boolean(options.taskIntake ?? false);
   const runner = new PiRunner({
     config: cfg,
     store,
@@ -72,6 +75,7 @@ export async function createOrbisRuntime(options = {}) {
     sessionApi: options.sessionApi ?? null,
     modelRuntimeFactory: options.modelRuntimeFactory ?? null,
     inheritHostProviders: options.inheritHostProviders ?? false,
+    taskIntake,
   });
 
   if (options.installGrantGate !== false) {
@@ -103,6 +107,12 @@ export async function createOrbisRuntime(options = {}) {
   if (options.defaultModel) {
     const res = await services.models.setDefaultModel(options.defaultModel);
     if (!res.ok) throw new Error(res.error || `无法设置默认模型：${options.defaultModel}`);
+  }
+
+  let taskHost = null;
+  if (taskIntake) {
+    taskHost = createTaskHost({ store, runner });
+    runner.taskCommands = createTaskCommands({ store, runner, taskRuns: store.taskRuns });
   }
 
   let scheduler = null;
@@ -182,6 +192,7 @@ export async function createOrbisRuntime(options = {}) {
     if (disposed) return;
     disposed = true;
     scheduler?.stop?.();
+    taskHost?.dispose?.();
     runner.grantGate?.stop?.();
     runner.disposeAll();
     store.dispose();

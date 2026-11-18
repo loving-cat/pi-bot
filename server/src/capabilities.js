@@ -318,6 +318,11 @@ export const TOOL_SPECS = Object.freeze({
   task_report: { action: null, readonly: true, coordination: true },
   task_plan: { action: null, coordination: true },
   task_expert_review: { action: null, readonly: true, coordination: true },
+  accept_task: { action: null, readonly: true, coordination: true },
+  task_status: { action: null, readonly: true, coordination: true },
+  task_revise: { action: null, coordination: true },
+  task_unblock: { action: null, coordination: true },
+  task_extend_budget: { action: null, coordination: true },
 
   // ---------------- 贾维斯（主控）对话式系统管家
   list_automations: { action: null, readonly: true },

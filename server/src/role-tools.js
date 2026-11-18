@@ -164,7 +164,7 @@ export function customToolsForRole(tools, { room, bot, policy = {} } = {}) {
  *   +1 会让所有老会话在下次使用时重建一次（丢的只是进程内的会话缓存，
  *   聊天记录都在库里，不受影响）。
  */
-export const SESSION_TOOLS_VERSION = 5;
+export const SESSION_TOOLS_VERSION = 6;
 
 /** 房间角色、成员或工具集版本变化时签名变化，用于重建缓存会话。 */
 export function roleConfigurationKey(room, bot) {

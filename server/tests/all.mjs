@@ -153,6 +153,12 @@ const TESTS = [
   'full-duplex',
   'jarvis-mode',
   'sdk-runtime',
+  'runner-modular',
+  'task-admission',
+  'task-request-gate',
+  'task-verification',
+  'task-run-store',
+  'task-intake-e2e',
 ];
 
 let failed = 0;
