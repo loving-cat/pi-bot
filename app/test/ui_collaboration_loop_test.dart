@@ -17,6 +17,8 @@ class _TestAppState extends AppState {
   final List<(String roomId, String text)> sent = [];
   final Map<String, Room> dmByBot = {};
 
+  void triggerNotify() => notifyListeners();
+
   @override
   Future<void> loadMessages(String roomId, {bool force = false}) async {}
 
@@ -104,7 +106,7 @@ void main() {
     expect(tester.widget<ChatScreen>(find.byType(ChatScreen)).room.id, 'dm-b2');
   });
 
-  testWidgets('RoomsScreen 显示待处理聚合横条与置顶/未读角标并按置顶排序', (tester) async {
+  testWidgets('RoomsScreen 取消左上角大提醒条，改为独立「待处理」Tab 并保留置顶/未读角标', (tester) async {
     tester.view.physicalSize = const Size(480, 900);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -169,7 +171,10 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.byKey(const ValueKey('pending-actions-banner')), findsOneWidget);
+    expect(find.byKey(const ValueKey('pending-actions-banner')), findsNothing);
+    expect(find.byKey(const ValueKey('rooms-tab-pending')), findsOneWidget);
+    expect(find.byKey(const ValueKey('rooms-pending-count')), findsOneWidget);
+    expect(find.text('1'), findsOneWidget);
     expect(find.byKey(const ValueKey('pending-r-work')), findsOneWidget);
     expect(find.byKey(const ValueKey('pin-r-pin')), findsOneWidget);
     expect(find.byKey(const ValueKey('unread-r-pin')), findsOneWidget);
@@ -177,6 +182,19 @@ void main() {
     final pinY = tester.getTopLeft(find.text('核心置顶群')).dy;
     final workY = tester.getTopLeft(find.byKey(const ValueKey('pending-r-work'))).dy;
     expect(pinY, lessThan(workY), reason: '置顶群应排在普通群前面');
+
+    // 点击独立「待处理」Tab，仅保留存在待处理事项的会话
+    await tester.tap(find.byKey(const ValueKey('rooms-tab-pending')));
+    await tester.pump();
+    expect(find.text('普通工作群'), findsOneWidget);
+    expect(find.text('核心置顶群'), findsNothing);
+
+    // 审批解决后仍停留在「待处理」Tab，展示空态且计数徽标消失
+    approvalMsg.meta!['decision'] = 'allow';
+    state.triggerNotify();
+    await tester.pump();
+    expect(find.byKey(const ValueKey('rooms-pending-count')), findsNothing);
+    expect(find.text('没有待处理的事项'), findsOneWidget);
   });
 
   testWidgets('输入框支持 @成员补全、/快捷指令与空会话成员点击', (tester) async {

@@ -299,23 +299,14 @@ class _RoomsScreenState extends State<RoomsScreen> {
           final pendingMap = {
             for (final item in pendingList) item.room.id: item,
           };
-          final hasGroups = visibleAll.any((r) => r.isGroup);
-          final hasDms = visibleAll.any((r) => !r.isGroup);
-          final effectiveFilter =
-              (_filter == _RoomFilter.pending && pendingList.isEmpty)
-                  ? _RoomFilter.all
-                  : _filter;
-          final showFilters =
-              (hasGroups && hasDms) ||
-              pendingList.isNotEmpty ||
-              effectiveFilter != _RoomFilter.all;
+          final showFilters = visibleAll.isNotEmpty || _filter != _RoomFilter.all;
 
           final matched = state.rooms.where(
             (r) => _matchesQuery(r, state, _query),
           );
           final rooms = matched.where((r) {
             if (r.hidden) return false;
-            return switch (effectiveFilter) {
+            return switch (_filter) {
               _RoomFilter.all => true,
               _RoomFilter.groups => r.isGroup,
               _RoomFilter.bots => !r.isGroup,
@@ -344,21 +335,15 @@ class _RoomsScreenState extends State<RoomsScreen> {
                             ? LucideIcons.refreshCw
                             : LucideIcons.cloudOff,
                       ),
-                    if (pendingList.isNotEmpty)
-                      PendingActionsBanner(
-                        items: pendingList,
-                        onOpenRoom: _openRoom,
-                      ),
                     if (showFilters)
                       _FilterStrip(
-                        selected: effectiveFilter,
-                        hasPending: pendingList.isNotEmpty,
+                        selected: _filter,
                         pendingCount: pendingList.length,
                         onSelect: (next) => setState(() => _filter = next),
                       ),
                     if (rooms.isEmpty &&
                         _query.isEmpty &&
-                        effectiveFilter == _RoomFilter.all &&
+                        _filter == _RoomFilter.all &&
                         state.link != LinkState.online)
                       const RoomListSkeleton()
                     else if (rooms.isEmpty)
@@ -382,9 +367,14 @@ class _RoomsScreenState extends State<RoomsScreen> {
                             ),
                             const SizedBox(height: 18),
                             Text(
-                              _query.isEmpty
-                                  ? s.t('rooms.empty')
-                                  : s.tf('rooms.noMatch', {'query': _query}),
+                              _query.isNotEmpty
+                                  ? s.tf('rooms.noMatch', {'query': _query})
+                                  : _filter == _RoomFilter.pending
+                                  ? s.t('rooms.pendingEmpty')
+                                  : (_filter != _RoomFilter.all &&
+                                            visibleAll.isNotEmpty
+                                        ? s.t('rooms.filterEmpty')
+                                        : s.t('rooms.empty')),
                               style: TextStyle(
                                 color: PB.textSecondary,
                                 fontSize: PB.fsSm,
@@ -393,7 +383,9 @@ class _RoomsScreenState extends State<RoomsScreen> {
                             ),
                             const SizedBox(height: 6),
                             Text(
-                              s.t('rooms.emptyHint'),
+                              _query.isEmpty && _filter == _RoomFilter.pending
+                                  ? s.t('rooms.pendingEmptyHint')
+                                  : s.t('rooms.emptyHint'),
                               style: TextStyle(
                                 color: PB.textQuaternary,
                                 fontSize: PB.fsXs,
@@ -529,15 +521,20 @@ class _RoomsScreenState extends State<RoomsScreen> {
 class _FilterStrip extends StatelessWidget {
   const _FilterStrip({
     required this.selected,
-    required this.hasPending,
     required this.pendingCount,
     required this.onSelect,
   });
 
   final _RoomFilter selected;
-  final bool hasPending;
   final int pendingCount;
   final void Function(_RoomFilter) onSelect;
+
+  Key _tabKey(_RoomFilter kind) => switch (kind) {
+    _RoomFilter.all => const ValueKey('rooms-tab-all'),
+    _RoomFilter.groups => const ValueKey('rooms-tab-groups'),
+    _RoomFilter.bots => const ValueKey('rooms-tab-bots'),
+    _RoomFilter.pending => const ValueKey('rooms-tab-pending'),
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -547,8 +544,7 @@ class _FilterStrip extends StatelessWidget {
       (_RoomFilter.all, s.t('rooms.filterAll')),
       (_RoomFilter.groups, s.t('rooms.filterGroups')),
       (_RoomFilter.bots, s.t('rooms.filterBots')),
-      if (hasPending)
-        (_RoomFilter.pending, '${s.t('rooms.filterPending')} ($pendingCount)'),
+      (_RoomFilter.pending, s.t('rooms.filterPending')),
     ];
     return Padding(
       padding: const EdgeInsets.fromLTRB(4, 2, 4, 8),
@@ -560,6 +556,7 @@ class _FilterStrip extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.only(right: 6),
                 child: Material(
+                  key: _tabKey(kind),
                   color: selected == kind
                       ? colors.accentSoft
                       : Colors.transparent,
@@ -583,17 +580,44 @@ class _FilterStrip extends StatelessWidget {
                               : PB.borderTertiary,
                         ),
                       ),
-                      child: Text(
-                        label,
-                        style: TextStyle(
-                          fontSize: PB.fsXxs,
-                          fontWeight: selected == kind
-                              ? FontWeight.w600
-                              : FontWeight.w500,
-                          color: selected == kind
-                              ? colors.link
-                              : PB.textTertiary,
-                        ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            label,
+                            style: TextStyle(
+                              fontSize: PB.fsXxs,
+                              fontWeight: selected == kind
+                                  ? FontWeight.w600
+                                  : FontWeight.w500,
+                              color: selected == kind
+                                  ? colors.link
+                                  : PB.textTertiary,
+                            ),
+                          ),
+                          if (kind == _RoomFilter.pending && pendingCount > 0)
+                            Container(
+                              key: const ValueKey('rooms-pending-count'),
+                              margin: const EdgeInsets.only(left: 5),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 5,
+                                vertical: 0.5,
+                              ),
+                              decoration: BoxDecoration(
+                                color: PB.warn.withValues(alpha: 0.16),
+                                borderRadius: BorderRadius.circular(PB.rFull),
+                              ),
+                              child: Text(
+                                '$pendingCount',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  color: PB.warn,
+                                  height: 1.2,
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
                     ),
                   ),
