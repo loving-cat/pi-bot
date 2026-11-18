@@ -54,6 +54,24 @@ test('配置没变时签名稳定（避免无谓重建）', () => {
   assert.equal(a, b, '同样的配置必须得到同样的签名');
 });
 
+test('★ 换模型 → 签名变化 → 缓存会话必须重建', () => {
+  const a = roleConfigurationKey(room, { ...bot, model: 'provider-a/model-1' });
+  const b = roleConfigurationKey(room, { ...bot, model: 'provider-b/model-2' });
+  assert.notEqual(a, b, '切了模型必须重建，否则继续用旧模型发请求');
+});
+
+test('★ 换思考档位 → 签名变化', () => {
+  const a = roleConfigurationKey(room, { ...bot, thinking: 'low' });
+  const b = roleConfigurationKey(room, { ...bot, thinking: 'high' });
+  assert.notEqual(a, b, '思考档位影响请求，也要重建');
+});
+
+test('模型未变时签名稳定（避免每次都重建会话）', () => {
+  const a = roleConfigurationKey(room, { ...bot, model: 'x/y' });
+  const b = roleConfigurationKey({ ...room }, { ...bot, model: 'x/y' });
+  assert.equal(a, b);
+});
+
 test('成员顺序不影响签名（同一批人以不同顺序传入视为相同）', () => {
   const a = roleConfigurationKey({ ...room, botIds: ['b2', 'b1'] }, bot);
   const b = roleConfigurationKey({ ...room, botIds: ['b1', 'b2'] }, bot);

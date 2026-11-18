@@ -166,12 +166,17 @@ export function customToolsForRole(tools, { room, bot, policy = {} } = {}) {
  */
 export const SESSION_TOOLS_VERSION = 6;
 
-/** 房间角色、成员或工具集版本变化时签名变化，用于重建缓存会话。 */
+/** 房间角色、成员、模型或工具集版本变化时签名变化，用于重建缓存会话。 */
 export function roleConfigurationKey(room, bot) {
   const members = [...new Set((room?.botIds ?? []).filter(Boolean))];
   const leadId = members.includes(room?.leadBotId) ? room.leadBotId : members[0] ?? null;
   return JSON.stringify([
     bot?.role ?? '', room?.kind ?? '', leadId, members.sort(),
+    // ★ 模型与思考档位必须进签名。
+    //   原来只签「角色 + 成员 + 工具版本」，用户把 bot 换成另一个模型后，
+    //   缓存会话原封不动地继续用旧模型 —— 界面显示已切、请求还打在旧端点上，
+    //   表现就是「切了还是失败」「要等半天才生效」。
+    bot?.model ?? '', bot?.thinking ?? '',
     // 工具集版本：改了工具/提示词就 bump，让老会话重建一次
     SESSION_TOOLS_VERSION,
   ]);
