@@ -21,6 +21,7 @@ import {
 } from '@earendil-works/pi-coding-agent';
 
 import { config as defaultConfig, resourceOptions } from './config.js';
+import { readBrandEnv } from './brand.js';
 import { store as defaultStore } from './store.js';
 import { preferencesPromptLines } from './preferences.js';
 import { isDelegatingLead, isRoomLead, isReadonlyPolicy, toolsForRole, customToolsForRole, roleConfigurationKey } from './role-tools.js';
@@ -198,9 +199,10 @@ export function createSessionBuilder({
       ? buildGitTools({ runner, store, roomId, botId, config })
       : [];
 
-    // ★ 接单工具：正式内部入口。默认关闭，不影响真实用户路径。
+    // ★ 接单与任务进度工具：结合宿主实例开关决定是否注册（SDK 轻量模式默认关）。
+    const intakeOn = Boolean(runner?.taskIntakeEnabled ?? intakeEnabled());
     const intakeTools =
-      !isTalkLane && isChief && intakeEnabled()
+      !isTalkLane && isChief && intakeOn
         ? buildIntakeTools({
             runner, store, roomId, botId, health,
             requestScopeOf: () => runner.currentRequestScope?.(roomId, botId) ?? null,
@@ -208,7 +210,7 @@ export function createSessionBuilder({
         : [];
 
     // 自然进度/改版：主控在本轮理解里读任务权威状态或沿原任务升版。
-    const insightTools = !isTalkLane && isChief && intakeEnabled()
+    const insightTools = !isTalkLane && isChief && intakeOn
       ? buildTaskInsightTools({ runner, store, roomId, botId })
       : [];
 
@@ -301,7 +303,7 @@ export function createSessionBuilder({
         ...(isTalkLane ? [] : [createMcpExtension({ botId, roomId, store })]),
       ],
       extensionsOverride: (base) => {
-        const needles = (process.env.PI_BOT_DISABLED_EXTENSIONS ?? 'context-mode')
+        const needles = (readBrandEnv(process.env, 'DISABLED_EXTENSIONS') ?? 'context-mode')
           .split(',')
           .map((x) => x.trim())
           .filter(Boolean);
@@ -331,7 +333,7 @@ export function createSessionBuilder({
       modelLabel: modelLabel(),
     });
     if (isTalkLane && picked.thinking && picked.thinking !== 'off') {
-      const talkThinking = String(process.env.PI_BOT_TALK_THINKING ?? 'low').trim();
+      const talkThinking = String(readBrandEnv(process.env, 'TALK_THINKING') ?? 'low').trim();
       if (talkThinking) picked.thinking = talkThinking;
     }
 

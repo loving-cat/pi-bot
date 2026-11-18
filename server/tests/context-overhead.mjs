@@ -85,11 +85,11 @@ test('fixedOverheadOf：有 system prompt 时返回正数', () => {
 test('★ 校准路径确实把 fixedOverheadTokens 传给了 capRecentTokens', () => {
   // 源码级断言：不起真模型，直接确认那条调用带了开销参数
   const src = fs.readFileSync(
-    path.join(import.meta.dirname, '..', 'src', 'pi-runner.js'),
+    path.join(import.meta.dirname, '..', 'src', 'runner', 'memory-compactor.js'),
     'utf8',
   );
-  const i = src.indexOf('#calibrateKeepRecent');
-  assert.ok(i > 0, '找不到 #calibrateKeepRecent');
+  const i = src.indexOf('export function calibrateKeepRecent');
+  assert.ok(i >= 0, '找不到 calibrateKeepRecent');
   // 取该方法之后的一段，确认里面那次 capRecentTokens 调用含 fixedOverheadTokens
   const chunk = src.slice(i, i + 6000);
   const callIdx = chunk.indexOf('capRecentTokens({');
@@ -118,10 +118,10 @@ test('两条路径用的是同一个 fixedOverheadOf 函数', () => {
 
 test('校准路径不覆盖用户显式设置的 keepRecentTokens', () => {
   const src = fs.readFileSync(
-    path.join(import.meta.dirname, '..', 'src', 'pi-runner.js'),
+    path.join(import.meta.dirname, '..', 'src', 'runner', 'memory-compactor.js'),
     'utf8',
   );
-  const i = src.indexOf('#calibrateKeepRecent');
+  const i = src.indexOf('export function calibrateKeepRecent');
   const chunk = src.slice(i, i + 1200);
   assert.ok(
     chunk.includes('bot?.keepRecentTokens != null') && chunk.includes('return'),

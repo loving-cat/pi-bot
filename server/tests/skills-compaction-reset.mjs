@@ -16,13 +16,17 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const runnerSrc = fs.readFileSync(path.resolve(here, '..', 'src', 'pi-runner.js'), 'utf8');
+const runnerDir = path.resolve(here, '..', 'src');
+const runnerSrc = fs.readFileSync(path.join(runnerDir, 'pi-runner.js'), 'utf8');
+const turnExecutorSrc = fs.readFileSync(path.join(runnerDir, 'runner', 'turn-executor.js'), 'utf8');
+const memoryCompactorSrc = fs.readFileSync(path.join(runnerDir, 'runner', 'memory-compactor.js'), 'utf8');
+const combinedSrc = [runnerSrc, turnExecutorSrc, memoryCompactorSrc].join('\n');
 
 test('★ pi 自己的压缩结束后要清技能记录', () => {
   // compaction_end 的分支里必须有这两句
-  const i = runnerSrc.indexOf("case 'compaction_end'");
-  assert.ok(i > 0, '找不到 compaction_end 分支');
-  const branch = runnerSrc.slice(i, i + 2500);
+  const i = turnExecutorSrc.indexOf("case 'compaction_end'");
+  assert.ok(i >= 0, '找不到 compaction_end 分支');
+  const branch = turnExecutorSrc.slice(i, i + 2500);
   assert.ok(
     branch.includes('compactedSinceInjection = true'),
     'pi 压缩后没标记需要重新注入技能',
@@ -31,11 +35,19 @@ test('★ pi 自己的压缩结束后要清技能记录', () => {
 });
 
 test('★ 主动压缩成功后也要清技能记录', () => {
-  // #compactIfNeeded 走 session.compact()，不发事件 ——
+  // compactIfNeeded 走 session.compact()，不发事件 ——
   // 只靠事件那条会在主动压缩后漏掉
-  const i = runnerSrc.indexOf('session.compact(PiRunner.COMPACT_PROMPT)');
-  assert.ok(i > 0, '找不到主动压缩调用');
-  const after = runnerSrc.slice(i, i + 2000);
+  assert.ok(
+    memoryCompactorSrc.includes('COMPACT_PROMPT'),
+    'memory-compactor.js 必须引用 COMPACT_PROMPT',
+  );
+  assert.ok(
+    /compactPrompt\s*=.*COMPACT_PROMPT/s.test(memoryCompactorSrc),
+    'compactPrompt 必须绑定到 COMPACT_PROMPT',
+  );
+  const i = memoryCompactorSrc.indexOf('session.compact(compactPrompt)');
+  assert.ok(i >= 0, '找不到主动压缩调用');
+  const after = memoryCompactorSrc.slice(i, i + 2000);
   assert.ok(
     after.includes('compactedSinceInjection = true'),
     '主动压缩后没标记需要重新注入技能',
@@ -44,6 +56,6 @@ test('★ 主动压缩成功后也要清技能记录', () => {
 });
 
 test('两条路径都要有，不能只做一条', () => {
-  const count = (runnerSrc.match(/skillsInjected = null/g) || []).length;
+  const count = (combinedSrc.match(/skillsInjected = null/g) || []).length;
   assert.ok(count >= 2, '技能记录清理点少于 2 个（实际 ' + count + ' 个）');
 });
