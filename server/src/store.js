@@ -18,6 +18,7 @@ import { bus as defaultBus } from './bus.js';
 import { DEFAULT_MAIN_BOT_EMOJI, DEFAULT_MAIN_BOT_NAME } from './brand.js';
 import { newId, now, readJson, writeJsonAtomic, insertionPoint, log } from './util.js';
 import { isTaskWorthy, normalizeTaskTitle } from './task-title.js';
+import { planLegacyNotes, withLegacyNotes } from './tasks/legacy-task-migration.js';
 import { normalizeRules } from './shell-policy.js';
 import * as preferencesDomain from './preferences.js';
 import { sanitizeMemoryText } from './memory-sanitize.js';
@@ -2295,6 +2296,22 @@ export class Store {
     }
     this.scheduleSave();
     return sent;
+  }
+
+  /**
+   * 给历史里的“对话片段任务”打上 legacyNote 标记（幂等、不删不篡改正文）。
+   *
+   * 早期把每次派活都记成任务，标题是模型原话（“我是…”“收到。”）。
+   * 这里只加一个标记，界面默认折叠；跑多少次结果都一样。
+   * @returns {number} 本次新标记的条数
+   */
+  markLegacyTaskNotes() {
+    const list = Array.isArray(this.state.tasks) ? this.state.tasks : [];
+    const ids = planLegacyNotes(list);
+    if (!ids.length) return 0;
+    this.state.tasks = withLegacyNotes(list, ids, { at: now() });
+    this.scheduleSave();
+    return ids.length;
   }
 
   /**

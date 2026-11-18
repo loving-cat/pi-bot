@@ -105,6 +105,14 @@ async function main() {
   const stuck = store.reconcileTasks();
   if (stuck) log(`收回了 ${stuck} 条上次遗留的“进行中”任务（已放回待办）`);
 
+  // 历史里那批“把聊天当任务”的条目：打上标记（幂等、不删不改正文）。
+  try {
+    const noted = store.markLegacyTaskNotes();
+    if (noted) log(`给 ${noted} 条历史对话片段打上 legacyNote（界面默认折叠）`);
+  } catch (err) {
+    log('旧任务打标失败（不影响启动）：', err?.message || err);
+  }
+
   // 根据明确的消息或调度关联补全缺失来源，证据不足的回执保持未知。
   try {
     const backfilled = backfillProgressSenders(store);

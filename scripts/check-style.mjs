@@ -39,6 +39,7 @@ const PURE_MODULES = [
   'opening-reply.js',
   'pass-marker.js',
   'task-title.js',
+  'tasks/legacy-task-migration.js',
 ];
 
 const TEST_OVERRIDES = new Map([

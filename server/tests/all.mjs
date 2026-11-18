@@ -155,6 +155,7 @@ const TESTS = [
   'sdk-runtime',
   'brand',
   'task-title',
+  'tasks/legacy-task-migration',
   'opening-reply',
   'pass-marker',
   'model-failure-hint',
