@@ -36,6 +36,7 @@ const PURE_MODULES = [
   'brand.js',
   'chat-redact.js',
   'update-check.js',
+  'opening-reply.js',
 ];
 
 const TEST_OVERRIDES = new Map([

@@ -154,6 +154,7 @@ const TESTS = [
   'jarvis-mode',
   'sdk-runtime',
   'brand',
+  'opening-reply',
   'runner-modular',
   'task-admission',
   'task-request-gate',
