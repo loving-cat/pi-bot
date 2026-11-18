@@ -308,8 +308,12 @@ class _PiBotAppState extends State<PiBotApp> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // 不在前台才弹通知
-    _state.foreground = state == AppLifecycleState.resumed;
+    if (state == AppLifecycleState.resumed) {
+      _state.onAppResumed();
+    } else {
+      // 不在前台才弹通知
+      _state.foreground = false;
+    }
   }
 
   /// 语言偏好异步读盘；读到就刷新，界面短暂保持中文不会闪。

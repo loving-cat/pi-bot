@@ -1,5 +1,16 @@
 import 'dart:io';
 
+/// macOS `autofs` 目录前缀：对其调用 `existsSync()` 可能触发内核阻塞等待，必须跳过。
+bool isMacOSAutomountTrap(String path, {bool? isMacOS}) {
+  if (!(isMacOS ?? Platform.isMacOS)) return false;
+  return path == '/net' ||
+      path.startsWith('/net/') ||
+      path == '/Network' ||
+      path.startsWith('/Network/') ||
+      path == '/home' ||
+      path.startsWith('/home/');
+}
+
 /// URI 整段受保护，单字母盘符保留给 Windows 路径识别。
 final _urlPattern = RegExp(
   r'''(?<![A-Za-z0-9_./\\+-])(?:[A-Za-z][A-Za-z0-9+.-]*://|[A-Za-z][A-Za-z0-9+.-]+:|//)[^\s<>"`]+''',
@@ -43,8 +54,12 @@ PastePathResult extractPastedFiles(String text) {
     final line = rawLine.trim();
     if (line.isEmpty) continue;
 
-    // 整行就是路径：整行收走
-    final whole = _urlPattern.hasMatch(line) ? null : asExistingFile(line);
+    // 整行就是路径：整行收走。
+    // 这里是「用户就粘了一个路径」，探测只做一次 —— 放宽到 1024，
+    // 别把深层目录/长文件名当成超长文本丢掉（行内探测才需要收紧到 260）。
+    final whole = _urlPattern.hasMatch(line)
+        ? null
+        : asExistingFile(line, maxLength: 1024);
     if (whole != null) {
       files.add(whole);
       continue;
@@ -65,14 +80,15 @@ PastePathResult extractPastedFiles(String text) {
 /// 把一个字符串当路径试：存在就返回 File，否则 null。
 ///
 /// 允许被引号包住（Finder 复制带空格的路径会加引号）。
-File? asExistingFile(String raw) {
+File? asExistingFile(String raw, {bool? isMacOS, int maxLength = 260}) {
   var text = raw.trim();
   if (text.length >= 2 && text.startsWith('"') && text.endsWith('"')) {
     text = text.substring(1, text.length - 1);
   }
-  if (text.isEmpty || text.length > 1024) return null;
+  if (text.isEmpty || text.length > maxLength) return null;
   // 不含路径分隔符的短词不当路径，避免把普通单词当文件
   if (!text.contains('/') && !text.contains('\\')) return null;
+  if (isMacOSAutomountTrap(text, isMacOS: isMacOS)) return null;
   final file = File(text);
   return file.existsSync() ? file : null;
 }
@@ -83,6 +99,23 @@ bool _isDriveLetter(String ch) {
   return (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A);
 }
 
+bool _isBoundaryChar(String ch) =>
+    ch == ' ' ||
+    ch == '\t' ||
+    ch == ',' ||
+    ch == ';' ||
+    ch == ')' ||
+    ch == ']' ||
+    ch == '>' ||
+    ch == '"' ||
+    ch == "'" ||
+    ch == '，' ||
+    ch == '。' ||
+    ch == '；' ||
+    ch == '、' ||
+    ch == '）' ||
+    ch == '】';
+
 /// 从一行里抽出所有真实存在的文件路径，把抽中的 File 追加进 [out]，
 /// 返回剩下的文字。
 String extractInlinePaths(String line, List<File> out) {
@@ -90,6 +123,8 @@ String extractInlinePaths(String line, List<File> out) {
   final urls = _urlPattern.allMatches(line).toList();
   var urlIndex = 0;
   var i = 0;
+  // 限制单行系统调用次数，避免含大量斜杠的长文阻塞 UI 线程。
+  var probeBudget = 64;
   while (i < line.length) {
     while (urlIndex < urls.length && urls[urlIndex].end <= i) {
       urlIndex++;
@@ -105,7 +140,8 @@ String extractInlinePaths(String line, List<File> out) {
     // 引号包住的路径：优先整段试（带空格的路径只能这么认）
     if (ch == '"') {
       final close = line.indexOf('"', i + 1);
-      if (close > i && (url == null || close < url.start)) {
+      if (close > i && (url == null || close < url.start) && probeBudget > 0) {
+        probeBudget--;
         final file = asExistingFile(line.substring(i, close + 1));
         if (file != null) {
           out.add(file);
@@ -125,9 +161,6 @@ String extractInlinePaths(String line, List<File> out) {
     //   · POSIX：/ 开头，或 ~/ 开头
     //   · Windows 盘符：C:\ 或 C:/ （字母 + 冒号 + 分隔符）
     //   · Windows UNC：\\server\share
-    //
-    // 早先只认 POSIX 开头，Windows 上"文字里夹路径"一条都识别不出来 ——
-    // 单元测试在 macOS 上全绿，CI 跑 Windows 才暴露。
     final startsPath =
         ch == '/' ||
         ch == '\\' ||
@@ -138,24 +171,40 @@ String extractInlinePaths(String line, List<File> out) {
             i + 2 < line.length &&
             line[i + 1] == ':' &&
             (line[i + 2] == '\\' || line[i + 2] == '/'));
-    if (startsPath) {
-      // 逐个可能的结束位置试，取最长能命中真实文件的片段。
-      //
-      // 为什么要试多个长度：路径里可能带空格（"b c.txt"），
-      // 但句子里的空格同时又是分隔符。只按空格截断会漏掉带空格的路径，
-      // 只用最长匹配又会把后面的句子一起吃进来。
+    if (startsPath && probeBudget > 0) {
       var best = -1;
-      var end = url?.start ?? line.length;
-      if (end - i > 1024) end = i + 1024;
-      while (end > i) {
-        if (asExistingFile(line.substring(i, end)) != null) {
+      File? bestFile;
+      var maxEnd = url?.start ?? line.length;
+      if (maxEnd - i > 260) maxEnd = i + 260;
+      final tried = <int>{};
+
+      // 先从高置信度边界（行尾、空格、标点）倒序探测
+      for (var end = maxEnd; end > i && probeBudget > 0; end--) {
+        if (end != maxEnd && !_isBoundaryChar(line[end])) continue;
+        tried.add(end);
+        probeBudget--;
+        final hit = asExistingFile(line.substring(i, end));
+        if (hit != null) {
           best = end;
+          bestFile = hit;
           break;
         }
-        end--;
       }
-      if (best > 0) {
-        out.add(asExistingFile(line.substring(i, best))!);
+      // 边界没命中时，在剩余预算内退回逐字符试探（如路径紧贴中文）
+      if (best < 0 && probeBudget > 0) {
+        for (var end = maxEnd; end > i && probeBudget > 0; end--) {
+          if (tried.contains(end)) continue;
+          probeBudget--;
+          final hit = asExistingFile(line.substring(i, end));
+          if (hit != null) {
+            best = end;
+            bestFile = hit;
+            break;
+          }
+        }
+      }
+      if (best > 0 && bestFile != null) {
+        out.add(bestFile);
         i = best;
         while (i < line.length && line[i] == ' ') {
           i++;

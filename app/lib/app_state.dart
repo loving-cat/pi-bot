@@ -455,6 +455,31 @@ class AppState extends ChangeNotifier {
   /// 流式输出的高频更新走这个，不走 notifyListeners。
   /// 否则每 80ms 一次 delta 会把整个界面（含左侧会话列表）重建一遍。
   final ValueNotifier<int> streamTick = ValueNotifier<int>(0);
+
+  /// 按消息 ID 隔离的流式 tick：群聊多 Bot 并发时只重绘各自对应的气泡。
+  final Map<String, ValueNotifier<int>> _streamTicks = {};
+
+  ValueNotifier<int> streamTickFor(String msgId) =>
+      _streamTicks.putIfAbsent(msgId, () => ValueNotifier<int>(0));
+
+  @visibleForTesting
+  int get activeStreamTickCount => _streamTicks.length;
+
+  void _bumpStreamTick(String msgId) {
+    final notifier = _streamTicks[msgId];
+    if (notifier != null) notifier.value++;
+  }
+
+  void _retireStreamTick(String msgId) {
+    _streamTicks.remove(msgId);
+  }
+
+  void _disposeIdleStreamTicks() {
+    for (final n in _streamTicks.values) {
+      if (!n.hasListeners) n.dispose();
+    }
+    _streamTicks.clear();
+  }
   LinkState link = LinkState.offline;
   String? lastError;
   bool ready = false;
@@ -602,6 +627,8 @@ class AppState extends ChangeNotifier {
   WebSocketChannel? _channel;
   StreamSubscription<dynamic>? _sub;
   Timer? _reconnectTimer;
+  Timer? _pingWatchTimer;
+  int _pongSeq = 0;
   int _attempt = 0;
   bool _disposed = false;
   String? _openRoomId;
@@ -1799,6 +1826,7 @@ class AppState extends ChangeNotifier {
           .whereType<Map<String, dynamic>>()
           .map(Bot.fromJson)
           .toList();
+      rooms.sort(_roomOrder);
       modelGroups = ((res['modelGroups'] as List?) ?? const [])
           .whereType<Map<String, dynamic>>()
           .map(ModelGroup.fromJson)
@@ -2146,9 +2174,10 @@ class AppState extends ChangeNotifier {
     //   服务端的 session 可能正卡在一个长命令里，几秒到几分钟才真的断。
     //   所以这里乐观地先改本地状态：说停就停。
     typing[roomId] = false;
+    typingBots.remove(roomId);
     queued[roomId] = 0;
     for (final m in messages[roomId] ?? const <Msg>[]) {
-      if (m.status == 'streaming') {
+      if (m.status == 'streaming' || m.status == 'retrying') {
         // 本地乐观终止：用 aborted 而不是 error —— 用户按 Esc 不是"出错"，
         // 不要弹红色错误气泡（在 pi agent 里终止就是终止，界面不留痕）
         m.status = 'aborted';
@@ -2156,6 +2185,7 @@ class AppState extends ChangeNotifier {
         for (final s in m.steps) {
           if (s.status == 'running') s.status = 'error';
         }
+        _retireStreamTick(m.id);
       }
     }
     _notify();
@@ -2175,6 +2205,9 @@ class AppState extends ChangeNotifier {
   Future<void> resetSession(String roomId) async {
     try {
       await api?.post('/api/rooms/$roomId/reset');
+      for (final m in messages[roomId] ?? const <Msg>[]) {
+        _retireStreamTick(m.id);
+      }
       messages[roomId] = [];
       _notify();
     } catch (err) {
@@ -2694,6 +2727,8 @@ class AppState extends ChangeNotifier {
             .whereType<Map<String, dynamic>>()
             .map(Bot.fromJson)
             .toList();
+        rooms.sort(_roomOrder);
+        _streamTicks.clear();
         final open = _openRoomId;
         if (open != null) unawaited(loadMessages(open, force: true));
         break;
@@ -2796,10 +2831,15 @@ class AppState extends ChangeNotifier {
       case 'msg.delta':
         final msg = _find(ev['roomId'] as String, ev['msgId'] as String);
         if (msg != null) {
+          final wasEmpty = msg.text.trim().isEmpty;
           msg.text = ev['text'] as String? ?? msg.text;
           msg.status = 'streaming';
           streamTick.value++;
-          return; // 不走 notifyListeners
+          _bumpStreamTick(msg.id);
+          if (wasEmpty && msg.text.trim().isNotEmpty) {
+            _notify();
+          }
+          return; // 仅首字上屏触发列表重建，后续增量走局部 tick
         }
         break;
 
@@ -2844,6 +2884,7 @@ class AppState extends ChangeNotifier {
               .map(ToolStep.fromJson)
               .toList();
           streamTick.value++;
+          _bumpStreamTick(msg.id);
           return; // 不走 notifyListeners
         }
         break;
@@ -2854,6 +2895,9 @@ class AppState extends ChangeNotifier {
           final msg = _visibleMessage(
             (ev['msg'] as Map).cast<String, dynamic>(),
           );
+          if (!msg.isLive || ev['t'] == 'msg.done') {
+            _retireStreamTick(msg.id);
+          }
           _replace((ev['msg'] as Map).cast<String, dynamic>());
           _maybeNotify(msg);
           break;
@@ -2862,6 +2906,7 @@ class AppState extends ChangeNotifier {
       case 'msg.error':
         final roomId = ev['roomId'] as String?;
         final msgId = ev['msgId'] as String?;
+        if (msgId != null) _retireStreamTick(msgId);
         final msg = (roomId != null && msgId != null)
             ? _find(roomId, msgId)
             : null;
@@ -2877,6 +2922,7 @@ class AppState extends ChangeNotifier {
       case 'msg.deleted':
         final roomId = ev['roomId'] as String?;
         final msgId = ev['msgId'] as String?;
+        if (msgId != null) _retireStreamTick(msgId);
         if (roomId != null && msgId != null) {
           messages[roomId]?.removeWhere((m) => m.id == msgId);
           // ★ 左边会话列表的预览也要跟着退。
@@ -3005,7 +3051,16 @@ class AppState extends ChangeNotifier {
         lastError = ev['error'] as String?;
         break;
 
+      case 'bot.heartbeat':
+        // 心跳保活帧只表明后端活跃，不能触发全树重建
+        return;
+
       case 'pong':
+        _pongSeq++;
+        _pingWatchTimer?.cancel();
+        _pingWatchTimer = null;
+        return;
+
       case 'ack':
         // 收件 ACK / queued / inFlight 都不是受理终态；只有持久回执投影的
         // request.result 或显式 accepted 终态才能清理原信封。
@@ -3066,13 +3121,54 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// 主控 DM 置顶，其他按最新消息排
+  /// 主控 DM 最前，其次用户置顶，其余按最新消息时间倒序
   int _roomOrder(Room a, Room b) {
     final mainId = bots.where((x) => x.isMain).map((x) => x.id).firstOrNull;
-    final aPin = !a.isGroup && a.botIds.contains(mainId) ? 1 : 0;
-    final bPin = !b.isGroup && b.botIds.contains(mainId) ? 1 : 0;
-    if (aPin != bPin) return bPin - aPin;
+    int rank(Room r) {
+      if (!r.isGroup && mainId != null && r.botIds.contains(mainId)) return 2;
+      if (r.pinned) return 1;
+      return 0;
+    }
+
+    final diff = rank(b) - rank(a);
+    if (diff != 0) return diff;
     return b.lastMessageAt.compareTo(a.lastMessageAt);
+  }
+
+  /// 仅用于测试：直接喂入一帧服务端事件。
+  @visibleForTesting
+  void handleFrameForTest(Map<String, dynamic> ev) =>
+      _onFrame(jsonEncode(ev));
+
+  /// App 回到前台时做一次 WS 活体探针，防止 macOS App Nap 唤醒后半开连接长期无响应。
+  void onAppResumed() {
+    foreground = true;
+    if (_disposed || !paired || _isTestBinding()) return;
+    if (link == LinkState.offline || _channel == null) {
+      if (!serverStarting) {
+        _attempt = 0;
+        connect();
+      }
+      return;
+    }
+    try {
+      _channel!.sink.add(
+        jsonEncode({
+          't': 'ping',
+          'ts': DateTime.now().millisecondsSinceEpoch,
+        }),
+      );
+    } catch (_) {
+      _onClosed('连接已断开');
+      return;
+    }
+    _pingWatchTimer?.cancel();
+    final seq = ++_pongSeq;
+    _pingWatchTimer = Timer(const Duration(seconds: 4), () {
+      _pingWatchTimer = null;
+      if (_disposed || _pongSeq != seq || link != LinkState.online) return;
+      _onClosed('连接无响应，正在重连');
+    });
   }
 
   /// 按名字找 bot —— @提及 的 chip 和悬停卡要用它把"名字"换成"那个 bot"。
@@ -3199,6 +3295,8 @@ class AppState extends ChangeNotifier {
   void disconnect({bool keepConfig = false}) {
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
+    _pingWatchTimer?.cancel();
+    _pingWatchTimer = null;
     _sub?.cancel();
     _sub = null;
     try {
@@ -3232,6 +3330,7 @@ class AppState extends ChangeNotifier {
     taskRuns.dispose();
     browser.dispose();
     streamTick.dispose();
+    _disposeIdleStreamTicks();
     super.dispose();
   }
 }
