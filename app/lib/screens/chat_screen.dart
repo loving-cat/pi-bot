@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
@@ -150,6 +151,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   /// 已挂载消息行的上下文索引，供引用跳转使用
   final Map<String, BuildContext> _msgContexts = {};
+  final Map<String, double> _measuredMsgHeights = {};
+  double? _lastMeasureWidth;
+  final ValueNotifier<bool> _railDragging = ValueNotifier<bool>(false);
   String? _highlightedMsgId;
   Timer? _highlightTimer;
 
@@ -218,6 +222,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _highlightTimer?.cancel();
     _highlightTimer = null;
     _msgContexts.clear();
+    _measuredMsgHeights.clear();
+    _railDragging.dispose();
     _state?.removeListener(_countIfScrolledUp);
     FocusManager.instance.removeListener(_onFocusChanged);
     _state?.openRoom(null);
@@ -701,6 +707,53 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         );
       }
     });
+  }
+
+  double _estimateItemExtent(
+    List<Msg> display,
+    Map<int, List<Msg>> progressGroups,
+    int index,
+    double colW,
+  ) {
+    final msg = display[index];
+    if (msg.isLive && msg.text.trim().isEmpty) return 0.0;
+    if (msg.isProgress) {
+      return progressGroups[index] != null
+          ? (_measuredMsgHeights['progress-${msg.id}'] ?? 38.0)
+          : 0.0;
+    }
+    final cached = _measuredMsgHeights[msg.id];
+    if (cached != null && cached > 0) return cached;
+
+    final bubbleW = math.max(180.0, math.min(colW - 64.0, kChatContentMax - 80.0));
+    final charsPerLine = math.max(18, (bubbleW / 13.5).floor());
+    var lines = 0;
+    var lineLen = 0;
+    for (final unit in msg.text.codeUnits) {
+      if (unit == 0x0A) {
+        lines += math.max(1, (lineLen / charsPerLine).ceil());
+        lineLen = 0;
+      } else {
+        lineLen++;
+      }
+    }
+    if (msg.text.isNotEmpty) {
+      lines += math.max(1, (lineLen / charsPerLine).ceil());
+    }
+
+    var h = 28.0 + lines * 21.0;
+    if (msg.attachments.isNotEmpty) h += msg.attachments.length * 68.0;
+    if (msg.steps.isNotEmpty) h += 36.0;
+    if (msg.isConfirmation || msg.isApproval || msg.isAsk) h += 130.0;
+
+    final prev = index > 0 ? display[index - 1] : null;
+    final newAuthor =
+        prev == null ||
+        prev.authorId != msg.authorId ||
+        prev.authorType != msg.authorType ||
+        (msg.createdAt - prev.createdAt) > 5 * 60 * 1000;
+    if (newAuthor) h += 24.0;
+    return h;
   }
 
   void _openPanelRoute(BuildContext context, Room room) {
@@ -1332,6 +1385,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                 child: LayoutBuilder(
                                   builder: (ctx, box) {
                                     final colW = box.maxWidth;
+                                    if (_lastMeasureWidth != null &&
+                                        (_lastMeasureWidth! - colW).abs() > 8) {
+                                      _measuredMsgHeights.clear();
+                                    }
+                                    _lastMeasureWidth = colW;
                                     // 内容列最多 kChatContentMax；多出来的宽度两边均分
                                     final extra = math.max(
                                       0.0,
@@ -1347,225 +1405,222 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                     final leftPadForGroup = room.isGroup
                                         ? math.max(12.0, pad - 42)
                                         : pad;
-                                    // ★ 不再显示滚动条。
-                                    //
-                                    //   抽搐的根因：消息列表在流式输出时每条消息都在
-                                    //   长高，内容总高度每几十毫秒变一次 ——
-                                    //   滚动条滑块必须跟着重算尺寸和位置，
-                                    //   看起来就是不停抖动。这不是配置问题，
-                                    //   只要"内容高度高频变化 + 常显滚动条"就会发生。
-                                    //
-                                    //   关掉它最实在：滚轮/触控板照样能滚，
-                                    //   而用户视觉上少一个一直抽搐的东西。
-                                    // ★ 只在这里关掉滚动条。
-                                    //
-                                    //   原来挂在 MaterialApp 上，等于把设置页、
-                                    //   日志、文件列表、回执二级页的滚动条一起关了 ——
-                                    //   长列表再也判断不了「下面还有多少」。
-                                    //   抽搐只发生在聊天列表（流式输出让高度高频变化），
-                                    //   所以只治这一处。
+                                    // ★ 只在这里关掉系统滚动条，并在拖拽右侧滑块期间锁死物理越界。
                                     return ScrollConfiguration(
-                                      behavior: const NoScrollbarBehavior(),
-                                      child: ListView.builder(
+                                      behavior: NoScrollbarBehavior(
+                                        clampOverscroll: _railDragging,
+                                      ),
+                                      child: ListView.custom(
                                         controller: _scroll,
-                                        // 重排时按 key 找回位置，避免整行重建
-                                        // （见上面 keyIndex 的说明）
-                                        findChildIndexCallback: (key) =>
-                                            keyIndex[key],
                                         padding: EdgeInsets.fromLTRB(
                                           leftPadForGroup,
                                           20,
                                           rightPad,
                                           20,
                                         ),
-                                        itemCount: display.length,
-                                        itemBuilder: (ctx, i) {
-                                          final msg = display[i];
+                                        childrenDelegate:
+                                            _ChatSliverChildDelegate(
+                                          childCount: display.length,
+                                          findChildIndexCallback: (key) =>
+                                              keyIndex[key],
+                                          extentOfIndex: (i) =>
+                                              _estimateItemExtent(
+                                            display,
+                                            progressGroups,
+                                            i,
+                                            colW,
+                                          ),
+                                          (ctx, i) {
+                                            final msg = display[i];
 
-                                          // ★ 思考期整条不渲染。
-                                          //
-                                          //   服务端在模型调用**之前**就建了一条
-                                          //   text='' 的 streaming 消息，所以整个思考期
-                                          //   它都在。原来渲染成三个点 —— 和左侧胶囊
-                                          //   「X 正在处理」说的是同一件事，纯重复；
-                                          //   而且空壳占着 padding，首字到达时会有
-                                          //   一次布局跳动。
-                                          //
-                                          //   现在直接跳过整条（连 _Appear 外壳都不建），
-                                          //   首字一到自然出现。
-                                          if (msg.isLive && msg.text.trim().isEmpty) {
-                                            return const SizedBox.shrink();
-                                          }
-
-                                          if (msg.isProgress) {
-                                            final run = progressGroups[i];
-                                            if (run == null) {
+                                            // ★ 思考期整条不渲染。
+                                            if (msg.isLive &&
+                                                msg.text.trim().isEmpty) {
                                               return const SizedBox.shrink();
                                             }
+
+                                            if (msg.isProgress) {
+                                              final run = progressGroups[i];
+                                              if (run == null) {
+                                                return const SizedBox.shrink();
+                                              }
+                                              return _Appear(
+                                                key: ValueKey(
+                                                  'progress-${msg.id}',
+                                                ),
+                                                child: _HeightRecorder(
+                                                  id: 'progress-${msg.id}',
+                                                  store: _measuredMsgHeights,
+                                                  child: ProgressNotice(
+                                                    messages: run,
+                                                  ),
+                                                ),
+                                              );
+                                            }
+
+                                            final prev = i > 0
+                                                ? display[i - 1]
+                                                : null;
+                                            final newAuthor =
+                                                prev == null ||
+                                                prev.authorId != msg.authorId ||
+                                                prev.authorType !=
+                                                    msg.authorType ||
+                                                (msg.createdAt -
+                                                        prev.createdAt) >
+                                                    5 * 60 * 1000;
+                                            // 同一个人连着发好几条时，头像挂在**最后一条**上
+                                            final next =
+                                                i + 1 < display.length
+                                                    ? display[i + 1]
+                                                    : null;
+                                            final endOfRun =
+                                                next == null ||
+                                                next.authorId != msg.authorId ||
+                                                next.authorType !=
+                                                    msg.authorType ||
+                                                (next.createdAt -
+                                                        msg.createdAt) >
+                                                    5 * 60 * 1000;
+                                            final authorBot =
+                                                msg.authorType == 'bot' &&
+                                                    msg.authorId != null
+                                                ? state.botById(msg.authorId)
+                                                : null;
+                                            final onReplyMsg =
+                                                msg.text.trim().isNotEmpty
+                                                    ? () =>
+                                                          _startReply(msg, room)
+                                                    : null;
+                                            final onMentionMsg =
+                                                (room.isGroup &&
+                                                        !msg.isUser &&
+                                                        authorBot != null)
+                                                    ? () => _insertMention(
+                                                          authorBot.name,
+                                                        )
+                                                    : null;
+                                            final relayed = isRelayedAuthor(
+                                              author: authorBot,
+                                              room: room,
+                                            );
+                                            final relayedBot = relayed
+                                                ? authorBot
+                                                : null;
+                                            final relayedRoom =
+                                                relayedBot == null
+                                                ? null
+                                                : state.rooms
+                                                      .where(
+                                                        (r) =>
+                                                            !r.isGroup &&
+                                                            r.botIds.contains(
+                                                              relayedBot.id,
+                                                            ),
+                                                      )
+                                                      .firstOrNull;
+                                            // 不居中：整行铺满，bot 贴左、我贴右
                                             return _Appear(
-                                              key: ValueKey(
-                                                'progress-${msg.id}',
-                                              ),
-                                              child: ProgressNotice(
-                                                messages: run,
+                                              key: ValueKey(msg.id),
+                                              child: _HeightRecorder(
+                                                id: msg.id,
+                                                store: _measuredMsgHeights,
+                                                child: _MsgAnchor(
+                                                  msgId: msg.id,
+                                                  registry: _msgContexts,
+                                                  child: Column(
+                                                    crossAxisAlignment:
+                                                        CrossAxisAlignment
+                                                            .stretch,
+                                                    children: [
+                                                      if (relayedBot != null)
+                                                        _RelayedFrom(
+                                                          bot: relayedBot,
+                                                          // 点开那个 bot 的私聊（只读）
+                                                          onTap:
+                                                              relayedRoom ==
+                                                                  null
+                                                              ? null
+                                                              : () => showChatPeek(
+                                                                  context,
+                                                                  refs: [
+                                                                    MsgRef(
+                                                                      botId:
+                                                                          relayedBot
+                                                                              .id,
+                                                                      roomId:
+                                                                          relayedRoom
+                                                                              .id,
+                                                                    ),
+                                                                  ],
+                                                                ),
+                                                        ),
+                                                      _MessageRow(
+                                                        msg: msg,
+                                                        // 气泡上限按**这一栏**的宽度算，不按窗口
+                                                        columnWidth: colW,
+                                                        showAuthor: newAuthor,
+                                                        showAvatar: endOfRun,
+                                                        bot: state.botById(
+                                                          msg.authorId,
+                                                        ),
+                                                        isGroup: room.isGroup,
+                                                        mentions:
+                                                            effectiveMentions,
+                                                        mentionOf: (name) {
+                                                          final b = state
+                                                              .botByName(name);
+                                                          return b == null
+                                                              ? null
+                                                              : MentionInfo(
+                                                                  seed: b.id,
+                                                                  subtitle: b
+                                                                      .tagline,
+                                                                  emoji:
+                                                                      b.emoji,
+                                                                );
+                                                        },
+                                                        isLead:
+                                                            room.isGroup &&
+                                                            msg.authorId !=
+                                                                null &&
+                                                            msg.authorId ==
+                                                                room.leadBotId,
+                                                        highlighted:
+                                                            _highlightedMsgId ==
+                                                                msg.id,
+                                                        onQuoteTap: (id) =>
+                                                            unawaited(
+                                                              _jumpToMessage(
+                                                                id,
+                                                                display,
+                                                              ),
+                                                            ),
+                                                        onReply: onReplyMsg,
+                                                        onMention:
+                                                            onMentionMsg,
+                                                        onLongPress: () =>
+                                                            showMessageActions(
+                                                              context,
+                                                              msg,
+                                                              onReply:
+                                                                  onReplyMsg,
+                                                              onMention:
+                                                                  onMentionMsg,
+                                                              mentionLabel:
+                                                                  authorBot !=
+                                                                          null
+                                                                      ? '@${authorBot.name}'
+                                                                      : null,
+                                                            ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
                                               ),
                                             );
-                                          }
-
-                                          final prev = i > 0
-                                              ? display[i - 1]
-                                              : null;
-                                          final newAuthor =
-                                              prev == null ||
-                                              prev.authorId != msg.authorId ||
-                                              prev.authorType !=
-                                                  msg.authorType ||
-                                              (msg.createdAt - prev.createdAt) >
-                                                  5 * 60 * 1000;
-                                          // 同一个人连着发好几条时，头像挂在**最后一条**上 ——
-                                          // 这样整串气泡都在头像的右上方，头像在底部托着。
-                                          // （挂在第一条的话，头像会卡在整串中间，很怪。）
-                                          final next = i + 1 < display.length
-                                              ? display[i + 1]
-                                              : null;
-                                          final endOfRun =
-                                              next == null ||
-                                              next.authorId != msg.authorId ||
-                                              next.authorType !=
-                                                  msg.authorType ||
-                                              (next.createdAt - msg.createdAt) >
-                                                  5 * 60 * 1000;
-                                          // ★ 这条是**外面的人说的**（不在这个会话的名单里）——
-                                          //   比如负责人把某个成员的报告转进群里。
-                                          //   挂一条「消息来自 X」，点开是**只读**的窥视：
-                                          //   看那个 bot 的私聊里到底说了什么，让链路可见。
-                                          //   注意：主控不算「外面的人」—— 它在哪儿说话都是派活。
-                                          final authorBot =
-                                              msg.authorType == 'bot' &&
-                                                  msg.authorId != null
-                                              ? state.botById(msg.authorId)
-                                              : null;
-                                          final onReplyMsg =
-                                              msg.text.trim().isNotEmpty
-                                                  ? () => _startReply(msg, room)
-                                                  : null;
-                                          final onMentionMsg =
-                                              (room.isGroup &&
-                                                      !msg.isUser &&
-                                                      authorBot != null)
-                                                  ? () => _insertMention(
-                                                        authorBot.name,
-                                                      )
-                                                  : null;
-                                          final relayed = isRelayedAuthor(
-                                            author: authorBot,
-                                            room: room,
-                                          );
-                                          final relayedBot = relayed
-                                              ? authorBot
-                                              : null;
-                                          final relayedRoom = relayedBot == null
-                                              ? null
-                                              : state.rooms
-                                                    .where(
-                                                      (r) =>
-                                                          !r.isGroup &&
-                                                          r.botIds.contains(
-                                                            relayedBot.id,
-                                                          ),
-                                                    )
-                                                    .firstOrNull;
-                                          // 不居中：整行铺满，bot 贴左、我贴右
-                                          return _Appear(
-                                            key: ValueKey(msg.id),
-                                            child: _MsgAnchor(
-                                              msgId: msg.id,
-                                              registry: _msgContexts,
-                                              child: Column(
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.stretch,
-                                                children: [
-                                                  if (relayedBot != null)
-                                                    _RelayedFrom(
-                                                      bot: relayedBot,
-                                                      // 点开那个 bot 的私聊（只读）——
-                                                      // 找不到私聊房间就不给点（只显示是谁说的）
-                                                      onTap: relayedRoom == null
-                                                          ? null
-                                                          : () => showChatPeek(
-                                                              context,
-                                                              refs: [
-                                                                MsgRef(
-                                                                  botId:
-                                                                      relayedBot
-                                                                          .id,
-                                                                  roomId:
-                                                                      relayedRoom
-                                                                          .id,
-                                                                ),
-                                                              ],
-                                                            ),
-                                                    ),
-                                                  _MessageRow(
-                                                    msg: msg,
-                                                    // 气泡上限按**这一栏**的宽度算，不按窗口
-                                                    columnWidth: colW,
-                                                    showAuthor: newAuthor,
-                                                    showAvatar: endOfRun,
-                                                    bot: state.botById(
-                                                      msg.authorId,
-                                                    ),
-                                                    isGroup: room.isGroup,
-                                                    mentions: effectiveMentions,
-                                                    // @ 的名字 → 那个 bot（chip 的颜色、悬停卡的内容都靠它）
-                                                    mentionOf: (name) {
-                                                      final b = state.botByName(
-                                                        name,
-                                                      );
-                                                      return b == null
-                                                          ? null
-                                                          : MentionInfo(
-                                                              seed: b.id,
-                                                              subtitle:
-                                                                  b.tagline,
-                                                              emoji: b.emoji,
-                                                            );
-                                                    },
-                                                    isLead:
-                                                        room.isGroup &&
-                                                        msg.authorId != null &&
-                                                        msg.authorId ==
-                                                            room.leadBotId,
-                                                    highlighted:
-                                                        _highlightedMsgId ==
-                                                            msg.id,
-                                                    onQuoteTap: (id) =>
-                                                        unawaited(
-                                                          _jumpToMessage(
-                                                            id,
-                                                            display,
-                                                          ),
-                                                        ),
-                                                    onReply: onReplyMsg,
-                                                    onMention: onMentionMsg,
-                                                    onLongPress: () =>
-                                                        showMessageActions(
-                                                          context,
-                                                          msg,
-                                                          onReply: onReplyMsg,
-                                                          onMention:
-                                                              onMentionMsg,
-                                                          mentionLabel:
-                                                              authorBot != null
-                                                                  ? '@${authorBot.name}'
-                                                                  : null,
-                                                        ),
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
-                                          );
-                                        },
+                                          },
+                                        ),
                                       ),
                                     );
                                   },
@@ -1615,6 +1670,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                               child: MessageAnchorRail(
                                 key: _railKey,
                                 controller: _scroll,
+                                dragActiveNotifier: _railDragging,
+                                onDragStart: () =>
+                                    _scrollFollow.setExternalDragging(true),
+                                onDragEnd: (atBottom) {
+                                  _scrollFollow.setExternalDragging(false);
+                                  if (atBottom) _scrollFollow.resume();
+                                },
                               ),
                             ),
                             // ★ 「回到底部」：叠在**消息区**右下角。
@@ -3589,5 +3651,73 @@ class _QuickBtn extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// 布局后记录单条消息的真实高度，供未布局项叠加估算总高度（零重建成本）。
+class _HeightRecorder extends SingleChildRenderObjectWidget {
+  const _HeightRecorder({
+    required this.id,
+    required this.store,
+    required super.child,
+  });
+
+  final String id;
+  final Map<String, double> store;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderHeightRecorder(id, store);
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    covariant _RenderHeightRecorder renderObject,
+  ) {
+    renderObject
+      ..id = id
+      ..store = store;
+  }
+}
+
+class _RenderHeightRecorder extends RenderProxyBox {
+  _RenderHeightRecorder(this.id, this.store);
+
+  String id;
+  Map<String, double> store;
+
+  @override
+  void performLayout() {
+    super.performLayout();
+    store[id] = size.height;
+  }
+}
+
+/// 带逐项高度缓存与启发式估算的列表代理，避免懒加载滑过长短悬殊消息时 maxScrollExtent 剧烈跳变。
+class _ChatSliverChildDelegate extends SliverChildBuilderDelegate {
+  _ChatSliverChildDelegate(
+    super.builder, {
+    required super.childCount,
+    required super.findChildIndexCallback,
+    required this.extentOfIndex,
+  });
+
+  final double Function(int index) extentOfIndex;
+
+  @override
+  double? estimateMaxScrollOffset(
+    int firstIndex,
+    int lastIndex,
+    double leadingScrollOffset,
+    double trailingScrollOffset,
+  ) {
+    final count = estimatedChildCount ?? 0;
+    var remaining = 0.0;
+    for (var i = lastIndex + 1; i < count; i++) {
+      remaining += extentOfIndex(i);
+    }
+    final minAllowed =
+        trailingScrollOffset - math.min(0.0, leadingScrollOffset);
+    return math.max(minAllowed, trailingScrollOffset + remaining);
   }
 }

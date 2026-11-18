@@ -31,10 +31,18 @@ class ChatScrollFollow {
   bool _active = false;
   bool _jumping = false;
   bool _resumeAfterDrag = false;
+  bool _externalDragging = false;
   int _generation = 0;
   int? _animatedGeneration;
   ScrollPosition? _lastPosition;
   double? _lastPixels;
+
+  /// 外部滚动条拖拽期间暂停自动追底，防止松手前抢夺位置。
+  void setExternalDragging(bool active) {
+    if (_disposed || _externalDragging == active) return;
+    _externalDragging = active;
+    if (active) pause();
+  }
 
   /// 同一轮最多安排 maxFrames 帧；重复请求不重置预算或叠加回调。
   void request() => _start(animate: false);
@@ -58,7 +66,7 @@ class ChatScrollFollow {
 
   /// 仅处理本列表的滚动通知，嵌套预览与横向列表不改变跟随意图。
   bool handleNotification(Notification notification) {
-    if (_disposed) return false;
+    if (_disposed || _externalDragging) return false;
     if (notification is ScrollMetricsNotification && notification.depth == 0) {
       // ★ 只有「本来就在底部、正在跟随」时才追底。
       //
@@ -114,7 +122,7 @@ class ChatScrollFollow {
     final previous = identical(position, _lastPosition) ? _lastPixels : null;
     _lastPosition = position;
     _lastPixels = position.pixels;
-    if (_jumping || previous == null) return;
+    if (_externalDragging || _jumping || previous == null) return;
     if (WidgetsBinding.instance.schedulerPhase ==
         SchedulerPhase.persistentCallbacks) {
       return;
