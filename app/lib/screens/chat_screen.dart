@@ -156,6 +156,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   double? _lastMeasureWidth;
   final ValueNotifier<bool> _railDragging = ValueNotifier<bool>(false);
   String? _highlightedMsgId;
+
+  /// 任务浮层已打开时的关闭句柄 —— 再点一次顶栏按钮就关掉它。
+  VoidCallback? _closeTaskBoard;
+
+  /// 刚被“点外面”关掉的时刻：用来吞掉同一次点击里反触发的那一下。
+  DateTime? _taskBoardClosedAt;
   Timer? _highlightTimer;
   bool _userTypingActive = false;
   Timer? _typingIdleTimer;
@@ -1319,8 +1325,33 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     tooltip: pending > 0
                         ? s.tf('chat.tasksWithCount', {'n': pending})
                         : s.t('chat.tasks'),
-                    onPressed: () =>
-                        showTaskBoard(ctx, state, room, anchorKey: _taskAnchor),
+                    onPressed: () {
+                      // 第一次点开、开着的时候再点就关（和常规弹层一致）。
+                      final close = _closeTaskBoard;
+                      if (close != null) {
+                        close();
+                        return;
+                      }
+                      // 浮层的遮罩在 pointer-down 就已经把它关了，紧接着 pointer-up
+                      // 会反向触发这颗按钮的 onPressed —— 不拦就会“关一下立刻又开”。
+                      final closedAt = _taskBoardClosedAt;
+                      if (closedAt != null &&
+                          DateTime.now().difference(closedAt).inMilliseconds <
+                              500) {
+                        return;
+                      }
+                      showTaskBoard(
+                        ctx,
+                        state,
+                        room,
+                        anchorKey: _taskAnchor,
+                        onHandle: (c) => _closeTaskBoard = c,
+                        onClosed: () {
+                          _closeTaskBoard = null;
+                          _taskBoardClosedAt = DateTime.now();
+                        },
+                      );
+                    },
                     icon: Badge(
                       isLabelVisible: pending > 0,
                       label: Text('$pending'),

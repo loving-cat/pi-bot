@@ -1,0 +1,106 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:pi_bot/app_state.dart';
+import 'package:pi_bot/l10n/l10n.dart';
+import 'package:pi_bot/models.dart';
+import 'package:pi_bot/screens/chat_screen.dart';
+import 'package:pi_bot/scope.dart';
+import 'package:pi_bot/widgets/blob_avatar.dart';
+import 'package:pi_bot/widgets/task_board.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+/// 任务板交互：
+///   · 顶栏那颗按钮是**开关**（点开 → 再点关）；
+///   · 任务详情弹窗的叉必须真的关得掉（之前用的是外层 Overlay 的 context）。
+void main() {
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+    BlobAvatar.animationsEnabled = false;
+  });
+
+  tearDown(() => BlobAvatar.animationsEnabled = true);
+
+  Future<AppState> pump(WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1000, 760);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final room = Room(
+      id: 'r1',
+      name: '调研组',
+      kind: 'group',
+      botIds: const ['b1'],
+      lastMessageAt: 1000,
+    );
+    final state = AppState()
+      ..bots = [Bot(id: 'b1', name: '技术分析员', role: 'lead')]
+      ..rooms = [room]
+      ..messages['r1'] = [
+        Msg(
+          id: 'm1',
+          roomId: 'r1',
+          authorType: 'bot',
+          authorId: 'b1',
+          authorName: '技术分析员',
+          text: '跑完了',
+          status: 'done',
+          createdAt: 1000,
+        ),
+      ]
+      ..tasks = [
+        TaskItem(
+          id: 't1',
+          title: '补一条验证',
+          status: 'open',
+          ownerName: '技术分析员',
+          roomId: 'r1',
+          detail: '上次运行被中断，已放回待办',
+        ),
+      ];
+    addTearDown(state.dispose);
+
+    await tester.pumpWidget(
+      AppScope(
+        state: state,
+        child: L10n(
+          controller: LocaleController(),
+          child: MaterialApp(home: ChatScreen(room: room)),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    return state;
+  }
+
+  testWidgets('顶栏任务按钮是开关：点开再点关', (tester) async {
+    await pump(tester);
+    final button = find.byIcon(LucideIcons.checkCircle2);
+
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(find.byType(TaskBoardSheet), findsOneWidget, reason: '第一次点击应打开任务浮层');
+
+    // 弹层开着时它自己有一层遮罩，点钮的位置会被“点外面就关”接住 ——
+    // 对用户来说结果一样：再点一下就关了。这里按屏幕坐标点，不管是谁接住。
+    await tester.tapAt(tester.getCenter(button));
+    await tester.pumpAndSettle();
+    expect(find.byType(TaskBoardSheet), findsNothing, reason: '开着的状态下再点应该关掉');
+  });
+
+  testWidgets('任务详情弹窗的叉能关掉', (tester) async {
+    await pump(tester);
+    await tester.tap(find.byIcon(LucideIcons.checkCircle2));
+    await tester.pumpAndSettle();
+
+    // 点任务行打开详情
+    await tester.tap(find.text('补一条验证').first);
+    await tester.pumpAndSettle();
+    expect(find.text('上次运行被中断，已放回待办'), findsOneWidget);
+
+    await tester.tap(find.byIcon(LucideIcons.x).last);
+    await tester.pumpAndSettle();
+    expect(find.text('上次运行被中断，已放回待办'), findsNothing, reason: '点叉必须关得掉');
+  });
+}

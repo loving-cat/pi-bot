@@ -218,7 +218,7 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
     showDialog<void>(
       context: context,
       barrierColor: const Color(0x99000000),
-      builder: (_) => Dialog(
+      builder: (dialogContext) => Dialog(
         backgroundColor: PB.bgPane,
         insetPadding: const EdgeInsets.all(24),
         shape: RoundedRectangleBorder(
@@ -258,8 +258,11 @@ class _TaskBoardSheetState extends State<TaskBoardSheet> {
                         ),
                       ),
                     IconButton(
+                      // ★ 用弹窗自己的 context 关：
+                      //   外层的 context 属于一个 OverlayEntry，它没有自己的 Navigator，
+                      //   拿它去 pop 不一定能命中刚弹出的那个路由。
                       visualDensity: VisualDensity.compact,
-                      onPressed: () => Navigator.of(context).pop(),
+                      onPressed: () => Navigator.of(dialogContext).pop(),
                       icon: Icon(LucideIcons.x, size: 16, color: PB.textTertiary),
                     ),
                   ],
@@ -514,6 +517,11 @@ Future<void> showTaskBoard(
   AppState state,
   Room room, {
   GlobalKey? anchorKey,
+  /// 弹层真正开出去后把“关闭它”的手柄交给调用方，
+  /// 让顶栏那颗按钮能做到“再点一下就关掉”。
+  void Function(VoidCallback close)? onHandle,
+  /// 弹层被任意方式关掉（点外面 / Esc / 手柄）时回调，用来清掉手柄。
+  VoidCallback? onClosed,
 }) async {
   // ★ 先在 await 之前把定位需要的东西取完。
   //
@@ -550,6 +558,7 @@ Future<void> showTaskBoard(
 
   if (anchorKey == null || anchor == null || overlay == null) {
     // 没有锚点：居中的浮层卡片，仍然比底部弹层合适
+    onHandle?.call(() => Navigator.of(context, rootNavigator: true).pop());
     await showDialog<void>(
       context: context,
       barrierColor: const Color(0x99000000),
@@ -566,6 +575,7 @@ Future<void> showTaskBoard(
         ),
       ),
     );
+    onClosed?.call();
     return;
   }
 
@@ -583,8 +593,12 @@ Future<void> showTaskBoard(
   );
 
   late OverlayEntry entry;
+  var closed = false;
   void close() {
+    if (closed) return;
+    closed = true;
     if (entry.mounted) entry.remove();
+    onClosed?.call();
   }
 
   entry = OverlayEntry(
@@ -594,10 +608,14 @@ Future<void> showTaskBoard(
       bottom: spot.bottom,
       width: width,
       onClose: close,
+      anchorRect: anchorHeight > 0
+          ? Rect.fromLTWH(anchor.dx, anchor.dy, box?.size.width ?? 0, anchorHeight)
+          : null,
       child: build(),
     ),
   );
   overlay.insert(entry);
+  onHandle?.call(close);
 }
 
 class _TaskBoardPopover extends StatefulWidget {
@@ -607,8 +625,12 @@ class _TaskBoardPopover extends StatefulWidget {
     required this.bottom,
     required this.width,
     required this.onClose,
+    this.anchorRect,
     required this.child,
   });
+
+  /// 锚点（顶栏那颗按钮）的屏幕矩形。点它也算“再点一下”。
+  final Rect? anchorRect;
 
   final double left;
   final double? top;
@@ -655,6 +677,12 @@ class _TaskBoardPopoverState extends State<_TaskBoardPopover> {
         Listener(
           behavior: HitTestBehavior.translucent,
           onPointerDown: (event) {
+            // 点同一颗按钮 = 再点一下：直接关。
+            //   遮罩会先拦住这一下，所以不能指望按钮自己受理。
+            if (widget.anchorRect?.contains(event.position) == true) {
+              widget.onClose();
+              return;
+            }
             final box = context.findRenderObject() as RenderBox?;
             if (box == null) return;
             final local = box.globalToLocal(event.position);
