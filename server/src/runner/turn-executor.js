@@ -12,7 +12,7 @@ import { readBrandEnv } from '../brand.js';
 import { readForModel, saveFromPath } from '../attachments.js';
 import { RunUsage } from '../run-stats.js';
 import { providerLeaseScope } from '../provider-updates.js';
-import { assistantFailure, fallbackModels, modelFailure, recoverModelReply } from '../model-reply.js';
+import { assistantFailure, fallbackModels, modelFailure, recoverModelReply, withModelHint } from '../model-reply.js';
 import { isRecoverableFailure } from '../retry-policy.js';
 import { collectNewImages, snapshotImages } from '../image-watch.js';
 import { snapshotWorkspace, diffSnapshots, summarizeChanges } from '../change-watch.js';
@@ -724,7 +724,9 @@ async function runWithLease(
       : responseFailure ?? modelFailure(err);
     const current = runner.store.getMessage(roomId, botMsg.id);
     const previousError = current?.error;
-    const message = failure.aborted && previousError === '已按你的要求终止' ? previousError : failure.error;
+    const message = failure.aborted && previousError === '已按你的要求终止'
+      ? previousError
+      : withModelHint(failure.error, runner.store.getBot(botId)?.model || runner.modelLabel?.() || '');
     const keepAborted = cancelled() && current?.status === 'aborted';
     const partial = render().trim();
     if (stepCapHit) {

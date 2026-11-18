@@ -1,6 +1,8 @@
 /// 协议数据模型：与 server/src/*.js 一一对应。
 library;
 
+import 'text_utils.dart';
+
 int _asInt(dynamic v, [int fallback = 0]) => v is int
     ? v
     : (v is num
@@ -350,7 +352,8 @@ class Msg {
     authorId: json['authorId'] as String?,
     authorEmoji: json['authorEmoji'] as String?,
     authorName: json['authorName'] as String? ?? '',
-    text: json['text'] as String? ?? '',
+    // 内部协议标记不展示（老消息也一并挡掉）
+    text: stripTrailingPassMarker(json['text'] as String? ?? ''),
     status: json['status'] as String? ?? 'done',
     createdAt: _asInt(json['createdAt'], DateTime.now().millisecondsSinceEpoch),
     steps: ((json['steps'] as List?) ?? const [])

@@ -155,6 +155,8 @@ const TESTS = [
   'sdk-runtime',
   'brand',
   'opening-reply',
+  'pass-marker',
+  'model-failure-hint',
   'runner-modular',
   'task-admission',
   'task-request-gate',

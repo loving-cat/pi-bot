@@ -37,6 +37,7 @@ const PURE_MODULES = [
   'chat-redact.js',
   'update-check.js',
   'opening-reply.js',
+  'pass-marker.js',
 ];
 
 const TEST_OVERRIDES = new Map([

@@ -66,6 +66,21 @@ String stripMarkdown(String input) {
 }
 
 /// 取一段文字的第一行有效内容（用来当摘要）
+/// 剥掉结尾的 `[PASS]`（可带括号说明）。
+///
+/// `[PASS]` 是群聊内部协议（"这轮不用我接"）。整条只有它时服务端会删消息，
+/// 但模型常把它贴在报告末尾 —— 那就成了漏给用户看的内部标记。
+/// 服务端已在落库前剥一层，这里再挡一次是为了**老消息**：历史里已经存进去的
+/// 那些，不重新落库也得显示干净。
+String stripTrailingPassMarker(String input) {
+  const tail = r'(?:\s*[[【]\s*PASS\s*[\]】]\s*(?:[（(][^（()）]*[)）])?\s*)$';
+  final re = RegExp(tail, caseSensitive: false);
+  final m = re.firstMatch(input);
+  if (m == null) return input;
+  final head = input.substring(0, m.start).trimRight();
+  return head.isEmpty ? input : head;
+}
+
 String firstLine(String input) {
   for (final line in input.split('\n')) {
     final t = stripMarkdown(line);

@@ -25,6 +25,21 @@ export function modelFailure(error) {
     : '模型请求失败，接口详情已隐藏，请检查服务端或模型接口日志。' };
 }
 
+/**
+ * 给模型失败文案补上"哪条链路"，方便用户立刻定位该改哪里。
+ *
+ * 典型现场：同一个群里有 5 个 bot，其中一个换到新模型就能跑，另外两个
+ * 还在老模型组上被限流；用户看到几条一模一样的红字「模型请求失败」，
+ * 根本不知道是哪个模型、哪条链路出的问题，于是只会反复"再切一次模型"。
+ */
+export function withModelHint(message, model) {
+  const text = String(message ?? '').trim();
+  const slug = String(model ?? '').trim();
+  if (!text || !slug) return text;
+  if (text.includes(slug)) return text;
+  return `${text}（当前模型：${slug}）`;
+}
+
 export function assistantFailure(message) {
   if (message?.role !== 'assistant') return null;
   if (message.stopReason === 'aborted') return modelFailure({ name: 'AbortError' });
