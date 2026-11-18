@@ -131,6 +131,38 @@ void main() {
       expect(find.text('抓数员 正在回复'), findsOneWidget);
     });
 
+    testWidgets('多个 bot 同时在跑：一屏并列显示，不再轮播覆盖', (tester) async {
+      final state = AppState();
+      state.bots = [
+        Bot(id: 'b1', name: '负责人'),
+        Bot(id: 'b2', name: '资料检索员'),
+      ];
+      state.messages['r1'] = [
+        streamingMsg(id: 'm1', authorId: 'b1'),
+        streamingMsg(id: 'm2', authorId: 'b2', steps: [step('bash')]),
+      ];
+      state.typingBots['r1'] = {'b1', 'b2'};
+      addTearDown(state.dispose);
+      await tester.pumpWidget(
+        AppScope(
+          state: state,
+          child: L10n(
+            controller: LocaleController(),
+            child: const MaterialApp(
+              home: Scaffold(
+                body: SizedBox(width: 700, height: 80, child: ActivityMonitor(roomId: 'r1')),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      // 两个人都看得见（轮播时只会出现一个）
+      expect(find.textContaining('负责人'), findsOneWidget);
+      expect(find.textContaining('资料检索员'), findsOneWidget);
+      expect(find.textContaining('正在跑命令'), findsOneWidget);
+    });
+
     testWidgets('没人在跑就整块隐藏', (tester) async {
       final state = AppState();
       addTearDown(state.dispose);

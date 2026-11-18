@@ -181,11 +181,34 @@ class _ActivityMonitorState extends State<ActivityMonitor> {
     }
     if (!running) return const SizedBox.shrink();
 
-    // 轮播：每 2.2 秒换一个人，用户能看到「A、B、C 都在动」。
-    final current = ids[_index % ids.length];
-    final bot = state.botById(current);
-    // 查不到人也要把表停掉，否则会一直空转
-    if (bot == null) return const SizedBox.shrink();
+    // ★ 不再轮播：轮播时每个瞬间只看得到一个人，轮到负责人就把其他人全盖住了。
+    // 现在按「在跑工具 > 在写 > 在思考」排序，一屏并列显示最多 3 个，剩下的用 +N。
+    final entries = <({String id, String name, String verb})>[];
+    for (final id in ids) {
+      final b = state.botById(id);
+      if (b == null) continue;
+      final live = liveActivityOf(roomMsgs.where((m) => m.authorId == id));
+      entries.add((
+        id: id,
+        name: b.name,
+        verb: live.isNotEmpty
+            ? live
+            : activityVerb(needsUser: widget.needsUser, streaming: widget.streaming),
+      ));
+    }
+    if (entries.isEmpty) return const SizedBox.shrink();
+    int rank(String verb) => verb == '正在回复'
+        ? 1
+        : (verb == '正在思考' ? 3 : (verb == '等你确认' ? 0 : 2));
+    entries.sort((a, b) => rank(a.verb) != rank(b.verb)
+        ? rank(a.verb).compareTo(rank(b.verb))
+        : a.name.compareTo(b.name));
+    final shown = entries.take(3).toList(growable: false);
+    final hidden = entries.length - shown.length;
+    final bot = state.botById(shown.first.id)!;
+    final label = shown.map((e) => '${e.name} ${e.verb}').join('  ·  ');
+    final tooltip = shown.map((e) => '${e.name}　${e.verb}').join('\n') +
+        (hidden > 0 ? '\n另有 $hidden 个在跑' : '');
     // ★ 不再把 TaskRun 的 title 当「它在做什么」。
     //
     //   TaskRun 是「受管执行」的概念：它的 title 是派给这个 bot 的任务目标，
@@ -195,19 +218,6 @@ class _ActivityMonitorState extends State<ActivityMonitor> {
     //
     //   typing 事件只带 botId，服务端没有下发「这一轮在答什么」，
     //   所以这里**不做猜测**：Tooltip 只说明状态，不复述内容。
-    final needsUser = widget.needsUser;
-    final streaming = widget.streaming;
-    final live = liveActivityOf(roomMsgs.where((m) => m.authorId == current));
-    final verb = live.isNotEmpty
-        ? live
-        : activityVerb(needsUser: needsUser, streaming: streaming);
-
-    // Tooltip 文案：只说状态 + 一句怎么办，不引用任何任务内容。
-    final tooltip = switch (verb) {
-      '等你确认' => '${bot.name} 在等你的确认，点开可以看它问了什么',
-      '正在回复' => '${bot.name} 正在把结论写出来',
-      _ => '${bot.name} $verb，结论出来后会自动出现在这里',
-    };
 
     // 做成悬浮胶囊，而不是一行裸文字。
     //
@@ -286,14 +296,13 @@ class _ActivityMonitorState extends State<ActivityMonitor> {
                       //   用户给 bot 创造的那个 3D 形象是由 avatarColor + avatarShape
                       //   经 BlobAvatar 自绘出来的，两者是不同的东西。
                       //
-                      //   animate: false —— 胶囊每 2.2 秒轮播一个人，
-                      //   带抖动动画会反复创建动画控制器，这里只要静态形象。
+                      //   animate: false —— 胶囊上不跑动画，避免反复建动画控制器。
                       BlobAvatar(
                         seed: bot.id,
                         color: PB.colorFor(bot.id),
                         size: _avatarSize,
                         animate: false,
-                        mood: streaming
+                        mood: shown.any((e) => e.verb == '正在回复')
                             ? AvatarMood.speaking
                             : AvatarMood.busy,
                       ),
@@ -319,11 +328,11 @@ class _ActivityMonitorState extends State<ActivityMonitor> {
                               maxWidth: _maxLabelWidth,
                             ),
                             child: ThinkingShimmer(
-                              key: ValueKey(current),
+                              key: ValueKey(shown.first.id),
                               baseColor: PB.textTertiary,
                               highlightColor: PB.textPrimary,
                               child: Text(
-                                '${bot.name} $verb',
+                                label,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
@@ -335,10 +344,10 @@ class _ActivityMonitorState extends State<ActivityMonitor> {
                           ),
                         ),
                       ),
-                      if (ids.length > 1) ...[
+                      if (hidden > 0) ...[
                         const SizedBox(width: 6),
                         Text(
-                          '+${ids.length - 1}',
+                          '+$hidden',
                           style: TextStyle(
                             fontSize: PB.fsXs,
                             color: PB.textTertiary,
