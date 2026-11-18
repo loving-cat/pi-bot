@@ -7,6 +7,7 @@
  *      理解轮不是受管 attempt；恢复只消费持久事实，不重跑理解。
  */
 import { createHash } from 'node:crypto';
+import { readBrandEnv } from '../brand.js';
 import { detectAutonomy } from '../tasks/task-autonomy.js';
 import { newId } from '../util.js';
 import { createTaskRun, parseIntake } from '../tasks/task-run-factory.js';
@@ -52,11 +53,11 @@ export function createRequestScope({
  *   · 停滞与重复检测：连续多轮没有新进展会明确停下并说明原因。
  *
  * 需要硬上限时由用户显式配置：
- *   · `PI_BOT_TASK_MAX_RUNS`（正整数）→ 所有新任务的根上限；
+ *   · `ORBIS_TASK_MAX_RUNS`（正整数，兼容老名 `PI_BOT_TASK_MAX_RUNS`）→ 所有新任务的根上限；
  *   · 部门预算里的 `maxRuns` → 该部门的根上限（只收紧不放大）。
  */
 export function admissionBudget(env = process.env, groupLimits = null) {
-  const raw = Number(env.PI_BOT_TASK_MAX_RUNS);
+  const raw = Number(readBrandEnv(env, 'TASK_MAX_RUNS'));
   const envMax = Number.isInteger(raw) && raw > 0 ? raw : null;
   const userMax = Number(groupLimits?.maxRuns);
   const userCap = Number.isInteger(userMax) && userMax > 0 ? userMax : null;

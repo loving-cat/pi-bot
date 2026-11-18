@@ -7,8 +7,8 @@
  *
  * 默认**不需要任何 API key**：走搜索引擎的 HTML 端点。
  * 想更稳/更干净，可以配一个正式接口（见 .env.example）：
- *   PI_BOT_SEARCH_URL   例：https://api.search.brave.com/res/v1/web/search?q={q}
- *   PI_BOT_SEARCH_KEY   配了就带上 Authorization: Bearer
+ *   ORBIS_SEARCH_URL   例：https://api.search.brave.com/res/v1/web/search?q={q}（老名 PI_BOT_SEARCH_URL 仍可用）
+ *   ORBIS_SEARCH_KEY   配了就带上 Authorization: Bearer（老名 PI_BOT_SEARCH_KEY 仍可用）
  *
  * 三条硬约束：
  *   1. 一切都要有超时和大小上限 —— 网络是最容易把整个 agent 卡死的地方。
@@ -19,6 +19,7 @@ import * as cheerio from 'cheerio';
 
 import { proxyStatus } from './http-client.js';
 import { config } from './config.js';
+import { readBrandEnv } from './brand.js';
 import { publicFetch } from './net-guard.js';
 
 export { assertPublicTarget } from './net-guard.js';
@@ -26,10 +27,10 @@ export { assertPublicTarget } from './net-guard.js';
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
-/** 抓页面的默认超时（毫秒） */
-const FETCH_TIMEOUT_MS = Number(process.env.PI_BOT_WEB_TIMEOUT_MS || 15_000);
+/** 抓页面的默认超时（毫秒）。`ORBIS_WEB_TIMEOUT_MS` 优先，兼容老名 `PI_BOT_WEB_TIMEOUT_MS`。 */
+const FETCH_TIMEOUT_MS = Number(readBrandEnv(process.env, 'WEB_TIMEOUT_MS') || 15_000);
 /** 单个页面拿回来的正文上限（字符）。再长就截断，剩下的让模型自己再抓一次。 */
-const MAX_TEXT_CHARS = Number(process.env.PI_BOT_WEB_MAX_CHARS || 8000);
+const MAX_TEXT_CHARS = Number(readBrandEnv(process.env, 'WEB_MAX_CHARS') || 8000);
 /** 下载上限（字节），防止有人甩个大文件过来把内存吃光 */
 const MAX_BYTES = 4 * 1024 * 1024;
 

@@ -153,6 +153,7 @@ const TESTS = [
   'full-duplex',
   'jarvis-mode',
   'sdk-runtime',
+  'brand',
   'runner-modular',
   'task-admission',
   'task-request-gate',

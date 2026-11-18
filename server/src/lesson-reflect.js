@@ -32,6 +32,7 @@ import {
 } from '@earendil-works/pi-coding-agent';
 
 import { config as defaultConfig } from './config.js';
+import { readBrandEnv } from './brand.js';
 import { store as defaultStore } from './store.js';
 import { log } from './util.js';
 import {
@@ -67,7 +68,7 @@ export function createLessonReflector({ runner, logFn = log, config: scopedConfi
   const lastAt = new Map();
 
   async function reflect({ roomId, sinceIndex = 0, lease = null } = {}) {
-    if (process.env.PI_BOT_LESSON_REFLECT === '0' || config.lessonReflect === false) return { skipped: 'disabled' };
+    if (readBrandEnv(process.env, 'LESSON_REFLECT') === '0' || config.lessonReflect === false) return { skipped: 'disabled' };
 
     const room = store.getRoom(roomId);
     if (!room || room.kind !== 'group') return { skipped: 'not-group' };
@@ -156,7 +157,7 @@ export function createLessonReflector({ runner, logFn = log, config: scopedConfi
       }
     }
 
-    if (process.env.PI_BOT_REFLECT_DEBUG === '1') {
+    if (readBrandEnv(process.env, 'REFLECT_DEBUG') === '1') {
       logFn?.(`复盘原文（${reply.length} 字）：${JSON.stringify(reply).slice(0, 1600)}`);
     }
 
