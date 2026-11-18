@@ -19,8 +19,10 @@ import '../paste_paths.dart';
 import '../progress_messages.dart';
 import '../scope.dart';
 import '../desktop_shortcuts.dart';
+import '../markdown_inline.dart';
 import '../theme.dart';
 import '../window_chrome.dart';
+import '../widgets/composer_palette.dart';
 import '../widgets/message_anchor_rail.dart';
 import '../widgets/no_scrollbar.dart';
 import '../widgets/toast.dart';
@@ -68,6 +70,7 @@ class ChatScreen extends StatefulWidget {
     required this.room,
     this.initialText,
     this.embedded = false,
+    this.overlayCovered = false,
   });
 
   final Room room;
@@ -75,6 +78,9 @@ class ChatScreen extends StatefulWidget {
 
   /// 宽屏分栏里嵌在右边时，不显示返回键
   final bool embedded;
+
+  /// HomeShell 正在显示模态遮罩（右栏/浏览器浮层），此时不能自动抢回焦点。
+  final bool overlayCovered;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -132,6 +138,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   /// 防止“粘贴路径 → 转附件”自己重入（清空文本也会触发监听）
   bool _convertingPaste = false;
+  int _lastInputLen = 0;
+
+  /// 输入框 `@成员` / `/` 快捷指令浮层状态
+  String _lastTriggerSig = '';
+  String? _escapedTriggerKey;
+  int _paletteIndex = 0;
+
+  /// 正在引用回复的目标消息
+  Msg? _replyingTo;
+
+  /// 已挂载消息行的上下文索引，供引用跳转使用
+  final Map<String, BuildContext> _msgContexts = {};
+  String? _highlightedMsgId;
+  Timer? _highlightTimer;
 
   @override
   void initState() {
@@ -150,18 +170,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _input.text = widget.initialText!;
       _input.selection = TextSelection.collapsed(offset: _input.text.length);
     }
+    _lastInputLen = _input.text.length;
+    _input.addListener(_absorbPastedPaths);
+    _input.addListener(_onInputTriggerChanged);
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // ★ 粘贴的是**文件路径**就自动变成附件。
-    //
-    //   为什么不拦 Ctrl+V：剪贴板要异步读，按键处理里没法同步判断"这是不是文件名" ——
-    //   强行拦会把正常粘贴文字也挡掉。所以让它先正常粘进输入框，
-    //   然后看一眼：如果整段就是一个（或几个）存在的文件路径，就收成附件。
-    //   在资源管理器里复制文件、粘到这儿，就是这个形态。
-    _input.addListener(_absorbPastedPaths);
     if (_state == null) {
       _state = AppScope.read(context);
       _state!.openRoom(widget.room.id);
@@ -173,6 +189,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         if (draft.isNotEmpty) {
           _input.text = draft;
           _input.selection = TextSelection.collapsed(offset: draft.length);
+          _lastInputLen = draft.length;
         }
       }
       // 新消息计数：只在"往上翻着"的时候累加。
@@ -198,12 +215,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _highlightTimer?.cancel();
+    _highlightTimer = null;
+    _msgContexts.clear();
     _state?.removeListener(_countIfScrolledUp);
     FocusManager.instance.removeListener(_onFocusChanged);
     _state?.openRoom(null);
     _scrollFollow.dispose();
     _scroll.dispose();
     _input.removeListener(_absorbPastedPaths);
+    _input.removeListener(_onInputTriggerChanged);
     _input.removeListener(_saveDraft);
     _state?.setDraft(widget.room.id, _input.text);
     _input.dispose();
@@ -291,7 +312,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   ///   · 焦点已经在自己身上 → 不用抢
   /// 只有"焦点落在空 scope 上"（也就是没人要）时才拿回来。
   void _keepComposerFocused() {
-    if (!mounted || _focus.hasFocus) return;
+    if (!mounted || widget.overlayCovered || _focus.hasFocus) return;
     final route = ModalRoute.of(context);
     if (route != null && !route.isCurrent) return;
     final primary = FocusManager.instance.primaryFocus;
@@ -306,15 +327,35 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Future<void> _send({bool flushMerge = true}) async {
     final text = _input.text;
     final files = List<Attachment>.from(_pending);
+    final reply = _replyingTo;
     if (text.trim().isEmpty && files.isEmpty) return;
-    _input.clear();
-    setState(() => _pending.clear());
-    _scrollFollow.resume();
+
     final state = AppScope.read(context);
+    var payload = text;
+    if (reply != null) {
+      final excerpt = markdownPreviewText(reply.text, maxChars: 72);
+      final who = reply.isUser
+          ? L10n.s(context).t('rooms.me')
+          : (state.botById(reply.authorId)?.name ?? reply.authorName);
+      if (excerpt.isNotEmpty) {
+        payload = text.trim().isEmpty
+            ? '> $who：$excerpt'
+            : '> $who：$excerpt\n\n${text.trim()}';
+      }
+    }
+
+    _input.clear();
+    _lastInputLen = 0;
+    _lastTriggerSig = '';
+    setState(() {
+      _pending.clear();
+      _replyingTo = null;
+    });
+    _scrollFollow.resume();
     try {
       await state.sendMessage(
         widget.room.id,
-        text,
+        payload,
         attachments: files,
         // ★ 用户还在连续输入（打完一句立刻接着下一句）→ 让服务端攒一下，
         //   把这几条合成一段给模型，它才能看懂完整意图。
@@ -325,13 +366,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       if (mounted) {
         toast(context, '$err');
         _input.text = text;
-        setState(() => _pending.addAll(files));
+        _lastInputLen = text.length;
+        setState(() {
+          _pending.addAll(files);
+          _replyingTo = reply;
+        });
       }
     } finally {
       // 发完继续留着焦点，方便接着敲。
       // 但如果正处在"还聚焦着、键盘却没反应"的状态，单纯 requestFocus
       // 不顶用（没有状态变化 → 引擎不重连），得把连接重开一次。
-      if (mounted) {
+      if (mounted && !widget.overlayCovered) {
         if (_focus.hasFocus) {
           _reattachInput();
         } else {
@@ -379,7 +424,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// 解析逻辑在 paste_paths.dart，那边能单独测。
   void _absorbPastedPaths() {
     if (_convertingPaste) return;
-    final result = extractPastedFiles(_input.text);
+    final value = _input.value;
+    final text = value.text;
+    final prevLen = _lastInputLen;
+    _lastInputLen = text.length;
+    // 中文/日文输入法组词中，或逐字输入/删除（非整段粘贴）时不触发同步文件系统探测。
+    if (value.composing.isValid && !value.composing.isCollapsed) return;
+    if (text.length - prevLen <= 1) return;
+    if (!text.contains('/') && !text.contains('\\')) return;
+
+    final result = extractPastedFiles(text);
     if (!result.hasFiles) return;
 
     _convertingPaste = true;
@@ -390,6 +444,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _input.text = kept;
       _input.selection = TextSelection.collapsed(offset: kept.length);
     }
+    _lastInputLen = _input.text.length;
     _convertingPaste = false;
 
     unawaited(
@@ -398,6 +453,303 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           (f.uri.pathSegments.last, () => f.readAsBytes()),
       ]),
     );
+  }
+
+  int get _cursorOffset {
+    final sel = _input.selection;
+    if (!sel.isValid || sel.extentOffset < 0) return _input.text.length;
+    return sel.extentOffset.clamp(0, _input.text.length);
+  }
+
+  String _computeTriggerSignature() {
+    final value = _input.value;
+    if (value.composing.isValid && !value.composing.isCollapsed) return '';
+    final cursor = _cursorOffset;
+    final mention = detectMentionTrigger(value.text, cursor);
+    if (mention != null) return 'm:${mention.start}:${mention.query}';
+    final slash = detectSlashTrigger(value.text, cursor);
+    if (slash != null) return 's:$slash';
+    return '';
+  }
+
+  void _onInputTriggerChanged() {
+    final sig = _computeTriggerSignature();
+    if (sig == _lastTriggerSig) return;
+    _lastTriggerSig = sig;
+    if (_escapedTriggerKey != null && _escapedTriggerKey != sig) {
+      _escapedTriggerKey = null;
+    }
+    if (mounted) {
+      setState(() => _paletteIndex = 0);
+    }
+  }
+
+  List<ComposerMentionItem> _mentionCandidates(
+    AppState state,
+    Room room,
+    String query,
+  ) {
+    final activeIds = state.typingBotIds(room.id).toSet();
+    final ordered = <Bot>[];
+    final seen = <String>{};
+    void addBot(Bot? b) {
+      if (b == null || !seen.add(b.id)) return;
+      ordered.add(b);
+    }
+
+    if (room.isGroup) {
+      for (final id in room.botIds) {
+        addBot(state.botById(id));
+      }
+      addBot(state.mainBot);
+    }
+    if (ordered.isEmpty) {
+      final lead =
+          state.botById(room.leadBotId) ??
+          state.botById(room.botIds.isNotEmpty ? room.botIds.first : null);
+      addBot(lead);
+      for (final b in state.bots) {
+        addBot(b);
+      }
+    }
+
+    final q = query.trim().toLowerCase();
+    return [
+      for (final b in ordered)
+        if (q.isEmpty ||
+            b.name.toLowerCase().contains(q) ||
+            b.tagline.toLowerCase().contains(q))
+          ComposerMentionItem(
+            bot: b,
+            busy: activeIds.contains(b.id),
+            isLead: b.id == room.leadBotId,
+          ),
+    ];
+  }
+
+  List<ComposerSlashItem> _slashCommands(
+    BuildContext context,
+    AppState state,
+    Room room,
+    AppStrings s,
+    String query,
+  ) {
+    final q = query.trim().toLowerCase();
+    final all = <ComposerSlashItem>[
+      ComposerSlashItem(
+        command: 'new',
+        title: s.t('chat.cmdNew'),
+        hint: s.t('chat.cmdNewHint'),
+        icon: LucideIcons.refreshCw,
+        onRun: () => unawaited(_confirmResetSession(context, state, room)),
+      ),
+      if (state.mainBot != null || state.bots.isNotEmpty)
+        ComposerSlashItem(
+          command: 'teach',
+          title: s.t('chat.cmdTeach'),
+          hint: s.t('chat.cmdTeachHint'),
+          icon: LucideIcons.target,
+          onRun: () => showTeachDialog(
+            context,
+            state.mainBot ?? state.bots.first,
+          ),
+        ),
+      ComposerSlashItem(
+        command: 'tasks',
+        title: s.t('chat.cmdTasks'),
+        hint: s.t('chat.cmdTasksHint'),
+        icon: LucideIcons.panelRight,
+        onRun: () => _openPanelRoute(context, room),
+      ),
+      ComposerSlashItem(
+        command: 'browser',
+        title: s.t('chat.cmdBrowser'),
+        hint: s.t('chat.cmdBrowserHint'),
+        icon: LucideIcons.globe,
+        onRun: () => _openBrowserRoute(context, state),
+      ),
+      ComposerSlashItem(
+        command: 'auto',
+        title: s.t('chat.cmdAuto'),
+        hint: s.t('chat.cmdAutoHint'),
+        icon: LucideIcons.clock,
+        onRun: () => showAutomationSheet(context, state, room),
+      ),
+      ComposerSlashItem(
+        command: 'reload',
+        title: s.t('chat.cmdReload'),
+        hint: s.t('chat.cmdReloadHint'),
+        icon: LucideIcons.download,
+        onRun: () async {
+          await state.loadMessages(room.id, force: true);
+          _scrollFollow.resume();
+        },
+      ),
+    ];
+    if (q.isEmpty) return all;
+    return [
+      for (final c in all)
+        if (c.command.contains(q) || c.title.toLowerCase().contains(q)) c,
+    ];
+  }
+
+  void _applyMentionPick(
+    Bot bot,
+    ({int start, int end, String query}) trigger,
+  ) {
+    final text = _input.text;
+    final inserted = '@${bot.name} ';
+    final nextText = text.replaceRange(trigger.start, trigger.end, inserted);
+    final cursor = trigger.start + inserted.length;
+    _input.value = TextEditingValue(
+      text: nextText,
+      selection: TextSelection.collapsed(offset: cursor),
+    );
+    _lastInputLen = nextText.length;
+    _lastTriggerSig = '';
+    _escapedTriggerKey = null;
+    if (isMobilePlatform) HapticFeedback.selectionClick();
+    setState(() => _paletteIndex = 0);
+    _focus.requestFocus();
+  }
+
+  void _runSlashCommand(ComposerSlashItem cmd) {
+    _input.clear();
+    _lastInputLen = 0;
+    _lastTriggerSig = '';
+    _escapedTriggerKey = null;
+    setState(() => _paletteIndex = 0);
+    cmd.onRun();
+  }
+
+  void _insertMention(String name) {
+    final clean = name.trim();
+    if (clean.isEmpty) return;
+    final token = '@$clean ';
+    final text = _input.text;
+    if (text.contains('@$clean')) {
+      _focus.requestFocus();
+      return;
+    }
+    final sep = text.isNotEmpty && !text.endsWith(' ') && !text.endsWith('\n')
+        ? ' '
+        : '';
+    final nextText = '$text$sep$token';
+    _input.value = TextEditingValue(
+      text: nextText,
+      selection: TextSelection.collapsed(offset: nextText.length),
+    );
+    _lastInputLen = nextText.length;
+    if (isMobilePlatform) HapticFeedback.selectionClick();
+    _focus.requestFocus();
+  }
+
+  void _startReply(Msg msg, Room room) {
+    HapticFeedback.lightImpact();
+    setState(() => _replyingTo = msg);
+    if (room.isGroup && msg.authorType == 'bot') {
+      final who = _state?.botById(msg.authorId)?.name ?? msg.authorName;
+      if (who.trim().isNotEmpty && !_input.text.contains('@${who.trim()}')) {
+        _insertMention(who);
+        return;
+      }
+    }
+    _focus.requestFocus();
+  }
+
+  Future<void> _jumpToMessage(String targetId, List<Msg> display) async {
+    final idx = display.indexWhere((m) => m.id == targetId);
+    if (idx < 0) {
+      _toast(L10n.s(context).t('chat.quoteNotFound'));
+      return;
+    }
+    _scrollFollow.pause();
+    setState(() => _highlightedMsgId = targetId);
+    _highlightTimer?.cancel();
+    if (!WidgetsBinding.instance.runtimeType.toString().contains('Test')) {
+      _highlightTimer = Timer(const Duration(milliseconds: 1200), () {
+        _highlightTimer = null;
+        if (mounted && _highlightedMsgId == targetId) {
+          setState(() => _highlightedMsgId = null);
+        }
+      });
+    }
+    final ctx = _msgContexts[targetId];
+    if (ctx != null && ctx.mounted) {
+      await Scrollable.ensureVisible(
+        ctx,
+        alignment: 0.35,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+      );
+      return;
+    }
+    if (!_scroll.hasClients) return;
+    final maxExtent = _scroll.position.maxScrollExtent;
+    final ratio = idx / math.max(1, display.length - 1);
+    _scroll.jumpTo((ratio * maxExtent).clamp(0.0, maxExtent));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final mountedCtx = _msgContexts[targetId];
+      if (mounted && mountedCtx != null && mountedCtx.mounted) {
+        unawaited(
+          Scrollable.ensureVisible(
+            mountedCtx,
+            alignment: 0.35,
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+          ),
+        );
+      }
+    });
+  }
+
+  void _openPanelRoute(BuildContext context, Room room) {
+    final twoPane =
+        widget.embedded && MediaQuery.sizeOf(context).width >= kTwoPaneMinWidth;
+    if (twoPane) {
+      AppScope.read(context).togglePanel();
+    } else {
+      showRoomPanel(context, room);
+    }
+  }
+
+  void _openBrowserRoute(BuildContext context, AppState state) {
+    final twoPane =
+        widget.embedded && MediaQuery.sizeOf(context).width >= kTwoPaneMinWidth;
+    if (twoPane) {
+      state.openBrowserPane();
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (ctx) => _FullPageBrowser(state: state),
+      ),
+    );
+  }
+
+  Future<void> _confirmResetSession(
+    BuildContext context,
+    AppState state,
+    Room room,
+  ) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(L10n.s(ctx).t('chat.newSession')),
+        content: Text(L10n.s(ctx).t('chat.newSessionBody')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(L10n.s(ctx).t('common.cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(L10n.s(ctx).t('chat.newSession')),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) await state.resetSession(room.id);
   }
 
   /// 把拖进来的东西展开成 (名字, 读字节) 列表。
@@ -627,6 +979,80 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final lead =
         state.botById(room.leadBotId) ??
         state.botById(room.botIds.isNotEmpty ? room.botIds.first : null);
+    final effectiveMentions = <String>[
+      ...{
+        ...room.botNames,
+        for (final id in room.botIds)
+          if (state.botById(id) != null) state.botById(id)!.name,
+      },
+    ];
+    final triggerSig = _computeTriggerSignature();
+    final mentionTrigger = _escapedTriggerKey == triggerSig
+        ? null
+        : detectMentionTrigger(_input.text, _cursorOffset);
+    final slashQuery =
+        (_escapedTriggerKey == triggerSig || mentionTrigger != null)
+            ? null
+            : detectSlashTrigger(_input.text, _cursorOffset);
+    final mentionItems = mentionTrigger != null
+        ? _mentionCandidates(state, room, mentionTrigger.query)
+        : const <ComposerMentionItem>[];
+    final slashItems = slashQuery != null
+        ? _slashCommands(context, state, room, s, slashQuery)
+        : const <ComposerSlashItem>[];
+    final showPalette = mentionItems.isNotEmpty || slashItems.isNotEmpty;
+
+    KeyEventResult handlePaletteKey(KeyEvent event) {
+      if (!showPalette) return KeyEventResult.ignored;
+      final count =
+          mentionItems.isNotEmpty ? mentionItems.length : slashItems.length;
+      if (count == 0) return KeyEventResult.ignored;
+      final key = event.logicalKey;
+      if (key == LogicalKeyboardKey.arrowDown) {
+        setState(() => _paletteIndex = (_paletteIndex + 1) % count);
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.arrowUp) {
+        setState(() => _paletteIndex = (_paletteIndex - 1 + count) % count);
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.escape) {
+        setState(() => _escapedTriggerKey = triggerSig);
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.enter ||
+          key == LogicalKeyboardKey.numpadEnter ||
+          key == LogicalKeyboardKey.tab) {
+        final safe = _paletteIndex.clamp(0, count - 1);
+        if (mentionItems.isNotEmpty && mentionTrigger != null) {
+          _applyMentionPick(mentionItems[safe].bot, mentionTrigger);
+        } else if (slashItems.isNotEmpty) {
+          _runSlashCommand(slashItems[safe]);
+        }
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    }
+
+    final paletteOverlay = !showPalette
+        ? null
+        : Positioned(
+            left: 16,
+            right: 28,
+            bottom: 8,
+            child: Align(
+              alignment: Alignment.bottomLeft,
+              child: ComposerPalette(
+                mentions: mentionItems,
+                commands: slashItems,
+                selectedIndex: _paletteIndex,
+                onPickMention: mentionTrigger == null
+                    ? null
+                    : (bot) => _applyMentionPick(bot, mentionTrigger),
+                onPickCommand: _runSlashCommand,
+              ),
+            ),
+          );
 
     if (state.lastError != null && state.lastError != _shownError) {
       _shownError = state.lastError;
@@ -869,7 +1295,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               children: [
                 Expanded(
                   child: msgs.isEmpty
-                      ? _EmptyHint(room: room, lead: lead)
+                      ? Stack(
+                          children: [
+                            _EmptyHint(
+                              room: room,
+                              lead: lead,
+                              onTapMember: _insertMention,
+                            ),
+                            if (paletteOverlay != null) paletteOverlay,
+                          ],
+                        )
                       : Stack(
                           children: [
                             // ★ 消息列表整块**不许抢焦点**。
@@ -1010,6 +1445,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                   msg.authorId != null
                                               ? state.botById(msg.authorId)
                                               : null;
+                                          final onReplyMsg =
+                                              msg.text.trim().isNotEmpty
+                                                  ? () => _startReply(msg, room)
+                                                  : null;
+                                          final onMentionMsg =
+                                              (room.isGroup &&
+                                                      !msg.isUser &&
+                                                      authorBot != null)
+                                                  ? () => _insertMention(
+                                                        authorBot.name,
+                                                      )
+                                                  : null;
                                           final relayed = isRelayedAuthor(
                                             author: authorBot,
                                             room: room,
@@ -1031,67 +1478,91 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                           // 不居中：整行铺满，bot 贴左、我贴右
                                           return _Appear(
                                             key: ValueKey(msg.id),
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.stretch,
-                                              children: [
-                                                if (relayedBot != null)
-                                                  _RelayedFrom(
-                                                    bot: relayedBot,
-                                                    // 点开那个 bot 的私聊（只读）——
-                                                    // 找不到私聊房间就不给点（只显示是谁说的）
-                                                    onTap: relayedRoom == null
-                                                        ? null
-                                                        : () => showChatPeek(
-                                                            context,
-                                                            refs: [
-                                                              MsgRef(
-                                                                botId:
-                                                                    relayedBot
-                                                                        .id,
-                                                                roomId:
-                                                                    relayedRoom
-                                                                        .id,
-                                                              ),
-                                                            ],
+                                            child: _MsgAnchor(
+                                              msgId: msg.id,
+                                              registry: _msgContexts,
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.stretch,
+                                                children: [
+                                                  if (relayedBot != null)
+                                                    _RelayedFrom(
+                                                      bot: relayedBot,
+                                                      // 点开那个 bot 的私聊（只读）——
+                                                      // 找不到私聊房间就不给点（只显示是谁说的）
+                                                      onTap: relayedRoom == null
+                                                          ? null
+                                                          : () => showChatPeek(
+                                                              context,
+                                                              refs: [
+                                                                MsgRef(
+                                                                  botId:
+                                                                      relayedBot
+                                                                          .id,
+                                                                  roomId:
+                                                                      relayedRoom
+                                                                          .id,
+                                                                ),
+                                                              ],
+                                                            ),
+                                                    ),
+                                                  _MessageRow(
+                                                    msg: msg,
+                                                    // 气泡上限按**这一栏**的宽度算，不按窗口
+                                                    columnWidth: colW,
+                                                    showAuthor: newAuthor,
+                                                    showAvatar: endOfRun,
+                                                    bot: state.botById(
+                                                      msg.authorId,
+                                                    ),
+                                                    isGroup: room.isGroup,
+                                                    mentions: effectiveMentions,
+                                                    // @ 的名字 → 那个 bot（chip 的颜色、悬停卡的内容都靠它）
+                                                    mentionOf: (name) {
+                                                      final b = state.botByName(
+                                                        name,
+                                                      );
+                                                      return b == null
+                                                          ? null
+                                                          : MentionInfo(
+                                                              seed: b.id,
+                                                              subtitle:
+                                                                  b.tagline,
+                                                              emoji: b.emoji,
+                                                            );
+                                                    },
+                                                    isLead:
+                                                        room.isGroup &&
+                                                        msg.authorId != null &&
+                                                        msg.authorId ==
+                                                            room.leadBotId,
+                                                    highlighted:
+                                                        _highlightedMsgId ==
+                                                            msg.id,
+                                                    onQuoteTap: (id) =>
+                                                        unawaited(
+                                                          _jumpToMessage(
+                                                            id,
+                                                            display,
                                                           ),
+                                                        ),
+                                                    onReply: onReplyMsg,
+                                                    onMention: onMentionMsg,
+                                                    onLongPress: () =>
+                                                        showMessageActions(
+                                                          context,
+                                                          msg,
+                                                          onReply: onReplyMsg,
+                                                          onMention:
+                                                              onMentionMsg,
+                                                          mentionLabel:
+                                                              authorBot != null
+                                                                  ? '@${authorBot.name}'
+                                                                  : null,
+                                                        ),
                                                   ),
-                                                _MessageRow(
-                                                  msg: msg,
-                                                  // 气泡上限按**这一栏**的宽度算，不按窗口
-                                                  columnWidth: colW,
-                                                  showAuthor: newAuthor,
-                                                  showAvatar: endOfRun,
-                                                  bot: state.botById(
-                                                    msg.authorId,
-                                                  ),
-                                                  isGroup: room.isGroup,
-                                                  mentions: room.botNames,
-                                                  // @ 的名字 → 那个 bot（chip 的颜色、悬停卡的内容都靠它）
-                                                  mentionOf: (name) {
-                                                    final b = state.botByName(
-                                                      name,
-                                                    );
-                                                    return b == null
-                                                        ? null
-                                                        : MentionInfo(
-                                                            seed: b.id,
-                                                            subtitle: b.tagline,
-                                                            emoji: b.emoji,
-                                                          );
-                                                  },
-                                                  isLead:
-                                                      room.isGroup &&
-                                                      msg.authorId != null &&
-                                                      msg.authorId ==
-                                                          room.leadBotId,
-                                                  onLongPress: () =>
-                                                      showMessageActions(
-                                                        context,
-                                                        msg,
-                                                      ),
-                                                ),
-                                              ],
+                                                ],
+                                              ),
                                             ),
                                           );
                                         },
@@ -1177,6 +1648,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                       _scrollFollow.resume(animate: true),
                                 ),
                               ),
+                            if (paletteOverlay != null) paletteOverlay,
                             // 顶部渐变：消息滚上去时柔和淡出，而不是被标题栏硬切
                             Positioned(
                               left: 0,
@@ -1209,6 +1681,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     queuedCount: state.queued[room.id] ?? 0,
                     pending: _pending,
                     uploading: _uploading,
+                    replyingTo: _replyingTo,
+                    onCancelReply: () => setState(() => _replyingTo = null),
+                    onInterceptKey: handlePaletteKey,
                     onPickImages: _pickImages,
                     onPickFiles: _pickFiles,
                     onTeach: () => showTeachDialog(
@@ -1355,15 +1830,28 @@ class _FullPageBrowserState extends State<_FullPageBrowser> {
 }
 
 class _EmptyHint extends StatelessWidget {
-  const _EmptyHint({required this.room, required this.lead});
+  const _EmptyHint({required this.room, required this.lead, this.onTapMember});
 
   final Room room;
   final Bot? lead;
+  final void Function(String name)? onTapMember;
 
   @override
   Widget build(BuildContext context) {
     final s = L10n.s(context);
+    final state = AppScope.of(context);
     final isGroup = room.isGroup;
+    final members = <(String seed, String name)>[
+      if (room.botIds.isNotEmpty)
+        for (var i = 0; i < room.botIds.length; i++)
+          (
+            room.botIds[i],
+            state.botById(room.botIds[i])?.name ??
+                (i < room.botNames.length ? room.botNames[i] : room.botIds[i]),
+          )
+      else
+        for (final name in room.botNames) (name, name),
+    ];
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(36),
@@ -1406,45 +1894,52 @@ class _EmptyHint extends StatelessWidget {
                 height: 1.6,
               ),
             ),
-            if (isGroup && room.botNames.isNotEmpty) ...[
+            if (isGroup && members.isNotEmpty) ...[
               const SizedBox(height: 16),
               Wrap(
                 spacing: 6,
                 runSpacing: 6,
                 alignment: WrapAlignment.center,
                 children: [
-                  for (var i = 0; i < room.botIds.length; i++)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 5,
-                      ),
-                      decoration: BoxDecoration(
-                        color: PB.bgBubble,
+                  for (final (seed, memberName) in members)
+                    Material(
+                      color: PB.bgBubble,
+                      borderRadius: BorderRadius.circular(PB.rFull),
+                      child: InkWell(
                         borderRadius: BorderRadius.circular(PB.rFull),
-                        border: Border.all(color: PB.borderTertiary),
-                      ),
-                      child: AvatarHoverScope(
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            BlobAvatar(
-                              seed: room.botIds[i],
-                              color: PB.colorFor(room.botIds[i]),
-                              size: 14,
-                              animate: false,
+                        onTap: onTapMember == null
+                            ? null
+                            : () => onTapMember!(memberName),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(PB.rFull),
+                            border: Border.all(color: PB.borderTertiary),
+                          ),
+                          child: AvatarHoverScope(
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                BlobAvatar(
+                                  seed: seed,
+                                  color: PB.colorFor(seed),
+                                  size: 14,
+                                  animate: false,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  memberName,
+                                  style: TextStyle(
+                                    fontSize: PB.fsXs,
+                                    color: PB.textTertiary,
+                                  ),
+                                ),
+                              ],
                             ),
-                            const SizedBox(width: 6),
-                            Text(
-                              i < room.botNames.length
-                                  ? room.botNames[i]
-                                  : room.botIds[i],
-                              style: TextStyle(
-                                fontSize: PB.fsXs,
-                                color: PB.textTertiary,
-                              ),
-                            ),
-                          ],
+                          ),
                         ),
                       ),
                     ),
@@ -1466,6 +1961,9 @@ class _Composer extends StatefulWidget {
     required this.queuedCount,
     required this.pending,
     required this.uploading,
+    this.replyingTo,
+    this.onCancelReply,
+    this.onInterceptKey,
     required this.onPickImages,
     required this.onPickFiles,
     required this.onTeach,
@@ -1481,6 +1979,9 @@ class _Composer extends StatefulWidget {
   final int queuedCount;
   final List<Attachment> pending;
   final bool uploading;
+  final Msg? replyingTo;
+  final VoidCallback? onCancelReply;
+  final KeyEventResult Function(KeyEvent event)? onInterceptKey;
   final VoidCallback onPickImages;
   final VoidCallback onPickFiles;
 
@@ -1670,6 +2171,12 @@ class _ComposerState extends State<_Composer> {
                 ),
               ),
             ),
+          if (widget.replyingTo != null)
+            _ComposerReplyBar(
+              key: const ValueKey('composer-reply-bar'),
+              target: widget.replyingTo!,
+              onCancel: widget.onCancelReply,
+            ),
           //   同上：这一行出现/消失也会挤掉输入框，必须给 key
           if (pending.isNotEmpty || widget.uploading)
             Padding(
@@ -1824,6 +2331,11 @@ class _ComposerState extends State<_Composer> {
                             event is! KeyRepeatEvent) {
                           return KeyEventResult.ignored;
                         }
+                        if (_isComposing()) return KeyEventResult.ignored;
+                        final intercepted = widget.onInterceptKey?.call(event);
+                        if (intercepted == KeyEventResult.handled) {
+                          return KeyEventResult.handled;
+                        }
                         final key = event.logicalKey;
                         final isEnter =
                             key == LogicalKeyboardKey.enter ||
@@ -1833,12 +2345,6 @@ class _ComposerState extends State<_Composer> {
                         if (HardwareKeyboard.instance.isShiftPressed) {
                           return KeyEventResult.ignored;
                         }
-                        // ★ IME 正在组词 → 这个回车属于输入法，不是发送。
-                        //
-                        //   中文用户输入英文时，候选框还没确认，按回车是「选这个候选」；
-                        //   若在这里当成发送，就变成「消息发出去 + 输入框被清空」，
-                        //   用户以为输入法吃字了。日文/韩文同理。
-                        if (_isComposing()) return KeyEventResult.ignored;
                         onSend();
                         return KeyEventResult.handled;
                       },
@@ -2222,6 +2728,10 @@ class _MessageRow extends StatelessWidget {
     required this.bot,
     required this.isGroup,
     required this.onLongPress,
+    this.onReply,
+    this.onMention,
+    this.onQuoteTap,
+    this.highlighted = false,
     this.mentions = const [],
     this.isLead = false,
     this.mentionOf,
@@ -2230,6 +2740,10 @@ class _MessageRow extends StatelessWidget {
 
   final Msg msg;
   final bool showAuthor;
+  final VoidCallback? onReply;
+  final VoidCallback? onMention;
+  final void Function(String targetId)? onQuoteTap;
+  final bool highlighted;
 
   /// 消息列的实际可用宽度（聊天栏被展开成多宽，不是整个窗口多宽）。
   ///
@@ -2289,7 +2803,13 @@ class _MessageRow extends StatelessWidget {
     }
     final fromId = m.replyToAuthorId;
     final fallback = fromId == null ? '' : (state.botById(fromId)?.name ?? '');
-    return MsgQuoteStrip(quoted: quoted, fallbackName: fallback);
+    return MsgQuoteStrip(
+      quoted: quoted,
+      fallbackName: fallback,
+      onTap: quoted != null && onQuoteTap != null
+          ? () => onQuoteTap!(quoted!.id)
+          : null,
+    );
   }
 
   @override
@@ -2368,8 +2888,14 @@ class _MessageRow extends StatelessWidget {
     final maxBubble = math.min(available * 0.82, 760.0);
 
     if (isUser) {
-      return Padding(
-        // 我发的消息也一样要喘气，不能比 bot 那侧还挤
+      return AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        decoration: highlighted
+            ? BoxDecoration(
+                color: PB.colors(context).accentSoft.withValues(alpha: 0.4),
+                borderRadius: BorderRadius.circular(PB.rXl),
+              )
+            : const BoxDecoration(),
         padding: const EdgeInsets.only(top: 22),
         child: Align(
           alignment: Alignment.centerRight,
@@ -2393,44 +2919,50 @@ class _MessageRow extends StatelessWidget {
                       ),
                     ),
                   if (msg.text.trim().isNotEmpty)
-                    _longPressWrapper(
-                      onLongPress,
-                      Container(
-                        constraints: BoxConstraints(
-                          maxWidth: math.min(available * 0.74, 560),
-                        ),
-                        padding: const EdgeInsets.fromLTRB(15, 13, 15, 13),
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [
-                              PB.colors(context).userBubbleTop,
+                    _BubbleQuickActions(
+                      isUser: true,
+                      textToCopy: msg.text,
+                      onReply: onReply,
+                      onMention: onMention,
+                      child: _longPressWrapper(
+                        onLongPress,
+                        Container(
+                          constraints: BoxConstraints(
+                            maxWidth: math.min(available * 0.74, 560),
+                          ),
+                          padding: const EdgeInsets.fromLTRB(15, 13, 15, 13),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [
+                                PB.colors(context).userBubbleTop,
+                                PB.colors(context).userBubbleBottom,
+                              ],
+                            ),
+                            borderRadius: BorderRadius.circular(PB.rBubble),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.10),
+                            ),
+                            boxShadow: PB.glow(
                               PB.colors(context).userBubbleBottom,
-                            ],
+                              blur: 16,
+                              alpha: 0.28,
+                            ),
                           ),
-                          borderRadius: BorderRadius.circular(PB.rBubble),
-                          border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.10),
-                          ),
-                          boxShadow: PB.glow(
-                            PB.colors(context).userBubbleBottom,
-                            blur: 16,
-                            alpha: 0.28,
-                          ),
-                        ),
-                        child: MdText(
-                          msg.text,
-                          linkColor: PB.colors(context).onAccent,
-                          selectable: true,
-                          onMentionTap: (name) => openBotDm(context, name),
-                          onLinkTap: (url) =>
-                              AppScope.read(context).openInBrowser(url),
-                          mentionOf: mentionOf,
-                          style: TextStyle(
-                            fontSize: PB.fsBase,
-                            height: 1.45,
-                            color: PB.colors(context).onAccent,
+                          child: MdText(
+                            msg.text,
+                            linkColor: PB.colors(context).onAccent,
+                            selectable: true,
+                            onMentionTap: (name) => openBotDm(context, name),
+                            onLinkTap: (url) =>
+                                AppScope.read(context).openInBrowser(url),
+                            mentionOf: mentionOf,
+                            style: TextStyle(
+                              fontSize: PB.fsBase,
+                              height: 1.45,
+                              color: PB.colors(context).onAccent,
+                            ),
                           ),
                         ),
                       ),
@@ -2476,7 +3008,14 @@ class _MessageRow extends StatelessWidget {
     }
 
     return AvatarHoverScope(
-      child: Padding(
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        decoration: highlighted
+            ? BoxDecoration(
+                color: PB.colors(context).accentSoft.withValues(alpha: 0.4),
+                borderRadius: BorderRadius.circular(PB.rXl),
+              )
+            : const BoxDecoration(),
         // ★ 气泡之间的呼吸：换个人发言 26px，
         //   同一个人连着说 6px —— 间距再小，谁跟谁说的就黏成一坨。
         padding: EdgeInsets.only(top: showAuthor ? 26 : 6),
@@ -2561,7 +3100,9 @@ class _MessageRow extends StatelessWidget {
                   if (msg.steps.isNotEmpty)
                     streaming
                         ? ValueListenableBuilder<int>(
-                            valueListenable: AppScope.read(context).streamTick,
+                            valueListenable: AppScope.read(
+                              context,
+                            ).streamTickFor(msg.id),
                             builder: (_, __, ___) => ToolSteps(
                               steps: msg.steps,
                               quietWhenDone: true,
@@ -2601,76 +3142,70 @@ class _MessageRow extends StatelessWidget {
                     //   长按是移动端交互；桌面上它注册的指针手势会和
                     //   SelectionArea 抢事件 —— 表现就是"文字拖不动、选不上"。
                     //   桌面端有右键菜单与 ⌘C，不需要长按。
-                    _longPressWrapper(
-                      onLongPress,
-                      Container(
-                        constraints: BoxConstraints(maxWidth: maxBubble),
-                        padding: const EdgeInsets.fromLTRB(15, 13, 15, 13),
-                        decoration: BoxDecoration(
-                          color: PB.bgBubble,
-                          borderRadius: BorderRadius.circular(PB.rBubble),
-                          border: Border.all(
-                            color: msg.status == 'error'
-                                ? PB.danger.withValues(alpha: 0.45)
-                                : (streaming
-                                      ? PB
-                                            .colors(context)
-                                            .accent
-                                            .withValues(alpha: 0.22)
-                                      : PB.borderHighlight),
+                    _BubbleQuickActions(
+                      isUser: false,
+                      textToCopy: msg.text,
+                      onReply: onReply,
+                      onMention: onMention,
+                      child: _longPressWrapper(
+                        onLongPress,
+                        Container(
+                          constraints: BoxConstraints(maxWidth: maxBubble),
+                          padding: const EdgeInsets.fromLTRB(15, 13, 15, 13),
+                          decoration: BoxDecoration(
+                            color: PB.bgBubble,
+                            borderRadius: BorderRadius.circular(PB.rBubble),
+                            border: Border.all(
+                              color: msg.status == 'error'
+                                  ? PB.danger.withValues(alpha: 0.45)
+                                  : (streaming
+                                        ? PB
+                                              .colors(context)
+                                              .accent
+                                              .withValues(alpha: 0.22)
+                                        : PB.borderHighlight),
+                            ),
+                            boxShadow: PB.shadow(y: 1, blur: 4, alpha: 0.22),
                           ),
-                          boxShadow: PB.shadow(y: 1, blur: 4, alpha: 0.22),
-                        ),
-                        // ★ 流式气泡单独订阅 streamTick。
-                        //
-                        //   为什么必须这么做：msg.delta 只改 msg.text 然后
-                        //   自增 streamTick，**不调 notifyListeners**
-                        //   （见 app_state.dart 的 msg.delta 分支，末尾是 return）。
-                        //   而 chat_screen 是靠 AppScope.of（InheritedNotifier）
-                        //   在 notifyListeners 时才重建的 —— 所以纯文字流式时
-                        //   气泡内容根本不刷新，要等某个无关事件触发整屏重建
-                        //   才突然显示出全文。这是个显示 bug，不只是性能问题。
-                        //
-                        //   ★ 只让**正在流式的这一条**订阅，绝不能让整个
-                        //   ChatScreen 订阅：否则每 80ms 整屏重建一次，
-                        //   所有可见气泡都会重新解析 Markdown，比现在更卡。
-                        //   用 AppScope.read（不建立依赖），不是 of。
-                        child: !streaming
-                            ? MdText(
-                                msg.text,
-                                selectable: true,
-                                onMentionTap: (name) =>
-                                    openBotDm(context, name),
-                                onLinkTap: (url) =>
-                                    AppScope.read(context).openInBrowser(url),
-                                mentionOf: mentionOf,
-                                mentions: mentions,
-                                style: TextStyle(
-                                  fontSize: PB.fsBase,
-                                  height: 1.5,
-                                  color: PB.textPrimary,
+                          // ★ 流式气泡单独订阅 streamTickFor(msg.id)。
+                          child: !streaming
+                              ? MdText(
+                                  msg.text,
+                                  selectable: true,
+                                  onMentionTap: (name) =>
+                                      openBotDm(context, name),
+                                  onLinkTap: (url) =>
+                                      AppScope.read(context).openInBrowser(url),
+                                  mentionOf: mentionOf,
+                                  mentions: mentions,
+                                  style: TextStyle(
+                                    fontSize: PB.fsBase,
+                                    height: 1.5,
+                                    color: PB.textPrimary,
+                                  ),
+                                )
+                              : ValueListenableBuilder<int>(
+                                  valueListenable: AppScope.read(
+                                    context,
+                                  ).streamTickFor(msg.id),
+                                  builder: (_, __, ___) => MdText(
+                                    '${msg.text}▍',
+                                    selectable: false,
+                                    onMentionTap: (name) =>
+                                        openBotDm(context, name),
+                                    onLinkTap: (url) => AppScope.read(
+                                      context,
+                                    ).openInBrowser(url),
+                                    mentionOf: mentionOf,
+                                    mentions: mentions,
+                                    style: TextStyle(
+                                      fontSize: PB.fsBase,
+                                      height: 1.5,
+                                      color: PB.textPrimary,
+                                    ),
+                                  ),
                                 ),
-                              )
-                            : ValueListenableBuilder<int>(
-                                valueListenable: AppScope.read(context)
-                                    .streamTick,
-                                builder: (_, __, ___) => MdText(
-                                        '${msg.text}▍',
-                                        selectable: false,
-                                        onMentionTap: (name) =>
-                                            openBotDm(context, name),
-                                        onLinkTap: (url) =>
-                                            AppScope.read(context)
-                                                .openInBrowser(url),
-                                        mentionOf: mentionOf,
-                                        mentions: mentions,
-                                        style: TextStyle(
-                                          fontSize: PB.fsBase,
-                                          height: 1.5,
-                                          color: PB.textPrimary,
-                                        ),
-                                      ),
-                              ),
+                        ),
                       ),
                     ),
                   if (msg.error != null && msg.error!.isNotEmpty)
@@ -2776,6 +3311,281 @@ class _HoverLiftState extends State<_HoverLift> {
               SizedBox(width: _hover ? 4 : 0),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 登记每条已挂载消息行的 BuildContext，供引用条跳转定位。
+class _MsgAnchor extends StatefulWidget {
+  const _MsgAnchor({
+    required this.msgId,
+    required this.registry,
+    required this.child,
+  });
+
+  final String msgId;
+  final Map<String, BuildContext> registry;
+  final Widget child;
+
+  @override
+  State<_MsgAnchor> createState() => _MsgAnchorState();
+}
+
+class _MsgAnchorState extends State<_MsgAnchor> {
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    widget.registry[widget.msgId] = context;
+  }
+
+  @override
+  void didUpdateWidget(_MsgAnchor oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.msgId != widget.msgId &&
+        oldWidget.registry[oldWidget.msgId] == context) {
+      oldWidget.registry.remove(oldWidget.msgId);
+    }
+    widget.registry[widget.msgId] = context;
+  }
+
+  @override
+  void dispose() {
+    if (widget.registry[widget.msgId] == context) {
+      widget.registry.remove(widget.msgId);
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
+
+/// 输入框上方的「正在引用回复某条消息」提示条。
+class _ComposerReplyBar extends StatelessWidget {
+  const _ComposerReplyBar({
+    super.key,
+    required this.target,
+    this.onCancel,
+  });
+
+  final Msg target;
+  final VoidCallback? onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = L10n.s(context);
+    final state = AppScope.of(context);
+    final who = target.isUser
+        ? s.t('rooms.me')
+        : (state.botById(target.authorId)?.name ?? target.authorName);
+    final excerpt = markdownPreviewText(target.text, maxChars: 64);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(10, 6, 6, 6),
+        decoration: BoxDecoration(
+          color: PB.bgBubble,
+          borderRadius: BorderRadius.circular(PB.rLg),
+          border: Border(
+            left: BorderSide(color: PB.colors(context).accent, width: 2.5),
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              LucideIcons.cornerUpLeft,
+              size: 13,
+              color: PB.colors(context).accentBright,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    s.tf('chat.replyingTo', {'name': who}),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: PB.fsXxs,
+                      fontWeight: FontWeight.w600,
+                      color: PB.colors(context).link,
+                    ),
+                  ),
+                  if (excerpt.isNotEmpty)
+                    Text(
+                      excerpt,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: PB.fsXxs,
+                        color: PB.textTertiary,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            if (onCancel != null)
+              IconButton(
+                onPressed: onCancel,
+                tooltip: s.t('common.close'),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                visualDensity: VisualDensity.compact,
+                icon: Icon(LucideIcons.x, size: 14, color: PB.textTertiary),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 桌面悬停快捷操作条（引用 / @TA / 复制）与移动端右滑引用手势。
+class _BubbleQuickActions extends StatefulWidget {
+  const _BubbleQuickActions({
+    required this.isUser,
+    required this.textToCopy,
+    required this.child,
+    this.onReply,
+    this.onMention,
+  });
+
+  final bool isUser;
+  final String textToCopy;
+  final Widget child;
+  final VoidCallback? onReply;
+  final VoidCallback? onMention;
+
+  @override
+  State<_BubbleQuickActions> createState() => _BubbleQuickActionsState();
+}
+
+class _BubbleQuickActionsState extends State<_BubbleQuickActions> {
+  bool _hovered = false;
+  double _dragX = 0;
+
+  void _copy(BuildContext context) {
+    HapticFeedback.selectionClick();
+    Clipboard.setData(ClipboardData(text: widget.textToCopy));
+    toast(context, L10n.s(context).t('msg.copied'), kind: ToastKind.success);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    Widget body = widget.child;
+
+    if (isMobilePlatform && widget.onReply != null) {
+      body = GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onHorizontalDragUpdate: (d) {
+          final next = (_dragX + d.delta.dx).clamp(0.0, 44.0);
+          if (next != _dragX) setState(() => _dragX = next);
+        },
+        onHorizontalDragEnd: (_) {
+          final trigger = _dragX >= 36;
+          setState(() => _dragX = 0);
+          if (trigger) widget.onReply?.call();
+        },
+        onHorizontalDragCancel: () {
+          if (_dragX != 0) setState(() => _dragX = 0);
+        },
+        child: Transform.translate(
+          offset: Offset(_dragX, 0),
+          child: body,
+        ),
+      );
+    }
+
+    final hasActions =
+        widget.onReply != null ||
+        widget.onMention != null ||
+        widget.textToCopy.trim().isNotEmpty;
+    if (!hasActions) return body;
+
+    return MouseRegion(
+      opaque: false,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          body,
+          if (_hovered)
+            Positioned(
+              top: 4,
+              right: widget.isUser ? null : 4,
+              left: widget.isUser ? 4 : null,
+              child: Material(
+                color: PB.bgElevated.withValues(alpha: 0.94),
+                borderRadius: BorderRadius.circular(PB.rFull),
+                elevation: 4,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(PB.rFull),
+                    border: Border.all(color: PB.borderSecondary),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (widget.onReply != null)
+                        _QuickBtn(
+                          icon: LucideIcons.reply,
+                          tooltip: L10n.s(context).t('msg.reply'),
+                          onTap: widget.onReply!,
+                        ),
+                      if (widget.onMention != null)
+                        _QuickBtn(
+                          icon: LucideIcons.atSign,
+                          tooltip: L10n.s(context).t('msg.mentionBot'),
+                          onTap: widget.onMention!,
+                        ),
+                      if (widget.textToCopy.trim().isNotEmpty)
+                        _QuickBtn(
+                          icon: LucideIcons.copy,
+                          tooltip: L10n.s(context).t('msg.copyContent'),
+                          onTap: () => _copy(context),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _QuickBtn extends StatelessWidget {
+  const _QuickBtn({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(PB.rFull),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(5),
+          child: Icon(icon, size: 13, color: PB.textSecondary),
         ),
       ),
     );

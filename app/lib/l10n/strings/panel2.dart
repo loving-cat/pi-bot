@@ -404,6 +404,9 @@ const areaPanel2 = StringArea(
     // ---- 消息操作 ----
     'msg.copyContent': '复制内容',
     'msg.copyId': '复制消息 id',
+    'msg.reply': '引用回复',
+    'msg.mentionBot': '@TA 追问',
+    'msg.copied': '已复制',
   },
   en: {
     // ---- common small words ----
@@ -820,5 +823,8 @@ const areaPanel2 = StringArea(
     // ---- message actions ----
     'msg.copyContent': 'Copy text',
     'msg.copyId': 'Copy message ID',
+    'msg.reply': 'Reply',
+    'msg.mentionBot': 'Mention',
+    'msg.copied': 'Copied',
   },
 );

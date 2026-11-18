@@ -8,7 +8,13 @@ import '../theme.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 /// 长按消息 → 底部操作面板
-Future<void> showMessageActions(BuildContext context, Msg msg) async {
+Future<void> showMessageActions(
+  BuildContext context,
+  Msg msg, {
+  VoidCallback? onReply,
+  VoidCallback? onMention,
+  String? mentionLabel,
+}) async {
   final strings = L10n.s(context);
   await showModalBottomSheet<void>(
     context: context,
@@ -30,6 +36,32 @@ Future<void> showMessageActions(BuildContext context, Msg msg) async {
             ),
           ),
           const SizedBox(height: 6),
+          if (onReply != null && msg.text.trim().isNotEmpty)
+            ListTile(
+              leading: const Icon(LucideIcons.reply, size: 20),
+              title: Text(
+                strings.t('msg.reply'),
+                style: const TextStyle(fontSize: PB.fsSm),
+              ),
+              onTap: () {
+                HapticFeedback.selectionClick();
+                Navigator.pop(ctx);
+                onReply();
+              },
+            ),
+          if (onMention != null)
+            ListTile(
+              leading: const Icon(LucideIcons.atSign, size: 20),
+              title: Text(
+                mentionLabel ?? strings.t('msg.mentionBot'),
+                style: const TextStyle(fontSize: PB.fsSm),
+              ),
+              onTap: () {
+                HapticFeedback.selectionClick();
+                Navigator.pop(ctx);
+                onMention();
+              },
+            ),
           ListTile(
             leading: const Icon(LucideIcons.clipboardCopy, size: 20),
             title: Text(
@@ -37,6 +69,7 @@ Future<void> showMessageActions(BuildContext context, Msg msg) async {
               style: const TextStyle(fontSize: PB.fsSm),
             ),
             onTap: () {
+              HapticFeedback.selectionClick();
               Clipboard.setData(ClipboardData(text: msg.text));
               Navigator.pop(ctx);
             },
@@ -48,6 +81,7 @@ Future<void> showMessageActions(BuildContext context, Msg msg) async {
               style: const TextStyle(fontSize: PB.fsSm),
             ),
             onTap: () {
+              HapticFeedback.selectionClick();
               Clipboard.setData(ClipboardData(text: msg.id));
               Navigator.pop(ctx);
             },
