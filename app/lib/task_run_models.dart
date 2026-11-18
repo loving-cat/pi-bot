@@ -169,6 +169,7 @@ class TaskRun {
     this.plan,
     this.leadBotId = '',
     this.leadBotName = '',
+    this.legacyNote = false,
     required this.budget,
     required this.result,
     required this.admissionStatus,
@@ -206,6 +207,10 @@ class TaskRun {
   /// 负责人 Bot（谁在带这个任务）。
   final String leadBotId;
   final String leadBotName;
+
+  /// 服务端打的「历史对话片段」标记（W5c）。
+  ///   为 true 时看板默认折叠，不再只靠客户端启发式判断。
+  final bool legacyNote;
   final TaskRunBudget budget;
   final TaskRunResult result;
   final String? admissionStatus;
@@ -239,6 +244,7 @@ class TaskRun {
       phase: _asString(json['phase'], 'active'),
       leadBotId: _asString(json['leadBotId']),
       leadBotName: _asString(json['leadBotName']),
+      legacyNote: json['legacyNote'] == true,
       childrenSummary: json['childrenSummary'] is Map
           ? TaskRunChildren.fromJson((json['childrenSummary'] as Map).cast<String, dynamic>())
           : null,

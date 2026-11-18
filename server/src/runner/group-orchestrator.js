@@ -574,14 +574,9 @@ export async function executeGroupRound(
             if (runner.aborting.has(roomId)) return;
           }
 
-          const taskId = item.fromId && !isManagedRound
-            ? runner.store.upsertDispatchTask({
-                roomId,
-                ownerBotId: bot.id,
-                title: item.fromText || item.reason,
-                sourceMessageId: item.sourceMessageId ?? null,
-              })
-            : null;
+          // ★ 不再往旧 TaskItem 写派活流水：任务板/顶栏浮层现在只读 TaskRun，
+          //   再写一份就是双轨。受管任务的账本在 taskRuns，未受管波次不再登记。
+          const taskId = null;
           runner.flushProviderUpdates();
           const gate = runner.breakerFor(bot.id);
           const gateCheck = gate ? breakerAllows(gate.breaker, Date.now()) : { allow: true };

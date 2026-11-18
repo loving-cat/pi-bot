@@ -153,6 +153,9 @@ export function projectTaskRun(taskRun, { root = null, children = null, nameOf =
     // 谁在负责这个任务（负责人 Bot）。
     leadBotId,
     leadBotName,
+    // 历史对话片段标记（W5c）：服务端打过就直接告诉客户端，
+    //   前端不再只靠猜标题。
+    legacyNote: taskRun.flags?.legacyNote === true,
     // 子任务进度（谁在做什么）：由调用方传入本版本子任务，缺省为空。
     childrenSummary,
     // ★ 负责人列的分工计划。

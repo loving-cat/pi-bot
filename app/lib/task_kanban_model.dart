@@ -201,7 +201,8 @@ List<KanbanCard> buildKanbanCards(
         summary: _summaryOf(run, summaryMaxChars),
         leadName: _leadNameOf(run, nameOf),
         paused: run.state == 'paused_user' || run.state == 'paused_budget',
-        legacyLike: looksLikeConversationFragment(run),
+        // 服务端打过 legacyNote 就以它为准；没打过才用客户端启发式判断（老数据兼容）。
+        legacyLike: run.legacyNote || looksLikeConversationFragment(run),
       ),
     );
   }

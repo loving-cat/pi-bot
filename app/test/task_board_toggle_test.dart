@@ -49,16 +49,7 @@ void main() {
           createdAt: 1000,
         ),
       ]
-      ..tasks = [
-        TaskItem(
-          id: 't1',
-          title: '补一条验证',
-          status: 'open',
-          ownerName: '技术分析员',
-          roomId: 'r1',
-          detail: '上次运行被中断，已放回待办',
-        ),
-      ];
+;
     addTearDown(state.dispose);
 
     await tester.pumpWidget(
@@ -151,4 +142,34 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(TaskBoardSheet), findsNothing, reason: 'dispose 必须收掉挂在根 Overlay 上的浮层');
   });
+  testWidgets('顶栏角标数的是 TaskRun：出现与消退都跟着变', (tester) async {
+    final state = await pump(tester);
+
+    Map<String, dynamic> run(String id, String st, int ver) => {
+          'id': id,
+          'roomId': 'r1',
+          'rootTaskId': id,
+          'revision': 1,
+          'sequence': 1,
+          'storeVersion': ver,
+          'state': st,
+          'title': '补一条验证',
+          'scope': '验证',
+          'deliverables': <String>[],
+          'updatedAt': 1000 + ver,
+          'leadBotId': 'b1',
+          'leadBotName': '技术分析员',
+          'phase': 'active',
+        };
+
+    state.taskRuns.applyHello({'taskRuns': [run('tr1', 'running', 1)]});
+    await tester.pump();
+    expect(find.text('1'), findsWidgets, reason: '在跑的任务要计入角标');
+
+    state.taskRuns.applyHello({'taskRuns': [run('tr1', 'completed', 2)]});
+    await tester.pump();
+    // 完成后角标不该再挂着 1（Badge 的标签消失）
+    expect(find.text('1'), findsNothing);
+  });
+
 }

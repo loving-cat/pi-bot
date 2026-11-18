@@ -17,6 +17,7 @@ TaskRun run({
   int updatedAt = 1000,
   int sequence = 1,
   String? parentTaskId,
+  bool legacyNote = false,
 }) {
   return TaskRun(
     id: id,
@@ -42,6 +43,7 @@ TaskRun run({
     updatedAt: updatedAt,
     leadBotId: leadBotId,
     leadBotName: leadBotName,
+    legacyNote: legacyNote,
   );
 }
 
@@ -299,6 +301,26 @@ void main() {
       expect(buildKanbanCards([run(state: 'paused_user')]).single.paused, isTrue);
       expect(buildKanbanCards([run(state: 'paused_budget')]).single.paused, isTrue);
       expect(buildKanbanCards([run(state: 'running')]).single.paused, isFalse);
+    });
+  });
+
+  group('服务端 legacyNote 优先', () {
+    test('★ 服务端打过标的，即使标题像正常任务也要折叠', () {
+      final card = buildKanbanCards([
+        run(state: 'completed', title: '重构看板数据源', legacyNote: true),
+      ]).single;
+      expect(card.legacyLike, isTrue);
+    });
+
+    test('服务端没打标时，仍用客户端启发式判断（老数据兼容）', () {
+      final card = buildKanbanCards([
+        run(state: 'completed', title: '收到。先看基线和色板…'),
+      ]).single;
+      expect(card.legacyLike, isTrue);
+      final normal = buildKanbanCards([
+        run(state: 'completed', title: '重构看板数据源'),
+      ]).single;
+      expect(normal.legacyLike, isFalse);
     });
   });
 

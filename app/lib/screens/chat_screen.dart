@@ -19,6 +19,7 @@ import '../models.dart';
 import '../paste_paths.dart';
 import '../progress_messages.dart';
 import '../scope.dart';
+import '../task_kanban_model.dart';
 import '../desktop_shortcuts.dart';
 import '../markdown_inline.dart';
 import '../theme.dart';
@@ -1311,11 +1312,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             ),
           ),
           actions: [
-            // 任务板：显示这个房间未完成的数量，点开是清单
-            Builder(
-              builder: (ctx) {
-                final list = state.tasksFor(room.id);
-                final pending = list.where((t) => !t.isDone).length;
+            // 任务板：角标数的是 **TaskRun 的未完成根任务**，和浮层/看板同一个口径。
+            // 订阅 taskRuns，任务状态一变（完成/取消/新建）它自己就重绘。
+            ListenableBuilder(
+              listenable: state.taskRuns,
+              builder: (ctx, _) {
+                final cards = buildKanbanCards(
+                  state.taskRuns.forRoom(room.id),
+                  nameOf: (id) => state.botById(id)?.name ?? '',
+                );
+                final pending =
+                    cards.where((c) => c.column != KanbanColumn.done).length;
                 return KeyedSubtree(
                   key: _taskAnchor,
                   child: IconButton(

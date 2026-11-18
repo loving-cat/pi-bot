@@ -91,5 +91,17 @@ test('plan 缺失时不投影', () => {
   assert.equal(empty.plan, null);
 });
 
+test('★ flags.legacyNote 透传到投影（W5c 前端消费的就是这个字段）', () => {
+  const base = {
+    id: 'tr_legacy', rootTaskId: 'tr_legacy', revision: 1, sequence: 1, storeVersion: 1,
+    state: 'completed', goal: { requirement: '收到。先看基线', deliverables: [] },
+    updatedAt: 1000,
+  };
+  const marked = projectTaskRun({ ...base, flags: { legacyNote: true } });
+  assert.equal(marked.legacyNote, true, '打过标必须告诉前端');
+  const plain = projectTaskRun({ ...base, flags: {} });
+  assert.equal(plain.legacyNote, false, '没打标就是 false');
+});
+
 console.log(`\n任务投影：${passed}/${passed + failed} 通过`);
 process.exit(failed ? 1 : 0);
