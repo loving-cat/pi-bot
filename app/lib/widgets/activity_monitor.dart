@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../app_state.dart';
+import '../models.dart';
 import '../scope.dart';
 import '../theme.dart';
 import 'avatar_life.dart';
@@ -66,6 +68,48 @@ String activityVerb({
   return '正在处理';
 }
 
+/// 工具名 → 用户看得懂的一句话。
+///
+/// 为什么手写映射而不是直接显示工具名：用户看到 `bash` / `grep` / `web_fetch`
+/// 只会觉得是黑话。这里只覆盖常用的一层，认不出来的统一“正在干活”。
+String toolPhrase(String tool) {
+  const map = {
+    'bash': '正在跑命令',
+    'run_background': '正在后台跑',
+    'write': '正在写文件',
+    'edit': '正在改代码',
+    'read': '正在读文件',
+    'grep': '正在翻代码',
+    'find': '正在找文件',
+    'ls': '正在看目录',
+    'web_search': '正在搜索',
+    'web_fetch': '正在读网页',
+    'ego_browser': '正在开浏览器',
+    'desktop_observe': '正在看屏幕',
+    'desktop_screenshot': '正在截图',
+    'desktop_input': '正在操作屏幕',
+    'dispatch_bot': '正在派活',
+    'accept_task': '正在建任务',
+    'task_report': '正在写回执',
+    'ask_user': '正在问你',
+  };
+  return map[tool] ?? '正在干活';
+}
+
+/// 从某个 bot 的对话记录里推断它**这一轮**在干什么。
+String liveActivityOf(Iterable<Msg> messages) {
+  Msg? live;
+  for (final m in messages) {
+    if (m.status == 'streaming' || m.status == 'retrying') live = m;
+  }
+  if (live == null) return '';
+  for (final step in live.steps) {
+    if (step.status == 'running') return toolPhrase(step.tool);
+  }
+  if (live.text.trim().isNotEmpty) return '正在回复';
+  return '正在思考';
+}
+
 /// 有内容才包 Tooltip，没有就原样返回。
 ///
 /// 空 Tooltip 不只是没意义：它会占一块可命中的区域，
@@ -108,7 +152,24 @@ class _ActivityMonitorState extends State<ActivityMonitor> {
   @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
-    final ids = state.typingBotIds(widget.roomId);
+    // ★ 流式增量不走 notifyListeners（否则整树重建），但胶囊里的
+    //   「正在思考 → 正在跑命令 → 正在回复」必须逐帧跟着变。
+    //   所以单独订阅 streamTick：只重建这颗胶囊。
+    return ValueListenableBuilder<int>(
+      valueListenable: state.streamTick,
+      builder: (context, _, __) => _buildPill(context, state),
+    );
+  }
+
+  Widget _buildPill(BuildContext context, AppState state) {
+    final roomMsgs = state.messages[widget.roomId] ?? const <Msg>[];
+    final liveAuthors = <String>{
+      for (final m in roomMsgs)
+        if ((m.status == 'streaming' || m.status == 'retrying') &&
+            (m.authorId ?? '').isNotEmpty)
+          m.authorId!
+    };
+    final ids = <String>{...state.typingBotIds(widget.roomId), ...liveAuthors}.toList();
     final running = ids.isNotEmpty;
     // 定时器的创建/销毁放到 build 之后做：build 必须是纯函数。
     if (running != _timerRunning) {
@@ -136,16 +197,16 @@ class _ActivityMonitorState extends State<ActivityMonitor> {
     //   所以这里**不做猜测**：Tooltip 只说明状态，不复述内容。
     final needsUser = widget.needsUser;
     final streaming = widget.streaming;
-    final verb = activityVerb(
-      needsUser: needsUser,
-      streaming: streaming,
-    );
+    final live = liveActivityOf(roomMsgs.where((m) => m.authorId == current));
+    final verb = live.isNotEmpty
+        ? live
+        : activityVerb(needsUser: needsUser, streaming: streaming);
 
     // Tooltip 文案：只说状态 + 一句怎么办，不引用任何任务内容。
     final tooltip = switch (verb) {
       '等你确认' => '${bot.name} 在等你的确认，点开可以看它问了什么',
       '正在回复' => '${bot.name} 正在把结论写出来',
-      _ => '${bot.name} 正在处理，结论出来后会自动出现在这里',
+      _ => '${bot.name} $verb，结论出来后会自动出现在这里',
     };
 
     // 做成悬浮胶囊，而不是一行裸文字。
