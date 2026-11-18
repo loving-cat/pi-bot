@@ -346,7 +346,6 @@ class _RoomsScreenState extends State<RoomsScreen> {
                       ),
                     _KanbanEntry(
                       onTap: () => showTaskKanban(context, state),
-                      total: state.taskRuns.tasks.length,
                       needsYou:
                           buildKanbanCards(state.taskRuns.tasks, onlyNeedsYou: true).length,
                     ),
@@ -541,12 +540,10 @@ class _RoomsScreenState extends State<RoomsScreen> {
 class _KanbanEntry extends StatelessWidget {
   const _KanbanEntry({
     required this.onTap,
-    required this.total,
     required this.needsYou,
   });
 
   final VoidCallback onTap;
-  final int total;
   final int needsYou;
 
   @override
@@ -602,10 +599,8 @@ class _KanbanEntry extends StatelessWidget {
                       ),
                     ),
                   ),
-                Text(
-                  '$total',
-                  style: TextStyle(fontSize: PB.fsXs, color: PB.textQuaternary),
-                ),
+                // 平时不显示任务总数：这行是入口，不是统计面板。
+                //   只在"有活等你处理"的时候亮一个橙数字，其余时候保持安静。
                 const SizedBox(width: 4),
                 Icon(LucideIcons.chevronRight, size: 13, color: PB.textQuaternary),
               ],
