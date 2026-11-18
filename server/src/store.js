@@ -17,6 +17,7 @@ import { config as defaultConfig } from './config.js';
 import { bus as defaultBus } from './bus.js';
 import { DEFAULT_MAIN_BOT_EMOJI, DEFAULT_MAIN_BOT_NAME } from './brand.js';
 import { newId, now, readJson, writeJsonAtomic, insertionPoint, log } from './util.js';
+import { isTaskWorthy, normalizeTaskTitle } from './task-title.js';
 import { normalizeRules } from './shell-policy.js';
 import * as preferencesDomain from './preferences.js';
 import { sanitizeMemoryText } from './memory-sanitize.js';
@@ -2211,7 +2212,10 @@ export class Store {
    * 返回任务 id，跑完用它收尾。
    */
   upsertDispatchTask({ roomId, ownerBotId, title, sourceMessageId = null }) {
-    const clean = String(title ?? '').trim().slice(0, 200);
+    // 不是派活就不建任务：自我介绍、招呼、纯应答、短问句都跳过。
+    //   原来把整段发言当标题存，任务板上全是「我是**跨境运营负责人**…」这种。
+    if (!isTaskWorthy(title)) return null;
+    const clean = normalizeTaskTitle(title, { maxChars: 48 });
     if (!clean || !ownerBotId) return null;
     // ★ 匹配范围：同房间 + 同负责人 + 未完成 + 标题完全相同。
     //

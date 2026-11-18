@@ -154,6 +154,7 @@ const TESTS = [
   'jarvis-mode',
   'sdk-runtime',
   'brand',
+  'task-title',
   'opening-reply',
   'pass-marker',
   'model-failure-hint',

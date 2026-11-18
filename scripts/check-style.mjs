@@ -38,6 +38,7 @@ const PURE_MODULES = [
   'update-check.js',
   'opening-reply.js',
   'pass-marker.js',
+  'task-title.js',
 ];
 
 const TEST_OVERRIDES = new Map([
