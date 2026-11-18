@@ -1,9 +1,9 @@
 # Spec：收束与交付 v1（rev.3）
 
-> **状态**：执行中（W0 / W1 / W3 / W4 / W7 ✅ 已收口；W5 🟡 看板与 Review 修复已落地、剩顶栏数据源与 W5c；W2 / W6 🟡 推进中）
+> **状态**：执行中（W0 / W1 / W3 / W4 / W7 ✅ 已收口；W5 ✅ 看板/顶栏已统一 TaskRun、W5c 已打标；W2 / W6 🟡 推进中）
 > **日期**：2026-11-19（rev.4：同步实测基线、R1–R4 收口、补记 2026-11-18 已落地但未入账的 5 项）
 > **对应主干**：`main` @ `dc09e85`（在 `fe4e501` 后已合入 W4 收口 `527040f`、品牌环境变量统一 `81065f1`、W1 CI 守卫 `4adac4b` 及 W5 看板与房间面板阶段提交 `c0aaeea`..`dc09e85`）
-> **实测基线（2026-11-19 复跑）**：服务端 **156/156** 测试文件通过（含 `sandbox-win` **30/30**，此前记录的 1 项环境失败已消失；口径以 `cd server && node tests/all.mjs` 输出为准）、App `flutter test` **933+** 通过、`check-capability-drift`（16 动作 / 72 工具）、`check-consistency`、`check-style`（20 个纯逻辑模块）、`check-spec-progress` 全绿。
+> **实测基线（2026-11-19 复跑）**：服务端 **157/157** 测试文件通过（含 `sandbox-win` **30/30**，此前记录的 1 项环境失败已消失；口径以 `cd server && node tests/all.mjs` 输出为准）、App `flutter test` **928** 通过、`check-capability-drift`（16 动作 / 72 工具）、`check-consistency`、`check-style`（20 个纯逻辑模块）、`check-spec-progress` 全绿。
 > **项目定位**：**Orbis**（兼容 `PI_BOT_*` 与旧导出名）要做**像 `pi-coding-agent` 那样的可嵌入多 Agent 基座** ——
 > 能力靠**声明式清单 + 统一领域服务**扩展，不靠散落的 `if` 分支；以单骨架（`Capabilities + Services + Runner 子模块 + GrantGate`）同时支撑 App、主控 Jarvis 总管家与 SDK（`createOrbisRuntime` / `createOrbisClient`）。
 >
@@ -213,8 +213,8 @@ node scripts/check-secrets.mjs
 
 **细分步序**：
 - **W5a · 归类纯逻辑模型**：✅ `app/lib/task_kanban_model.dart`（11 状态 → 四列、等你处理优先级、rune 安全截断、旧片段启发式）+ `app/test/task_kanban_model_test.dart`（`c0aaeea` / `cffcc00`；`cd app && flutter test test/task_kanban_model_test.dart`）。
-- **W5b · 全局看板页 + 房间面板接线**：🟡 看板页已落地 —— `app/lib/widgets/task_kanban.dart`（四列 + 顶部一行「共 N 个任务 / M 个等你处理」+ 只看等我的 + 负责人过滤 + 旧记录折叠；顶部原四张统计卡与列头重复，已于 `1240db7` 换成一行摘要），入口在 `app/lib/screens/rooms_screen.dart`（`dc09e85` 已调整为平时不显示任务总数，只在有待处理时亮橙色角标）；`app/test/task_kanban_page_test.dart`。**本轮已收口**：R1–R4（见下方清单）；**未完成**：`app/lib/widgets/task_board.dart` 顶栏浮层从旧 `TaskItem` 彻底迁到 `TaskRun` 且保留置顶/勾选交互。
-- **W5c · 通用旧数据幂等迁移（❌ 未开始）**：（待新增）`server/src/tasks/legacy-task-migration.js` +（待新增）`server/tests/legacy-task-migration.mjs` —— 把历史 `TaskItem` 无损迁成历史 `TaskRun`；采用通用内容启发式规则（无产物链接或属对话回复片段的已完成项自动标 `legacy-note` 并默认折叠，避免刷屏污染「已完成」列），不硬编码特定本机条数。
+- **W5b · 全局看板页 + 房间面板接线**：✅ 看板页与房间面板都已统一到 `TaskRun`：全局看板 `app/lib/widgets/task_kanban.dart`（四列 + 一行摘要 + 只看等我的 + 负责人过滤 + 旧记录折叠，`1240db7` 去掉了与列头重复的四格统计），入口在 `app/lib/screens/rooms_screen.dart`（平时不显示总数，只在有待处理时亮橙色角标）。**房间顶栏浮层已重写为 TaskRun 面板**：`app/lib/widgets/task_board.dart` 现在读 `state.taskRuns.forRoom()`，卡点开走 `showTaskRunSheet`（pause/resume/cancel/批准/回答都在那里）；旧 `TaskItem` 的“加一行/勾完成/置顶”整套双轨界面已删除（`task_board_test.dart` / `task_board_visual_test.dart` 一并移除），聊天顶栏角标也改成数 TaskRun。R1–R4 已全部收口（见下方表）。
+- **W5c · 旧数据打标（✅ 已落地）**：`server/src/tasks/legacy-task-migration.js`（纯逻辑：`looksLikeChatFragment` / `planLegacyNotes` / `withLegacyNotes`）+ `server/tests/tasks/legacy-task-migration.mjs`（7 项：只标已完成且无交付物、寒暄/长句标题，幂等、不丢条目、不改入参）。启动时由 `store.markLegacyTaskNotes()` 幂等打上 `meta.legacyNote`（不删不改正文），界面默认折叠——历史对话片段不再污染「已完成」列。
 
 #### W5 收口与 Code Review 交接清单（R1–R4 已于 2026-11-19 全部收起，保留记录供复查）
 
