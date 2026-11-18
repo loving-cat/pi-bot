@@ -5,6 +5,7 @@ import '../l10n/l10n.dart';
 import '../models.dart';
 import '../theme.dart';
 import '../scope.dart';
+import 'thinking_shimmer.dart';
 
 /// 工具调用状态：默认只显示运行中提示；调试模式显示可展开的步骤明细。
 class ToolSteps extends StatefulWidget {
@@ -69,11 +70,15 @@ class _ToolStepsState extends State<ToolSteps> {
               ),
             ),
             const SizedBox(width: 7),
-            Text(
-              strings.t('tools.working'),
-              style: TextStyle(
-                fontSize: PB.fsXxs,
-                color: PB.textQuaternary,
+            ThinkingShimmer(
+              baseColor: PB.textQuaternary,
+              highlightColor: PB.textSecondary,
+              child: Text(
+                strings.t('tools.working'),
+                style: TextStyle(
+                  fontSize: PB.fsXxs,
+                  color: PB.textQuaternary,
+                ),
               ),
             ),
           ],
@@ -118,17 +123,22 @@ class _ToolStepsState extends State<ToolSteps> {
                           : (failed.isEmpty ? PB.textQuaternary : PB.danger),
                     ),
                     const SizedBox(width: 5),
-                    Text(
-                      running
-                          ? strings.t('tools.calling')
-                          : strings.tf('tools.callsCount', {'n': steps.length}),
-                      style: TextStyle(
-                        fontSize: PB.fsXxs,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: 0.3,
-                        color: running
-                            ? PB.colors(context).link
-                            : PB.textTertiary,
+                    ThinkingShimmer(
+                      enabled: running,
+                      baseColor: PB.colors(context).link.withValues(alpha: 0.72),
+                      highlightColor: PB.colors(context).accentBright,
+                      child: Text(
+                        running
+                            ? strings.t('tools.calling')
+                            : strings.tf('tools.callsCount', {'n': steps.length}),
+                        style: TextStyle(
+                          fontSize: PB.fsXxs,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.3,
+                          color: running
+                              ? PB.colors(context).link
+                              : PB.textTertiary,
+                        ),
                       ),
                     ),
                     const SizedBox(width: 6),
@@ -173,15 +183,28 @@ class _ToolStepsState extends State<ToolSteps> {
                 ),
               ),
 
-            // 展开：全部步骤（连续重复合并成 × N）
-            if (_open) ...[
-              for (final item in merged)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(10, 0, 10, 3),
-                  child: _StepRow(step: item.step, count: item.count),
-                ),
-              const SizedBox(height: 3),
-            ],
+            // 展开：全部步骤（连续重复合并成 × N，带高度平滑过渡）
+            AnimatedSize(
+              duration: const Duration(milliseconds: 200),
+              curve: const Cubic(0.22, 1, 0.36, 1),
+              alignment: Alignment.topLeft,
+              child: _open
+                  ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        for (final item in merged)
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(10, 0, 10, 3),
+                            child: _StepRow(
+                              step: item.step,
+                              count: item.count,
+                            ),
+                          ),
+                        const SizedBox(height: 3),
+                      ],
+                    )
+                  : const SizedBox.shrink(),
+            ),
           ],
         ),
       ),
@@ -231,19 +254,26 @@ class _StepRow extends StatelessWidget {
         Flexible(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 280),
-            child: Text(
-              '${step.tool}${step.detail.isNotEmpty ? '  ${shortText(step.detail, 62)}' : ''}'
-              '${count > 1 ? '  ×$count' : ''}'
-              '${step.durationMs != null ? '  ${step.durationMs}ms' : ''}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontFamily: PB.monoFamily,
-                fontFamilyFallback: PB.monoFallback,
-                fontSize: PB.fsTinyCjk,
-                color: isError
-                    ? PB.danger
-                    : (isRunning ? PB.colors(context).link : PB.textQuaternary),
+            child: ThinkingShimmer(
+              enabled: isRunning,
+              baseColor: PB.colors(context).link.withValues(alpha: 0.72),
+              highlightColor: PB.colors(context).accentBright,
+              child: Text(
+                '${step.tool}${step.detail.isNotEmpty ? '  ${shortText(step.detail, 62)}' : ''}'
+                '${count > 1 ? '  ×$count' : ''}'
+                '${step.durationMs != null ? '  ${step.durationMs}ms' : ''}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontFamily: PB.monoFamily,
+                  fontFamilyFallback: PB.monoFallback,
+                  fontSize: PB.fsTinyCjk,
+                  color: isError
+                      ? PB.danger
+                      : (isRunning
+                            ? PB.colors(context).link
+                            : PB.textQuaternary),
+                ),
               ),
             ),
           ),

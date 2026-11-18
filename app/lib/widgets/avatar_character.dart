@@ -8,6 +8,14 @@ enum AvatarCharacterKind {
   wedge,
   hexagon,
   egg,
+  clover,
+  star,
+  diamond,
+  shield,
+  drop,
+  mochi,
+  neko,
+  octagon,
 }
 
 class AvatarCharacter {

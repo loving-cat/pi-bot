@@ -14,8 +14,8 @@ import 'package:pi_bot/discovery.dart';
 String _announce(Map<String, Object?> extra) => jsonEncode({
   't': kAnnounceType,
   'v': 1,
-  'name': 'pi-bot',
-  'hostname': 'xls-pc',
+  'name': 'Orbis',
+  'hostname': 'studio-pc',
   'version': '1.4.1',
   'port': 8787,
   'urls': ['http://192.168.1.7:8787'],
@@ -28,7 +28,7 @@ void main() {
     test('正常应答：名字、机器名、地址、要不要配对码都能读出来', () {
       final host = parseAnnouncement(_announce({}));
       expect(host, isNotNull);
-      expect(host!.label, 'xls-pc');
+      expect(host!.label, 'studio-pc');
       expect(host.url, 'http://192.168.1.7:8787');
       expect(host.version, '1.4.1');
       expect(host.port, 8787);
@@ -82,14 +82,14 @@ void main() {
 
     test('机器名为空时用 name 当标题', () {
       final host = parseAnnouncement(_announce({'hostname': ''}));
-      expect(host!.label, 'pi-bot');
+      expect(host!.label, 'Orbis');
     });
   });
 
   group('去重与排序', () {
     DiscoveredHost host(String hostname, List<String> urls, {int port = 8787}) =>
         DiscoveredHost(
-          name: 'pi-bot',
+          name: 'Orbis',
           hostname: hostname,
           version: '1.4.1',
           port: port,
@@ -99,7 +99,7 @@ void main() {
 
     test('同一台主机两次应答：tls 信息缺失的一侧被补齐', () {
       final plain = DiscoveredHost(
-        name: 'pi-bot',
+        name: 'Orbis',
         hostname: 'pc-a',
         version: '1.4.1',
         port: 8787,
@@ -107,7 +107,7 @@ void main() {
         pairing: true,
       );
       final secure = DiscoveredHost(
-        name: 'pi-bot',
+        name: 'Orbis',
         hostname: 'pc-a',
         version: '1.4.1',
         port: 8787,

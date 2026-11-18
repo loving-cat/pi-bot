@@ -291,6 +291,10 @@ class AppState extends ChangeNotifier {
   /// 兼容旧用法：这个会话是否有人在写。
   final Map<String, bool> typing = {};
 
+  /// 按轨道拆分的忙碌 Bot 集合：working=后台执行，talking=前台旁路回话。
+  final Map<String, Set<String>> workingBots = {};
+  final Map<String, Set<String>> talkingBots = {};
+
   /// 这个会话当前在干活的 Bot id 列表（供输入框上方的轮播使用）。
   List<String> typingBotIds(String roomId) =>
       (typingBots[roomId] ?? const <String>{}).toList(growable: false);
@@ -2102,8 +2106,16 @@ class AppState extends ChangeNotifier {
     String mode = 'steer',
     List<Attachment> attachments = const [],
     bool flushMerge = true,
+    String duplexMode = 'auto',
   }) =>
-      sendMessageTracked(roomId, text, mode: mode, attachments: attachments, flushMerge: flushMerge);
+      sendMessageTracked(
+        roomId,
+        text,
+        mode: mode,
+        attachments: attachments,
+        flushMerge: flushMerge,
+        duplexMode: duplexMode,
+      );
 
   /// 可指定 requestId 的发送入口：仅原操作重传时复用。
   Future<void> sendMessageTracked(
@@ -2113,6 +2125,7 @@ class AppState extends ChangeNotifier {
     List<Attachment> attachments = const [],
     bool flushMerge = true,
     String? requestId,
+    String duplexMode = 'auto',
   }) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty && attachments.isEmpty) return;
@@ -2141,6 +2154,7 @@ class AppState extends ChangeNotifier {
           'roomId': roomId,
           'text': trimmed,
           'mode': mode,
+          if (duplexMode != 'auto') 'duplexMode': duplexMode,
           if (flushMerge) 'flushMerge': true,
           if (ids.isNotEmpty) 'attachments': ids,
           'clientId': DateTime.now().microsecondsSinceEpoch.toString(),
@@ -2155,6 +2169,7 @@ class AppState extends ChangeNotifier {
       await client.post('/api/rooms/$roomId/send', {
         'text': trimmed,
         'mode': mode,
+        if (duplexMode != 'auto') 'duplexMode': duplexMode,
         'requestId': effectiveRequestId,
         if (ids.isNotEmpty) 'attachments': ids,
       });
@@ -2166,20 +2181,32 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<void> abort(String roomId) async {
+  Future<void> abort(String roomId, {String scope = 'all'}) async {
     // ★ 先当场把界面停下来，再去告诉服务端。
-    //
-    //   只发请求（走 WS）、本地什么都不动的话，服务端那边在收尾，
-    //   界面上却是**转圈照转、消息照流**，看起来就是“没反应”。
-    //   服务端的 session 可能正卡在一个长命令里，几秒到几分钟才真的断。
-    //   所以这里乐观地先改本地状态：说停就停。
-    typing[roomId] = false;
-    typingBots.remove(roomId);
-    queued[roomId] = 0;
+    final cleanScope = (scope == 'work' || scope == 'talk') ? scope : 'all';
+    if (cleanScope != 'talk') {
+      workingBots.remove(roomId);
+      queued[roomId] = 0;
+    }
+    if (cleanScope != 'work') {
+      talkingBots.remove(roomId);
+    }
+    final remaining = <String>{
+      ...?workingBots[roomId],
+      ...?talkingBots[roomId],
+    };
+    if (remaining.isEmpty) {
+      typingBots.remove(roomId);
+      typing[roomId] = false;
+    } else {
+      typingBots[roomId] = remaining;
+      typing[roomId] = true;
+    }
     for (final m in messages[roomId] ?? const <Msg>[]) {
+      final isTalkMsg = m.meta?['duplex'] == 'side_reply';
+      if (cleanScope == 'work' && isTalkMsg) continue;
+      if (cleanScope == 'talk' && !isTalkMsg) continue;
       if (m.status == 'streaming' || m.status == 'retrying') {
-        // 本地乐观终止：用 aborted 而不是 error —— 用户按 Esc 不是"出错"，
-        // 不要弹红色错误气泡（在 pi agent 里终止就是终止，界面不留痕）
         m.status = 'aborted';
         m.error = '';
         for (final s in m.steps) {
@@ -2192,9 +2219,15 @@ class AppState extends ChangeNotifier {
     try {
       final channel = _channel;
       if (channel != null && link == LinkState.online) {
-        channel.sink.add(jsonEncode({'t': 'abort', 'roomId': roomId}));
-      } else {
+        channel.sink.add(jsonEncode({
+          't': 'abort',
+          'roomId': roomId,
+          if (cleanScope != 'all') 'scope': cleanScope,
+        }));
+      } else if (cleanScope == 'all') {
         await api?.post('/api/rooms/$roomId/abort');
+      } else {
+        await api?.post('/api/rooms/$roomId/abort', {'scope': cleanScope});
       }
     } catch (err) {
       lastError = '$err';
@@ -2680,6 +2713,8 @@ class AppState extends ChangeNotifier {
         //   停在"正在调用工具…"，圈一直在转但什么也没发生。
         //   一份全新的快照进来了，这些临时状态就该归零。
         typing.clear();
+        workingBots.clear();
+        talkingBots.clear();
         // ★ 活动轮播的"谁在干活"也要一起清。
         //
         //   只清 typing 不清 typingBots 的话，断线那条路径上登记的
@@ -2746,6 +2781,43 @@ class AppState extends ChangeNotifier {
         // 复盘是在服务端后台跑的：不接这个事件，界面就要等用户切标签页
         // 才能看到新候选（更糟的是操作一条已经被删的经验 →“经验不存在”）。
         applyLessons((ev['lessons'] as List?) ?? const []);
+        break;
+
+      case 'skills.updated':
+        if (ev['skills'] is List) {
+          skills = (ev['skills'] as List)
+              .whereType<Map>()
+              .map((e) => LibrarySkill.fromJson(e.cast<String, dynamic>()))
+              .toList();
+          skillsLoaded = true;
+        }
+        break;
+
+      case 'automation.updated':
+        {
+          final raw = ev['automation'];
+          if (raw is Map) {
+            final item = Automation.fromJson(raw.cast<String, dynamic>());
+            final idx = automations.indexWhere((a) => a.id == item.id);
+            automations = idx >= 0
+                ? ([...automations]..[idx] = item)
+                : [...automations, item];
+          }
+          break;
+        }
+
+      case 'automation.deleted':
+        {
+          final id = ev['id'] as String?;
+          if (id != null && id.isNotEmpty) {
+            automations = automations.where((a) => a.id != id).toList();
+          }
+          break;
+        }
+
+      case 'models.changed':
+        connectionsRevision++;
+        if (api != null) unawaited(refresh());
         break;
 
       case 'mcp.updated':
@@ -2982,17 +3054,72 @@ class AppState extends ChangeNotifier {
         final rid = ev['roomId'] as String;
         final active = ev['active'] as bool? ?? false;
         final botId = ev['botId'] as String?;
-        typing[rid] = active;
+        final lane = ev['lane'] as String?;
         if (botId != null) {
-          final set = typingBots.putIfAbsent(rid, () => <String>{});
-          if (active) {
-            set.add(botId);
+          if (lane == 'talk') {
+            final talkSet = talkingBots.putIfAbsent(rid, () => <String>{});
+            if (active) {
+              talkSet.add(botId);
+            } else {
+              talkSet.remove(botId);
+            }
+            if (talkSet.isEmpty) talkingBots.remove(rid);
+          } else if (lane == 'work') {
+            final workSet = workingBots.putIfAbsent(rid, () => <String>{});
+            if (active) {
+              workSet.add(botId);
+            } else {
+              workSet.remove(botId);
+            }
+            if (workSet.isEmpty) workingBots.remove(rid);
           } else {
-            set.remove(botId);
+            if (active) {
+              workingBots.putIfAbsent(rid, () => <String>{}).add(botId);
+            } else {
+              workingBots[rid]?.remove(botId);
+              if (workingBots[rid]?.isEmpty ?? false) workingBots.remove(rid);
+              talkingBots[rid]?.remove(botId);
+              if (talkingBots[rid]?.isEmpty ?? false) talkingBots.remove(rid);
+            }
           }
-          if (set.isEmpty) typingBots.remove(rid);
+          final merged = <String>{
+            ...?workingBots[rid],
+            ...?talkingBots[rid],
+          };
+          if (merged.isEmpty) {
+            typingBots.remove(rid);
+          } else {
+            typingBots[rid] = merged;
+          }
+          typing[rid] = merged.isNotEmpty;
+          if (lane != 'talk' && (workingBots[rid]?.isEmpty ?? true)) {
+            queued.remove(rid);
+          }
+        } else {
+          typing[rid] = active;
+          if (!active) {
+            workingBots.remove(rid);
+            talkingBots.remove(rid);
+            typingBots.remove(rid);
+            queued.remove(rid);
+          }
         }
-        if (ev['active'] != true) queued.remove(ev['roomId']);
+        break;
+
+      case 'duplex.routed':
+        final rid = ev['roomId'] as String?;
+        final msgId = ev['messageId'] as String?;
+        if (rid != null && msgId != null) {
+          final target = _find(rid, msgId);
+          if (target != null) {
+            target.meta = {
+              ...?target.meta,
+              'duplex': ev['kind'],
+              'decidedBy': ev['decidedBy'],
+              if (ev['duringMsgId'] != null) 'duringMsgId': ev['duringMsgId'],
+            };
+          }
+        }
         break;
 
       case 'queue':

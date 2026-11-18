@@ -8,7 +8,7 @@ import 'avatar_life.dart';
 import 'avatar_projection.dart';
 import 'avatar_solid.dart';
 
-/// 柔软几何角色：同色侧面、宽过渡明暗与平行胶囊眼。
+/// 柔软几何角色：同色侧面、宽过渡明暗、平行胶囊眼与微表情。
 /// 归一化轮廓和渐变按身份、颜色缓存，无裁剪、模糊或离屏图层。
 class AvatarCharacterPainter extends CustomPainter {
   const AvatarCharacterPainter({
@@ -20,6 +20,7 @@ class AvatarCharacterPainter extends CustomPainter {
     required this.gaze,
     this.ring = false,
     this.mood = AvatarMood.idle,
+    this.smile = 0,
   });
 
   final AvatarCharacter character;
@@ -30,6 +31,7 @@ class AvatarCharacterPainter extends CustomPainter {
   final Offset gaze;
   final bool ring;
   final AvatarMood mood;
+  final double smile;
 
   static final Map<AvatarCharacterKind, _Geometry> _geometries = {};
   static final Map<int, _Palette> _palettes = {};
@@ -52,15 +54,19 @@ class AvatarCharacterPainter extends CustomPainter {
     );
     final palette = _palette(color);
     final projection = AvatarProjection.fromGaze(gaze: gaze, size: side);
-    final squeeze = 1 + poke.clamp(0.0, 1.0) * 0.065;
+    final breathWave = math.sin(phase);
+    final squeeze =
+        (1.0 + poke.clamp(-0.35, 1.0) * 0.065) * (1.0 + breathWave * 0.012);
+    final dynamicRoll =
+        character.restTilt - projection.yaw * 0.10 + breathWave * 0.020;
     final front = projection.planeTransform(
       depth: AvatarProjection.frontDepth,
-      roll: character.restTilt,
+      roll: dynamicRoll,
       squeeze: squeeze,
     );
     final back = projection.planeTransform(
       depth: AvatarProjection.backDepth,
-      roll: character.restTilt,
+      roll: dynamicRoll,
       squeeze: squeeze,
       offset: const Offset(0.030, 0.034) * (1 - projection.amount),
     );
@@ -69,7 +75,7 @@ class AvatarCharacterPainter extends CustomPainter {
     canvas.save();
     canvas.translate((size.width - side) / 2, (size.height - side) / 2);
     canvas.scale(side);
-    canvas.translate(0, math.sin(phase) * 0.003);
+    canvas.translate(0, breathWave * 0.010);
 
     canvas.save();
     canvas.transform(back);
@@ -149,29 +155,64 @@ class AvatarCharacterPainter extends CustomPainter {
       0.066 * character.eyeScale,
       0.85 / side / projection.fit / math.cos(projection.yaw),
     );
+    final moodEyeScale = switch (mood) {
+      AvatarMood.busy => 0.93,
+      AvatarMood.speaking => 1.04,
+      AvatarMood.listening => 1.03,
+      AvatarMood.happy => 0.86,
+      AvatarMood.idle => 1.0,
+    };
     final eyeHeight =
-        0.150 *
-        character.eyeScale *
-        geometry.faceScale *
-        (mood == AvatarMood.busy ? 0.94 : 1.0);
-    final opening = 1 - blink.clamp(0.0, 1.0) * 0.91;
-    final visibleHeight = math.max(
-      0.65 / side / projection.fit / math.cos(projection.pitch),
-      eyeHeight * opening,
+        0.150 * character.eyeScale * geometry.faceScale * moodEyeScale;
+    final effectiveSmile = math.max(
+      smile.clamp(0.0, 1.0),
+      mood == AvatarMood.happy ? 1.0 : 0.0,
     );
-    for (final sign in [-1.0, 1.0]) {
-      final center = faceCenter + Offset(sign * spacing, 0);
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromCenter(
-            center: center,
-            width: eyeWidth,
-            height: visibleHeight,
-          ),
-          Radius.circular(eyeWidth * 0.5),
-        ),
-        palette.eyePaint,
+
+    if (effectiveSmile > 0.25 && side >= 20 && blink < 0.4) {
+      final stroke = math.max(
+        eyeWidth * 0.56,
+        0.85 / side / projection.fit,
       );
+      final archPaint = Paint()
+        ..color = palette.eyePaint.color
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round
+        ..strokeWidth = stroke;
+      final hw = eyeWidth * 0.86;
+      final archH = eyeHeight * 0.48 * effectiveSmile;
+      for (final sign in [-1.0, 1.0]) {
+        final center = faceCenter + Offset(sign * spacing, eyeHeight * 0.12);
+        final arc = Path()
+          ..moveTo(center.dx - hw, center.dy)
+          ..quadraticBezierTo(
+            center.dx,
+            center.dy - archH * 1.4,
+            center.dx + hw,
+            center.dy,
+          );
+        canvas.drawPath(arc, archPaint);
+      }
+    } else {
+      final opening = 1 - blink.clamp(0.0, 1.0) * 0.91;
+      final visibleHeight = math.max(
+        0.65 / side / projection.fit / math.cos(projection.pitch),
+        eyeHeight * opening,
+      );
+      for (final sign in [-1.0, 1.0]) {
+        final center = faceCenter + Offset(sign * spacing, 0);
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+            Rect.fromCenter(
+              center: center,
+              width: eyeWidth,
+              height: visibleHeight,
+            ),
+            Radius.circular(eyeWidth * 0.5),
+          ),
+          palette.eyePaint,
+        );
+      }
     }
     canvas.restore();
     canvas.restore();
@@ -186,18 +227,13 @@ class AvatarCharacterPainter extends CustomPainter {
       oldDelegate.poke != poke ||
       oldDelegate.gaze != gaze ||
       oldDelegate.ring != ring ||
-      oldDelegate.mood != mood;
+      oldDelegate.mood != mood ||
+      oldDelegate.smile != smile;
 }
 
 class _Palette {
   _Palette(Color requested) {
     final hsl = HSLColor.fromColor(requested);
-    // ★ 饱和度上限从 0.90 放到 1.0：
-    //   旧值会把最鲜艳的蓝色砍掉 6%，再加上亮度上限 0.68，
-    //   整体观感偏灰、在暗色底上不够“跳”。取色对齐 GrokBot 后
-    //   上限放到满，只保留下限（防止近灰色被误拉亮）。
-    //   亮度区间也从 [0.40,0.68] 收到 [0.42,0.62]：
-    //   太亮会发白，太暗会和深色背景糊在一起。
     final base = hsl
         .withSaturation(
           hsl.saturation > 0.15
@@ -353,7 +389,16 @@ class _Geometry {
         );
       case AvatarCharacterKind.cloud:
         return _Geometry(
-          body: _softCloud(),
+          body: _polarClosedPath(
+            count: 30,
+            offsetAt: (angle) {
+              final r = 0.335 * (1 + 0.20 * math.cos(3 * angle + math.pi / 2));
+              return Offset(
+                0.49 + math.cos(angle) * r * 1.06,
+                0.49 + math.sin(angle) * r * 0.95,
+              );
+            },
+          ),
           faceCenter: const Offset(0.55, 0.445),
         );
       case AvatarCharacterKind.wedge:
@@ -403,20 +448,145 @@ class _Geometry {
             ..close(),
           faceCenter: const Offset(0.535, 0.455),
         );
+      case AvatarCharacterKind.clover:
+        return _Geometry(
+          body: _polarClosedPath(
+            count: 48,
+            offsetAt: (angle) {
+              final r = 0.298 * (1 - 0.135 * math.cos(4 * angle));
+              return Offset(
+                0.495 + math.cos(angle) * r,
+                0.50 + math.sin(angle) * r,
+              );
+            },
+          ),
+          faceCenter: const Offset(0.54, 0.44),
+        );
+      case AvatarCharacterKind.star:
+        return _Geometry(
+          body: _polarClosedPath(
+            count: 50,
+            offsetAt: (angle) {
+              final r =
+                  0.295 * (1 + 0.14 * math.cos(5 * angle + math.pi / 2));
+              return Offset(
+                0.495 + math.cos(angle) * r,
+                0.505 + math.sin(angle) * r,
+              );
+            },
+          ),
+          faceCenter: const Offset(0.535, 0.455),
+          faceScale: 0.94,
+        );
+      case AvatarCharacterKind.diamond:
+        return _Geometry(
+          body: _roundedPolygon([
+            const Offset(0.495, 0.15),
+            const Offset(0.84, 0.50),
+            const Offset(0.495, 0.85),
+            const Offset(0.15, 0.50),
+          ], cornerRatio: 0.22),
+          faceCenter: const Offset(0.53, 0.45),
+          faceScale: 0.92,
+        );
+      case AvatarCharacterKind.shield:
+        return _Geometry(
+          body: Path()
+            ..moveTo(0.495, 0.16)
+            ..cubicTo(0.67, 0.16, 0.79, 0.19, 0.81, 0.28)
+            ..cubicTo(0.83, 0.45, 0.78, 0.67, 0.61, 0.79)
+            ..quadraticBezierTo(0.495, 0.86, 0.38, 0.79)
+            ..cubicTo(0.21, 0.67, 0.16, 0.45, 0.18, 0.28)
+            ..cubicTo(0.20, 0.19, 0.32, 0.16, 0.495, 0.16)
+            ..close(),
+          faceCenter: const Offset(0.535, 0.435),
+          faceScale: 0.95,
+        );
+      case AvatarCharacterKind.drop:
+        return _Geometry(
+          body: _polarClosedPath(
+            count: 48,
+            offsetAt: (angle) {
+              final s = math.sin(angle);
+              final rx = 0.295 * (1 + 0.22 * s);
+              final ry = 0.315 * (1 - 0.04 * math.cos(2 * angle));
+              return Offset(
+                0.495 + math.cos(angle) * rx,
+                0.515 + s * ry,
+              );
+            },
+          ),
+          faceCenter: const Offset(0.53, 0.505),
+          faceScale: 0.92,
+        );
+      case AvatarCharacterKind.mochi:
+        return _Geometry(
+          body: _polarClosedPath(
+            count: 44,
+            offsetAt: (angle) {
+              final s = math.sin(angle);
+              final rx = 0.325 * (1 + 0.10 * s);
+              final ry = 0.290 * (1 - 0.06 * s);
+              return Offset(
+                0.495 + math.cos(angle) * rx,
+                0.52 + s * ry,
+              );
+            },
+          ),
+          faceCenter: const Offset(0.54, 0.485),
+        );
+      case AvatarCharacterKind.neko:
+        return _Geometry(
+          body: _polarClosedPath(
+            count: 56,
+            offsetAt: (angle) {
+              double diff(double target) {
+                var d = (angle - target) % (2 * math.pi);
+                if (d > math.pi) d -= 2 * math.pi;
+                if (d < -math.pi) d += 2 * math.pi;
+                return d;
+              }
+
+              final leftEar = math.exp(-math.pow(diff(-2.12) / 0.34, 2));
+              final rightEar = math.exp(-math.pow(diff(-1.02) / 0.34, 2));
+              final flatBottom = 1 - 0.04 * math.max(0.0, math.sin(angle));
+              final r = 0.285 * flatBottom + 0.088 * (leftEar + rightEar);
+              return Offset(
+                0.495 + math.cos(angle) * r,
+                0.535 + math.sin(angle) * r,
+              );
+            },
+          ),
+          faceCenter: const Offset(0.535, 0.49),
+          faceScale: 0.95,
+        );
+      case AvatarCharacterKind.octagon:
+        return _Geometry(
+          body: _roundedPolygon([
+            for (var i = 0; i < 8; i++)
+              Offset(
+                0.495 +
+                    math.cos(-math.pi / 2 + math.pi / 8 + i * math.pi / 4) *
+                        0.340,
+                0.50 +
+                    math.sin(-math.pi / 2 + math.pi / 8 + i * math.pi / 4) *
+                        0.340,
+              ),
+          ], cornerRatio: 0.26),
+          faceCenter: const Offset(0.54, 0.44),
+        );
     }
   }
 
-  /// 三瓣固定轮廓，以中点曲线连续连接；仅在首次创建此种轮廓时计算。
-  static Path _softCloud() {
-    const count = 30;
-    final points = List<Offset>.generate(count, (index) {
-      final angle = index / count * 2 * math.pi;
-      final radius = 0.335 * (1 + 0.20 * math.cos(3 * angle + math.pi / 2));
-      return Offset(
-        0.49 + math.cos(angle) * radius * 1.06,
-        0.49 + math.sin(angle) * radius * 0.95,
-      );
-    });
+  /// 用极坐标控制点生成平滑连续的闭合曲线，仅在首次构造该种几何时运行。
+  static Path _polarClosedPath({
+    required int count,
+    required Offset Function(double angle) offsetAt,
+  }) {
+    final points = List<Offset>.generate(
+      count,
+      (index) => offsetAt(index / count * 2 * math.pi),
+    );
     final first = (points.last + points.first) / 2;
     final path = Path()..moveTo(first.dx, first.dy);
     for (var index = 0; index < count; index++) {
@@ -424,6 +594,26 @@ class _Geometry {
       final next = points[(index + 1) % count];
       final midpoint = (current + next) / 2;
       path.quadraticBezierTo(current.dx, current.dy, midpoint.dx, midpoint.dy);
+    }
+    return path..close();
+  }
+
+  /// 圆角正/凹多边形轮廓生成。
+  static Path _roundedPolygon(
+    List<Offset> vertices, {
+    required double cornerRatio,
+  }) {
+    final n = vertices.length;
+    final start = Offset.lerp(vertices.last, vertices.first, 1 - cornerRatio)!;
+    final path = Path()..moveTo(start.dx, start.dy);
+    for (var i = 0; i < n; i++) {
+      final prev = vertices[(i - 1 + n) % n];
+      final curr = vertices[i];
+      final next = vertices[(i + 1) % n];
+      final enter = Offset.lerp(curr, prev, cornerRatio)!;
+      final exit = Offset.lerp(curr, next, cornerRatio)!;
+      path.lineTo(enter.dx, enter.dy);
+      path.quadraticBezierTo(curr.dx, curr.dy, exit.dx, exit.dy);
     }
     return path..close();
   }

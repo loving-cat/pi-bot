@@ -22,6 +22,7 @@ class _MemoryState extends AppState {
     String mode = 'steer',
     List<Attachment> attachments = const [],
     bool flushMerge = true,
+    String duplexMode = 'auto',
   }) async => sent.add(text);
 }
 

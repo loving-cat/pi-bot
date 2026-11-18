@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pi_bot/l10n/l10n.dart';
 import 'package:pi_bot/token_count.dart';
+import 'package:pi_bot/widgets/avatar_character.dart';
 
 void main() {
   group('parseTokenCount', () {
@@ -81,10 +82,14 @@ void main() {
   });
 
   group('词表完整性', () {
-    test('中英两种语言都有 8 个轮廓名与 8 个颜色名', () {
+    test('中英两种语言都有 ${AvatarCharacterKind.values.length} 个轮廓名与 8 个颜色名', () {
       for (final language in AppLanguage.values) {
         final strings = AppStrings(language);
-        expect(strings.avatarShapeNames.length, 8, reason: language.code);
+        expect(
+          strings.avatarShapeNames.length,
+          AvatarCharacterKind.values.length,
+          reason: language.code,
+        );
         expect(strings.avatarColorNames.length, 8, reason: language.code);
         for (final name in strings.avatarShapeNames) {
           expect(name.trim(), isNotEmpty, reason: language.code);

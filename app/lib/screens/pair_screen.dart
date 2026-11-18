@@ -239,7 +239,7 @@ class _PairScreenState extends State<PairScreen> {
                   ),
                   const SizedBox(height: 20),
                   const Text(
-                    'pi-bot',
+                    'Orbis',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontSize: PB.fsXxl,

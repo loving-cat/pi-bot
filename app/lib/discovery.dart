@@ -110,7 +110,7 @@ DiscoveredHost? parseAnnouncement(String text) {
       : '';
   final name = decoded['name'] is String && (decoded['name'] as String).trim().isNotEmpty
       ? (decoded['name'] as String).trim()
-      : 'pi-bot';
+      : 'Orbis';
   // 没有地址也没有机器名 —— 这条应答没法连，丢掉。
   if (urls.isEmpty && (hostname.isEmpty || port <= 0)) return null;
 

@@ -16,7 +16,7 @@ DiscoveredHost _host(
   List<String>? urls,
   bool approve = true,
 }) => DiscoveredHost(
-  name: 'pi-bot',
+  name: 'Orbis',
   hostname: hostname,
   version: version,
   port: 8787,
@@ -44,7 +44,7 @@ void main() {
     await _pump(
       tester,
       NearbyHostsCard(
-        hosts: [_host('xls-pc'), _host('mac-mini', urls: ['http://192.168.1.8:8787'])],
+        hosts: [_host('studio-pc'), _host('mac-mini', urls: ['http://192.168.1.8:8787'])],
         scanning: false,
         picked: null,
         onPick: (h) => picked = h.label,
@@ -52,7 +52,7 @@ void main() {
       ),
     );
     expect(find.text('附近的电脑'), findsOneWidget);
-    expect(find.text('xls-pc'), findsOneWidget);
+    expect(find.text('studio-pc'), findsOneWidget);
     expect(find.text('mac-mini'), findsOneWidget);
     expect(find.text('http://192.168.1.7:8787'), findsOneWidget);
 
@@ -109,7 +109,7 @@ void main() {
   });
 
   testWidgets('选中的那台有视觉标记（不然看不出选的是哪台）', (tester) async {
-    final host = _host('xls-pc');
+    final host = _host('studio-pc');
     await _pump(
       tester,
       NearbyHostsCard(
@@ -128,14 +128,14 @@ void main() {
     await _pump(
       tester,
       PairWaitingCard(
-        host: 'xls-pc',
+        host: 'studio-pc',
         title: '已发送，去电脑上点"允许"',
-        hint: '电脑上的 pi-bot 会弹出窗口问你这台手机要不要连进来',
+        hint: '电脑上的 Orbis 会弹出窗口问你这台手机要不要连进来',
         onCancel: () => cancelled = true,
       ),
     );
     expect(find.text('已发送，去电脑上点"允许"'), findsOneWidget);
-    expect(find.text('xls-pc'), findsOneWidget);
+    expect(find.text('studio-pc'), findsOneWidget);
     expect(find.textContaining('弹出窗口'), findsOneWidget);
     await tester.tap(find.text('取消'));
     expect(cancelled, isTrue);

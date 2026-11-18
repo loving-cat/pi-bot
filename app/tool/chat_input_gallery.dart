@@ -25,6 +25,7 @@ class _GalleryState extends AppState {
     String mode = 'steer',
     List<Attachment> attachments = const [],
     bool flushMerge = true,
+    String duplexMode = 'auto',
   }) async {
     sendCount++;
     lastText = text;

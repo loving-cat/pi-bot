@@ -10,7 +10,7 @@ import 'area.dart';
 const areaOnboarding = StringArea(
   zh: {
     'onboard.title': '先配置一个模型',
-    'onboard.subtitle': 'pi-bot 靠模型干活。没有可用的模型组时，bot 收到消息也无法回复。',
+    'onboard.subtitle': 'Orbis 靠模型干活。没有可用的模型组时，bot 收到消息也无法回复。',
     'onboard.step1': '填接口地址、API Key，选接口类型',
     'onboard.step2': '点「测试连通性」，自动发现可用模型并填入',
     'onboard.step3': '保存后选一个默认模型',
@@ -38,7 +38,7 @@ const areaOnboarding = StringArea(
   },
   en: {
     'onboard.title': 'Set up a model first',
-    'onboard.subtitle': 'pi-bot runs on models. Without a usable model group, bots cannot reply to anything.',
+    'onboard.subtitle': 'Orbis runs on models. Without a usable model group, bots cannot reply to anything.',
     'onboard.step1': 'Fill in the base URL, API key and API type',
     'onboard.step2': 'Hit Test connection to discover and fill in available models',
     'onboard.step3': 'Save, then pick a default model',

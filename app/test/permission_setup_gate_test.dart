@@ -34,7 +34,7 @@ Map<String, dynamic> planJson({
         'lines': ['选一个负责人项目'],
         'options': {
           'projects': [
-            {'id': 'p-quant', 'label': 'quant-all-in', 'path': 'D:/quant-all-in'},
+            {'id': 'p-demo', 'label': 'orbis-demo', 'path': 'D:/projects/orbis-demo'},
             {'id': 'p-other', 'label': '另一个项目', 'path': 'D:/other'},
           ],
           'gitScopes': [
@@ -42,7 +42,7 @@ Map<String, dynamic> planJson({
             {'id': 'commit', 'label': '读 + 本地提交（不碰远端）', 'actions': ['git.read', 'git.commit']},
           ],
         },
-        'recommended': {'projectId': 'p-quant', 'gitScope': 'commit'},
+        'recommended': {'projectId': 'p-demo', 'gitScope': 'commit'},
       },
       {
         'id': 3,
@@ -139,7 +139,7 @@ void main() {
     final button = find.byType(FilledButton);
     expect(tester.widget<FilledButton>(button).onPressed, isNotNull);
     await tapVisible(tester, button);
-    expect(gotProject, 'p-quant', reason: '推荐值应该被回填');
+    expect(gotProject, 'p-demo', reason: '推荐值应该被回填');
     expect(gotScope, 'commit');
   });
 
@@ -152,7 +152,7 @@ void main() {
         },
       ),
     );
-    await tester.tap(find.text('quant-all-in').first);
+    await tester.tap(find.text('orbis-demo').first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('另一个项目').last);
     await tester.pumpAndSettle();
@@ -192,7 +192,7 @@ void main() {
       'title': '负责人项目与普通 Git 动作范围',
       'options': {
         'projects': [
-          {'id': 'p-quant', 'label': 'quant-all-in', 'path': 'D:/quant-all-in'},
+          {'id': 'p-demo', 'label': 'orbis-demo', 'path': 'D:/projects/orbis-demo'},
         ],
         'gitScopes': <Map<String, dynamic>>[],
       },

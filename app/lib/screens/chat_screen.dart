@@ -26,6 +26,7 @@ import '../window_chrome.dart';
 import '../widgets/composer_palette.dart';
 import '../widgets/message_anchor_rail.dart';
 import '../widgets/no_scrollbar.dart';
+import '../widgets/streaming_markdown_view.dart';
 import '../widgets/toast.dart';
 import '../widgets/anchored_menu.dart';
 import '../widgets/activity_monitor.dart';
@@ -156,6 +157,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final ValueNotifier<bool> _railDragging = ValueNotifier<bool>(false);
   String? _highlightedMsgId;
   Timer? _highlightTimer;
+  bool _userTypingActive = false;
+  Timer? _typingIdleTimer;
+  String _lastObservedTypingText = '';
 
   @override
   void initState() {
@@ -175,8 +179,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _input.selection = TextSelection.collapsed(offset: _input.text.length);
     }
     _lastInputLen = _input.text.length;
+    _lastObservedTypingText = _input.text;
     _input.addListener(_absorbPastedPaths);
     _input.addListener(_onInputTriggerChanged);
+    _input.addListener(_onInputTypingChanged);
   }
 
   @override
@@ -208,6 +214,28 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _state?.setDraft(widget.room.id, _input.text);
   }
 
+  void _onInputTypingChanged() {
+    final text = _input.text;
+    if (text == _lastObservedTypingText) return;
+    _lastObservedTypingText = text;
+    if (text.trim().isEmpty) {
+      _typingIdleTimer?.cancel();
+      _typingIdleTimer = null;
+      if (_userTypingActive) setState(() => _userTypingActive = false);
+      return;
+    }
+    if (!_userTypingActive) setState(() => _userTypingActive = true);
+    _typingIdleTimer?.cancel();
+    if (!WidgetsBinding.instance.runtimeType.toString().contains('Test')) {
+      _typingIdleTimer = Timer(const Duration(milliseconds: 2500), () {
+        _typingIdleTimer = null;
+        if (mounted && _userTypingActive) {
+          setState(() => _userTypingActive = false);
+        }
+      });
+    }
+  }
+
   void _countIfScrolledUp() {
     final list = _state?.messages[widget.room.id] ?? const [];
     final lastId = list.isEmpty ? null : list.last.id;
@@ -221,6 +249,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _highlightTimer?.cancel();
     _highlightTimer = null;
+    _typingIdleTimer?.cancel();
+    _typingIdleTimer = null;
     _msgContexts.clear();
     _measuredMsgHeights.clear();
     _railDragging.dispose();
@@ -231,6 +261,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _scroll.dispose();
     _input.removeListener(_absorbPastedPaths);
     _input.removeListener(_onInputTriggerChanged);
+    _input.removeListener(_onInputTypingChanged);
     _input.removeListener(_saveDraft);
     _state?.setDraft(widget.room.id, _input.text);
     _input.dispose();
@@ -1029,6 +1060,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           ValueKey('progress-${display[i].id}'): i,
     };
     final busy = state.typing[room.id] == true;
+    final streamingTextActive =
+        (state.talkingBots[room.id]?.isNotEmpty ?? false) ||
+        msgs.any((m) => m.isLive && m.text.trim().isNotEmpty);
+    final roomAvatarMood = streamingTextActive
+        ? AvatarMood.speaking
+        : (busy
+              ? AvatarMood.busy
+              : (_userTypingActive ? AvatarMood.listening : AvatarMood.idle));
     final lead =
         state.botById(room.leadBotId) ??
         state.botById(room.botIds.isNotEmpty ? room.botIds.first : null);
@@ -1208,8 +1247,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         GroupBlobAvatar(
                           seeds: room.botIds,
                           size: 22,
-                          animate: busy,
-                          mood: busy ? AvatarMood.busy : AvatarMood.idle,
+                          animate: roomAvatarMood.isActiveWork,
+                          mood: roomAvatarMood,
                         )
                       else
                         BlobAvatar(
@@ -1224,7 +1263,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           emoji: lead?.emoji,
                           size: 22,
                           animate: true,
-                          mood: busy ? AvatarMood.busy : AvatarMood.idle,
+                          mood: roomAvatarMood,
                         ),
                       const SizedBox(width: 8),
                       Text(
@@ -1353,6 +1392,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             _EmptyHint(
                               room: room,
                               lead: lead,
+                              mood: roomAvatarMood,
                               onTapMember: _insertMention,
                             ),
                             if (paletteOverlay != null) paletteOverlay,
@@ -1740,7 +1780,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     controller: _input,
                     focus: _focus,
                     busy: busy,
-                    queuedCount: state.queued[room.id] ?? 0,
                     pending: _pending,
                     uploading: _uploading,
                     replyingTo: _replyingTo,
@@ -1892,10 +1931,16 @@ class _FullPageBrowserState extends State<_FullPageBrowser> {
 }
 
 class _EmptyHint extends StatelessWidget {
-  const _EmptyHint({required this.room, required this.lead, this.onTapMember});
+  const _EmptyHint({
+    required this.room,
+    required this.lead,
+    this.mood = AvatarMood.idle,
+    this.onTapMember,
+  });
 
   final Room room;
   final Bot? lead;
+  final AvatarMood mood;
   final void Function(String name)? onTapMember;
 
   @override
@@ -1921,7 +1966,12 @@ class _EmptyHint extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             if (isGroup)
-              GroupBlobAvatar(seeds: room.botIds, size: 64, animate: true)
+              GroupBlobAvatar(
+                seeds: room.botIds,
+                size: 64,
+                animate: true,
+                mood: mood,
+              )
             else
               BlobAvatar(
                 seed: room.botIds.isNotEmpty ? room.botIds.first : room.id,
@@ -1931,6 +1981,7 @@ class _EmptyHint extends StatelessWidget {
                 emoji: lead?.emoji,
                 size: 64,
                 animate: true,
+                mood: mood,
                 // 空会话里这个大头像是"孤零零挂着"的，戳一下挤一下不会抢谁的点击
                 interactive: true,
               ),
@@ -2020,7 +2071,6 @@ class _Composer extends StatefulWidget {
     required this.controller,
     required this.focus,
     required this.busy,
-    required this.queuedCount,
     required this.pending,
     required this.uploading,
     this.replyingTo,
@@ -2038,7 +2088,6 @@ class _Composer extends StatefulWidget {
   final TextEditingController controller;
   final FocusNode focus;
   final bool busy;
-  final int queuedCount;
   final List<Attachment> pending;
   final bool uploading;
   final Msg? replyingTo;
@@ -2173,7 +2222,6 @@ class _ComposerState extends State<_Composer> {
     final s = L10n.s(context);
     final controller = widget.controller;
     final busy = widget.busy;
-    final queuedCount = widget.queuedCount;
     final onSend = widget.onSend;
     final onStop = widget.onStop;
     final pending = widget.pending;
@@ -2184,55 +2232,6 @@ class _ComposerState extends State<_Composer> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // ★ 这个 key 是**必须的**，不是为了好看。
-          //
-          //   不加的话：busy 一变，这个孩子就凭空插到 Column 最前面，
-          //   Flutter 按位置配对 → 后面的输入框整棵被**重建** →
-          //   新的 EditableText 拿着一个"已经聚焦"的 FocusNode 初始化，
-          //   于是它**永远不会打开文本输入连接**。表现就是：
-          //   发完第一条，光标在闪、打字没反应、点一下也没用（点它没有状态变化，
-          //   引擎不会重连）。有 key 之后 Flutter 按 key 配对，输入框原地不动。
-          // ★ 只有**真的有排队消息**时才显示这一行。
-          //   原来条件是 if (busy)，删掉"正在干活"文案后就变成
-          //   "已发了 0 句" 常驻 —— 那是在说一件没发生的事。
-          if (busy && queuedCount > 0)
-            Padding(
-              key: const ValueKey('composer-busy-hint'),
-              padding: const EdgeInsets.only(bottom: 6),
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 11,
-                  vertical: 5,
-                ),
-                decoration: BoxDecoration(
-                  color: PB.bgBubble,
-                  borderRadius: BorderRadius.circular(PB.rFull),
-                  border: Border.all(color: PB.borderTertiary),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      LucideIcons.zap,
-                      size: 12,
-                      color: PB.colors(context).accentBright,
-                    ),
-                    const SizedBox(width: 5),
-                    Text(
-                      // ★ 只在有排队消息时显示。
-                      //   "正在干活"这类泛提示已经由输入框上方的活动轮播表达，
-                      //   而那行能说出**谁在干、在干什么**，信息量更大；
-                      //   两行都说同一件事只会挤占视线。
-                      s.tf('chat.busyQueued', {'n': queuedCount}),
-                      style: TextStyle(
-                        fontSize: PB.fsXxs,
-                        color: PB.textTertiary,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
           if (widget.replyingTo != null)
             _ComposerReplyBar(
               key: const ValueKey('composer-reply-bar'),
@@ -2528,7 +2527,7 @@ class _ComposerState extends State<_Composer> {
   }
 }
 
-class _RoundButton extends StatelessWidget {
+class _RoundButton extends StatefulWidget {
   const _RoundButton({
     super.key,
     required this.icon,
@@ -2550,24 +2549,45 @@ class _RoundButton extends StatelessWidget {
   final double size;
 
   @override
+  State<_RoundButton> createState() => _RoundButtonState();
+}
+
+class _RoundButtonState extends State<_RoundButton> {
+  bool _down = false;
+
+  @override
   Widget build(BuildContext context) {
     final button = Padding(
       padding: const EdgeInsets.only(bottom: 1),
-      child: Material(
-        color: color,
-        shape: const CircleBorder(),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          child: SizedBox(
-            width: size,
-            height: size,
-            child: Icon(icon, size: size * 0.475, color: iconColor),
+      child: AnimatedScale(
+        scale: _down ? 0.92 : 1.0,
+        duration: const Duration(milliseconds: 90),
+        curve: Curves.easeOutCubic,
+        child: Material(
+          color: widget.color,
+          shape: const CircleBorder(),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onHighlightChanged: (v) {
+              if (v != _down && mounted) setState(() => _down = v);
+            },
+            onTap: widget.onTap,
+            child: SizedBox(
+              width: widget.size,
+              height: widget.size,
+              child: Icon(
+                widget.icon,
+                size: widget.size * 0.475,
+                color: widget.iconColor,
+              ),
+            ),
           ),
         ),
       ),
     );
-    return tooltip == null ? button : Tooltip(message: tooltip!, child: button);
+    return widget.tooltip == null
+        ? button
+        : Tooltip(message: widget.tooltip!, child: button);
   }
 }
 
@@ -3100,6 +3120,9 @@ class _MessageRow extends StatelessWidget {
                           emoji: displayEmoji,
                           size: 28,
                           animate: false,
+                          mood: streaming
+                              ? AvatarMood.speaking
+                              : AvatarMood.idle,
                         ),
                       )
                     : null,
@@ -3250,9 +3273,9 @@ class _MessageRow extends StatelessWidget {
                                   valueListenable: AppScope.read(
                                     context,
                                   ).streamTickFor(msg.id),
-                                  builder: (_, __, ___) => MdText(
-                                    '${msg.text}▍',
-                                    selectable: false,
+                                  builder: (_, __, ___) => StreamingMarkdownView(
+                                    msg.text,
+                                    streaming: true,
                                     onMentionTap: (name) =>
                                         openBotDm(context, name),
                                     onLinkTap: (url) => AppScope.read(

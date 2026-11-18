@@ -6,6 +6,7 @@
 // 查询口径：先查当前语言，缺了回退中文，再缺就返回 key 本身
 // —— 接口漏配文案时界面显示 "chat.send" 而不是崩，一眼能看出漏了哪条。
 
+import '../widgets/avatar_character.dart';
 import 'strings/registry.dart';
 
 export 'strings/registry.dart';
@@ -89,9 +90,10 @@ class AppStrings {
 
   // ---- 少量需要计算的文案 ----
 
-  /// 8 种轮廓的名字，顺序与 AvatarCharacterKind.values 一致。
+  /// 16 种轮廓的名字，顺序与 AvatarCharacterKind.values 一致。
   List<String> get avatarShapeNames => [
-    for (var i = 0; i < 8; i++) t('avatar.shape.$i'),
+    for (var i = 0; i < AvatarCharacterKind.values.length; i++)
+      t('avatar.shape.$i'),
   ];
 
   /// 8 个预设色的名字，顺序与 avatarColorPresets 一致。

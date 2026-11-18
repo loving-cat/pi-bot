@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 
 import '../scope.dart';
 import '../theme.dart';
+import 'avatar_life.dart';
 import 'blob_avatar.dart';
+import 'thinking_shimmer.dart';
 
 /// 输入框左上角的「谁在干活」轮播。
 ///
@@ -230,25 +232,43 @@ class _ActivityMonitorState extends State<ActivityMonitor> {
                         color: PB.colorFor(bot.id),
                         size: _avatarSize,
                         animate: false,
+                        mood: streaming
+                            ? AvatarMood.speaking
+                            : AvatarMood.busy,
                       ),
                       const SizedBox(width: 7),
                       // 胶囊里只写「名字 正在处理」；任务描述进 Tooltip。
                       AnimatedSwitcher(
                         duration: const Duration(milliseconds: 260),
+                        switchInCurve: const Cubic(0.22, 1, 0.36, 1),
+                        transitionBuilder: (child, anim) => FadeTransition(
+                          opacity: anim,
+                          child: SlideTransition(
+                            position: Tween(
+                              begin: const Offset(0, 0.25),
+                              end: Offset.zero,
+                            ).animate(anim),
+                            child: child,
+                          ),
+                        ),
                         child: _maybeTooltip(
                           tooltip,
                           ConstrainedBox(
                             constraints: const BoxConstraints(
                               maxWidth: _maxLabelWidth,
                             ),
-                            child: Text(
-                              '${bot.name} $verb',
+                            child: ThinkingShimmer(
                               key: ValueKey(current),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: PB.fsXs,
-                                color: PB.textTertiary,
+                              baseColor: PB.textTertiary,
+                              highlightColor: PB.textPrimary,
+                              child: Text(
+                                '${bot.name} $verb',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: PB.fsXs,
+                                  color: PB.textTertiary,
+                                ),
                               ),
                             ),
                           ),

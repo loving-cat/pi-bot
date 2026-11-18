@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../l10n/l10n.dart';
+import '../model_display.dart';
 import '../models.dart';
 import '../scope.dart';
 import '../theme.dart';
@@ -266,9 +267,15 @@ class _BotRow extends StatelessWidget {
                         const SizedBox(height: 2),
                         Text(
                           L10n.s(context).tf('bots.modelSummary', {
-                            'model':
-                                bot.model ??
-                                L10n.s(context).t('bots.defaultModel'),
+                            'model': () {
+                              final info = compactModelDisplay(
+                                bot.model,
+                                state.modelGroups,
+                              );
+                              return info.isEmpty
+                                  ? L10n.s(context).t('bots.defaultModel')
+                                  : info.combined;
+                            }(),
                             'thinking': bot.thinking ?? '-',
                           }),
                           style: TextStyle(

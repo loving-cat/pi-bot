@@ -173,8 +173,8 @@ const areaChat = StringArea(
     'pair.searching': '正在搜索同一个 Wi-Fi 下的电脑…',
     'pair.notFound': '没找到附近的电脑',
     'pair.notFoundHint':
-        '确认电脑上的 pi-bot 正在运行，两台设备连的是同一个 Wi-Fi。'
-        '电脑第一次运行时系统会问"是否允许 pi-bot 访问网络"，要选允许。',
+        '确认电脑上的 Orbis 正在运行，两台设备连的是同一个 Wi-Fi。'
+        '电脑第一次运行时系统会问"是否允许 Orbis 访问网络"，要选允许。',
     'pair.codeHintForHost': '在 {host} 上点"允许"，或者把它显示的 6 位配对码填在这里',
     'pair.manualToggle': '找不到？手动填地址',
     'pair.manualHide': '收起手动填地址',
@@ -182,7 +182,7 @@ const areaChat = StringArea(
     'pair.requestTitle': '请求连接',
     'pair.requestSending': '正在请求…',
     'pair.waitingApproval': '已发送，去电脑上点"允许"',
-    'pair.waitingHint': '电脑上的 pi-bot 会弹出窗口问你这台手机要不要连进来；没人点的话 30 秒后自动断开。',
+    'pair.waitingHint': '电脑上的 Orbis 会弹出窗口问你这台手机要不要连进来；没人点的话 30 秒后自动断开。',
     'pair.denied': '电脑上拒绝了这次连接',
     'pair.expired': '请求已过期，重新点一次那台电脑',
     'pair.timeout': '等太久了：去电脑上看看有没有弹窗，再试一次',
@@ -193,7 +193,7 @@ const areaChat = StringArea(
 
     // ---- 扫码 ----
     'scan.permPermanentlyDenied':
-        '扫码要用相机。\n你之前拒绝过两次，系统不再弹窗了 ——\n去设置里把 pi-bot 的相机权限打开。',
+        '扫码要用相机。\n你之前拒绝过两次，系统不再弹窗了 ——\n去设置里把 Orbis 的相机权限打开。',
     'scan.permNeeded': '扫码要用相机。\n不给权限就扫不了码（也可以直接手填地址+配对码）。',
     'scan.openSettings': '去系统设置',
     'scan.allowCamera': '允许使用相机',
@@ -201,7 +201,7 @@ const areaChat = StringArea(
     'scan.cameraSlow': '相机还没起来…',
     'scan.cameraStarting': '正在启动相机…',
     'scan.firstUseHint': '第一次用会弹一个相机权限，点「允许」',
-    'scan.errorPermission': '没拿到相机权限。\n去「系统设置 → 应用 → pi-bot → 权限」里打开相机，再回来点重试。',
+    'scan.errorPermission': '没拿到相机权限。\n去「系统设置 → 应用 → Orbis → 权限」里打开相机，再回来点重试。',
     'scan.errorUnsupported': '这台设备不支持扫码。',
     'scan.errorGeneric': '相机打不开：{error}',
     'scan.alignHint': '对准电脑终端里那个二维码',
@@ -401,7 +401,7 @@ const areaChat = StringArea(
     'pair.searching': 'Looking for computers on this Wi-Fi…',
     'pair.notFound': 'No computers found',
     'pair.notFoundHint':
-        'Make sure pi-bot is running on the computer and both devices are on the same Wi-Fi. '
+        'Make sure Orbis is running on the computer and both devices are on the same Wi-Fi. '
         'The first time it runs, the system asks whether to allow network access - choose Allow.',
     'pair.codeHintForHost': 'Tap Allow on {host}, or type the 6-digit code it shows here',
     'pair.manualToggle': 'Not there? Enter the address manually',
@@ -410,7 +410,7 @@ const areaChat = StringArea(
     'pair.requestTitle': 'Ask to connect',
     'pair.requestSending': 'Sending…',
     'pair.waitingApproval': 'Sent - tap Allow on the computer',
-    'pair.waitingHint': 'pi-bot on the computer pops up a window asking whether this phone may connect. It disconnects after 30 seconds if nobody answers.',
+    'pair.waitingHint': 'Orbis on the computer pops up a window asking whether this phone may connect. It disconnects after 30 seconds if nobody answers.',
     'pair.denied': 'The computer declined this connection',
     'pair.expired': 'Request expired - tap that computer again',
     'pair.timeout': 'Too long with no answer: check the computer for a prompt, then try again',
@@ -420,7 +420,7 @@ const areaChat = StringArea(
 
 
     // ---- Scanning ----
-    'scan.permPermanentlyDenied': 'Scanning needs the camera.\nYou denied it twice, so the system no longer asks —\nallow camera access for pi-bot in Settings.',
+    'scan.permPermanentlyDenied': 'Scanning needs the camera.\nYou denied it twice, so the system no longer asks —\nallow camera access for Orbis in Settings.',
     'scan.permNeeded': 'Scanning needs the camera.\nWithout permission you cannot scan (you can still type the address and code by hand).',
     'scan.openSettings': 'Open system settings',
     'scan.allowCamera': 'Allow camera access',
@@ -428,7 +428,7 @@ const areaChat = StringArea(
     'scan.cameraSlow': 'The camera is still starting…',
     'scan.cameraStarting': 'Starting the camera…',
     'scan.firstUseHint': 'The first time, allow the camera permission prompt',
-    'scan.errorPermission': 'No camera permission.\nAllow the camera in System Settings → Apps → pi-bot → Permissions, then come back and retry.',
+    'scan.errorPermission': 'No camera permission.\nAllow the camera in System Settings → Apps → Orbis → Permissions, then come back and retry.',
     'scan.errorUnsupported': 'This device does not support scanning.',
     'scan.errorGeneric': 'Cannot open the camera: {error}',
     'scan.alignHint': 'Point at the QR code in the terminal on your computer',

@@ -65,6 +65,7 @@ const areaPanel2 = StringArea(
     // ---- 模型选择器 ----
     'model.pickerLabel': '模型（留空用默认）',
     'model.pickFromList': '从列表里选',
+    'model.editRaw': '手动编辑原始 ID',
     'model.pickTitle': '选一个模型',
     'model.emptyGroups': '还没有可用的模型组。\n请到「设置 → 模型组」添加或启用模型组。',
     'model.contextShort': '{n}k 上下文',
@@ -202,10 +203,10 @@ const areaPanel2 = StringArea(
     'update.done': '下载完成',
     'update.savedTo': '更新包已保存到：',
     'update.macInstructions':
-        '关闭 pi-bot，打开 DMG 并将 App 拖入 Applications；\n重新打开后，在设置中重启本机服务端。',
-    'update.installInstructions': '关闭 pi-bot 后运行这个安装包完成更新。',
+        '关闭 Orbis，打开 DMG 并将 App 拖入 Applications；\n重新打开后，在设置中重启本机服务端。',
+    'update.installInstructions': '关闭 Orbis 后运行这个安装包完成更新。',
     'update.winSetupInstructions':
-        '关闭 pi-bot 后双击安装包，按下一步装完即可；\n数据目录和已配对的设备不会被改动。',
+        '关闭 Orbis 后双击安装包，按下一步装完即可；\n数据目录和已配对的设备不会被改动。',
     'update.gotIt': '知道了',
     'update.openFolder': '打开所在目录',
 
@@ -248,7 +249,7 @@ const areaPanel2 = StringArea(
     'confirm.approved': '已批准',
     'confirm.rejected': '已拒绝',
     'confirm.approveOnPhone': '批准',
-    'confirm.openOnPhone': '在手机上打开 pi-bot 来批准 —— 桌面上的批准不算数：主 Bot 能操作这台电脑，它可以自己点。',
+    'confirm.openOnPhone': '在手机上打开 Orbis 来批准 —— 桌面上的批准不算数：主 Bot 能操作这台电脑，它可以自己点。',
     'approval.reject': '拒绝',
     'approval.approveOnce': '批准这一次',
     'approval.approvedHint': '已经放行这一次，它会接着做完。',
@@ -473,6 +474,7 @@ const areaPanel2 = StringArea(
     // ---- model picker ----
     'model.pickerLabel': 'Model (blank = default)',
     'model.pickFromList': 'Pick from list',
+    'model.editRaw': 'Edit raw ID',
     'model.pickTitle': 'Pick a model',
     'model.emptyGroups': 'No model groups available.\nAdd or enable one in Settings → Model groups.',
     'model.contextShort': '{n}k context',
@@ -611,11 +613,11 @@ const areaPanel2 = StringArea(
     'update.downloadFailed': 'Download failed: HTTP {status}',
     'update.done': 'Download complete',
     'update.savedTo': 'Installer saved to:',
-    'update.macInstructions': 'Quit pi-bot, open the DMG and drag the app into Applications.\nThen reopen it and restart the local server in Settings.',
+    'update.macInstructions': 'Quit Orbis, open the DMG and drag the app into Applications.\nThen reopen it and restart the local server in Settings.',
     'update.installInstructions':
-        'Quit pi-bot, then run this installer to finish updating.',
+        'Quit Orbis, then run this installer to finish updating.',
     'update.winSetupInstructions':
-        'Quit pi-bot, then run the installer and click through the wizard.\nYour data directory and paired devices are left untouched.',
+        'Quit Orbis, then run the installer and click through the wizard.\nYour data directory and paired devices are left untouched.',
     'update.gotIt': 'Got it',
     'update.openFolder': 'Show in folder',
 
@@ -659,7 +661,7 @@ const areaPanel2 = StringArea(
     'confirm.approved': 'Approved',
     'confirm.rejected': 'Rejected',
     'confirm.approveOnPhone': 'Approve',
-    'confirm.openOnPhone': 'Open pi-bot on your phone to approve. Approving on this desktop does not count: the assistant can drive this computer and could click it itself.',
+    'confirm.openOnPhone': 'Open Orbis on your phone to approve. Approving on this desktop does not count: the assistant can drive this computer and could click it itself.',
     'approval.reject': 'Reject',
     'approval.approveOnce': 'Approve once',
     'approval.approvedHint': 'Approved for this run. It will finish the job.',

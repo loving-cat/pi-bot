@@ -26,7 +26,7 @@ Map<String, dynamic> planJson({
             'title': '项目与 Git 范围',
             'options': {
               'projects': [
-                {'id': 'p-quant', 'label': 'quant-all-in', 'path': 'D:/quant-all-in'},
+                {'id': 'p-demo', 'label': 'orbis-demo', 'path': 'D:/projects/orbis-demo'},
               ],
               'gitScopes': [
                 {'id': 'none', 'label': '不用 Git', 'actions': <String>[]},
@@ -36,7 +36,7 @@ Map<String, dynamic> planJson({
             'separateApproval': [
               {'id': 'remote', 'title': '远端操作'},
             ],
-            'recommended': {'projectId': 'p-quant', 'gitScope': 'commit'},
+            'recommended': {'projectId': 'p-demo', 'gitScope': 'commit'},
           },
           {
             'id': 3,
@@ -103,7 +103,7 @@ void main() {
         ]),
       );
       expect(plan.stateOf(), OnboardingPageState.blocked);
-      expect(plan.canStart(projectId: 'p-quant', gitScope: 'commit'), isFalse);
+      expect(plan.canStart(projectId: 'p-demo', gitScope: 'commit'), isFalse);
       expect(plan.headline(), '没有主 Bot');
       expect(plan.primaryActionText(), '');
     });
@@ -113,7 +113,7 @@ void main() {
       final plan = OnboardingPlan.fromJson(planJson(blockers: [
         {'id': 'no-main-bot', 'text': '没有主 Bot'},
       ]));
-      expect(plan.stateOf(projectId: 'p-quant', gitScope: 'commit'), OnboardingPageState.blocked);
+      expect(plan.stateOf(projectId: 'p-demo', gitScope: 'commit'), OnboardingPageState.blocked);
     });
 
     test('齐了但没选 → needsChoice', () {
@@ -125,29 +125,29 @@ void main() {
 
     test('只选了项目、没选 Git 档位 → 还不算选完', () {
       final plan = OnboardingPlan.fromJson(planJson());
-      expect(plan.stateOf(projectId: 'p-quant'), OnboardingPageState.needsChoice);
+      expect(plan.stateOf(projectId: 'p-demo'), OnboardingPageState.needsChoice);
     });
 
     test('Git 选 none 也算选过了（空不是一个"没选"）', () {
       final plan = OnboardingPlan.fromJson(planJson());
-      expect(plan.choicesMade(projectId: 'p-quant', gitScope: 'none'), isTrue);
-      expect(plan.stateOf(projectId: 'p-quant', gitScope: 'none'), OnboardingPageState.ready);
+      expect(plan.choicesMade(projectId: 'p-demo', gitScope: 'none'), isTrue);
+      expect(plan.stateOf(projectId: 'p-demo', gitScope: 'none'), OnboardingPageState.ready);
     });
 
     test('选完了 → ready，按钮是"开始"', () {
       final plan = OnboardingPlan.fromJson(planJson());
-      expect(plan.stateOf(projectId: 'p-quant', gitScope: 'commit'), OnboardingPageState.ready);
-      expect(plan.canStart(projectId: 'p-quant', gitScope: 'commit'), isTrue);
-      expect(plan.primaryActionText(projectId: 'p-quant', gitScope: 'commit'), '开始');
+      expect(plan.stateOf(projectId: 'p-demo', gitScope: 'commit'), OnboardingPageState.ready);
+      expect(plan.canStart(projectId: 'p-demo', gitScope: 'commit'), isTrue);
+      expect(plan.primaryActionText(projectId: 'p-demo', gitScope: 'commit'), '开始');
     });
 
     test('不是首次 → configured，按钮换成"保存改动"', () {
       final plan = OnboardingPlan.fromJson(planJson(firstRun: false));
-      final state = plan.stateOf(projectId: 'p-quant', gitScope: 'commit');
+      final state = plan.stateOf(projectId: 'p-demo', gitScope: 'commit');
       expect(state, OnboardingPageState.configured);
-      expect(plan.primaryActionText(projectId: 'p-quant', gitScope: 'commit'), '保存改动');
+      expect(plan.primaryActionText(projectId: 'p-demo', gitScope: 'commit'), '保存改动');
       // configured 不走"开始"，否则会重复发一次授权
-      expect(plan.canStart(projectId: 'p-quant', gitScope: 'commit'), isFalse);
+      expect(plan.canStart(projectId: 'p-demo', gitScope: 'commit'), isFalse);
     });
 
     test('每种状态都有话说（不能有一条空文案）', () {
@@ -160,9 +160,9 @@ void main() {
               ]),
             ).headline(),
           OnboardingPageState.needsChoice => plan.headline(),
-          OnboardingPageState.ready => plan.headline(projectId: 'p-quant', gitScope: 'commit'),
+          OnboardingPageState.ready => plan.headline(projectId: 'p-demo', gitScope: 'commit'),
           OnboardingPageState.configured =>
-            OnboardingPlan.fromJson(planJson(firstRun: false)).headline(projectId: 'p-quant', gitScope: 'commit'),
+            OnboardingPlan.fromJson(planJson(firstRun: false)).headline(projectId: 'p-demo', gitScope: 'commit'),
         };
         expect(text.trim(), isNotEmpty, reason: '状态 $state 没有文案');
       }
@@ -173,19 +173,19 @@ void main() {
     test('推荐值在选项里就用推荐值', () {
       final plan = OnboardingPlan.fromJson(planJson());
       final step = plan.projectStep!;
-      expect(initialChoice(step.projects, step.recommendedProjectId), 'p-quant');
+      expect(initialChoice(step.projects, step.recommendedProjectId), 'p-demo');
       expect(initialChoice(step.gitScopes, step.recommendedGitScope), 'commit');
     });
 
     test('★ 推荐值不在选项里就退第一个（不显示一个列表里没有的值）', () {
       final plan = OnboardingPlan.fromJson(planJson());
       final step = plan.projectStep!;
-      expect(initialChoice(step.projects, 'p-删掉了'), 'p-quant');
+      expect(initialChoice(step.projects, 'p-删掉了'), 'p-demo');
       expect(initialChoice(step.gitScopes, 'push'), 'none');
     });
 
     test('没有选项就是 null，不硬编一个', () {
-      expect(initialChoice(const [], 'p-quant'), isNull);
+      expect(initialChoice(const [], 'p-demo'), isNull);
       expect(initialChoice(const [], null), isNull);
     });
 

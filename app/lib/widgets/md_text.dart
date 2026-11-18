@@ -32,6 +32,7 @@ class MdText extends StatefulWidget {
     this.onLinkTap,
     this.linkColor,
     this.mentionOf,
+    this.streamingCursorColor,
   });
 
   final String text;
@@ -42,6 +43,9 @@ class MdText extends StatefulWidget {
 
   /// 气泡背景上的链接颜色；省略时使用当前主题，引用内使用主题链接色。
   final Color? linkColor;
+
+  /// 流式输出尾标颜色（非 null 时不拼接进原始 Markdown 字符串，直接画在末块末尾）。
+  final Color? streamingCursorColor;
 
   /// 要高亮的名字（不含 @）—— 部门成员。agent 之间用 @ 派活，高亮后一眼看得出谁被点名了。
   final List<String> mentions;
@@ -166,9 +170,22 @@ class _MdTextState extends State<MdText> {
         );
 
     final blocks = _blocksFor(widget.text);
+    final cursorColor = widget.streamingCursorColor;
     final children = <Widget>[];
-    for (final block in blocks) {
-      children.add(_renderBlock(context, block, base, code));
+    if (blocks.isEmpty && cursorColor != null) {
+      children.add(Text('▍', style: base.copyWith(color: cursorColor)));
+    } else {
+      for (var i = 0; i < blocks.length; i++) {
+        children.add(
+          _renderBlock(
+            context,
+            blocks[i],
+            base,
+            code,
+            cursorColor: i == blocks.length - 1 ? cursorColor : null,
+          ),
+        );
+      }
     }
 
     final body = children.length == 1
@@ -202,8 +219,9 @@ class _MdTextState extends State<MdText> {
     BuildContext context,
     _Block block,
     TextStyle base,
-    TextStyle code,
-  ) {
+    TextStyle code, {
+    Color? cursorColor,
+  }) {
     switch (block) {
       case _Heading(:final level, :final text):
         final size = switch (level) {
@@ -222,17 +240,31 @@ class _MdTextState extends State<MdText> {
               height: 1.35,
             ),
             code,
+            cursorColor: cursorColor,
           ),
         );
 
       case _Hr():
-        return Padding(
+        final line = Padding(
           padding: const EdgeInsets.symmetric(vertical: 6),
           child: Container(height: 1, color: PB.borderTertiary),
         );
+        if (cursorColor == null) return line;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            line,
+            Text('▍', style: base.copyWith(color: cursorColor)),
+          ],
+        );
 
       case _Code(:final language, :final code_):
-        return _CodeBlock(language: language, code: code_, style: code);
+        return _CodeBlock(
+          language: language,
+          code: code_,
+          style: code,
+          cursorColor: cursorColor,
+        );
 
       case _Quote(:final text):
         return MarkdownQuote(
@@ -242,6 +274,7 @@ class _MdTextState extends State<MdText> {
             base.copyWith(color: PB.colors(context).quoteText, height: 1.6),
             code,
             quote: true,
+            cursorColor: cursorColor,
           ),
         );
 
@@ -249,10 +282,10 @@ class _MdTextState extends State<MdText> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            for (final item in items)
+            for (var i = 0; i < items.length; i++)
               Padding(
                 padding: EdgeInsets.only(
-                  left: item.indent * 16.0,
+                  left: items[i].indent * 16.0,
                   top: 2,
                   bottom: 2,
                 ),
@@ -260,16 +293,24 @@ class _MdTextState extends State<MdText> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     SizedBox(
-                      width: item.ordered ? 22 : 16,
+                      width: items[i].ordered ? 22 : 16,
                       child: Text(
-                        item.ordered ? item.marker : '•',
+                        items[i].ordered ? items[i].marker : '•',
                         style: base.copyWith(
                           color: PB.textTertiary,
                           height: 1.5,
                         ),
                       ),
                     ),
-                    Expanded(child: _rich(item.text, base, code)),
+                    Expanded(
+                      child: _rich(
+                        items[i].text,
+                        base,
+                        code,
+                        cursorColor:
+                            i == items.length - 1 ? cursorColor : null,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -277,15 +318,26 @@ class _MdTextState extends State<MdText> {
         );
 
       case _Table(:final header, :final rows):
-        return _TableView(
+        final table = _TableView(
           header: header,
           rows: rows,
           base: base,
           renderInline: _rich,
         );
+        if (cursorColor == null) return table;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            table,
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text('▍', style: base.copyWith(color: cursorColor)),
+            ),
+          ],
+        );
 
       case _Para(:final text):
-        return _rich(text, base, code);
+        return _rich(text, base, code, cursorColor: cursorColor);
     }
   }
 
@@ -294,6 +346,7 @@ class _MdTextState extends State<MdText> {
     TextStyle base,
     TextStyle code, {
     bool quote = false,
+    Color? cursorColor,
   }) {
     final spans = _inline(
       source,
@@ -301,6 +354,14 @@ class _MdTextState extends State<MdText> {
       code,
       linkColor: quote ? PB.colors(context).link : widget.linkColor,
     );
+    if (cursorColor != null) {
+      spans.add(
+        TextSpan(
+          text: '▍',
+          style: base.copyWith(color: cursorColor),
+        ),
+      );
+    }
     // 选中交给最外层那一个 SelectionArea（见 build），这里只画文本。
     // 不用 SelectableText.rich：它不支持 WidgetSpan，而 @提及 要画头像 chip。
     return Text.rich(TextSpan(children: spans, style: base));
@@ -635,11 +696,13 @@ class _CodeBlock extends StatelessWidget {
     required this.language,
     required this.code,
     required this.style,
+    this.cursorColor,
   });
 
   final String language;
   final String code;
   final TextStyle style;
+  final Color? cursorColor;
 
   @override
   Widget build(BuildContext context) {
@@ -703,6 +766,11 @@ class _CodeBlock extends StatelessWidget {
                       TextSpan(
                         text: t.text,
                         style: _syntaxStyle(context, t.kind, style),
+                      ),
+                    if (cursorColor != null)
+                      TextSpan(
+                        text: '▍',
+                        style: style.copyWith(color: cursorColor),
                       ),
                   ],
                 ),

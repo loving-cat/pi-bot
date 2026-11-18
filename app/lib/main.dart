@@ -455,7 +455,7 @@ class _PiBotThemedApplicationState extends State<PiBotThemedApplication> {
 
   Widget _buildApplication(Locale locale) => MaterialApp(
     navigatorKey: widget.navigatorKey,
-    title: 'pi-bot',
+    title: 'Orbis',
     debugShowCheckedModeBanner: false,
     // ★ 框架内置组件的文案全靠这些 delegate 本地化。
     //

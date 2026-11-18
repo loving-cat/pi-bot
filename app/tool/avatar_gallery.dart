@@ -15,17 +15,25 @@ class AvatarGallery extends StatefulWidget {
 }
 
 class _AvatarGalleryState extends State<AvatarGallery> {
-  bool _busy = false;
+  AvatarMood _mood = AvatarMood.idle;
   bool _animate = true;
-  static final _seeds = List.generate(12, (i) => 'bot-$i');
+  static final _kinds = AvatarCharacterKind.values;
+  static final _seeds = List.generate(_kinds.length, (i) => 'shape-$i');
 
-  Widget _avatar(String seed, double size, {bool ring = false}) => BlobAvatar(
+  Widget _avatar(
+    String seed,
+    double size, {
+    bool ring = false,
+    int? shape,
+  }) => BlobAvatar(
     seed: seed,
     color: PB.colorFor(seed),
+    shape: shape,
     size: size,
     ring: ring,
     animate: _animate,
-    mood: _busy ? AvatarMood.busy : AvatarMood.idle,
+    interactive: true,
+    mood: _mood,
   );
 
   @override
@@ -53,23 +61,21 @@ class _AvatarGalleryState extends State<AvatarGallery> {
               ),
               const SizedBox(height: 10),
               const Text(
-                '14 / 22 / 46 / 96 px · move the pointer across a card',
+                '16 shapes · 14 / 22 / 46 / 96 px · hover or poke a character',
                 style: TextStyle(color: Colors.white60),
               ),
               const SizedBox(height: 16),
               Wrap(
-                spacing: 20,
+                spacing: 12,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text('Busy'),
-                      Switch(
-                        value: _busy,
-                        onChanged: (value) => setState(() => _busy = value),
-                      ),
-                    ],
-                  ),
+                  for (final mood in AvatarMood.values)
+                    ChoiceChip(
+                      label: Text(mood.name),
+                      selected: _mood == mood,
+                      onSelected: (_) => setState(() => _mood = mood),
+                    ),
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -87,7 +93,7 @@ class _AvatarGalleryState extends State<AvatarGallery> {
                 spacing: 12,
                 runSpacing: 12,
                 children: [
-                  for (var i = 0; i < _seeds.length; i++)
+                  for (var i = 0; i < _kinds.length; i++)
                     AvatarHoverScope(
                       child: Container(
                         width: 190,
@@ -102,11 +108,16 @@ class _AvatarGalleryState extends State<AvatarGallery> {
                             SizedBox(
                               height: 118,
                               child: Center(
-                                child: _avatar(_seeds[i], 96, ring: i == 0),
+                                child: _avatar(
+                                  _seeds[i],
+                                  96,
+                                  ring: i == 0,
+                                  shape: i,
+                                ),
                               ),
                             ),
                             Text(
-                              'BOT ${i + 1} · ${AvatarCharacter.fromSeed(_seeds[i]).kind.name}',
+                              '#${i + 1} · ${_kinds[i].name}',
                               style: const TextStyle(
                                 fontFamily: 'Inter',
                                 fontSize: 11,
@@ -117,9 +128,9 @@ class _AvatarGalleryState extends State<AvatarGallery> {
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                               children: [
-                                _avatar(_seeds[i], 46),
-                                _avatar(_seeds[i], 22),
-                                _avatar(_seeds[i], 14),
+                                _avatar(_seeds[i], 46, shape: i),
+                                _avatar(_seeds[i], 22, shape: i),
+                                _avatar(_seeds[i], 14, shape: i),
                               ],
                             ),
                           ],
@@ -140,7 +151,7 @@ class _AvatarGalleryState extends State<AvatarGallery> {
                           seeds: _seeds.take(count).toList(),
                           size: 64,
                           animate: _animate,
-                          mood: _busy ? AvatarMood.busy : AvatarMood.idle,
+                          mood: _mood,
                         ),
                         const SizedBox(height: 8),
                         Text(

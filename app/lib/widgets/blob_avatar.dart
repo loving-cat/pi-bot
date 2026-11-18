@@ -59,6 +59,9 @@ class BlobAvatar extends StatefulWidget {
   /// 测试开关，关闭所有动画与指针驱动。
   static bool animationsEnabled = true;
 
+  /// 运行期只读开关，供同类动效组件统一响应测试静默开关。
+  static bool get animationsActive => animationsEnabled;
+
   @visibleForTesting
   static String shapeKindOf(String seed) =>
       AvatarCharacter.fromSeed(seed).kind.name;
@@ -160,7 +163,7 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
 
   bool get _ambientAllowed =>
       BlobAvatar.animationsEnabled &&
-      (widget.mood == AvatarMood.busy || (_alive && _awake));
+      (widget.mood.isActiveWork || (_alive && _awake));
 
   @override
   void initState() {
@@ -177,17 +180,24 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
       _sleep();
       return;
     }
+    final wobbleDuration = widget.mood == AvatarMood.speaking
+        ? const Duration(milliseconds: 5500)
+        : const Duration(seconds: 11);
     _wobble ??= AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 11),
+      duration: wobbleDuration,
     );
+    if (_wobble!.duration != wobbleDuration) {
+      _wobble!.duration = wobbleDuration;
+      if (_wobble!.isAnimating) _wobble!.repeat();
+    }
     _blink ??= AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 190),
     );
     _poke ??= AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 380),
+      duration: const Duration(milliseconds: 520),
     );
     _wake();
   }
@@ -201,7 +211,7 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
     }
     _syncAmbient();
     _settleTimer?.cancel();
-    if (widget.mood == AvatarMood.busy) return;
+    if (widget.mood.isActiveWork) return;
     _settleTimer = Timer(AvatarLife.settleAfter, _sleep);
   }
 
@@ -210,6 +220,8 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
     _wobble?.stop();
     _blinkTimer?.cancel();
     _blink?.value = 0;
+    _poke?.stop();
+    _poke?.value = 0;
     _awake = false;
     _syncAmbient();
   }
@@ -218,13 +230,23 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
     _blinkTimer?.cancel();
     if (!mounted || _blink == null) return;
     final delay = Duration(milliseconds: 2600 + (_rng?.nextInt(4200) ?? 2000));
-    _blinkTimer = Timer(delay, () async {
-      if (!mounted || _blink == null) return;
-      await _blink!.forward(from: 0);
-      if (!mounted) return;
-      await _blink!.reverse();
-      if (mounted) _scheduleBlink();
-    });
+    _blinkTimer = Timer(delay, () => unawaited(_runBlink(allowDouble: true)));
+  }
+
+  Future<void> _runBlink({required bool allowDouble}) async {
+    if (!mounted || !_awake || _blink == null) return;
+    await _blink!.forward(from: 0);
+    if (!mounted || !_awake || _blink == null) return;
+    await _blink!.reverse();
+    if (!mounted || !_awake || _blink == null) return;
+    if (allowDouble && ((_rng?.nextInt(100) ?? 50) < 22)) {
+      _blinkTimer = Timer(
+        const Duration(milliseconds: 70),
+        () => unawaited(_runBlink(allowDouble: false)),
+      );
+      return;
+    }
+    _scheduleBlink();
   }
 
   void _followPointer() {
@@ -357,7 +379,17 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
   void _onPoke() {
     if (!_alive || _poke == null) return;
     _wake();
-    _poke!.forward(from: 0).then((_) => _poke!.reverse());
+    unawaited(_poke!.forward(from: 0));
+  }
+
+  double _elasticPoke(double t) {
+    if (t <= 0 || t >= 1) return 0;
+    return math.exp(-4.5 * t) * math.sin(t * math.pi * 2.5);
+  }
+
+  double _pokeSmile(double t) {
+    if (t <= 0 || t >= 0.85) return 0;
+    return math.sin((t / 0.85) * math.pi).clamp(0.0, 1.0);
   }
 
   /// 忙碌或醒着的头像间歇变换视线；指针跟随时暂停自主动作。
@@ -373,8 +405,9 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
     if (_following) return;
     final rng = _rng;
     if (rng == null) return;
-    final base = widget.mood == AvatarMood.busy ? 1400 : 2600;
-    final jitter = rng.nextInt(widget.mood == AvatarMood.busy ? 1600 : 4200);
+    final active = widget.mood.isActiveWork;
+    final base = active ? 1400 : 2600;
+    final jitter = rng.nextInt(active ? 1600 : 4200);
     _ambientTimer = Timer(Duration(milliseconds: base + jitter), _doAmbient);
   }
 
@@ -388,6 +421,9 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
     if (widget.mood == AvatarMood.busy) {
       final dir = rng.nextBool() ? 1.0 : -1.0;
       target = Offset(dir * reach * 0.85, -reach * 0.35);
+    } else if (widget.mood == AvatarMood.speaking) {
+      final dir = rng.nextBool() ? 1.0 : -1.0;
+      target = Offset(dir * reach * 0.45, -reach * 0.12);
     } else {
       target = Offset(
         (rng.nextDouble() * 2 - 1) * reach * 0.55,
@@ -395,7 +431,7 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
       );
     }
     _aimGaze(target);
-    final holdMs = widget.mood == AvatarMood.busy ? 900 : 1200;
+    final holdMs = widget.mood.isActiveWork ? 900 : 1200;
     _ambientTimer = Timer(Duration(milliseconds: holdMs), () {
       if (!mounted || !_ambientAllowed || _following) return;
       _aimGaze(Offset.zero);
@@ -477,11 +513,20 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
   }
 
   Widget _content() {
-    final busyLift = widget.mood == AvatarMood.busy
-        ? Offset(0, -widget.size * 0.045)
-        : Offset.zero;
+    final moodLift = switch (widget.mood) {
+      AvatarMood.busy => Offset(0, -widget.size * 0.045),
+      AvatarMood.listening => Offset(0, widget.size * 0.045),
+      AvatarMood.speaking => Offset(0, -widget.size * 0.015),
+      AvatarMood.idle || AvatarMood.happy => Offset.zero,
+    };
 
-    Widget paint(double phase, double blink, double poke, Offset gaze) =>
+    Widget paint(
+      double phase,
+      double blink,
+      double poke,
+      Offset gaze, {
+      double smile = 0,
+    }) =>
         CustomPaint(
           size: Size.square(widget.size),
           painter: AvatarCharacterPainter(
@@ -490,9 +535,10 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
             phase: phase,
             blink: blink,
             poke: poke,
-            gaze: gaze + busyLift,
+            gaze: gaze + moodLift,
             ring: widget.ring,
             mood: widget.mood,
+            smile: smile,
           ),
         );
 
@@ -508,12 +554,16 @@ class _BlobAvatarState extends State<BlobAvatar> with TickerProviderStateMixin {
     return RepaintBoundary(
       child: AnimatedBuilder(
         animation: Listenable.merge([_wobble!, _blink!, _poke!, _gaze]),
-        builder: (context, _) => paint(
-          _wobble!.value * 2 * math.pi,
-          _blink!.value,
-          _poke!.value,
-          _gaze.value,
-        ),
+        builder: (context, _) {
+          final pokeRaw = _poke!.value;
+          return paint(
+            _wobble!.value * 2 * math.pi,
+            _blink!.value,
+            _elasticPoke(pokeRaw),
+            _gaze.value,
+            smile: _pokeSmile(pokeRaw),
+          );
+        },
       ),
     );
   }

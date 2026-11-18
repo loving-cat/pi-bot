@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../model_display.dart';
 import '../models.dart';
 import '../scope.dart';
 import '../l10n/l10n.dart';
@@ -195,8 +196,17 @@ class _RoomPanelState extends State<RoomPanel> {
 
   Widget _header(BuildContext context, Room room) {
     final s = L10n.s(context);
+    final state = AppScope.of(context);
     final lead = room.leadName;
     final bot = _primaryBot(room);
+    final effectiveSlug = !room.isGroup && bot != null
+        ? ((bot.model ?? '').trim().isNotEmpty
+              ? bot.model!
+              : (state.serverInfo?.model ?? ''))
+        : '';
+    final modelInfo = !room.isGroup && effectiveSlug.isNotEmpty
+        ? compactModelDisplay(effectiveSlug, state.modelGroups)
+        : null;
     return ChromeSafeHeader(
       child: AvatarHoverScope(
         child: Stack(
@@ -247,6 +257,13 @@ class _RoomPanelState extends State<RoomPanel> {
                       fontWeight: FontWeight.w600,
                     ),
                   ),
+                  if (modelInfo != null && !modelInfo.isEmpty) ...[
+                    const SizedBox(height: 6),
+                    _HeaderModelBadge(
+                      info: modelInfo,
+                      onTap: () => _selectTab(0),
+                    ),
+                  ],
                   if (!room.isGroup && bot != null) ...[
                     const SizedBox(height: 12),
                     BotAppearanceSection(key: ValueKey(bot.id), bot: bot),
@@ -644,6 +661,10 @@ class _MemberRow extends StatelessWidget {
     final s = L10n.s(context);
     final b = bot;
     if (b == null) return const SizedBox.shrink();
+    final state = AppScope.of(context);
+    final modelInfo = (b.model ?? '').trim().isNotEmpty
+        ? compactModelDisplay(b.model, state.modelGroups)
+        : null;
     return AvatarHoverScope(
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 3),
@@ -661,12 +682,30 @@ class _MemberRow extends StatelessWidget {
                 ),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: Text(
-                    b.name,
-                    style: TextStyle(
-                      fontSize: PB.fsSm,
-                      color: PB.textPrimary,
-                    ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        b.name,
+                        style: TextStyle(
+                          fontSize: PB.fsSm,
+                          color: PB.textPrimary,
+                        ),
+                      ),
+                      if (modelInfo != null && !modelInfo.isEmpty)
+                        Tooltip(
+                          message: modelInfo.fullSlug,
+                          child: Text(
+                            modelInfo.combined,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: PB.fsXxs,
+                              color: PB.textQuaternary,
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
                 if (isLead)
@@ -1551,6 +1590,88 @@ class _MemoryTabState extends State<_MemoryTab> {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+class _HeaderModelBadge extends StatelessWidget {
+  const _HeaderModelBadge({required this.info, required this.onTap});
+
+  final CompactModelInfo info;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final groupColor = info.groupId.isNotEmpty
+        ? PB.colorFor(info.groupId)
+        : PB.textTertiary;
+    final tip = info.groupName.isNotEmpty && info.groupName != info.groupTag
+        ? '${info.groupName} / ${info.modelId}'
+        : info.fullSlug;
+
+    return Tooltip(
+      message: tip,
+      child: Material(
+        key: const ValueKey('panel-model-badge'),
+        color: PB.bgBubble,
+        borderRadius: BorderRadius.circular(PB.rFull),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(PB.rFull),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(PB.rFull),
+              border: Border.all(color: PB.borderTertiary),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (info.hasGroup) ...[
+                  Container(
+                    width: 6,
+                    height: 6,
+                    decoration: BoxDecoration(
+                      color: groupColor,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 5),
+                  Text(
+                    info.groupTag,
+                    style: TextStyle(
+                      fontSize: PB.fsXxs,
+                      fontWeight: FontWeight.w600,
+                      color: groupColor,
+                    ),
+                  ),
+                  const SizedBox(width: 5),
+                  Text(
+                    '·',
+                    style: TextStyle(
+                      fontSize: PB.fsXxs,
+                      color: PB.textQuaternary,
+                    ),
+                  ),
+                  const SizedBox(width: 5),
+                ],
+                Flexible(
+                  child: Text(
+                    info.modelLabel,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: PB.fsXxs,
+                      fontWeight: FontWeight.w500,
+                      color: PB.textSecondary,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

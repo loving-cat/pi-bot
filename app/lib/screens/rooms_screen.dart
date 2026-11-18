@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../app_state.dart';
 import '../l10n/l10n.dart';
+import '../model_display.dart';
 import '../models.dart';
 import '../platform.dart';
 import '../scope.dart';
@@ -187,7 +188,7 @@ class _RoomsScreenState extends State<RoomsScreen> {
                           child: Text(
                             state.userName.isNotEmpty
                                 ? state.userName
-                                : (state.serverUrl ?? 'pi-bot'),
+                                : (state.serverUrl ?? 'Orbis'),
                             style: const TextStyle(
                               fontSize: PB.fsLg,
                               fontWeight: FontWeight.w500,
@@ -221,9 +222,15 @@ class _RoomsScreenState extends State<RoomsScreen> {
                             state.link == LinkState.online
                                 ? s.tf('rooms.botsModel', {
                                     'n': state.bots.length,
-                                    'model': shortModel(
-                                      state.serverInfo?.model,
-                                    ),
+                                    'model': () {
+                                      final info = compactModelDisplay(
+                                        state.serverInfo?.model,
+                                        state.modelGroups,
+                                      );
+                                      return info.isEmpty
+                                          ? ''
+                                          : info.combined;
+                                    }(),
                                   })
                                 : (state.link == LinkState.connecting
                                       ? s.t('rooms.connecting')
