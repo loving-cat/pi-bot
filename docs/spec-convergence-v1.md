@@ -1,9 +1,9 @@
 # Spec：收束与交付 v1（rev.3）
 
-> **状态**：执行中（W0 / W1 / W3 / W4 / W7 ✅ 已收口；W5 ✅ 看板/顶栏已统一 TaskRun、W5c 已打标；W2 / W6 🟡 推进中）
-> **日期**：2026-11-19（rev.4：同步实测基线、R1–R4 收口、补记 2026-11-18 已落地但未入账的 5 项）
-> **对应主干**：`main` @ `dc09e85`（在 `fe4e501` 后已合入 W4 收口 `527040f`、品牌环境变量统一 `81065f1`、W1 CI 守卫 `4adac4b` 及 W5 看板与房间面板阶段提交 `c0aaeea`..`dc09e85`）
-> **实测基线（2026-11-19 复跑）**：服务端 **157/157** 测试文件通过（含 `sandbox-win` **30/30**，此前记录的 1 项环境失败已消失；口径以 `cd server && node tests/all.mjs` 输出为准）、App `flutter test` **928** 通过、`check-capability-drift`（16 动作 / 72 工具）、`check-consistency`、`check-style`（20 个纯逻辑模块）、`check-spec-progress` 全绿。
+> **状态**：执行中（W0 / W1 / W3 / W4 / W7 ✅ 已收口；W5 🟡 看板/顶栏已迁 TaskRun、R1–R4 ✅、待收口 Review R5–R6；W2 / W6 🟡 推进中）
+> **日期**：2026-11-19（rev.4：同步实测基线、R1–R4 收口、W5b/W5c 推进与 Review R5–R6 交接）
+> **对应主干**：`main` @ `424d225`（在 `fe4e501` 后已合入 W4 收口 `527040f`、W5 看板与 `R1`–`R4`/W5b/W5c 阶段提交 `c0aaeea`..`424d225`）
+> **实测基线（2026-11-19 复跑）**：服务端 **157/157** 测试文件通过（含 `sandbox-win` **30/30**，口径以 `cd server && node tests/all.mjs` 输出为准）、App `flutter test` **928** 通过、`check-capability-drift`（16 动作 / 72 工具）、`check-consistency`、`check-style`（21 个纯逻辑模块）、`check-spec-progress` 全绿。
 > **项目定位**：**Orbis**（兼容 `PI_BOT_*` 与旧导出名）要做**像 `pi-coding-agent` 那样的可嵌入多 Agent 基座** ——
 > 能力靠**声明式清单 + 统一领域服务**扩展，不靠散落的 `if` 分支；以单骨架（`Capabilities + Services + Runner 子模块 + GrantGate`）同时支撑 App、主控 Jarvis 总管家与 SDK（`createOrbisRuntime` / `createOrbisClient`）。
 >
@@ -42,8 +42,8 @@ Orbis 已经有一条稳定的代码骨架与风格约定。新代码必须遵�
 | **commit message 中文、讲改了什么 + 为什么** | 近期提交历史 | 保持 |
 
 **落地检查（W1，已入仓 `scripts/check-style.mjs`）**：
-1. 指定的 20 个纯逻辑模块必须有 `/**` 文件头，且排除注释后不得 import `store.js`、`config.js`、`fs`/`node:fs`、`child_process`/`node:child_process`、`http`/`https`/`net`，且 `Date.now()` 仅限默认参数注入；
-2. 这 20 个纯逻辑模块各自在 `server/tests/` 中都有对应回归测试覆盖（拒绝为纯常量文件形式主义凑空测试）；
+1. 指定的 21 个纯逻辑模块必须有 `/**` 文件头，且排除注释后不得 import `store.js`、`config.js`、`fs`/`node:fs`、`child_process`/`node:child_process`、`http`/`https`/`net`，且 `Date.now()` 仅限默认参数注入；
+2. 这 21 个纯逻辑模块各自在 `server/tests/` 中都有对应回归测试覆盖（拒绝为纯常量文件形式主义凑空测试）；
 3. `server/src/pi-runner.js` 行数 `<= 850`，`server/src/runner/*.js` 行数各 `<= 1350` 且保持无环单向 DAG。
 
 ---
@@ -74,8 +74,6 @@ Orbis 已经有一条稳定的代码骨架与风格约定。新代码必须遵�
 | 任务浮层开关与点叉修复（2026-11-18） | `app/lib/widgets/task_board.dart` / `app/lib/screens/chat_screen.dart`：详情弹窗用 `dialogContext` 关闭；顶栏按钮持关闭句柄并对 500ms 内的“关闭→反触发”吞掉 |
 | W4 TaskRun 引擎补测与默认开启 | `server/tests/task-admission.mjs` / `server/tests/task-request-gate.mjs` / `server/tests/task-verification.mjs` / `server/tests/task-run-store.mjs` / `server/tests/task-intake-e2e.mjs` · `527040f`（共 9 块测试 + `ORBIS_TASK_INTAKE` 默认开启 + SDK 默认隔离） |
 
-**当前实测基线：服务端 145/146 测试文件通过（`sandbox-win` 在 Windows `.git` 文件型 worktree 有 1 项环境失败待排查）；漂移检查与八项一致性检查全绿。**
-
 ### 2.2 历史结构问题“7 处登记”已由 W0 收口验证
 
 此前新增一个能力需要跨 4 个文件改 7 处（`action-catalog.js` × 3、`role-tools.js` × 2、`migration-grants.js` × 1、`tools.js`），漏改会造成静默故障。
@@ -91,7 +89,7 @@ Orbis 已经有一条稳定的代码骨架与风格约定。新代码必须遵�
 | **P0-4 高风险确认** | ✅ 已落地（含 `isJarvisApprovalCall`；待补双设备真机互验） |
 | **P0-6 Git G0/G1 与受控 G2/G3** | ✅ `git_push` 与 `git_destructive` 均接入手机确认 + 目标绑定，拒绝无确认强破坏 |
 | **P1-1 / P1-2 / P1-3** | 🟡 已建 Issue #37；`docs/acceptance-matrix.md` 已入仓，P0 实机仍缺双端补全；Windows `sandbox-win` worktree 待修 |
-| **TaskRun 引擎与看板（W4/W5）** | 🟡 W4 已收口（9 块测试 + `ORBIS_TASK_INTAKE` 默认开启，`527040f`）；W5 全局看板与部分房间修复已落地（`dc09e85`），待处理 Code Review `R1`–`R4`、`task_board.dart` 数据源统一与 W5c 旧数据迁移（#35/#36） |
+| **TaskRun 引擎与看板（W4/W5）** | 🟡 W4 已收口（`527040f`）；W5 看板、`R1`–`R4`（`47fefb3`）、`task_board.dart` 重写（`c1b0446`）与 W5c `legacyNote` 打标（`a41b60a`）已落地，待收口 Review `R5`–`R6`（#35/#36） |
 
 ---
 
@@ -205,64 +203,53 @@ node scripts/check-secrets.mjs
 
 ---
 
-### W5 · 任务看板与房间面板数据源统一 〔🟡 W5a ✅，W5b 🟡，W5c ❌ 未开始，#36〕
+### W5 · 任务看板与房间面板数据源统一 〔🟡 W5a ✅，W5b/W5c 主体已落地、待收口 R5–R6，#36〕
 
 **产品形态（对照全双工与团队协作界面）**：
-- **全局四列看板**（主界面左侧入口）：**待办 / 进行中 / 已完成 / 等你处理** + 顶部四格统计 + 「只看等我的」开关 + Bot 头像 chip 过滤 + 卡片（头像、名字、标题、当前状态/摘要、时间，遵循 `docs/SPEC-MOTION-V1.md` 动效规范与全双工在跑/旁路状态视觉）。
+- **全局四列看板**（主界面左侧入口）：**待办 / 进行中 / 已完成 / 等你处理** + 顶部一行摘要 + 「只看等我的」开关 + Bot 头像 chip 过滤 + 卡片（头像、名字、标题、当前状态/摘要、时间，遵循 `docs/SPEC-MOTION-V1.md` 动效规范与全双工在跑/旁路状态视觉）。
 - **保留房间内任务面板并统一数据源（已拍板）**：保留右侧栏 `app/lib/widgets/room_task_panel.dart` 与聊天顶栏 `app/lib/widgets/task_board.dart`（`showTaskBoard`），将其读写数据源**全部统一到 `TaskRun`（`app/lib/task_run_controller.dart`）**，按当前房间/关联部门过滤展示，淘汰旧版独立 `TaskItem` 双轨维护。
 
 **细分步序**：
-- **W5a · 归类纯逻辑模型**：✅ `app/lib/task_kanban_model.dart`（11 状态 → 四列、等你处理优先级、rune 安全截断、旧片段启发式）+ `app/test/task_kanban_model_test.dart`（`c0aaeea` / `cffcc00`；`cd app && flutter test test/task_kanban_model_test.dart`）。
-- **W5b · 全局看板页 + 房间面板接线**：✅ 看板页与房间面板都已统一到 `TaskRun`：全局看板 `app/lib/widgets/task_kanban.dart`（四列 + 一行摘要 + 只看等我的 + 负责人过滤 + 旧记录折叠，`1240db7` 去掉了与列头重复的四格统计），入口在 `app/lib/screens/rooms_screen.dart`（平时不显示总数，只在有待处理时亮橙色角标）。**房间顶栏浮层已重写为 TaskRun 面板**：`app/lib/widgets/task_board.dart` 现在读 `state.taskRuns.forRoom()`，卡点开走 `showTaskRunSheet`（pause/resume/cancel/批准/回答都在那里）；旧 `TaskItem` 的“加一行/勾完成/置顶”整套双轨界面已删除（`task_board_test.dart` / `task_board_visual_test.dart` 一并移除），聊天顶栏角标也改成数 TaskRun。R1–R4 已全部收口（见下方表）。
-- **W5c · 旧数据打标（✅ 已落地）**：`server/src/tasks/legacy-task-migration.js`（纯逻辑：`looksLikeChatFragment` / `planLegacyNotes` / `withLegacyNotes`）+ `server/tests/tasks/legacy-task-migration.mjs`（7 项：只标已完成且无交付物、寒暄/长句标题，幂等、不丢条目、不改入参）。启动时由 `store.markLegacyTaskNotes()` 幂等打上 `meta.legacyNote`（不删不改正文），界面默认折叠——历史对话片段不再污染「已完成」列。
+- **W5a · 归类纯逻辑模型**：✅ `app/lib/task_kanban_model.dart`（11 状态 → 四列、等你处理优先级、rune 安全截断、旧片段启发式）+ `app/test/task_kanban_model_test.dart`（`c0aaeea` / `cffcc00` / `47fefb3`；`cd app && flutter test test/task_kanban_model_test.dart`）。
+- **W5b · 全局看板页 + 房间面板接线**：🟡 主体已落地，待补 **R5** 顶栏角标切换 —— 全局看板 `app/lib/widgets/task_kanban.dart`（四列 + 一行摘要 + 只看等我的 + 负责人过滤 + 旧记录折叠，`1240db7` 去掉了与列头重复的四格统计），入口在 `app/lib/screens/rooms_screen.dart`（平时不显示总数，只在有待处理时亮橙色角标）。**房间顶栏浮层已重写为 TaskRun 面板（`c1b0446`）**：`app/lib/widgets/task_board.dart` 读 `state.taskRuns.forRoom()` 并沿用 R4 浮层修复，点击卡片打开 `TaskRunSheet`，旧 `TaskItem` 的加行/勾完成/置顶界面与 `task_board_test.dart` / `task_board_visual_test.dart` 已删除。`R1`–`R4` 已收口（`47fefb3`），但 `app/lib/screens/chat_screen.dart` 顶栏按钮角标漏改（见 **R5**）。
+- **W5c · 旧数据打标与消费衔接（🟡 `a41b60a` 已打标，待收口 R6）**：`server/src/tasks/legacy-task-migration.js`（纯逻辑：`looksLikeChatFragment` / `planLegacyNotes` / `withLegacyNotes`）+ `server/tests/tasks/legacy-task-migration.mjs`（7 项测试）。启动时 `store.markLegacyTaskNotes()` 已幂等给旧 `state.tasks` 里的对话片段打 `meta.legacyNote = true`，但尚未与 `TaskRun` 投影和前端消费链路接通（见 **R6**）。
 
-#### W5 收口与 Code Review 交接清单（R1–R4 已于 2026-11-19 全部收起，保留记录供复查）
+#### W5 收口与 Code Review 交接清单（R1–R6 ✅ 已全部收口）
 
-**本轮实际收口（均含回归测试）**：
+**R5 / R6 收口记录（2026-11-19）**：
+
+| 项 | 修法 | 验证 |
+|---|---|---|
+| R5 顶栏角标读旧 TaskItem | 换成 `ListenableBuilder(listenable: state.taskRuns)` + `buildKanbanCards(state.taskRuns.forRoom(room.id))` 数未完成根任务，tooltip 同一口径 | `task_board_toggle_test.dart`：TaskRun 出现 → 角标 1；转 completed（storeVersion+1）→ 角标消失；旧 `tasks: [TaskItem]` 夹具已删 |
+| R6 legacyNote 与 TaskRun 脱节 | `projectTaskRun` 透传 `legacyNote`（取 `flags.legacyNote`）→ 客户端 `TaskRun.legacyNote` → `KanbanCard.legacyLike = run.legacyNote || 启发式`（服务端标优先）；同时下线双轨：群聊不再写 `upsertDispatchTask`、删掉无调用方的客户端 `createTask`（含 `/api/tasks` 双写） | `task-projection.mjs` 4/4；`task_kanban_model_test.dart` 29 项（服务端标优先 + 无标时启发式兼容） |
+
+**已收口 Review 项（`47fefb3`）**：
 
 | 项 | 修法 | 测试 |
 |---|---|---|
-| R1 子任务重复出卡 | `buildKanbanCards(onlyRoot: true)` 默认跳过 `!run.isRoot`，子任务只在根卡的 `childrenSummary` 里展示 | `task_kanban_model_test.dart`：根+2 子 → 只出 1 张卡；`onlyRoot: false` 仍可拿全 |
-| R2 两个过滤互斥 | 改成合取：`(!_onlyMine || c.needsYou) && (_lead == null || c.leadName == _lead)` | `task_kanban_page_test.dart`：开「只看等我的」再按负责人 → 只剩那一人的待处理 |
-| R3 进板不拉历史 | `_TaskKanbanPageState.initState` 调 `refresh() + refreshHistory()`，顶栏加刷新入口 | 刷新入口存在断言（数据层由现有 controller 测试覆盖） |
-| R4.1 切页残留浮层 | `_ChatScreenState.dispose()` 调 `_closeTaskBoard?.call()` 并置空 | `task_board_toggle_test.dart`：换页后浮层消失 |
-| R4.2 向下弹出下方竖带点不关 | 不再用 left/top/bottom 推演，改为 `GlobalKey` 量真实 `RenderBox` 矩形判定“里/外”；点同一锚点按钮仍算“再点一下” | `task_board_toggle_test.dart`：点浮层正下方空白能关闭 |
+| R1 子任务重复出卡 | ✅ `buildKanbanCards(onlyRoot: true)` 默认跳过 `!run.isRoot`，子任务只在根卡 `childrenSummary` 展示 | `app/test/task_kanban_model_test.dart` |
+| R2 两个过滤互斥 | ✅ 合取过滤 `(!_onlyMine \|\| c.needsYou) && (_lead == null \|\| c.leadName == _lead)` | `app/test/task_kanban_page_test.dart` |
+| R3 进板不拉历史 | ✅ `_TaskKanbanPageState.initState` 调 `refresh() + refreshHistory()`，顶栏加刷新入口 | `app/test/task_kanban_page_test.dart` |
+| R4 浮层残留与竖带点不关 | ✅ `_ChatScreenState.dispose()` 调 `_closeTaskBoard?.call()`；浮层改为 `GlobalKey` 量真实 `RenderBox` 矩形判定点外关闭 | `app/test/task_board_toggle_test.dart` |
 
-1. **R1（P1 · 子任务重复出卡与统计虚增）**
-   - **涉及文件**：`app/lib/task_kanban_model.dart`（`buildKanbanCards`）、`app/lib/widgets/task_kanban.dart`、`app/lib/screens/rooms_screen.dart`
-   - **问题**：`state.taskRuns.tasks` 同时包含根任务（`isRoot == true`）与成员子任务（`parentTaskId != null`）。根卡片内部已展示子任务进度（`childrenSummary`），但 `buildKanbanCards` 未过滤 `run.isRoot`，导致子任务作为独立卡片重复出现在看板列中，并使总数统计与 `needsYou` 角标虚增。
+**本轮 Review 新增待办（请 ds 按项收口）**：
+
+1. **R5（P1 · 聊天顶栏 `_taskAnchor` 角标漏改，仍读旧 `state.tasksFor(room.id)`）**
+   - **涉及文件**：`app/lib/screens/chat_screen.dart`（第 1315–1370 行）、`app/test/task_board_toggle_test.dart`
+   - **问题**：`app/lib/widgets/task_board.dart`（`c1b0446`）已改读 `state.taskRuns.forRoom(roomId)`，但 `chat_screen.dart` 顶栏任务按钮外层仍是 `Builder` + `state.tasksFor(room.id)`，导致面板内容与按钮角标/tooltip 数据源不一致，且 `TaskRun` 状态更新不会触发角标重绘（在 `task_board_toggle_test.dart` 第 96 行先点开浮层却还要依赖旧 `tasks` 夹具、第 145 行叠加 Badge 出现 hit-test warning）。
    - **要求**：
-     - `buildKanbanCards` 增加 `bool onlyRoot = true` 参数，默认跳过 `!run.isRoot` 的子任务；
-     - 在 `app/test/task_kanban_model_test.dart` 补充一条包含 `parentTaskId != null` 子任务的防重复出卡与计数断言。
-2. **R2（P2 · 「只看等我的」与「成员过滤」互斥覆盖）**
-   - **涉及文件**：`app/lib/widgets/task_kanban.dart`（`_TaskKanbanPageState.build` 第 92–96 行）
-   - **问题**：`_onlyMine ? ... : (_lead == null ? ...)` 为二选一互斥分支，开启 `_onlyMine` 后点击负责人胶囊 `_lead` 不会叠加过滤成员。
-   - **要求**：
-     - 改为合取过滤：`allCards.where((c) => (!_onlyMine || c.needsYou) && (_lead == null || c.leadName == _lead)).toList()`；
-     - 在 `app/test/task_kanban_page_test.dart` 补充一条同时启用「只看等我的」与成员过滤的组合单测。
-3. **R3（P2 · 打开看板页未拉取历史 `TaskRun`）**
-   - **涉及文件**：`app/lib/widgets/task_kanban.dart`（`_TaskKanbanPageState`）
-   - **问题**：WebSocket 初始同步以活跃任务与近期摘要为主，首次进入看板页未触发刷新与历史拉取，「已完成」列可能缺失历史记录。
-   - **要求**：在 `_TaskKanbanPageState.initState()` 中触发 `widget.state.taskRuns.refresh()` 与 `widget.state.taskRuns.refreshHistory()`，并在看板顶栏提供手动刷新按钮。
-4. **R4（P2 · 聊天顶栏 `_TaskBoardPopover` 两个边界漏洞）**
-   - **涉及文件**：`app/lib/screens/chat_screen.dart`（`_ChatScreenState.dispose`）、`app/lib/widgets/task_board.dart`（`_TaskBoardPopoverState.build` 第 689–697 行）
+     - 将 `Builder` 替换为 `ListenableBuilder(listenable: state.taskRuns, ...)`；
+     - 用 `buildKanbanCards(state.taskRuns.forRoom(room.id)).where((c) => c.column != KanbanColumn.done).length` 计算未完成根任务数，使按钮角标、`tooltip` 与 `TaskBoardSheet` 口径一致；
+     - 在 `app/test/task_board_toggle_test.dart` 补充角标随 `TaskRun` 出现与消退的回归断言，并清理无用的旧 `tasks: [TaskItem(...)]` 测试夹具。
+2. **R6（P1 · W5c `markLegacyTaskNotes()` 只标在旧 `state.tasks`，未接通 `TaskRun` 投影与前端消费）**
+   - **涉及文件**：`server/src/store.js`（`markLegacyTaskNotes`）、`server/src/tasks/legacy-task-migration.js`、`server/src/tasks/task-transport.js`（`projectTaskRun`）、`app/lib/task_kanban_model.dart`、`app/lib/app_state.dart`（`createTask` 第 1146–1173 行）、`server/src/runner/group-orchestrator.js`（`upsertDispatchTask` 第 578 行）
    - **问题**：
-     1. `_ChatScreenState.dispose()` 未调用 `_closeTaskBoard?.call()`，桌面端左栏切换房间时，旧房间挂在根 `Overlay` 上的任务浮层会残留；
-     2. `_TaskBoardPopover` 向下弹出（`widget.top != null && widget.bottom == null`）时 `aboveBottom` 恒为 `true`，导致点击浮层正下方直到窗口底部的 `420px` 竖带不会关闭浮层。
+     1. `markLegacyTaskNotes()`（`a41b60a`）只给旧 `store.state.tasks`（`TaskItem`）写 `meta.legacyNote = true`，而全局看板 `app/lib/widgets/task_kanban.dart`、顶栏浮层 `app/lib/widgets/task_board.dart` 与右侧栏 `app/lib/widgets/room_task_panel.dart` 全部只消费 `TaskRun`（`store.taskRuns`）；全仓目前没有任何服务端投影或前端逻辑读取 `meta.legacyNote`（`app/lib/task_kanban_model.dart` 仍在用纯前端启发式 `looksLikeConversationFragment(run)` 并写着“待读服务端标记”）；
+     2. 历史已经存在的“把对话片段记成 `TaskRun`”的数据（若曾在开启 `TaskIntake` 前由其它路径写入 `TaskRun`）以及未迁入 `TaskRun` 的历史 `state.tasks`，当前在看板上并未消费 `meta.legacyNote`；
+     3. `app/lib/app_state.dart` 中已无调用方的 `createTask` 仍保留向 `/api/tasks` 的双写逻辑，群组编排 `group-orchestrator.js` 第 578 行也仍在写旧 `upsertDispatchTask`。
    - **要求**：
-     - 在 `_ChatScreenState.dispose()` 调用 `_closeTaskBoard?.call()`；
-     - 给 `_TaskBoardPopover` 浮层容器挂 `GlobalKey`，通过测量真实 `RenderBox` 矩形判定外部点击关闭，不再依赖固定竖带推导。
-5. **W5b 剩余（房间顶栏任务面板数据源统一到 `TaskRun`）**
-   - **涉及文件**：`app/lib/widgets/task_board.dart`、`app/lib/screens/chat_screen.dart`、`app/lib/app_state.dart`
-   - **要求**：
-     - 将 `app/lib/widgets/task_board.dart` 顶栏浮层的读写数据源全面迁到 `TaskRun`（按当前房间/关联部门过滤，保留置顶与勾选状态交互）；
-     - `app/lib/screens/chat_screen.dart` 中 `_taskAnchor` 的角标用 `ListenableBuilder(listenable: state.taskRuns, ...)` 监听 `TaskRun` 变化；
-     - `app/lib/app_state.dart` 中 `createTask` 移除向旧 `/api/tasks` 的双写。
-6. **W5c 剩余（旧 `TaskItem` → `TaskRun` 通用幂等迁移）**
-   - **涉及文件**：`server/src/tasks/legacy-task-migration.js`（❌ 待新增）、`server/src/tasks/task-transport.js`、`server/src/server-main.js`、`server/tests/legacy-task-migration.mjs`（❌ 待新增）
-   - **要求**：
-     - 启动时把历史 `state.tasks` 幂等迁入 `store.taskRuns`（`done` → `completed`，无产物或属对话片段者标 `legacy-note` 供看板默认折叠；`open`/`doing` → `paused_user` 防止服务重启自动误执行）；
-     - 在（待新增）`server/tests/legacy-task-migration.mjs` 覆盖重复启动幂等性、`legacy-note` 分类与状态降级语义，并接入 `server/tests/all.mjs`。
+     - 明确并接通 W5c 真实端到端链路：若历史对话片段存在旧 `state.tasks` 中需要进入看板追溯，应在迁移/合并层将 `TaskItem` 幂等映射到历史 `TaskRun`（带 `legacyNote` 元信息）并经 `server/src/tasks/task-transport.js` 投影给前端；若只留存 `TaskRun` 账本，则将 `legacyNote` 判定与持久化接到 `TaskRun` 上并用 `projectTaskRun` 透传，在 `app/lib/task_kanban_model.dart` 优先消费服务端标记；补齐前后端衔接测试；
+     - 清理 `app/lib/app_state.dart` 中无调用方的 `createTask`（`/api/tasks` 双写）及相关旧 `TaskItem` 前端死代码；评估确认群组派活已全走 `TaskRun` 后，再安全下线 `group-orchestrator.js` 中的 `upsertDispatchTask` 双写。
 
 ---
 
@@ -306,12 +293,12 @@ W0（✅ 能力骨架）
  ├─→ W3（✅ 用户覆盖层）
  ├─→ W2a → W2b → W2c/W2e（✅）→ W2d macOS & 实机补齐（#30/#31/#32/#33）
  ├─→ W4a → W4b（9 块测试）→ W4c 默认开启 + 全双工/Jarvis/SDK（✅，527040f，#35）
- │                            └─→ W5 全局四列看板 + Review 修复（R1–R4）+ 顶栏 TaskRun 统一 + W5c 迁移（🟡，#36）
+ │                            └─→ W5 全局四列看板 + R1–R4（✅，47fefb3）+ 顶栏重写/W5c 打标 → 待收口 R5–R6（🟡，#36）
  └─→ W6（🟡 验收矩阵补实机 + sandbox-win 修复）
 W7（✅ Issue #37）
 ```
 
-**当前可安全停线**：W0 + W1 + W3 + W4 + W2a/b/c/e + `PiRunner` 模块化 + Orbis SDK 与全双工 + 全局看板初始页已完成并入仓；下一步按 **W5 收口与 Code Review 交接清单（R1–R4 → W5b 顶栏统一 → W5c 旧数据迁移）** 推进并收口 `#36`。
+**当前可安全停线**：W0 + W1 + W3 + W4 + W2a/b/c/e + `PiRunner` 模块化 + Orbis SDK 与全双工 + 全局看板与 `R1`–`R4`（`47fefb3`）已完成并入仓；下一步按 **W5 Review 交接清单（`R5` 聊天顶栏角标切 `TaskRun` + `R6` 打通 `legacyNote` 与 `TaskRun` 消费链路）** 推进并收口 `#36`。
 
 ---
 
