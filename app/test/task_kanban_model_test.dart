@@ -221,6 +221,19 @@ void main() {
 
   });
 
+  group('取消与完成不能混为一谈', () {
+    test('cancelled 只对 state=cancelled 为真', () {
+      expect(buildKanbanCards([run(state: 'cancelled')]).single.cancelled, isTrue);
+      expect(buildKanbanCards([run(state: 'completed')]).single.cancelled, isFalse);
+    });
+
+    test('取消也落在「已完成」列，但带着取消标记', () {
+      final card = buildKanbanCards([run(state: 'cancelled')]).single;
+      expect(card.column, KanbanColumn.done);
+      expect(card.cancelled, isTrue);
+    });
+  });
+
   group('卡片字段', () {
     test('没有负责人时 leadName 是空串，界面自己决定显示「未指派」', () {
       final card = buildKanbanCards([

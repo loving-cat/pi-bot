@@ -107,6 +107,17 @@ void main() {
     expect(find.text('正在写代码'), findsNothing);
   });
 
+  testWidgets('被取消的任务进「已完成」列要打「已取消」标记', (tester) async {
+    await pumpBoard(tester, [
+      taskJson(id: 'c1', state: 'cancelled', title: '被取消的活'),
+      taskJson(id: 'c2', state: 'completed', title: '真正干完的活'),
+    ]);
+
+    expect(find.byKey(const ValueKey('kanban-cancelled-c1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('kanban-cancelled-c2')), findsNothing);
+    expect(find.text('已取消'), findsOneWidget);
+  });
+
   testWidgets('已完成列里的旧对话片段默认折叠，点开才显示', (tester) async {
     await pumpBoard(tester, [
       taskJson(

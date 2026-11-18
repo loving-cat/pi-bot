@@ -422,10 +422,38 @@ class _CardTile extends StatelessWidget {
     final lead = card.leadName.isEmpty
         ? s.t('kanban.unassigned')
         : card.leadName;
-    return Column(
+    final body = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        TaskRunCard(task: card.run, compact: true, onOpen: onOpen),
+        Stack(
+          children: [
+            TaskRunCard(task: card.run, compact: true, onOpen: onOpen),
+            // 取消不等于干完：卡片右上角盖一个「已取消」标签，
+            // 否则它和真正交付的卡片在「已完成」列里长得一模一样。
+            if (card.cancelled)
+              Positioned(
+                top: 6,
+                right: 8,
+                child: Container(
+                  key: ValueKey('kanban-cancelled-${card.id}'),
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: PB.bgElevated.withValues(alpha: 0.92),
+                    borderRadius: BorderRadius.circular(PB.rFull),
+                    border: Border.all(color: PB.borderTertiary),
+                  ),
+                  child: Text(
+                    s.t('kanban.cancelled'),
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: PB.textTertiary,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
         Padding(
           padding: const EdgeInsets.only(left: 6, right: 6, bottom: 8),
           child: Row(
@@ -460,6 +488,9 @@ class _CardTile extends StatelessWidget {
         ),
       ],
     );
+
+    // 取消的卡片整体压暗一点：不是交付物，不该和真正完成的一样醒目。
+    return card.cancelled ? Opacity(opacity: 0.72, child: body) : body;
   }
 }
 

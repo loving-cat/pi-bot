@@ -121,6 +121,10 @@ class KanbanCard {
   /// 让「已完成」列不至于被 36 条"收到。先看基线和色板…"刷满。
   final bool legacyLike;
 
+  /// 是不是被取消的（也会落在「已完成」列）。
+  ///   取消不等于干完：卡片上必须标出来，否则看板会把它当成交付。
+  bool get cancelled => run.state == 'cancelled';
+
   String get id => run.id;
   String get roomId => run.roomId ?? '';
   bool get needsYou => column == KanbanColumn.needsYou;
