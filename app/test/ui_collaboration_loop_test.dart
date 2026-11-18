@@ -329,6 +329,9 @@ void main() {
     await mouse.moveTo(tester.getCenter(find.text('建议先收敛接口契约').first));
     await tester.pump();
 
+    // 操作条用 CompositedTransformFollower 跟着气泡走（滚动时不会留在原地压别人）
+    expect(find.byType(CompositedTransformFollower), findsWidgets);
+    expect(find.byType(CompositedTransformTarget), findsWidgets);
     // 悬停操作条必须浮在气泡上方，不能压住正文（第一行常常就是结论）
     final iconRect = tester.getRect(find.byIcon(LucideIcons.reply));
     final textRect = tester.getRect(find.text('建议先收敛接口契约').first);

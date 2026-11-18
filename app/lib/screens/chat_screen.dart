@@ -3559,6 +3559,10 @@ class _BubbleQuickActionsState extends State<_BubbleQuickActions> {
   ///   （长消息第一行往往就是结论）。所以用 OverlayEntry 另起一层：
   ///   视觉在气泡上方，点击命中由 Overlay 保证，气泡里的排版一动不动。
   OverlayEntry? _bar;
+  /// 气泡右上角的锚点：操作条用 CompositedTransformFollower 跟着它。
+  /// 用 LayerLink 而不是记一次 localToGlobal —— 记住的坐标不会随滚动更新，
+  /// 列表一滚条子就留在原处，开始压住别的内容。
+  final LayerLink _link = LayerLink();
   Timer? _hideTimer;
   bool _hovered = false;
   bool _barHovered = false;
@@ -3614,30 +3618,32 @@ class _BubbleQuickActionsState extends State<_BubbleQuickActions> {
 
   void _insertBar() {
     if (_bar != null) return;
-    final box = context.findRenderObject() as RenderBox?;
-    if (box == null || !box.hasSize) return;
-    final rect = box.localToGlobal(Offset.zero) & box.size;
     final overlay = Overlay.of(context, rootOverlay: true);
     _bar = OverlayEntry(
       builder: (ctx) {
-        final screen = MediaQuery.sizeOf(ctx);
-        // ★ 贴在气泡右上角外侧：底边跟气泡顶边齐平（留 2px 缝），
-        //   右边与气泡右边缘对齐 —— 像贴在气泡上的一个小面板，
-        //   而不是飘在行头另一侧。用 bottom 锚定就不用猜条子高度。
-        final rightGap = math.max(8.0, screen.width - rect.right);
         return Positioned(
-          bottom: math.max(4.0, screen.height - rect.top + 2),
-          right: rightGap,
-          child: MouseRegion(
-            onEnter: (_) {
-              _hideTimer?.cancel();
-              _barHovered = true;
-            },
-            onExit: (_) {
-              _barHovered = false;
-              _syncBar();
-            },
-            child: _barContent(ctx),
+          left: 0,
+          top: 0,
+          // CompositedTransformFollower 会把自身画到锚点位置：
+          // 气泡（target）在滚动里怎么动，条子（follower）就跟着动，
+          // 永远贴在气泡右上角外侧，不会留在原地压别的消息。
+          child: CompositedTransformFollower(
+            link: _link,
+            showWhenUnlinked: false,
+            targetAnchor: Alignment.topRight,
+            followerAnchor: Alignment.bottomRight,
+            offset: const Offset(0, -2),
+            child: MouseRegion(
+              onEnter: (_) {
+                _hideTimer?.cancel();
+                _barHovered = true;
+              },
+              onExit: (_) {
+                _barHovered = false;
+                _syncBar();
+              },
+              child: _barContent(ctx),
+            ),
           ),
         );
       },
@@ -3711,11 +3717,14 @@ class _BubbleQuickActionsState extends State<_BubbleQuickActions> {
 
     if (!_hasActions) return body;
 
-    return MouseRegion(
-      opaque: false,
-      onEnter: (_) => _onEnter(),
-      onExit: (_) => _onExit(),
-      child: body,
+    return CompositedTransformTarget(
+      link: _link,
+      child: MouseRegion(
+        opaque: false,
+        onEnter: (_) => _onEnter(),
+        onExit: (_) => _onExit(),
+        child: body,
+      ),
     );
   }
 }
