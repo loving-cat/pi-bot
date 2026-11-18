@@ -252,6 +252,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    // 切房间/退出时把任务浮层一起收掉：
+    //   它挂在根 Overlay 上，不收就会留在新房间上面。
+    _closeTaskBoard?.call();
+    _closeTaskBoard = null;
     WidgetsBinding.instance.removeObserver(this);
     _highlightTimer?.cancel();
     _highlightTimer = null;

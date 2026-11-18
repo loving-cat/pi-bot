@@ -644,6 +644,12 @@ class _TaskBoardPopover extends StatefulWidget {
 }
 
 class _TaskBoardPopoverState extends State<_TaskBoardPopover> {
+  /// 量浮层自己的真实矩形。
+  ///   不能用 left/top/bottom 算：向下弹出时 bottom == null，
+  ///   原来那套判定会把浮层正下方一直到窗口底都当成“里面”，
+  ///   点那一条空白关不掉。
+  final GlobalKey _sheetKey = GlobalKey();
+
   @override
   void initState() {
     super.initState();
@@ -677,6 +683,18 @@ class _TaskBoardPopoverState extends State<_TaskBoardPopover> {
         Listener(
           behavior: HitTestBehavior.translucent,
           onPointerDown: (event) {
+            final sheetBox =
+                _sheetKey.currentContext?.findRenderObject() as RenderBox?;
+            if (sheetBox != null && sheetBox.attached && sheetBox.hasSize) {
+              final rect =
+                  sheetBox.localToGlobal(Offset.zero) & sheetBox.size;
+              final inSheet = rect.contains(event.position);
+              // 点同一颗锚点按钮也当“再点一下”
+              final onAnchor =
+                  widget.anchorRect?.contains(event.position) ?? false;
+              if (!inSheet || onAnchor) widget.onClose();
+              return;
+            }
             // 点同一颗按钮 = 再点一下：直接关。
             //   遮罩会先拦住这一下，所以不能指望按钮自己受理。
             if (widget.anchorRect?.contains(event.position) == true) {
@@ -714,6 +732,7 @@ class _TaskBoardPopoverState extends State<_TaskBoardPopover> {
           bottom: widget.bottom,
           width: widget.width,
           child: Material(
+            key: _sheetKey,
             color: Colors.transparent,
             child: Container(
               constraints: const BoxConstraints(maxHeight: 520),

@@ -103,4 +103,28 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('上次运行被中断，已放回待办'), findsNothing, reason: '点叉必须关得掉');
   });
+  testWidgets('向下弹出时，浮层正下方的空白也能关掉', (tester) async {
+    await pump(tester);
+    await tester.tap(find.byIcon(LucideIcons.checkCircle2));
+    await tester.pumpAndSettle();
+    expect(find.byType(TaskBoardSheet), findsOneWidget);
+
+    // 浮层顶部约在按钮下方；窗口 760 高，点它的正下方（横坐标在浮层宽度内）
+    final sheet = tester.getRect(find.byType(TaskBoardSheet));
+    await tester.tapAt(Offset(sheet.center.dx, 745));
+    await tester.pumpAndSettle();
+    expect(find.byType(TaskBoardSheet), findsNothing, reason: '向下弹出的下方空白必须能关闭');
+  });
+
+  testWidgets('切走页面时浮层要一起收掉（不留在新页面上）', (tester) async {
+    await pump(tester);
+    await tester.tap(find.byIcon(LucideIcons.checkCircle2));
+    await tester.pumpAndSettle();
+    expect(find.byType(TaskBoardSheet), findsOneWidget);
+
+    // 模拟切房间/退出：整棵树换掉，ChatScreen 被 dispose
+    await tester.pumpWidget(const MaterialApp(home: Scaffold(body: SizedBox())));
+    await tester.pumpAndSettle();
+    expect(find.byType(TaskBoardSheet), findsNothing, reason: 'dispose 必须收掉挂在根 Overlay 上的浮层');
+  });
 }

@@ -12,6 +12,8 @@
 /// `state.taskRuns`；看板不另建缓存，否则两处状态会打架。
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
@@ -45,6 +47,15 @@ class _TaskKanbanPageState extends State<TaskKanbanPage> {
   bool _showLegacy = false;
   String? _lead;
 
+  @override
+  void initState() {
+    super.initState();
+    // WS 初始同步只带活跃任务 + 近期摘要；「已完成」列要看历史，
+    // 所以进板时主动拉一次，不靠“等下一次推送”。
+    unawaited(widget.state.taskRuns.refresh());
+    unawaited(widget.state.taskRuns.refreshHistory());
+  }
+
   static const double _minColumnWidth = 260;
   static const double _wideBreakpoint = 900;
 
@@ -64,6 +75,16 @@ class _TaskKanbanPageState extends State<TaskKanbanPage> {
           elevation: 0,
           scrolledUnderElevation: 0,
           actions: [
+            IconButton(
+              key: const ValueKey('kanban-refresh'),
+              tooltip: s.t('kanban.refresh'),
+              icon: const Icon(LucideIcons.refreshCw, size: 17),
+              color: PB.textTertiary,
+              onPressed: () {
+                unawaited(widget.state.taskRuns.refresh());
+                unawaited(widget.state.taskRuns.refreshHistory());
+              },
+            ),
             IconButton(
               key: const ValueKey('kanban-only-mine'),
               tooltip: s.t('kanban.onlyMine'),
@@ -89,11 +110,13 @@ class _TaskKanbanPageState extends State<TaskKanbanPage> {
             // bots 表补名字 —— 否则成员过滤条上显示的是 b_49b6aa… 这种 id。
             nameOf: (id) => widget.state.botById(id)?.name ?? '',
           );
-          final cards = _onlyMine
-              ? allCards.where((c) => c.needsYou).toList()
-              : (_lead == null
-                    ? allCards
-                    : allCards.where((c) => c.leadName == _lead).toList());
+          // 两个过滤是**合取**关系：只看等我的、按负责人，同时开也要一起生效。
+          // 原来写成三元二选一，开了“只看等我的”再点成员胶囊就没反应了。
+          final cards = allCards
+              .where((c) =>
+                  (!_onlyMine || c.needsYou) &&
+                  (_lead == null || c.leadName == _lead))
+              .toList();
           final columns = groupKanbanCards(cards);
           final stats = KanbanStats.of(groupKanbanCards(allCards));
           final leads = <String>{

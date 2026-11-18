@@ -107,6 +107,32 @@ void main() {
     expect(find.text('正在写代码'), findsNothing);
   });
 
+  testWidgets('「只看等我的」与成员过滤可以叠加（不再互相覆盖）', (tester) async {
+    await pumpBoard(tester, [
+      taskJson(id: 'a1', state: 'waiting_approval', title: '甲等你批', leadBotName: '甲', leadBotId: 'b1'),
+      taskJson(id: 'b1', state: 'waiting_input', title: '乙等你选', leadBotName: '乙', leadBotId: 'b2'),
+      taskJson(id: 'a2', state: 'running', title: '甲在跑', leadBotName: '甲', leadBotId: 'b1'),
+    ]);
+
+    await tester.tap(find.byKey(const ValueKey('kanban-only-mine')));
+    await tester.pump();
+    // 只剩两张"等你处理"
+    expect(find.text('甲等你批'), findsOneWidget);
+    expect(find.text('乙等你选'), findsOneWidget);
+    expect(find.text('甲在跑'), findsNothing);
+
+    // 再按负责人过滤：只留甲的、且仍是待处理
+    await tester.tap(find.byKey(const ValueKey('kanban-lead-甲')));
+    await tester.pump();
+    expect(find.text('甲等你批'), findsOneWidget);
+    expect(find.text('乙等你选'), findsNothing);
+  });
+
+  testWidgets('看板页有刷新入口（进板会主动拉历史）', (tester) async {
+    await pumpBoard(tester, [taskJson(id: 'x', state: 'completed', title: '历史任务')]);
+    expect(find.byKey(const ValueKey('kanban-refresh')), findsOneWidget);
+  });
+
   testWidgets('被取消的任务进「已完成」列要打「已取消」标记', (tester) async {
     await pumpBoard(tester, [
       taskJson(id: 'c1', state: 'cancelled', title: '被取消的活'),

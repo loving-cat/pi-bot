@@ -178,12 +178,16 @@ String _leadNameOf(TaskRun run, String Function(String botId)? nameOf) {
 List<KanbanCard> buildKanbanCards(
   List<TaskRun> runs, {
   bool onlyNeedsYou = false,
+  /// 默认只出**根任务**的卡：子任务已经在根卡里以 childrenSummary 展示，
+  /// 再单独出一张 = 同一件事在看板上出现两次，还会把数量和角标一起虚增。
+  bool onlyRoot = true,
   int titleMaxChars = kKanbanTitleMaxChars,
   int summaryMaxChars = kKanbanSummaryMaxChars,
   String Function(String botId)? nameOf,
 }) {
   final cards = <KanbanCard>[];
   for (final run in runs) {
+    if (onlyRoot && !run.isRoot) continue;
     final column = kanbanColumnOf(run.state);
     if (onlyNeedsYou && column != KanbanColumn.needsYou) continue;
     final rawTitle = run.title.trim().isNotEmpty

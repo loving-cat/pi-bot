@@ -16,12 +16,13 @@ TaskRun run({
   String leadBotId = 'b1',
   int updatedAt = 1000,
   int sequence = 1,
+  String? parentTaskId,
 }) {
   return TaskRun(
     id: id,
     roomId: 'r1',
     rootTaskId: id,
-    parentTaskId: null,
+    parentTaskId: parentTaskId,
     revision: 1,
     sequence: sequence,
     storeVersion: 1,
@@ -219,6 +220,26 @@ void main() {
       expect(card.leadName, 'b_x');
     });
 
+  });
+
+  group('子任务不单独出卡', () {
+    test('★ 根任务 + 子任务：默认只出根卡，数量不虚增', () {
+      final cards = buildKanbanCards([
+        run(id: 'root', state: 'running'),
+        run(id: 'child1', state: 'running', parentTaskId: 'root'),
+        run(id: 'child2', state: 'completed', parentTaskId: 'root'),
+      ]);
+      expect(cards.length, 1, reason: '子任务已在根卡里展示，不能再出卡');
+      expect(cards.single.id, 'root');
+    });
+
+    test('显式要子任务时仍能拿到（onlyRoot: false）', () {
+      final cards = buildKanbanCards([
+        run(id: 'root', state: 'running'),
+        run(id: 'child1', state: 'running', parentTaskId: 'root'),
+      ], onlyRoot: false);
+      expect(cards.length, 2);
+    });
   });
 
   group('取消与完成不能混为一谈', () {
