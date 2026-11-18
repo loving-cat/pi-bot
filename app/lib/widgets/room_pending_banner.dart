@@ -35,6 +35,12 @@ PendingRoomAction? detectRoomPendingAction(AppState state, Room room) {
       ? loaded
       : [if (room.lastMessage != null) room.lastMessage!];
 
+  // ★ 开场白里的「你现在想做什么」不算「待你处理」。
+  //   首开私聊时 bot 会自动自我介绍并弹一张 ask 卡片（服务端 greetDm），
+  //   那不是它卡在等你，而是它刚坐下开口。用户还没在这个会话里说过话，
+  //   就把这种未回答的 ask 计进待处理，右栏和列表会一直挂着「待回复」。
+  final openingOnly = !msgs.any((m) => m.isUser);
+
   for (var i = msgs.length - 1; i >= 0; i--) {
     final m = msgs[i];
     if (m.isConfirmation) {
@@ -63,6 +69,8 @@ PendingRoomAction? detectRoomPendingAction(AppState state, Room room) {
       }
     }
     if (m.isAsk && !m.askAnswered) {
+      // 开场问候（还没聊过）或开场轮次里产生的问句：不弹待处理。
+      if (openingOnly || m.meta?['opening'] == true) continue;
       return PendingRoomAction(
         room: room,
         kind: PendingActionKind.ask,
