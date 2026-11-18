@@ -1,6 +1,6 @@
 # Spec：收束与交付 v1（rev.3）
 
-> **状态**：执行中（W0 / W1 / W3 / W7 ✅ 已收口；W2 / W4 / W6 🟡 推进中；W5 待 W4c 解锁）
+> **状态**：执行中（W0 / W1 / W3 / W7 ✅ 已收口；W4a / W4b / W4c ✅ 已落地；W5a / W5b ✅ 已落地、W5c 待做；W2 / W6 🟡 推进中）
 > **日期**：2026-11-18
 > **对应主干**：`main` @ `fe4e501` 后基线（含 Orbis 品牌与 SDK 运行时、全双工路由、Jarvis 工具、`pi-runner.js` 六子模块拆分；服务端 `145/146` 测试文件通过，唯一失败项为 Windows 本机 AppContainer worktree 环境用例 `sandbox-win`）
 > **项目定位**：**Orbis**（兼容 `PI_BOT_*` 与旧导出名）要做**像 `pi-coding-agent` 那样的可嵌入多 Agent 基座** ——
@@ -198,15 +198,15 @@ node scripts/check-secrets.mjs
 
 ---
 
-### W5 · 任务看板与房间面板数据源统一 〔❌ 未开始，依赖 W4c，#36〕
+### W5 · 任务看板与房间面板数据源统一 〔🟡 W5a / W5b ✅ 已落地，W5c 待做〕
 
 **产品形态（对照全双工与团队协作界面）**：
 - **全局四列看板**（主界面左侧入口）：**待办 / 进行中 / 已完成 / 等你处理** + 顶部四格统计 + 「只看等我的」开关 + Bot 头像 chip 过滤 + 卡片（头像、名字、标题、当前状态/摘要、时间，遵循 `docs/SPEC-MOTION-V1.md` 动效规范与全双工在跑/旁路状态视觉）。
 - **保留房间内任务面板并统一数据源（已拍板）**：保留右侧栏 `app/lib/widgets/room_task_panel.dart` 与聊天顶栏 `app/lib/widgets/task_board.dart`（`showTaskBoard`），将其读写数据源**全部统一到 `TaskRun`（`app/lib/task_run_controller.dart`）**，按当前房间/关联部门过滤展示，淘汰旧版独立 `TaskItem` 双轨维护。
 
 **细分步序**：
-- **W5a · 归类纯逻辑模型**：（待新增）`app/lib/task_kanban_model.dart`（状态到四列映射、等你处理优先排序、标题截断）+（待新增）`app/test/task_kanban_model_test.dart`（≥ 10 项）。
-- **W5b · 全局看板页 + 房间面板接线**：（待新增）`app/lib/widgets/task_kanban.dart`（只负责展示与交互），复用 `app/lib/task_run_controller.dart`、`app/lib/widgets/task_run_card.dart`、`app/lib/widgets/task_run_sheet.dart`，并同步切换 `app/lib/widgets/task_board.dart` 数据源到 `TaskRun`。
+- **W5a · 归类纯逻辑模型**：✅ `app/lib/task_kanban_model.dart`（11 状态 → 四列、等你处理优先级、rune 安全截断、旧片段启发式）+ `app/test/task_kanban_model_test.dart` **21 项**（`c0aaeea`；`cd app && flutter test test/task_kanban_model_test.dart`）。
+- **W5b · 全局看板页 + 房间面板接线**：🟡 看板页已落地 —— `app/lib/widgets/task_kanban.dart`（四列 + 四格统计 + 只看等我的 + 负责人过滤 + 旧记录折叠），复用 `task_run_controller.dart` / `task_run_card.dart` / `task_run_sheet.dart`，入口在会话列表（标题栏加按钮会撑破四栏宽度预算）；`app/test/task_kanban_page_test.dart` **5 项**（`8155983`；`cd app && flutter test test/task_kanban_page_test.dart`）。**未完成**：`app/lib/widgets/task_board.dart`（751 行，仍读旧 `TaskItem`）与 `room_task_panel.dart` 的数据源切换 —— 需要先把房间顶栏清单从 `TaskItem` 迁到 `TaskRun` 且保留置顶/勾选交互。
 - **W5c · 通用旧数据幂等迁移**：（待新增）`server/tests/legacy-task-migration.mjs` —— 把历史 `TaskItem` 无损迁成历史 `TaskRun`；采用通用内容启发式规则（无产物链接或属对话回复片段的已完成项自动标 `legacy-note` 并默认折叠，避免刷屏污染「已完成」列），不硬编码特定本机条数。
 
 ---
