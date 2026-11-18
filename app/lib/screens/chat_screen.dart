@@ -1039,7 +1039,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final msgs = state.messages[room.id] ?? const <Msg>[];
     // ★ 并发时"还在思考"的占位（streaming 且一个字都没有）统一挪到列表最底部，
     //   否则先开始、后完成的 bot 的占位会被后完成 bot 的长内容顶上去。
-    final display = displayOrderMsgs(msgs);
+    // 上下文压缩的提示条不再进对话：压缩是后台行为，用户读消息时不该被
+    // 「省下 62k」这种运营数字打断。信息挪到顶栏上下文胶囊的 Tooltip 里。
+    final display = displayOrderMsgs(msgs).where((m) => !m.isCompact).toList();
     final progressGroups = groupProgressMessages(display);
 
     // ★ Key → index 表，喂给 ListView.builder 的 findChildIndexCallback。
