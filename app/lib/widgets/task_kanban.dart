@@ -20,14 +20,15 @@ import '../l10n/l10n.dart';
 import '../task_kanban_model.dart';
 import '../task_run_models.dart';
 import '../theme.dart';
+import '../window_chrome.dart';
 import 'task_run_card.dart';
 import 'task_run_sheet.dart';
 
 /// 打开全局任务看板（整页路由：手机和桌面同一套，避免再养一个浮层）。
 Future<void> showTaskKanban(BuildContext context, AppState state) {
-  return Navigator.of(context).push(
-    MaterialPageRoute<void>(builder: (_) => TaskKanbanPage(state: state)),
-  );
+  return Navigator.of(
+    context,
+  ).push(MaterialPageRoute<void>(builder: (_) => TaskKanbanPage(state: state)));
 }
 
 class TaskKanbanPage extends StatefulWidget {
@@ -52,23 +53,32 @@ class _TaskKanbanPageState extends State<TaskKanbanPage> {
     final s = L10n.s(context);
     return Scaffold(
       backgroundColor: PB.bgApp,
-      appBar: AppBar(
-        title: Text(s.t('kanban.title')),
-        backgroundColor: PB.bgApp,
-        elevation: 0,
-        actions: [
-          IconButton(
-            key: const ValueKey('kanban-only-mine'),
-            tooltip: s.t('kanban.onlyMine'),
-            icon: Icon(
-              _onlyMine ? LucideIcons.filterX : LucideIcons.funnel,
-              size: 18,
+      // 全页也要能拖窗口：顶部条用 chromeAppBar + WindowDragArea，
+      // 否则进了看板就拖不动整个应用（其它页面都这么做）。
+      appBar: chromeAppBar(
+        context,
+        AppBar(
+          flexibleSpace: const WindowDragArea(),
+          title: Text(s.t('kanban.title')),
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+          actions: [
+            IconButton(
+              key: const ValueKey('kanban-only-mine'),
+              tooltip: s.t('kanban.onlyMine'),
+              icon: Icon(
+                _onlyMine ? LucideIcons.filterX : LucideIcons.funnel,
+                size: 18,
+              ),
+              color: _onlyMine
+                  ? PB.colors(context).accentBright
+                  : PB.textTertiary,
+              onPressed: () => setState(() => _onlyMine = !_onlyMine),
             ),
-            color: _onlyMine ? PB.colors(context).accentBright : PB.textTertiary,
-            onPressed: () => setState(() => _onlyMine = !_onlyMine),
-          ),
-          const SizedBox(width: 6),
-        ],
+            const SizedBox(width: 6),
+          ],
+        ),
       ),
       body: ListenableBuilder(
         listenable: widget.state.taskRuns,
@@ -77,12 +87,14 @@ class _TaskKanbanPageState extends State<TaskKanbanPage> {
           final cards = _onlyMine
               ? allCards.where((c) => c.needsYou).toList()
               : (_lead == null
-                  ? allCards
-                  : allCards.where((c) => c.leadName == _lead).toList());
+                    ? allCards
+                    : allCards.where((c) => c.leadName == _lead).toList());
           final columns = groupKanbanCards(cards);
           final stats = KanbanStats.of(groupKanbanCards(allCards));
-          final leads = <String>{for (final c in allCards) if (c.leadName.isNotEmpty) c.leadName}.toList()
-            ..sort();
+          final leads = <String>{
+            for (final c in allCards)
+              if (c.leadName.isNotEmpty) c.leadName,
+          }.toList()..sort();
           return Column(
             children: [
               _StatsRow(stats: stats),
@@ -175,7 +187,10 @@ class _StatsRow extends StatelessWidget {
               child: Container(
                 key: ValueKey('kanban-stat-${column.name}'),
                 margin: const EdgeInsets.symmetric(horizontal: 3),
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
                 decoration: BoxDecoration(
                   color: PB.bgElevated,
                   borderRadius: BorderRadius.circular(PB.rXl),
@@ -425,7 +440,9 @@ class _CardTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = L10n.s(context);
-    final lead = card.leadName.isEmpty ? s.t('kanban.unassigned') : card.leadName;
+    final lead = card.leadName.isEmpty
+        ? s.t('kanban.unassigned')
+        : card.leadName;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -476,13 +493,14 @@ String _relativeTime(int epochMs) {
 }
 
 String _columnLabel(AppStrings s, KanbanColumn column) => switch (column) {
-      KanbanColumn.todo => s.t('kanban.todo'),
-      KanbanColumn.doing => s.t('kanban.doing'),
-      KanbanColumn.done => s.t('kanban.done'),
-      KanbanColumn.needsYou => s.t('kanban.needsYou'),
-    };
+  KanbanColumn.todo => s.t('kanban.todo'),
+  KanbanColumn.doing => s.t('kanban.doing'),
+  KanbanColumn.done => s.t('kanban.done'),
+  KanbanColumn.needsYou => s.t('kanban.needsYou'),
+};
 
-Color _columnColor(BuildContext context, KanbanColumn column) => switch (column) {
+Color _columnColor(BuildContext context, KanbanColumn column) =>
+    switch (column) {
       KanbanColumn.todo => PB.textTertiary,
       KanbanColumn.doing => PB.colors(context).accent,
       KanbanColumn.done => PB.success,
