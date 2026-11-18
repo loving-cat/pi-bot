@@ -68,6 +68,15 @@ const areaChat = StringArea(
     'rooms.disbandBody': '群和里面的聊天记录都会消失，成员 bot 本身不会被删掉。',
     'rooms.deleteChatBody': '聊天记录会清空。bot 本身不会被删掉 —— 下次点它（或 @它）会重新开一个空对话。',
     'rooms.hiddenCount': '已隐藏 {n} 个会话',
+    'rooms.filterAll': '全部',
+    'rooms.filterGroups': '团队',
+    'rooms.filterBots': '助手',
+    'rooms.filterPending': '待处理',
+    'rooms.pendingTitle': '待你处理（{n}）',
+    'rooms.pendingOpen': '去处理',
+    'rooms.badgeConfirm': '待确认',
+    'rooms.badgeApproval': '待批准',
+    'rooms.badgeAsk': '等你回复',
 
     // ---- 聊天页 ----
     'chat.pickImageFailed': '选图失败：{error}',
@@ -280,6 +289,15 @@ const areaChat = StringArea(
     'rooms.disbandBody': 'The group and its chat history will be gone. The bots themselves stay.',
     'rooms.deleteChatBody': 'The chat history will be cleared. The bot itself stays — next time you open it (or @ it) you start a fresh conversation.',
     'rooms.hiddenCount': '{n} hidden conversations',
+    'rooms.filterAll': 'All',
+    'rooms.filterGroups': 'Teams',
+    'rooms.filterBots': 'Direct',
+    'rooms.filterPending': 'Action needed',
+    'rooms.pendingTitle': 'Needs your action ({n})',
+    'rooms.pendingOpen': 'Open',
+    'rooms.badgeConfirm': 'Confirm',
+    'rooms.badgeApproval': 'Approve',
+    'rooms.badgeAsk': 'Waiting',
 
     // ---- Chat ----
     'chat.pickImageFailed': 'Could not add the image: {error}',

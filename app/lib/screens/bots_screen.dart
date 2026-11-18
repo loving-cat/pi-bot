@@ -287,7 +287,13 @@ class _BotRow extends StatelessWidget {
                     tooltip: L10n.s(context).t('bots.dm'),
                     onPressed: () async {
                       final room = await state.ensureDm(bot.id);
-                      if (room != null && context.mounted) {
+                      if (room == null || !context.mounted) return;
+                      final wide =
+                          MediaQuery.sizeOf(context).width >= kTwoPaneMinWidth;
+                      if (wide && Navigator.of(context).canPop()) {
+                        state.requestRoom(room.id);
+                        Navigator.of(context).pop();
+                      } else {
                         Navigator.push(
                           context,
                           MaterialPageRoute(

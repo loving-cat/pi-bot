@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -10,6 +12,7 @@ import '../text_utils.dart';
 import '../theme.dart';
 import '../window_chrome.dart';
 import '../widgets/bot_delete_confirm.dart';
+import '../widgets/room_pending_banner.dart';
 import '../widgets/toast.dart';
 import '../widgets/avatar_life.dart';
 import '../widgets/anchored_menu.dart';
@@ -45,6 +48,8 @@ class RoomsScreen extends StatefulWidget {
   State<RoomsScreen> createState() => _RoomsScreenState();
 }
 
+enum _RoomFilter { all, groups, bots, pending }
+
 class _RoomsScreenState extends State<RoomsScreen> {
   /// 「新建」按钮的锚点：浮层要贴着它弹出。
   final _createAnchor = GlobalKey();
@@ -52,11 +57,44 @@ class _RoomsScreenState extends State<RoomsScreen> {
   bool _searching = false;
   final _searchController = TextEditingController();
   String _query = '';
+  _RoomFilter _filter = _RoomFilter.all;
 
   @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _openRoom(Room room) {
+    final state = AppScope.read(context);
+    if (room.unread && state.api != null) {
+      unawaited(state.updateRoom(room.id, {'unread': false}));
+    }
+    if (widget.onSelect != null) {
+      widget.onSelect!(room);
+    } else {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => ChatScreen(room: room)),
+      );
+    }
+  }
+
+  bool _matchesQuery(Room r, AppState state, String q) {
+    if (q.isEmpty) return true;
+    final needle = q.toLowerCase();
+    if (r.name.toLowerCase().contains(needle)) return true;
+    if (r.topic.toLowerCase().contains(needle)) return true;
+    if ((r.lastMessage?.text ?? '').toLowerCase().contains(needle)) return true;
+    for (final id in r.botIds) {
+      final b = state.botById(id);
+      if (b == null) continue;
+      if (b.name.toLowerCase().contains(needle) ||
+          b.tagline.toLowerCase().contains(needle)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /// 被隐藏的会话：底部一行入口 + 一个能取消隐藏的弹层
@@ -112,14 +150,6 @@ class _RoomsScreenState extends State<RoomsScreen> {
   Widget build(BuildContext context) {
     final s = L10n.s(context);
     final state = AppScope.of(context);
-    final matched = state.rooms.where(
-      (r) =>
-          _query.isEmpty || r.name.toLowerCase().contains(_query.toLowerCase()),
-    );
-    // 右键菜单里「从侧边栏隐藏」的不进列表 —— 但底部要留一个入口能翻出来，
-    // 否则"隐藏"就是个陷阱：点错了就再也找不回来。
-    final rooms = matched.where((r) => !r.hidden).toList();
-    final hidden = matched.where((r) => r.hidden).toList();
 
     return Scaffold(
       backgroundColor: PB.bgApp,
@@ -261,101 +291,139 @@ class _RoomsScreenState extends State<RoomsScreen> {
           ],
         ),
       ),
-      body: RefreshIndicator(
-        color: PB.colors(context).accent,
-        backgroundColor: PB.bgElevated,
-        onRefresh: () => state.refresh(),
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 680),
-            child: ListView(
-              physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.fromLTRB(8, 2, 8, 40),
-              children: [
-                if (state.link != LinkState.online)
-                  _Banner(
-                    text: state.link == LinkState.connecting
-                        ? s.t('rooms.serverConnecting')
-                        : s.t('rooms.serverUnreachable'),
-                    icon: state.link == LinkState.connecting
-                        ? LucideIcons.refreshCw
-                        : LucideIcons.cloudOff,
-                  ),
-                if (rooms.isEmpty &&
-                    _query.isEmpty &&
-                    state.link != LinkState.online)
-                  const RoomListSkeleton()
-                else if (rooms.isEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 110),
-                    child: Column(
-                      children: [
-                        Container(
-                          width: 64,
-                          height: 64,
-                          decoration: BoxDecoration(
-                            color: PB.bgBubble,
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(color: PB.borderTertiary),
-                          ),
-                          child: Icon(
-                            LucideIcons.sparkles,
-                            size: 26,
-                            color: PB.textQuaternary,
-                          ),
+      body: ListenableBuilder(
+        listenable: state.taskRuns,
+        builder: (context, _) {
+          final visibleAll = state.rooms.where((r) => !r.hidden).toList();
+          final pendingList = collectPendingRoomActions(state);
+          final pendingMap = {
+            for (final item in pendingList) item.room.id: item,
+          };
+          final hasGroups = visibleAll.any((r) => r.isGroup);
+          final hasDms = visibleAll.any((r) => !r.isGroup);
+          final effectiveFilter =
+              (_filter == _RoomFilter.pending && pendingList.isEmpty)
+                  ? _RoomFilter.all
+                  : _filter;
+          final showFilters =
+              (hasGroups && hasDms) ||
+              pendingList.isNotEmpty ||
+              effectiveFilter != _RoomFilter.all;
+
+          final matched = state.rooms.where(
+            (r) => _matchesQuery(r, state, _query),
+          );
+          final rooms = matched.where((r) {
+            if (r.hidden) return false;
+            return switch (effectiveFilter) {
+              _RoomFilter.all => true,
+              _RoomFilter.groups => r.isGroup,
+              _RoomFilter.bots => !r.isGroup,
+              _RoomFilter.pending => pendingMap.containsKey(r.id),
+            };
+          }).toList();
+          final hidden = matched.where((r) => r.hidden).toList();
+
+          return RefreshIndicator(
+            color: PB.colors(context).accent,
+            backgroundColor: PB.bgElevated,
+            onRefresh: () => state.refresh(),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 680),
+                child: ListView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.fromLTRB(8, 2, 8, 40),
+                  children: [
+                    if (state.link != LinkState.online)
+                      _Banner(
+                        text: state.link == LinkState.connecting
+                            ? s.t('rooms.serverConnecting')
+                            : s.t('rooms.serverUnreachable'),
+                        icon: state.link == LinkState.connecting
+                            ? LucideIcons.refreshCw
+                            : LucideIcons.cloudOff,
+                      ),
+                    if (pendingList.isNotEmpty)
+                      PendingActionsBanner(
+                        items: pendingList,
+                        onOpenRoom: _openRoom,
+                      ),
+                    if (showFilters)
+                      _FilterStrip(
+                        selected: effectiveFilter,
+                        hasPending: pendingList.isNotEmpty,
+                        pendingCount: pendingList.length,
+                        onSelect: (next) => setState(() => _filter = next),
+                      ),
+                    if (rooms.isEmpty &&
+                        _query.isEmpty &&
+                        effectiveFilter == _RoomFilter.all &&
+                        state.link != LinkState.online)
+                      const RoomListSkeleton()
+                    else if (rooms.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 110),
+                        child: Column(
+                          children: [
+                            Container(
+                              width: 64,
+                              height: 64,
+                              decoration: BoxDecoration(
+                                color: PB.bgBubble,
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(color: PB.borderTertiary),
+                              ),
+                              child: Icon(
+                                LucideIcons.sparkles,
+                                size: 26,
+                                color: PB.textQuaternary,
+                              ),
+                            ),
+                            const SizedBox(height: 18),
+                            Text(
+                              _query.isEmpty
+                                  ? s.t('rooms.empty')
+                                  : s.tf('rooms.noMatch', {'query': _query}),
+                              style: TextStyle(
+                                color: PB.textSecondary,
+                                fontSize: PB.fsSm,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              s.t('rooms.emptyHint'),
+                              style: TextStyle(
+                                color: PB.textQuaternary,
+                                fontSize: PB.fsXs,
+                              ),
+                            ),
+                          ],
                         ),
-                        const SizedBox(height: 18),
-                        Text(
-                          _query.isEmpty
-                              ? s.t('rooms.empty')
-                              : s.tf('rooms.noMatch', {'query': _query}),
-                          style: TextStyle(
-                            color: PB.textSecondary,
-                            fontSize: PB.fsSm,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          s.t('rooms.emptyHint'),
-                          style: TextStyle(
-                            color: PB.textQuaternary,
-                            fontSize: PB.fsXs,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                for (final room in rooms)
-                  _RoomRow(
-                    // 按会话 id 加 key：列表重排（新消息把会话顶上来）时
-                    // 元素跟着挪，而不是整行销毁重建（会重播 hover/动画状态）
-                    key: ValueKey(room.id),
-                    room: room,
-                    state: state,
-                    selected: widget.selectedId == room.id,
-                    onOpen: (r) {
-                      if (widget.onSelect != null) {
-                        widget.onSelect!(r);
-                      } else {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => ChatScreen(room: r),
-                          ),
-                        );
-                      }
-                    },
-                  ),
-                if (hidden.isNotEmpty)
-                  _HiddenRow(
-                    count: hidden.length,
-                    onTap: () => _showHidden(context, hidden),
-                  ),
-              ],
+                      ),
+                    for (final room in rooms)
+                      _RoomRow(
+                        // 按会话 id 加 key：列表重排（新消息把会话顶上来）时
+                        // 元素跟着挪，而不是整行销毁重建（会重播 hover/动画状态）
+                        key: ValueKey(room.id),
+                        room: room,
+                        state: state,
+                        pending: pendingMap[room.id],
+                        selected: widget.selectedId == room.id,
+                        onOpen: _openRoom,
+                      ),
+                    if (hidden.isNotEmpty)
+                      _HiddenRow(
+                        count: hidden.length,
+                        onTap: () => _showHidden(context, hidden),
+                      ),
+                  ],
+                ),
+              ),
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }
@@ -401,11 +469,8 @@ class _RoomsScreenState extends State<RoomsScreen> {
           sectionLabel: s.t('rooms.dmSection'),
           onTap: () async {
             final room = await state.ensureDm(mainBot.id);
-            if (room != null && context.mounted) {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => ChatScreen(room: room)),
-              );
+            if (room != null && mounted) {
+              _openRoom(room);
             }
           },
         ),
@@ -419,11 +484,8 @@ class _RoomsScreenState extends State<RoomsScreen> {
               : preview(bot.tagline, 34),
           onTap: () async {
             final room = await state.ensureDm(bot.id);
-            if (room != null && context.mounted) {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => ChatScreen(room: room)),
-              );
+            if (room != null && mounted) {
+              _openRoom(room);
             }
           },
         ),
@@ -458,12 +520,89 @@ class _RoomsScreenState extends State<RoomsScreen> {
       topic: form.topic,
       botIds: form.botIds,
     );
-    if (room != null && context.mounted) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => ChatScreen(room: room)),
-      );
+    if (room != null && mounted) {
+      _openRoom(room);
     }
+  }
+}
+
+class _FilterStrip extends StatelessWidget {
+  const _FilterStrip({
+    required this.selected,
+    required this.hasPending,
+    required this.pendingCount,
+    required this.onSelect,
+  });
+
+  final _RoomFilter selected;
+  final bool hasPending;
+  final int pendingCount;
+  final void Function(_RoomFilter) onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = L10n.s(context);
+    final colors = PB.colors(context);
+    final items = <(_RoomFilter, String)>[
+      (_RoomFilter.all, s.t('rooms.filterAll')),
+      (_RoomFilter.groups, s.t('rooms.filterGroups')),
+      (_RoomFilter.bots, s.t('rooms.filterBots')),
+      if (hasPending)
+        (_RoomFilter.pending, '${s.t('rooms.filterPending')} ($pendingCount)'),
+    ];
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 2, 4, 8),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            for (final (kind, label) in items)
+              Padding(
+                padding: const EdgeInsets.only(right: 6),
+                child: Material(
+                  color: selected == kind
+                      ? colors.accentSoft
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(PB.rFull),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(PB.rFull),
+                    onTap: () {
+                      if (isMobilePlatform) HapticFeedback.selectionClick();
+                      onSelect(kind);
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 11,
+                        vertical: 5,
+                      ),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(PB.rFull),
+                        border: Border.all(
+                          color: selected == kind
+                              ? colors.accent.withValues(alpha: 0.45)
+                              : PB.borderTertiary,
+                        ),
+                      ),
+                      child: Text(
+                        label,
+                        style: TextStyle(
+                          fontSize: PB.fsXxs,
+                          fontWeight: selected == kind
+                              ? FontWeight.w600
+                              : FontWeight.w500,
+                          color: selected == kind
+                              ? colors.link
+                              : PB.textTertiary,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -539,12 +678,14 @@ class _RoomRow extends StatefulWidget {
     required this.room,
     required this.state,
     required this.onOpen,
+    this.pending,
     this.selected = false,
   });
 
   final Room room;
   final AppState state;
   final void Function(Room room) onOpen;
+  final PendingRoomAction? pending;
   final bool selected;
 
   @override
@@ -622,7 +763,10 @@ class _RoomRowState extends State<_RoomRow> {
                   // （InkWell 没有 onLongPressStart，拿不到手指坐标，就用行的中心当锚点。）
                   onSecondaryTapDown: (d) =>
                       _roomMenu(context, room, d.globalPosition),
-                  onLongPress: () => _roomMenu(context, room, _rowAnchor()),
+                  onLongPress: () {
+                    if (isMobilePlatform) HapticFeedback.selectionClick();
+                    _roomMenu(context, room, _rowAnchor());
+                  },
                   onHighlightChanged: (v) => setState(() => _pressed = v),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
@@ -632,10 +776,46 @@ class _RoomRowState extends State<_RoomRow> {
                     child: Row(
                       children: [
                         if (room.isGroup)
-                          GroupBlobAvatar(
-                            seeds: room.botIds,
-                            size: 46,
-                            animate: false,
+                          SizedBox(
+                            width: 46,
+                            height: 46,
+                            child: Stack(
+                              clipBehavior: Clip.none,
+                              children: [
+                                GroupBlobAvatar(
+                                  seeds: room.botIds,
+                                  size: 46,
+                                  animate: false,
+                                  mood: busy
+                                      ? AvatarMood.busy
+                                      : AvatarMood.idle,
+                                ),
+                                if (busy)
+                                  Positioned(
+                                    right: -3,
+                                    bottom: -3,
+                                    child: Container(
+                                      padding: const EdgeInsets.all(2),
+                                      decoration: BoxDecoration(
+                                        color: Theme.of(
+                                          context,
+                                        ).scaffoldBackgroundColor,
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: SizedBox(
+                                        width: 12,
+                                        height: 12,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 1.8,
+                                          color: PB
+                                              .colors(context)
+                                              .accentBright,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
                           )
                         else
                           BlobAvatar(
@@ -698,13 +878,53 @@ class _RoomRowState extends State<_RoomRow> {
                                       room.name,
                                       style: TextStyle(
                                         fontSize: PB.fsBase,
-                                        fontWeight: FontWeight.w600,
+                                        fontWeight: room.unread
+                                            ? FontWeight.w700
+                                            : FontWeight.w600,
                                         letterSpacing: -0.1,
                                         color: PB.textPrimary,
                                       ),
                                       overflow: TextOverflow.ellipsis,
                                     ),
                                   ),
+                                  if (room.pinned) ...[
+                                    const SizedBox(width: 6),
+                                    Icon(
+                                      LucideIcons.pin,
+                                      key: ValueKey('pin-${room.id}'),
+                                      size: 12,
+                                      color: PB.textQuaternary,
+                                    ),
+                                  ],
+                                  if (widget.pending != null) ...[
+                                    const SizedBox(width: 6),
+                                    Container(
+                                      key: ValueKey('pending-${room.id}'),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 6,
+                                        vertical: 1.5,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: (widget.pending!.irreversible
+                                                ? PB.danger
+                                                : PB.warn)
+                                            .withValues(alpha: 0.14),
+                                        borderRadius: BorderRadius.circular(
+                                          PB.rFull,
+                                        ),
+                                      ),
+                                      child: Text(
+                                        widget.pending!.badgeLabel(s),
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w600,
+                                          color: widget.pending!.irreversible
+                                              ? PB.danger
+                                              : PB.warn,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
                                   const SizedBox(width: 8),
                                   Text(
                                     formatTime(room.lastMessageAt),
@@ -719,17 +939,37 @@ class _RoomRowState extends State<_RoomRow> {
                                 ],
                               ),
                               const SizedBox(height: 4),
-                              Text(
-                                previewText,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: PB.fsSm,
-                                  height: 1.3,
-                                  color: busy
-                                      ? PB.colors(context).link
-                                      : PB.textTertiary,
-                                ),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      previewText,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: PB.fsSm,
+                                        height: 1.3,
+                                        color: busy
+                                            ? PB.colors(context).link
+                                            : (room.unread
+                                                  ? PB.textSecondary
+                                                  : PB.textTertiary),
+                                      ),
+                                    ),
+                                  ),
+                                  if (room.unread) ...[
+                                    const SizedBox(width: 8),
+                                    Container(
+                                      key: ValueKey('unread-${room.id}'),
+                                      width: 7,
+                                      height: 7,
+                                      decoration: BoxDecoration(
+                                        color: PB.colors(context).accent,
+                                        shape: BoxShape.circle,
+                                      ),
+                                    ),
+                                  ],
+                                ],
                               ),
                             ],
                           ),

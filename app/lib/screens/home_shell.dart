@@ -317,6 +317,7 @@ class _HomeShellState extends State<HomeShell> {
                             key: ValueKey(selected.id),
                             room: selected,
                             embedded: true,
+                            overlayCovered: layout.hasOverlay,
                           ),
                   ),
                 ),
