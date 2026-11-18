@@ -14,6 +14,8 @@ import '../theme.dart';
 import '../window_chrome.dart';
 import '../widgets/bot_delete_confirm.dart';
 import '../widgets/room_pending_banner.dart';
+import '../task_kanban_model.dart';
+import '../widgets/task_kanban.dart';
 import '../widgets/toast.dart';
 import '../widgets/avatar_life.dart';
 import '../widgets/anchored_menu.dart';
@@ -342,6 +344,12 @@ class _RoomsScreenState extends State<RoomsScreen> {
                             ? LucideIcons.refreshCw
                             : LucideIcons.cloudOff,
                       ),
+                    _KanbanEntry(
+                      onTap: () => showTaskKanban(context, state),
+                      total: state.taskRuns.tasks.length,
+                      needsYou:
+                          buildKanbanCards(state.taskRuns.tasks, onlyNeedsYou: true).length,
+                    ),
                     if (showFilters)
                       _FilterStrip(
                         selected: _filter,
@@ -522,6 +530,90 @@ class _RoomsScreenState extends State<RoomsScreen> {
     if (room != null && mounted) {
       _openRoom(room);
     }
+  }
+}
+
+/// 会话列表里的「任务看板」入口。
+///
+/// 为什么不做成标题栏按钮：四栏全开时左栏只有两百多像素，
+/// 再塞一个 34px 圆钮就会把标题行挤破（有专门的宽度预算测试守着）。
+/// 所以它占一行纵向空间 —— 顺带还能把「待处理」数量写在右边。
+class _KanbanEntry extends StatelessWidget {
+  const _KanbanEntry({
+    required this.onTap,
+    required this.total,
+    required this.needsYou,
+  });
+
+  final VoidCallback onTap;
+  final int total;
+  final int needsYou;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = L10n.s(context);
+    final colors = PB.colors(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 4, 4, 6),
+      child: Material(
+        color: PB.bgElevated,
+        borderRadius: BorderRadius.circular(PB.rXl),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(PB.rXl),
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(PB.rXl),
+              border: Border.all(color: PB.borderSecondary),
+            ),
+            child: Row(
+              children: [
+                Icon(LucideIcons.layoutGrid, size: 14, color: colors.accentBright),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    s.t('kanban.title'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: PB.fsSm,
+                      fontWeight: FontWeight.w500,
+                      color: PB.textPrimary,
+                    ),
+                  ),
+                ),
+                if (needsYou > 0)
+                  Container(
+                    key: const ValueKey('rooms-kanban-needs-you'),
+                    margin: const EdgeInsets.only(right: 6),
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                    decoration: BoxDecoration(
+                      color: PB.warn.withValues(alpha: 0.16),
+                      borderRadius: BorderRadius.circular(PB.rFull),
+                    ),
+                    child: Text(
+                      '$needsYou',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        color: PB.warn,
+                        height: 1.2,
+                      ),
+                    ),
+                  ),
+                Text(
+                  '$total',
+                  style: TextStyle(fontSize: PB.fsXs, color: PB.textQuaternary),
+                ),
+                const SizedBox(width: 4),
+                Icon(LucideIcons.chevronRight, size: 13, color: PB.textQuaternary),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 
