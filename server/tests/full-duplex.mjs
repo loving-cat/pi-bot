@@ -332,16 +332,67 @@ await test('FD-2 dispatch_bot 异步派活立刻返回，后台完成后交付�
   runner.runBotOnce = originalRunBotOnce;
 });
 
-await test('FD-3 群聊忙时补一句要求（amend）：只 steer 在跑的成员，不打断、不重排整轮', async () => {
+await test('FD-4 群聊忙时问负责人进度（负责人没在跑）：走旁路问答，不把问题塞给在跑的成员', async () => {
+  const lead = store.createBot({ name: '主管E', persona: '统筹' });
+  const a = store.createBot({ name: '执行E1', persona: '写代码' });
+  const group = store.createGroup({ name: '问进度组', botIds: [lead.id, a.id], leadBotId: lead.id });
+  const runner = makeRunner();
+
+  const steered = [];
+  runner.sessions.set(`${group.id}:${a.id}`, {
+    busy: true,
+    bot: a,
+    startedAt: Date.now() - 1500,
+    goalText: '跑测试',
+    liveMsgId: 'm_a',
+    session: {
+      model,
+      steer: async (t) => { steered.push(t); return 'steered'; },
+    },
+  });
+  runner.roundLocks.add(group.id);
+
+  let talkBuiltFor = null;
+  runner.__buildSession = async (_rid, bid, opts = {}) => {
+    assert.equal(opts.talkLane, true);
+    talkBuiltFor = bid;
+    let listener;
+    return {
+      bot: lead,
+      session: {
+        model,
+        subscribe(fn) { listener = fn; return () => {}; },
+        dispose() {},
+        async abort() {},
+        async prompt() {
+          listener({
+            type: 'message_end',
+            message: { role: 'assistant', content: [{ type: 'text', text: '整体 60%，执行E1 还在跑测试。' }] },
+          });
+        },
+      },
+    };
+  };
+
+  const out = await runner.send(group.id, '现在整体进度到多少了');
+  assert.equal(out.duplex, 'side_reply', '该由负责人旁路回答，而不是把问题塞给成员');
+  await sleep(60);
+  assert.equal(talkBuiltFor, lead.id);
+  assert.deepEqual(steered, [], '在跑的成员一个字都不该收到');
+
+  runner.roundLocks.delete(group.id);
+});
+
+await test('FD-3 群聊忙时补一句要求（amend）：只 steer 负责人，不把话强压给在跑的成员', async () => {
   const lead = store.createBot({ name: '主管D', persona: '统筹' });
   const a = store.createBot({ name: '执行D1', persona: '写代码' });
   const b = store.createBot({ name: '执行D2', persona: '做调研' });
   const group = store.createGroup({ name: '补充要求组', botIds: [lead.id, a.id, b.id], leadBotId: lead.id });
   const runner = makeRunner();
 
-  const steered = { [a.id]: [], [b.id]: [] };
+  const steered = { [a.id]: [], [b.id]: [], [lead.id]: [] };
   const aborted = [];
-  for (const bot of [a, b]) {
+  for (const bot of [a, b, lead]) {
     runner.sessions.set(`${group.id}:${bot.id}`, {
       busy: true,
       bot,
@@ -364,8 +415,9 @@ await test('FD-3 群聊忙时补一句要求（amend）：只 steer 在跑的成
   assert.equal(out.steered, 'amend');
 
   assert.deepEqual(aborted, [], '任何人都不能被 abort');
-  assert.match(steered[a.id][0], /收窄到 A 股/, '在跑成员应收到补充要求');
-  assert.match(steered[b.id][0], /收窄到 A 股/, '另一个在跑成员也要收到');
+  assert.match(steered[lead.id][0], /收窄到 A 股/, '负责人应收到补充要求');
+  assert.equal(steered[a.id].length, 0, '在跑的成员不该被强塞（用户没 @ 他）');
+  assert.equal(steered[b.id].length, 0, '在跑的成员不该被强塞（用户没 @ 他）');
   assert.equal(runner.roundQueue.get(group.id).text, '排队后续', '原队列不能被换成新文本');
   assert.equal(runner.sessions.get(`${group.id}:${a.id}`).busy, true, '在跑成员的会话要保留');
 

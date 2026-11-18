@@ -9,6 +9,7 @@
 import { log } from '../util.js';
 import { shells } from '../shells.js';
 import { readForModel } from '../attachments.js';
+import { parseMentions } from '../mentions.js';
 import { RunUsage } from '../run-stats.js';
 import { providerLeaseScope } from '../provider-updates.js';
 import { assistantFailure, modelFailure } from '../model-reply.js';
@@ -16,6 +17,7 @@ import { deliverDirectInput } from '../direct-message-delivery.js';
 import { releaseEntry } from '../session-pool.js';
 import { createSessionBuilder } from '../session-factory.js';
 import { decide as decidePoint, shouldUseJev } from '../decision-router.js';
+import { looksLikeSupplement } from '../duplex-router.js';
 import { routeBusyInput, DUPLEX_KIND } from '../duplex-router.js';
 import {
   buildLiveWorkSnapshot,
@@ -788,7 +790,25 @@ export async function sendUserMessage(
       roomKind: 'group',
       workSnapshot: groupSnap.members[0] ?? null,
     });
-    if ((runner.roundLocks.has(roomId) || runner.isRoomBusy(roomId)) && decision.kind === DUPLEX_KIND.sideReply) {
+    // ★ 补一句要求时「该找谁」：@了谁就找谁，否则找负责人。
+    //
+    //   不能把用户的一句话同时强转给**所有在跑的成员**：用户问「进度到多少了」，
+    //   结果四个成员各自回一句、负责人反而没声音。这里先算出唯一目标。
+    const groupMembers = (room.botIds ?? [])
+      .map((id) => runner.store.getBot(id))
+      .filter(Boolean);
+    const mentionHit = parseMentions(clean, groupMembers, { selfId: bot.id }).found?.[0] ?? null;
+    const amendTargetId = mentionHit ?? room.leadBotId ?? bot.id;
+    const amendTargetBusy = Boolean(
+      runner.sessions.get(sessionKey(roomId, amendTargetId))?.busy,
+    );
+    const isSupplement = decision.kind === DUPLEX_KIND.amend && looksLikeSupplement(clean);
+    const wantsSideReply = decision.kind === DUPLEX_KIND.sideReply ||
+      // 补一句约束但负责人没在跑：当旁路问答处理，不去 steer 在干的成员。
+      // 新任务（「第二轮需求」这种）不走这条路 —— 仍然按插话重排处理。
+      (isSupplement && !amendTargetBusy);
+
+    if ((runner.roundLocks.has(roomId) || runner.isRoomBusy(roomId)) && wantsSideReply) {
       runner.aborting.delete(roomId);
       const userMessage = runner.store.appendMessage({
         roomId,
@@ -840,11 +860,14 @@ export async function sendUserMessage(
     //   这正是「说好的全双工但一插话就重来」的根因。
     //   所以 amend 走 steer：话进到正在跑的那几个会话里，谁在跑谁收到，谁都不被打断。
     if ((runner.roundLocks.has(roomId) || runner.isRoomBusy(roomId)) &&
-        decision.kind === DUPLEX_KIND.amend) {
+        decision.kind === DUPLEX_KIND.amend &&
+        // 只有看起来是「补一句约束」才走 steer；像「第二轮需求」这种新任务
+        // 仍然走原来的插话重排（兼容 room-lock 那套契约）。
+        looksLikeSupplement(clean)) {
       const running = [];
-      for (const bid of room.botIds ?? []) {
-        const e = runner.sessions.get(sessionKey(roomId, bid));
-        if (e?.busy && e.session?.steer) running.push({ bid, entry: e });
+      const targetEntry = runner.sessions.get(sessionKey(roomId, amendTargetId));
+      if (targetEntry?.busy && targetEntry.session?.steer) {
+        running.push({ bid: amendTargetId, entry: targetEntry });
       }
       if (running.length) {
         const { promptText } = await runner.buildInput(clean, files, roomId);
@@ -888,6 +911,7 @@ export async function sendUserMessage(
             requestId: groupScope?.requestId ?? null,
             kind: DUPLEX_KIND.amend,
             decidedBy: decision.decidedBy,
+            botId: amendTargetId,
             duringMsgId: groupSnap.members[0]?.workMsgId ?? null,
           });
           if (groupScope) runner.requestLifecycle?.close?.(groupScope, null, 'answer');

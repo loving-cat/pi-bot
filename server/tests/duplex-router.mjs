@@ -8,6 +8,7 @@ import {
   DUPLEX_KIND,
   classifyBusyInputSync,
   fallbackBusyInput,
+  looksLikeSupplement,
   routeBusyInput,
 } from '../src/duplex-router.js';
 
@@ -92,6 +93,19 @@ await test('Jev 达标置信度采用；低置信度/异常/超限保守落回 f
 
   const fb = fallbackBusyInput({ text: '补充两条边界条件' });
   assert.equal(fb.kind, DUPLEX_KIND.amend);
+});
+
+await test('★ 问进度就是旁路问答（即使没有问号）', () => {
+  for (const t of ['现在整体进度到多少了', '进度到多少了？', '到哪一步了']) {
+    const r = classifyBusyInputSync({ text: t, roomKind: 'group' });
+    assert.equal(r.kind, 'side_reply', `${t} 应当是旁路问答`);
+  }
+});
+
+await test('★ 新任务不当补充，加一句约束才当补充', () => {
+  assert.equal(looksLikeSupplement('把范围收窄到 A 股，只看最近一个月'), true);
+  assert.equal(looksLikeSupplement('第二轮需求'), false);
+  assert.equal(looksLikeSupplement('改个需求'), false);
 });
 
 let failed = 0;

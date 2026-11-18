@@ -36,7 +36,7 @@ const GREETING_OR_STATUS_EXACT_RE =
   /^(?:在吗|在不在|你好|嗨|hello|hi|hey|ping|status|progress)[?？!！。.~～\s]*$/i;
 
 const PROGRESS_QUERY_RE =
-  /(?:怎么样了|到哪一步|到哪了|什么进度|进度如何|进展如何|跑得怎么样|做好了吗|跑完了吗|跑完没|好了吗|还在跑吗|还在干嘛|在干嘛|在忙什么|卡住了吗|挂了吗|出什么错|报错是什么|为什么这么慢|还要多久|谁在干活|谁在跑)/;
+  /(?:怎么样了|到哪一步|到哪了|到多少|多少了|什么进度|进度如何|进度到|进展如何|跑得怎么样|做好了吗|跑完了吗|跑完没|好了吗|还在跑吗|还在干吗|在干吗|在庙什么|在芙什么|卡住了吗|挂了吗|出什么错|报错是什么|为什么这么慢|还要多久|谁在干活|谁在跑)/;
 
 const IMPERATIVE_MENTION_RE = /^@\S+\s+(?:把|帮我|去|改|写|跑|做|查|删)/;
 
@@ -137,6 +137,26 @@ export function classifyBusyInputSync({
 /**
  * 保守安全兜底：永远不返回 `abort_replace`。
  */
+/**
+ * 这句话是「给正在干的活补一句」还是「又来一件新活」？
+ *
+ * 为什么要分：群聊里用户插话，补充约束（"范围收窄到 A 股"）应该
+ * 直接送到负责人正在跑的一轮里，不打断其他成员；而"第二轮需求""改个需求"
+ * 是新任务，必须走正常的轮次排队（原有的「插话 = 打断重来」契约）。
+ *
+ * 判据刻意保守：短句 + 出现约束类词才算补充；拿不准一律当新任务
+ * （宁可多开一轮，也不能把真正的新需求当成小补充吃掉）。
+ */
+const SUPPLEMENT_HINT_RE =
+  /(顺便|补一句|补充|再加|加上|记得|注意|只(?:看|要|算|保留|用)|收窄|限制|范围|口径|格式|先别|先按)/;
+
+export function looksLikeSupplement(text) {
+  const clean = String(text ?? '').trim();
+  if (!clean) return false;
+  if (clean.length > 60) return false;
+  return SUPPLEMENT_HINT_RE.test(clean);
+}
+
 export function fallbackBusyInput({ text = '', hasAttachments = false } = {}) {
   const clean = String(text ?? '').trim();
   if (
