@@ -4,6 +4,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../model_display.dart';
 import '../models.dart';
 import '../scope.dart';
+import '../text_utils.dart';
 import '../l10n/l10n.dart';
 import '../theme.dart';
 import '../window_chrome.dart';
@@ -11,6 +12,7 @@ import 'toast.dart';
 import 'attachment_view.dart';
 import 'blob_avatar.dart';
 import 'bot_run_section.dart';
+import 'md_text.dart';
 import 'bot_appearance_section.dart';
 import 'room_task_panel.dart';
 import 'task_run_sheet.dart';
@@ -1349,7 +1351,9 @@ class _MemoryTabState extends State<_MemoryTab> {
               Flexible(
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
-                  child: SelectableText(
+                  // 记忆摘要是模型写的 markdown（**一、偏好…** / - 列表）：
+                  // 用 MdText 真渲染，别把星号和行首破折号当正文给用户看。
+                  child: MdText(
                     m.summary,
                     style: TextStyle(
                       fontSize: PB.fsSm,
@@ -1541,8 +1545,10 @@ class _MemoryTabState extends State<_MemoryTab> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    // 面板里只给一段预览：先把 markdown 压成纯文字，
+                    // 不然卡片上会直接看到 `**一、偏好与要求**`。
                     Text(
-                      m.summary,
+                      preview(m.summary, 400),
                       maxLines: 10,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
