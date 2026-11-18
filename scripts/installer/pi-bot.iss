@@ -15,8 +15,8 @@
 ; This file is UTF-8 with BOM: the [CustomMessages] block below is Chinese.
 
 #define MyAppName "pi-bot"
-#define MyAppPublisher "loving-cat"
-#define MyAppUrl "https://github.com/loving-cat/pi-bot"
+#define MyAppPublisher "Orbis Contributors"
+#define MyAppUrl "https://github.com/orbis-ai/orbis"
 #define MyAppExeName "pi_bot.exe"
 
 ; Stable across versions: the same AppId makes an upgrade replace the previous

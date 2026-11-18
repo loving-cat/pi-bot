@@ -103,8 +103,8 @@ const RULES = [
   },
   {
     name: '本机主机名 *.local',
-    // 只拦像主机名的写法（带连字符，或跟在 @ / // 后面），放行 pi-bot.local 与 relay.local 这类样例值
-    re: /(?<![\w.-])(?!(?:pi-bot|relay)\.local\b)(?:[A-Za-z0-9]+-[A-Za-z0-9-]*\.local\b|(?<=[@/])[A-Za-z0-9-]+\.local\b)/,
+    // 只拦像主机名的写法（带连字符，或跟在 @ / // 后面），放行 orbis.local / pi-bot.local / relay.local 这类样例值
+    re: /(?<![\w.-])(?!(?:orbis|pi-bot|relay)\.local\b)(?:[A-Za-z0-9]+-[A-Za-z0-9-]*\.local\b|(?<=[@/])[A-Za-z0-9-]+\.local\b)/,
   },
   {
     name: '云代理链接',
@@ -117,7 +117,12 @@ const RULES = [
   {
     name: '真实邮箱',
     // 仅放行完整的公开署名地址，域名边界之后仍有字符时继续检查。
-    re: /\b(?!noreply@github\.com(?![A-Za-z0-9.-]))[A-Za-z0-9._%+-]+@(?!users\.noreply\.github\.com\b|example\.|pi-bot\.local\b|[A-Za-z0-9.-]+\.(?:test|example|invalid)\b)[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b/,
+    re: /\b(?!noreply@github\.com(?![A-Za-z0-9.-]))[A-Za-z0-9._%+-]+@(?!users\.noreply\.github\.com\b|example\.|(?:orbis|pi-bot)\.local\b|[A-Za-z0-9.-]+\.(?:test|example|invalid)\b)[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b/,
+  },
+  {
+    name: '内部代号或私有项目名残留',
+    re: /\b(?:ds-bot|quant-all-in|xls-pc|xls-mbp)\b/i,
+    fileOnly: true,
   },
 ];
 
@@ -257,13 +262,14 @@ const KEY_SHAPED_RULES = new Set([
 
 let hits = [];
 
-function scanText(where, text) {
+function scanText(where, text, { isMeta = false } = {}) {
   const lines = String(text ?? '').split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (line.length > 2000) continue;
     if (/^Co-authored-by: Cursor Agent <cursoragent@cursor\.com>$/.test(line)) continue;
     for (const rule of RULES) {
+      if (rule.fileOnly && isMeta) continue;
       const matches = line.matchAll(new RegExp(rule.re.source, rule.re.flags.replaceAll('g', '') + 'g'));
       let found = false;
       for (const match of matches) {
@@ -292,7 +298,7 @@ const pushIdx = process.argv.indexOf('--push');
 
 /** 自动化身份的地址不含个人信息，放行；其余必须是 noreply 或明显的样例域名 */
 const okMail = (m) => /@users\.noreply\.github\.com$/i.test(m) || /^noreply@github\.com$/i.test(m)
-  || /@pi-bot\.local$/i.test(m) || /@[A-Za-z0-9.-]+\.(test|example|invalid)$/i.test(m) || /@example\./i.test(m)
+  || /@(?:orbis|pi-bot)\.local$/i.test(m) || /@[A-Za-z0-9.-]+\.(test|example|invalid)$/i.test(m) || /@example\./i.test(m)
   || /^codex@localhost$/i.test(m) || /^pi@bot$/i.test(m) || /^cursoragent@cursor\.com$/i.test(m);
 
 function scanCommitMeta(range) {
@@ -303,7 +309,7 @@ function scanCommitMeta(range) {
     for (const [who, mail] of [['作者', author], ['提交者', committer]]) {
       if (!okMail(mail)) hits.push({ file: `commit ${sha}`, line: 0, rule: `${who}邮箱不是 noreply`, text: mail });
     }
-    scanText(`commit ${sha} 提交信息`, body);
+    scanText(`commit ${sha} 提交信息`, body, { isMeta: true });
   }
 }
 

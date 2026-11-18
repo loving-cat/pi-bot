@@ -9,14 +9,20 @@
 |---|---|
 | `index.js` | 入口分流：pi CLI 参数交给 pi CLI，否则加载 `server-main.js` |
 | `pi-args.js` | 判断「这次是 pi CLI 调用还是服务端」并委派；扩展派子 agent 会拿 `argv[1]` 当 pi 入口 |
-| `server-main.js` | 服务端装配：reap 一次性消息 → runner/pairing → HTTP/WS → 定时任务调度器 → 信号收工 |
-| `config.js` | 全部配置来源；数据目录定位与一次性迁移 |
+| `server-main.js` | 服务端装配：reap 一次性消息 → runner/pairing/services → HTTP/WS → 定时任务调度器 → 信号收工 |
+| `config.js` | 配置工厂（`createConfig`）与默认实例；数据目录定位与一次性迁移；优先读取 `ORBIS_*` 环境变量（兼容 `PI_BOT_*`） |
+| `brand.js` | 品牌常量与 `readBrandEnv` 单一真源（`Orbis` / `orbis-ai/orbis`） |
+| `bus.js` | 实例级事件总线工厂（`createBus`）与默认总线 |
+| `sdk/index.js` | 进程内 Agent SDK 门面（`createOrbisRuntime` / 兼容别名 `createPiBotRuntime`、能力声明与 `defineTool` 重导出） |
+| `sdk/client.js` | 远程 HTTP + WS 客户端 SDK（`createOrbisClient` / 兼容别名 `createPiBotClient`，自动读取本机 token 与申请 nonce） |
+| `services/*.js` | 领域服务层（`bots`/`rooms`/`models`/`automations`/`capabilities`/`policy`），供 UI/Jarvis/SDK 三端复用 |
+| `capabilities.js` | 能力与权限清单唯一事实源（`ACTIONS`、`TOOL_SPECS`、Jarvis 高危确认判定） |
 | `http.js` | REST 路由（鉴权、房间/消息/bot/任务/定时任务/分片上传/附件/政策） |
 | `ws.js` | WebSocket：hello 快照、send/abort/ping、事件广播 |
 | `version.js` | 服务端版本唯一来源（读 package.json） |
 | `update-check.js` | 版本比较与更新判定、按平台挑安装包（纯函数） |
 | `update-checker.js` | 查 GitHub Releases（可换镜像）、超时与缓存；只查不装 |
-| `store.js` | 内存态与落盘：bots/rooms/devices/sessions/**tasks**/**automations**/**approvals**/policy；消息游标；拒绝留档 |
+| `store.js` | 实例化存储与落盘工厂（`createStore` + 延迟默认单例）：bots/rooms/devices/sessions/tasks/automations/approvals/policy |
 | `pi-runner.js` | 轮次编排：建会话、群轮次、派活、预算、打断、上报、定时任务执行入口 |
 | `session-factory.js` | 造会话：模型/工具/预算/提示词装配；扩展过滤（不加载 context-mode 类） |
 | `session-pool.js` | 会话缓存、pending 去重、LRU 驱逐 |
@@ -27,6 +33,10 @@
 | `role-tools.js` | 有效负责人判定、内置与自定义工具白名单、角色配置签名（纯逻辑） |
 | `direct-message-delivery.js` | 私聊异步输入投递；会话忙时按原模式排队、保留输入并响应取消 |
 | `tools.js` | 工具定义（通用 + 主控）：派活/私信/建部门/后台进程/询问卡片… |
+| `jarvis-tools.js` | 主控总管家工具（定时任务/部门预算/知识库/本机导入/MCP/模型组与 Jev/全局策略） |
+| `chat-redact.js` | 聊天记录敏感 API Key / Token 自动识别与原地打码（纯函数） |
+| `duplex-router.js` | 全双工边干边聊分流判定（`side_reply` / `amend` / `abort_replace`，纯函数） |
+| `live-work-snapshot.js` | 旁路 Talk 读取当前后台 Work 进度与终端输出的只读快照构造 |
 | `group-prompt.js` | 群聊会话层：谁先开口、每人看到什么、提示词拼装（纯逻辑） |
 | `group-round.js` | 群轮次决策：该跳过/排队/打断/派发、收尾轮判定（纯函数） |
 | `policy-version.js` | 部门规矩的版本标识与变更影响判定：哪些字段影响授权、变更该通知哪些在跑的活（纯函数） |
@@ -211,9 +221,10 @@
 
 | 文件 | 行数 | 计划拆法 |
 |---|---|---|
-| `app/lib/screens/chat_screen.dart` | ~1970 | 消息列表 / 输入区 / 顶栏 三块独立；消息气泡单独成文件 |
-| `server/src/pi-runner.js` | ~1800 | 群轮次已抽出，还可把"单轮执行"与"会话生命周期"分开 |
-| `server/src/store.js` | ~1600 | 按域拆：rooms / bots / tasks / automations / persist（保持单一入口导出） |
+| `app/lib/screens/chat_screen.dart` | ~3747 | 消息列表 / 输入区 / 顶栏 三块独立；消息气泡单独成文件 |
+| `app/lib/app_state.dart` | ~3464 | 连接、消息、任务与设置模块拆成协作者 |
+| `server/src/pi-runner.js` | ~5290 | Phase 2 拆分目标：`runtime/model-hub.js` + `runtime/turn-runner.js` + `runtime/memory-compactor.js` |
+| `server/src/store.js` | ~2870 | 按域拆：rooms / bots / tasks / automations / persist（保持 `createStore` 单一入口） |
 
 ## 测试地图
 

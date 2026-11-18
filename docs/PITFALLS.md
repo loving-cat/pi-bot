@@ -694,7 +694,7 @@ if (level === "xhigh" || level === "max") return mapped !== undefined;
 
 所以"模型支持推理（`reasoning: true`）"**不等于**"支持 max"。
 
-**修法**（以 ctyun 为例，写在 `~/.pi/agent/models.json` 的模型上）：
+**修法**（以某兼容网关为例，写在 `~/.pi/agent/models.json` 的模型上）：
 
 ```json
 "thinkingLevelMap": {
@@ -707,7 +707,7 @@ if (level === "xhigh" || level === "max") return mapped !== undefined;
 
 1. **不要写 `off: null`**。pi 把 `null` 当成"不支持这一档"，off 会从可选档位里消失，
    用户选 off 时会被 clamp 成 minimal。想表达"不传参"就别写 off（不在 map 里 = 不下发）。
-2. **上游不一定吃 `max`**。ctyun 的 qwen 系列对 `reasoning_effort: "max"` 直接 500，
+2. **上游不一定吃 `max`**。某兼容网关的 qwen 系列对 `reasoning_effort: "max"` 直接 500，
    但接受 `xhigh` —— 这种模型要把 max 映射成 `xhigh`，别照抄别的模型。
 
 **验证**（不要只看界面）：

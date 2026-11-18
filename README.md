@@ -1,8 +1,8 @@
-# pi-bot
+# Orbis
 
-手机和电脑上的 **pi agent 团队**。你发一句话，总经理拆活、部门老大接单、成员各自干活，结果回到你手上。
+手机和电脑上的 **Orbis（多智能体团队与全能主控基座）**。你发一句话，主控拆活、部门老大接单、成员各自干活，结果回到你手上。
 
-不是套壳聊天——底下是真正的 pi agent：能读写文件、跑命令、开子进程、调 MCP，产出直接落盘并作为附件发回来。
+不是套壳聊天——底层基于 `@earendil-works/pi-coding-agent` 引擎：能读写文件、跑命令、开子进程、调 MCP，产出直接落盘并作为附件发回来。
 
 ```
 ┌────────────────── 客户端（Flutter，一套代码两端）──────────────────┐
@@ -11,9 +11,9 @@
 └───────────────────────────────┬──────────────────────────────────┘
                                 │ WSS + JSON（配对码换 token）
 ┌───────────────────────────────▼──────────────────────────────────┐
-│  pi-bot server（Node 22+，纯 ESM，无构建）                         │
+│  Orbis server（orbis-agent · Node 22+，纯 ESM，无构建）           │
 │                                                                  │
-│   总经理(main bot) ──► 部门(群) ──► 部门老大(lead) ──► 成员(member) │
+│   主控(Orbis / main) ──► 部门(群) ──► 部门老大(lead) ──► 成员     │
 │        │                  │              │              │        │
 │        └── 下达任务 ──────┘              └── @同事派活 ──┘        │
 │                                                                  │
@@ -26,8 +26,8 @@
 
 | 平台 | 文件 |
 |---|---|
-| **Windows** | [Windows 免安装包](https://github.com/loving-cat/pi-bot/releases/latest)（`pi-bot-windows-*.zip`）— 解压双击 `pi_bot.exe`，免安装；从源码打包见 [Windows 构建说明](docs/WINDOWS.md) |
-| **Android** | [Android APK](https://github.com/loving-cat/pi-bot/releases/latest)（`pi-bot-android-*.apk`）— 手机浏览器直接下载安装 |
+| **Windows** | [Windows 免安装包](https://github.com/orbis-ai/orbis/releases/latest)（`pi-bot-windows-*.zip`）— 解压双击运行；从源码打包见 [Windows 构建说明](docs/WINDOWS.md) |
+| **Android** | [Android APK](https://github.com/orbis-ai/orbis/releases/latest)（`pi-bot-android-*.apk`）— 手机浏览器直接下载安装 |
 | **macOS** | 从源码运行 `./scripts/pack-macos.sh` 生成 App 与 DMG，见 [macOS 构建说明](docs/MACOS.md) |
 
 **包里不含任何地址和密钥**——服务端地址、配对码、模型 baseUrl/API key 全部由你自己填（见下面「快速开始」）。
@@ -36,7 +36,7 @@
 
 | 角色 | 是什么 | 干什么 |
 |---|---|---|
-| **总经理**（`role: main`） | 主控 bot，唯一和你直接对话 | 听懂需求 → 决定交给哪个部门/谁 → 盯结果 → 给你交代。**只有只读文件工具**，负责指挥不负责动手 |
+| **总经理**（`role: main`） | 主控 bot，唯一与你全局对齐的总管家 | 听懂需求 → 直接亲手解决或拆活交给部门 → 盯结果 → 给你交代；支持 J.A.R.V.I.S. 宿主直管与系统配置管理（详见 [docs/SPEC-JARVIS-V1.md](docs/SPEC-JARVIS-V1.md)） |
 | **部门**（群） | 一群专才 | 有独立的 `leadBotId`（部门老大） |
 | **部门老大** | 部门负责人 | 你在部门里发指令时**由它先接**：拆活 → `@同事` 派下去 → 汇总结果 |
 | **成员** | 部门员工 | 只做被派到的事，能 `@同事` 协作，做完直接给结果 |
@@ -174,6 +174,24 @@ Xcode 检查与 Flutter 构建，仅重新组装安装包。当前使用 ad-hoc 
 > 它会照 App 的方式新建一个模型组、造个临时 bot 真跑一句话，然后自己清理干净。
 > 模型菜单"绿不绿"证明不了能不能真跑——这个脚本才是真的发一句话。
 
+## 作为 Agent 基座（SDK 调用）
+
+像使用 `@earendil-works/pi-coding-agent` 一样，外部程序可以直接嵌入隔离的多智能体运行时，或通过 HTTP/WS 控制已运行的常驻服务端：
+
+```js
+import { createOrbisRuntime } from 'orbis-agent/sdk';
+
+const rt = await createOrbisRuntime({
+  dataDir: './.orbis-state',
+  workspace: process.cwd(),
+});
+const res = await rt.askMain('检查这个目录的项目结构并给出改进建议');
+console.log(res.replyText);
+await rt.dispose();
+```
+
+完整文档与远程 `createOrbisClient` 用法见 [SDK 与单骨架说明](docs/SDK.md)（同时保留 `createPiBotRuntime` / `createPiBotClient` 与 `PI_BOT_*` 环境变量兼容）。
+
 ## 目录
 
 ```
@@ -288,7 +306,7 @@ flutter analyze
 （`/api/files/:id?token=…`）为了给 `<img>` 直接用，token 在 query 里 —— 局域网自用可以接受，
 但如果你把服务端暴露到公网，请换成反向代理注入鉴权，别让 token 进访问日志。
 
-见 `server/.env.example`。常用：
+见 `server/.env.example`。核心服务端变量均已支持 **`ORBIS_*`（优先）并向后兼容 `PI_BOT_*`**。常用：
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
