@@ -88,9 +88,9 @@ void main() {
     expect(find.text('正在写代码'), findsOneWidget);
     expect(find.text('等你批准发布'), findsOneWidget);
     expect(find.text('重构看板数据源'), findsOneWidget);
-    // 四格统计
-    expect(find.byKey(const ValueKey('kanban-stat-needsYou')), findsOneWidget);
-    expect(find.byKey(const ValueKey('kanban-stat-done')), findsOneWidget);
+    // 顶部一行摘要（不再四格重复）
+    expect(find.byKey(const ValueKey('kanban-summary-needs-you')), findsOneWidget);
+    expect(find.textContaining('共 4 个任务'), findsOneWidget);
   });
 
   testWidgets('「只看等我的」只留等你处理列', (tester) async {

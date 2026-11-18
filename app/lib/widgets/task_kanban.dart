@@ -83,7 +83,12 @@ class _TaskKanbanPageState extends State<TaskKanbanPage> {
       body: ListenableBuilder(
         listenable: widget.state.taskRuns,
         builder: (context, _) {
-          final allCards = buildKanbanCards(widget.state.taskRuns.tasks);
+          final allCards = buildKanbanCards(
+            widget.state.taskRuns.tasks,
+            // 服务端有时只带 leadBotId（老数据/机器人被改名），这里用本地
+            // bots 表补名字 —— 否则成员过滤条上显示的是 b_49b6aa… 这种 id。
+            nameOf: (id) => widget.state.botById(id)?.name ?? '',
+          );
           final cards = _onlyMine
               ? allCards.where((c) => c.needsYou).toList()
               : (_lead == null
@@ -97,7 +102,7 @@ class _TaskKanbanPageState extends State<TaskKanbanPage> {
           }.toList()..sort();
           return Column(
             children: [
-              _StatsRow(stats: stats),
+              _SummaryLine(stats: stats),
               if (leads.isNotEmpty)
                 _LeadFilter(
                   leads: leads,
@@ -164,72 +169,46 @@ class _TaskKanbanPageState extends State<TaskKanbanPage> {
   }
 }
 
-class _StatsRow extends StatelessWidget {
-  const _StatsRow({required this.stats});
+/// 顶部一行摘要。
+///
+/// 原来这里是四张统计卡，内容和下面四列的表头完全重复（同样是四列 + 数字），
+/// 一屏里同样的信息出现两遍，看着冗余也占地方。改成一行只说"总数 + 需要你处理的"，
+/// 具体每列多少看列头就够了。
+class _SummaryLine extends StatelessWidget {
+  const _SummaryLine({required this.stats});
 
   final KanbanStats stats;
 
   @override
   Widget build(BuildContext context) {
     final s = L10n.s(context);
-    final items = <(KanbanColumn, String, int)>[
-      (KanbanColumn.todo, s.t('kanban.todo'), stats.todo),
-      (KanbanColumn.doing, s.t('kanban.doing'), stats.doing),
-      (KanbanColumn.done, s.t('kanban.done'), stats.done),
-      (KanbanColumn.needsYou, s.t('kanban.needsYou'), stats.needsYou),
-    ];
     return Padding(
-      padding: const EdgeInsets.fromLTRB(10, 4, 10, 6),
+      padding: const EdgeInsets.fromLTRB(14, 6, 14, 4),
       child: Row(
         children: [
-          for (final (column, label, count) in items)
-            Expanded(
-              child: Container(
-                key: ValueKey('kanban-stat-${column.name}'),
-                margin: const EdgeInsets.symmetric(horizontal: 3),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 8,
-                ),
-                decoration: BoxDecoration(
-                  color: PB.bgElevated,
-                  borderRadius: BorderRadius.circular(PB.rXl),
-                  border: Border.all(color: PB.borderSecondary),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 6,
-                      height: 6,
-                      decoration: BoxDecoration(
-                        color: _columnColor(context, column),
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: PB.fsXs,
-                          color: PB.textTertiary,
-                        ),
-                      ),
-                    ),
-                    Text(
-                      '$count',
-                      style: TextStyle(
-                        fontSize: PB.fsSm,
-                        fontWeight: FontWeight.w600,
-                        color: PB.textPrimary,
-                      ),
-                    ),
-                  ],
+          Text(
+            s.tf('kanban.summary', {'n': stats.total}),
+            style: TextStyle(fontSize: PB.fsXs, color: PB.textTertiary),
+          ),
+          if (stats.needsYou > 0) ...[
+            const SizedBox(width: 8),
+            Container(
+              key: const ValueKey('kanban-summary-needs-you'),
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1.5),
+              decoration: BoxDecoration(
+                color: PB.warn.withValues(alpha: 0.16),
+                borderRadius: BorderRadius.circular(PB.rFull),
+              ),
+              child: Text(
+                s.tf('kanban.needsYouCount', {'n': stats.needsYou}),
+                style: TextStyle(
+                  fontSize: PB.fsXxs,
+                  fontWeight: FontWeight.w600,
+                  color: PB.warn,
                 ),
               ),
             ),
+          ],
         ],
       ),
     );

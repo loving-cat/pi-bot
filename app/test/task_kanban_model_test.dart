@@ -202,6 +202,25 @@ void main() {
     });
   });
 
+  group('负责人名字', () {
+    test('服务端只给 id 时，用宿主的 bots 表解析成名字', () {
+      final card = buildKanbanCards(
+        [run(leadBotName: '', leadBotId: 'b_49b6aa1bfa146284')],
+        nameOf: (id) => id == 'b_49b6aa1bfa146284' ? '调研负责人' : '',
+      ).single;
+      expect(card.leadName, '调研负责人');
+    });
+
+    test('解析不到就退回 id，不会变成空白', () {
+      final card = buildKanbanCards(
+        [run(leadBotName: '', leadBotId: 'b_x')],
+        nameOf: (_) => '',
+      ).single;
+      expect(card.leadName, 'b_x');
+    });
+
+  });
+
   group('卡片字段', () {
     test('没有负责人时 leadName 是空串，界面自己决定显示「未指派」', () {
       final card = buildKanbanCards([

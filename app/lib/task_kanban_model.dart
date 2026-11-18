@@ -154,6 +154,17 @@ String _summaryOf(TaskRun run, int maxChars) {
   return truncateKanbanText(parts.first, maxChars);
 }
 
+/// 负责人名字：服务端带名字就用它；只有 id 时先问宿主（App 有 bots 表），
+/// 再退回 id —— 看板上宁可显示 `b_49b6aa…`，也不要显示空白。
+String _leadNameOf(TaskRun run, String Function(String botId)? nameOf) {
+  final named = run.leadBotName.trim();
+  if (named.isNotEmpty) return named;
+  final id = run.leadBotId.trim();
+  if (id.isEmpty) return '';
+  final resolved = nameOf?.call(id).trim() ?? '';
+  return resolved.isNotEmpty ? resolved : id;
+}
+
 /// 把一批 TaskRun 摊成卡片。
 ///
 /// - `onlyNeedsYou`：界面上的「只看等我的」开关；
@@ -165,6 +176,7 @@ List<KanbanCard> buildKanbanCards(
   bool onlyNeedsYou = false,
   int titleMaxChars = kKanbanTitleMaxChars,
   int summaryMaxChars = kKanbanSummaryMaxChars,
+  String Function(String botId)? nameOf,
 }) {
   final cards = <KanbanCard>[];
   for (final run in runs) {
@@ -179,9 +191,7 @@ List<KanbanCard> buildKanbanCards(
         column: column,
         title: truncateKanbanText(rawTitle, titleMaxChars),
         summary: _summaryOf(run, summaryMaxChars),
-        leadName: run.leadBotName.trim().isNotEmpty
-            ? run.leadBotName.trim()
-            : (run.leadBotId.trim().isNotEmpty ? run.leadBotId.trim() : ''),
+        leadName: _leadNameOf(run, nameOf),
         paused: run.state == 'paused_user' || run.state == 'paused_budget',
         legacyLike: looksLikeConversationFragment(run),
       ),
