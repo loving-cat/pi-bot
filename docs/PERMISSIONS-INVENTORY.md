@@ -3,6 +3,8 @@
 对应规格：`architecture-permissions-v1.0.1.md` §11「梳理所有文件、命令、Git、GUI、网络与凭据入口，入口逐次强制核对当前有效授权及完整父链撤销状态」。
 
 > 本文只是**盘点**，不代表任何入口已合规。规格 §16.1 原话：「本稿没有任何当前实现通过结论」。
+>
+> **2026-11 架构更新**：能力声明与工具白名单现已收敛到 [capabilities.js](../server/src/capabilities.js)（16 个动作 / 67 个工具），经 `policy-hook.js` → `grant-gate.js` 统一核验，并由 `server/scripts/check-capability-drift.mjs` 与 `server/scripts/check-consistency.mjs` 每日护航；下表一～三保留作为 P0-1 盘点基线与历史记录。
 
 ## 现状：唯一的校验点是一条线
 
@@ -110,8 +112,8 @@
 |---|---|---|
 | G0 | status / diff / log / show / branches / blobs | 只读 |
 | G1 | add / commit | 本地普通提交 |
-| G2 | push / merge / rebase | **不提供** —— 要用户确认，确认框架刚做完（P0-4），还没接上 |
-| G3 | reset / clean / 改远端 / 改 hooks | **不提供** —— 需要确认 |
+| G2 | push / merge / rebase | 已接入受控能力：`git_push` 仅主 Bot（`migration: 'chief'`）且强制手机确认；`git_destructive` 须经 `git.destructive` 授权 + 手机确认 + 票据核验 |
+| G3 | reset / clean / force 等 | `git_destructive` 同上强确认收口，拒绝绕过 `--no-verify` 或无确认强推 |
 
 **读操作的坑（实测）**：`--no-ext-diff` / `--no-textconv` 是**子命令**参数，
 放到 `git` 前面直接 `unknown option`（退出码 129）。所以只有 `--no-pager`
@@ -152,10 +154,10 @@ macOS 走 `System Events` 列窗口 + `screencapture -R <矩形>`。
 System Events 拿不到 CGWindowID，所以是按矩形截；窗口被部分遮挡时
 遮挡处截到的是上面那个窗口。**待 macOS 实机验证**（规格 §16.1 要求标出）。
 
-### 输入层：未做（P0-3b）
+### 输入层（P0-3b，按 W2 演进）
 
-无鼠标、无键盘、无隐藏/最小化恢复。规格 §5.2 要求的输入租约、
-用户接管检测、世代号、旧坐标失效都还没实现 —— 这一层必须在确认框架之后。
+- **已落地（W2a / W2b / W2c / W2e，`d3b77fc`）**：单写输入租约 `desktop-lease.js`、用户接管检测 `desktop-takeover.js`、Windows 实现 `desktop-input.js`，并经 `capabilities.js` 接入 `desktop.input`（`risk: critical` / `irreversible: true` / `chiefOnly: true` / `migration: 'never'`）；此外围绕规格 §5.6 延伸出 **T1 独立虚拟桌面** 工具（`desktop-island.js`：`desktop_island_observe` / `desktop_island_launch` / `desktop_island_input`）。
+- **待补（W2d）**：macOS `server/src/desktop-input-mac.js` 仍为空壳（统一返回 `not_platform`，由 `desktop-input-mac.mjs` 13 项守门，详见 #30）；Windows 锁屏/多屏与拖拽实机待补（#31/#32/#33）。
 
 `ego_browser` 是**页面级**（`page.goto`/`page.snapshot`/`page.evaluate`），不是桌面级，不构成 computer use。
 
@@ -183,7 +185,7 @@ System Events 拿不到 CGWindowID，所以是按矩形截；窗口被部分遮�
 | 确认框架（P0-4） | ✅ | `cdb9f5a` |
 | 迁移授权补齐（桌面观察 / push / 世代 / 运行期新 bot） | ✅ | `c8f33f3` `c5da8dc` |
 | 界面：看得到每条授权并收回 | ✅ | `37ed25b` `544bf8f` |
-| 桌面输入（P0-3b，输入租约） | ⬜ 最后 | — |
+| 桌面输入（P0-3b：租约/接管/Windows ✅，macOS 空壳） | 🟡 | `d3b77fc`（Windows 已实机，macOS 见 #30） |
 
 ### 迁移授权这一块的坑（已修，记在这以免再犯）
 

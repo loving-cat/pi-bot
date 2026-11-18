@@ -23,7 +23,13 @@
 | `update-check.js` | 版本比较与更新判定、按平台挑安装包（纯函数） |
 | `update-checker.js` | 查 GitHub Releases（可换镜像）、超时与缓存；只查不装 |
 | `store.js` | 实例化存储与落盘工厂（`createStore` + 延迟默认单例）：bots/rooms/devices/sessions/tasks/automations/approvals/policy |
-| `pi-runner.js` | 轮次编排：建会话、群轮次、派活、预算、打断、上报、定时任务执行入口 |
+| `pi-runner.js` | 运行时外观层与生命周期管理（模型注册/熔断/端点轮转/会话池/abort/reset），向 `runner/*` 子模块委派执行与编排 |
+| `runner/turn-executor.js` | 单轮会话执行主干（`executeTurn`：受管 scope/租约、主动压缩、技能与经验增量注入、流式事件、三层恢复与产物收集） |
+| `runner/group-orchestrator.js` | 部门群轮次编排（`executeGroupRound` / `dispatchGroupRound`：发言判定、并发派发、`roundEpochs` 代数打断、收尾与游标） |
+| `runner/duplex-lane.js` | 全双工旁路 Talk、连发合并与发信分流入口（`sendUserMessage` / `deliverMerged` / `consumeSideContext` / `abortTalkInRoom`） |
+| `runner/task-bridge.js` | 请求信封（`withRequestEnvelope`）、受管报告通道与阻塞核验（`collectReport` / `verifyReportWait`）、看门狗与失败升级 |
+| `runner/memory-compactor.js` | 主动压缩阈值校准与重试（`planCompaction` / `calibrateKeepRecent` / `compactIfNeeded`）与后台记忆摘要 |
+| `runner/runner-utils.js` | 无状态底层常量与辅助函数（`sessionKey` / `textOf` / `throttle` / `emitContext` 等），供 `pi-runner.js` 与 `runner/*` 共用 |
 | `session-factory.js` | 造会话：模型/工具/预算/提示词装配；扩展过滤（不加载 context-mode 类） |
 | `session-pool.js` | 会话缓存、pending 去重、LRU 驱逐 |
 | `session-refresh.js` | 配置变更后标记会话待重载；忙碌会话延后释放，取用时同步预留避免竞态 |

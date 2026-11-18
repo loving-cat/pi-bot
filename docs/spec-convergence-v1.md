@@ -1,385 +1,295 @@
-# Spec：收束与交付 v1（rev.2）
+# Spec：收束与交付 v1（rev.3）
 
-> **状态**：待用户审核 · 未开始执行
-> **日期**：2026-11-15
-> **对应主干**：`main` @ `c20a6b6`（CI 三端全绿）
-> **项目定位**：pi-bot 要做**像 pi-coding-agent 那样的多 bot 基座** ——
-> 能力靠**声明式登记**扩展，不靠散落的 if 分支。这份 spec 的第一项（W0）
-> 就是把这个定位落到代码结构上，其余项都在它之上延伸。
+> **状态**：执行中（W0 / W1 / W3 / W7 ✅ 已收口；W2 / W4 / W6 🟡 推进中；W5 待 W4c 解锁）
+> **日期**：2026-11-18
+> **对应主干**：`main` @ `fe4e501` 后基线（含 Orbis 品牌与 SDK 运行时、全双工路由、Jarvis 工具、`pi-runner.js` 六子模块拆分；服务端 `145/146` 测试文件通过，唯一失败项为 Windows 本机 AppContainer worktree 环境用例 `sandbox-win`）
+> **项目定位**：**Orbis**（兼容 `PI_BOT_*` 与旧导出名）要做**像 `pi-coding-agent` 那样的可嵌入多 Agent 基座** ——
+> 能力靠**声明式清单 + 统一领域服务**扩展，不靠散落的 `if` 分支；以单骨架（`Capabilities + Services + Runner 子模块 + GrantGate`）同时支撑 App、主控 Jarvis 总管家与 SDK（`createOrbisRuntime` / `createOrbisClient`）。
 >
-> **rev.2 相对 rev.1 的改动**：新增 **W0 能力骨架**（用户要求「先搭骨架再延伸、
-> 避免功能之间冲突」），并把「编码风格」与「集成规则」写成可检查的条款。
+> **rev.3 相对 rev.2 的改动**：
+> 1. 同步主干现实基线（`037620e` / `ee4e9a7` / `1f116ee` / `fe4e501` 及 `server/src/pi-runner.js` 模块化拆分）；
+> 2. W0 示例代码对齐真实的 `ACTIONS` + `TOOL_SPECS` 双层声明结构，并修正自检路径为 `server/scripts/check-capability-drift.mjs`；
+> 3. §4 集成规则升级为四层单骨架（清单 → `services/*` → `runner/*` → HTTP/SDK/App）；
+> 4. 补充 **W4c 与全双工（Full-Duplex）/ Jarvis / Orbis SDK 的协同契约**（日常问答与 Jarvis 零二次追问、`amend` 不被接单队列劫持、SDK 默认隔离）；
+> 5. 明确 **W5 任务看板与房间内任务面板保留并统一 `TaskRun` 数据源**、通用旧数据启发式迁移规则；
+> 6. 更新 §6 边界（`git_destructive` 经手机确认开放、`T1 独立桌面` 与 `T2 用户真实桌面` 分级）并完成 **W1** 进度/风格 CI 自检。
 
 ---
 
 ## 0. 五条硬规矩
 
-1. **先骨架，再延伸**。凡是会牵动 2 个以上模块的东西，先把"它属于哪一层、
-   唯一事实存在哪"定死，再写业务。**不允许边写边发明结构**。
-2. **一个事实只存一份**。同一件事（风险档、谁能用、只读放不放行）
-   只能有一个声明点，其余全部**派生**。派生不叫复制。
-3. **不装成已完成**。规格 §17 原话要求「不是全禁用，也不是全放开」，
-   且「本稿没有任何当前实现通过结论」。任何"已完成"必须附
-   commit + 可复跑的验证命令。
-4. **一项一项收口**（用户 2026-11-15 原话）。每项独立 commit、独立验证，
-   收完再开下一项。
-5. **不留半截平台代码**。需要实机的（输入、截图权限、TCC）先落纯逻辑 + 测试，
-   平台实现单独一项、失败可整块回退。
+1. **先骨架，再延伸**。凡是会牵动 2 个以上模块的东西，先把“它属于哪一层、唯一事实存在哪”定死，再写业务。**不允许边写边发明结构**。
+2. **一个事实只存一份**。同一件事（风险档、谁能用、只读放不放行、领域校验）只能有一个声明点，其余全部**派生**或**复用**。派生不叫复制。
+3. **不装成已完成**。规格 §17 原话要求「不是全禁用，也不是全放开」，且「本稿没有任何当前实现通过结论」。任何“已完成”必须附 commit 或可复跑的验证命令。
+4. **一项一项收口**（用户 2026-11-15 原话）。每项独立验证、独立收口，确认通过再开下一项。
+5. **不留半截平台代码**。需要实机的（输入、截图权限、TCC）先落纯逻辑 + 测试，平台实现单独一项、失败可整块回退。
 
 ---
 
-## 1. 编码风格（从现有仓库实测，不是我的偏好）
+## 1. 编码风格（从现有仓库实测，机器可检查）
 
-pi-bot 已经有一条很稳定的风格。新代码必须照着写，否则看起来像外人写的。
+Orbis 已经有一条稳定的代码骨架与风格约定。新代码必须遵守：
 
 | 约定 | 实例 | 要求 |
 |---|---|---|
-| **纯逻辑单独成文件**，头部注释先讲"为什么需要这件事"、讲清楚两种错误做法 | `policy-version.js` / `grants.js` / `action-catalog.js` | 新模块必须这样开头 |
-| **不 import store / 不读时钟 / 不碰文件** 的才叫纯逻辑 | `grants.js` / `shell-policy.js` / `automations.js` | 能在 `tests/` 里直接单测 |
-| **有 IO 的装配层薄**，只接线 | `server-main.js` / `http.js` | 判定不写在接线层 |
-| **测试文件同构**：模块头注释讲守什么 → `fixture` 临时目录 → 直方图式 `test()` → `✓/✗` 逐条打印 → `N/N 通过` | `tests/action-catalog.mjs` | 新测试照抄这个骨架 |
-| **测试要"守事实"，不守实现细节** | 断言"策略放行的工具必须有对应动作"而不是"数组等于这 5 个" | 否则一改实现就假红/假绿 |
-| **注释写"为什么"和"踩过什么坑"**，不写"这一行做什么" | 全仓一致 | 关键分支必须写理由 |
-| **commit message 中文、讲改了什么 + 为什么**，不写搬运过程 | 近期 40 个提交 | 保持 |
+| **纯逻辑单独成文件**，头部注释讲清“为什么需要这件事” | `policy-version.js` / `grants.js` / `duplex-router.js` | 新纯逻辑模块必须以 `/**` 注释开头 |
+| **不引 `store` / `config` / FS / 进程 / 网络、不暗自读时钟** | `grants.js` / `overrides.js` / `desktop-lease.js` | `Date.now()` 仅允许作为 `now = Date.now()` 可注入默认参数，能在 `server/tests/` 直接单测 |
+| **领域逻辑进 `services/`，装配层保持薄** | `server/src/services/*.js` / `http.js` / `sdk/index.js` | HTTP、Jarvis 工具、SDK 三端复用同一服务，不在路由或外观层重复写业务逻辑 |
+| **运行时严格单向模块化（DAG）** | `server/src/pi-runner.js` → `server/src/runner/*.js` | `pi-runner.js` 外观层 `<= 850` 行；`runner/*.js` 各 `<= 1350` 行且禁止反向导入 `pi-runner.js` |
+| **测试文件同构且“守事实”** | `server/tests/action-catalog.mjs` | 模块头说明守什么 → 临时目录隔离 → 直方图式校验 → 打印 `N/N 通过` |
+| **注释写“为什么”和“踩过什么坑”** | 全仓一致 | 关键分支与兼容边界必须写明理由 |
+| **commit message 中文、讲改了什么 + 为什么** | 近期提交历史 | 保持 |
 
-**落地检查**：W1 里加 `scripts/check-style.mjs`，验证三条机器可判断的：
-纯逻辑模块不含 `import { store }`、不含 `Date.now()`（除非显式传入 now）、
-`tests/` 里同一个模块的测试文件存在。
+**落地检查（W1，已入仓 `scripts/check-style.mjs`）**：
+1. 指定的 17 个纯逻辑模块必须有 `/**` 文件头，且排除注释后不得 import `store.js`、`config.js`、`fs`/`node:fs`、`child_process`/`node:child_process`、`http`/`https`/`net`，且 `Date.now()` 仅限默认参数注入；
+2. 这 17 个纯逻辑模块各自在 `server/tests/` 中都有对应回归测试覆盖（拒绝为纯常量文件形式主义凑空测试）；
+3. `server/src/pi-runner.js` 行数 `<= 850`，`server/src/runner/*.js` 行数各 `<= 1350` 且保持无环单向 DAG。
 
 ---
 
 ## 2. 现状事实（实测，不是结论）
 
-### 2.1 已交付（有代码 + 有测试 + 有 commit）
+### 2.1 已交付（有代码 + 有测试 + 已验证）
 
 | 能力 | 证据 |
 |---|---|
-| 授权模型 + 统一网关（父链/撤销/世代/策略版本） | `grants.js` `grant-gate.js` `migration-grants.js` · `tests/grants.mjs` 42 项 · `b130fc6` `c5da8dc` |
-| 动作目录（风险/可撤销/目标认法的单一来源） | `action-catalog.js` · `tests/action-catalog.mjs` 20 项 · `ce137d8` |
-| HTTP 危险路由接网关 + nonce + 审计 | `http-admin.js` · `tests/http-admin.mjs` 15 项 · `df549c5` |
-| 高风险确认（手机通道 / 目标摘要绑定 / 一次一用） | `confirm.js` · `tests/confirm.mjs` 23 项 · `cdb9f5a` |
-| 桌面观察（列窗口 / 截指定窗口） | `desktop-observe.js` · `c45eb7c` |
-| Git G0/G1/G2-push（push 要手机确认） | `git-ops.js` `git-tools.js` |
-| 模板不得签发授权 | `tests/template-grants.mjs` 4 项 · `7f63583` |
+| W0 能力单一事实源 + 自检 | `server/src/capabilities.js` + 三处派生 + `server/scripts/check-capability-drift.mjs`（16 动作 / 67 工具）+ `server/scripts/check-consistency.mjs` |
+| 授权模型 + 统一网关（父链/撤销/世代/策略版本） | `grants.js` `grant-gate.js` `migration-grants.js` · `server/tests/grants.mjs` 43 项 · `b130fc6` `c5da8dc` |
+| 动作目录（从清单派生，零漂移） | `server/src/action-catalog.js` · `server/tests/action-catalog.mjs` 20 项 · `ce137d8` |
+| HTTP 危险路由接网关 + nonce + 审计 | `server/src/http-admin.js` · `server/tests/http-admin.mjs` 15 项 · `df549c5` |
+| 高风险确认（手机通道 / 目标摘要绑定 / 一次一用） | `server/src/confirm.js` · `server/tests/confirm.mjs` 23 项 · `cdb9f5a` |
+| 桌面观察（T2 用户桌面 + T1 独立桌面） | `server/src/desktop-observe.js`（`c45eb7c`）+ `server/src/desktop-island.js`（`desktop-island*.mjs` 47 项） |
+| W2 桌面输入逻辑与 Windows 实现（W2a/b/c/e） | `desktop-lease.js`（24 项）`desktop-takeover.js`（31 项）`desktop-input.js`（50 项 · `d3b77fc`） |
+| W3 用户自定义覆盖层 | `server/src/overrides.js` · `server/tests/overrides.mjs` 29 项 |
+| Git G0/G1 + G2/G3 受控操作 | `git-ops.js`（27 项）`git-push-flow.mjs`（10 项，`git_destructive` 绑定手机强确认） |
+| 模板不得签发授权 | `server/tests/template-grants.mjs` 4 项 · `7f63583` |
 | 授权可见 + 可收回 + 判定记录 | `/api/grants` `/api/grant-audit` + App 系统页 · `37ed25b` `7766a11` |
-| 主 Bot / 负责人能自己动手（先派后干） | `c20a6b6` · `tests/role-tools.mjs` 11 项 |
+| 全双工边干边聊、Jarvis 总管家与 Orbis SDK | `037620e` `ee4e9a7` `1f116ee` `fe4e501` · `duplex-router`/`full-duplex`/`jarvis-mode`/`sdk-runtime` |
+| `PiRunner` 六子模块单向架构拆分 | `server/src/pi-runner.js`（825 行）+ `server/src/runner/*.js` · `server/tests/runner-modular.mjs` 5 项 |
 
-**server 105/105 测试文件通过；app 740 项；`flutter analyze` 干净。**
+**当前实测基线：服务端 145/146 测试文件通过（`sandbox-win` 在 Windows `.git` 文件型 worktree 有 1 项环境失败待排查）；漂移检查与八项一致性检查全绿。**
 
-### 2.2 ★ 结构问题：一个能力要在 7 处登记、跨 4 个文件
+### 2.2 历史结构问题“7 处登记”已由 W0 收口验证
 
-实测（把 `desktop_observe` 的登记点全找出来）：
+此前新增一个能力需要跨 4 个文件改 7 处（`action-catalog.js` × 3、`role-tools.js` × 2、`migration-grants.js` × 1、`tools.js`），漏改会造成静默故障。
+在 `037620e` 接入 10 个 Jarvis 工具与独立桌面工具时，实测仅修改 `server/src/capabilities.js`（动作与工具声明）及工具实现即可生效，`action-catalog.js` 一行未改，`server/scripts/check-capability-drift.mjs` 验证零漂移，**证明 W0 的核心结构目标已经成立**。
 
-```
-1. action-catalog.js   ACTIONS        风险档 / 可撤销 / 要不要目标
-2. action-catalog.js   TOOLS          哪几个工具产生这个动作
-3. action-catalog.js   TARGET_RULES   从哪个入参字段认目标
-4. role-tools.js       READONLY_ALLOW 只读档放不放行
-5. role-tools.js       CHIEF_ONLY_TOOLS 是否只给主 Bot
-6. migration-grants.js MIGRATION_WITHHELD / CHIEF_ONLY_ACTIONS 迁移档给不给
-7. tools.js            defineTool     工具实现
-```
-
-**这就是"功能之间冲突"的根源。** 加第 8 个能力时漏掉任一处，得到的不是报错，
-而是**静默错误**。这一周已经踩到 4 次：
-
-| 漏了哪一处 | 现象 |
-|---|---|
-| 迁移授权没列新动作 | 主 Bot 一调就 `no_grant`，看着像"功能坏了" |
-| 只读名单与网关不同步 | 切成只读后 12 个工具被误拦（连 `web_search` 都不行） |
-| 风险档按工具名查动作名 | 审计里 `risk` 恒为 `null` |
-| 签发/校验的世代不一致 | 「重启后旧批准不续命」从没生效过 |
-
-**结论**：这不是纪律问题，是结构问题。同一件事写在 7 个地方，人一定会漏。
-
-### 2.3 规格 §11 的账
+### 2.3 规格 §11 账本与当前差值
 
 | 项 | 现状 |
 |---|---|
-| **P0-3b 桌面输入**（鼠标/键盘 + 输入租约 + 接管检测 + 世代号） | **零代码**（`grep SendInput\|CGEvent\|inputLease` 全空） |
-| **P0-3 桌面单写租约**（同一桌面只有一个注入租约） | **零代码** |
-| **P0-2 用户自定义覆盖层**（四层配置的②） | **零代码**（只有模板/授权/执行记录三层） |
-| **P0-6 Git G2/G3**（merge/rebase/force/reset/clean） | **明确拒绝** —— 属产品决策，本 spec 不动 |
-| **P1-1 worktree 授权图** | 解析有了（`gitdir/commondir/realpath`），授权图没有 |
-| **P1-2 §12 验收矩阵 14 行** | **基本全空**（Windows 4 处、macOS 1 处"待实机"） |
-| **P1-3 审计/崩溃恢复/授权对账/并发** | 审计有，其余未做 |
-| **P2 全套** | **未开始** |
-
-### 2.4 状态锈
-
-| 问题 | 影响 |
-|---|---|
-| 权限规格在 `~/Downloads/architecture-permissions-v1.0.1.md`，**不在仓库** | 驱动代码的规格不跟代码走 |
-| `docs/PERMISSIONS-INVENTORY.md` 进度表停在 9 行 | 今天 12 个提交没入账 |
-| TaskRun 引擎：**2900 行代码 / 默认关 / `data/taskruns/` 不存在** | 三种状态里最坏的一种：有代码、没数据、界面会画空 |
-| TaskRun 测试偏薄 | `task-supervisor` 1564 行实现对 236 行测试 |
+| **P0-1 执行入口与授权网关** | ✅ 已收口（`capabilities` → `grant-gate` / `policy-hook` / `http-admin`） |
+| **P0-2 用户自定义覆盖层**（四层配置的②） | ✅ 已完成（`server/src/overrides.js` + 29 项测试） |
+| **P0-3 / P0-3b 桌面输入与单写租约** | 🟡 W2a/W2b/W2c/W2e 完成；缺 W2d macOS（#30）、锁屏/多屏实机（#31/#32）、拖拽（#33） |
+| **P0-4 高风险确认** | ✅ 已落地（含 `isJarvisApprovalCall`；待补双设备真机互验） |
+| **P0-6 Git G0/G1 与受控 G2/G3** | ✅ `git_push` 与 `git_destructive` 均接入手机确认 + 目标绑定，拒绝无确认强破坏 |
+| **P1-1 / P1-2 / P1-3** | 🟡 已建 Issue #37；`docs/acceptance-matrix.md` 已入仓，P0 实机仍缺双端补全；Windows `sandbox-win` worktree 待修 |
+| **TaskRun 引擎与看板（W4/W5）** | 🟡 W4b 已补 5 块 68 项断言（覆盖率 23% → 38%），还差 4 块零覆盖路径与全双工联动（#35/#36），开关继续默认关闭 |
 
 ---
 
-## 3. 工作项
+## 3. 工作项（W0 ~ W7）
 
-### W0 · 能力骨架（Capability Manifest）〔半天，**必须先做**〕
+### W0 · 能力骨架（Capability Manifest）〔✅ 已完成〕
 
-> **对应你的两条要求**：「先搭建骨架再延伸」「避免每个功能的冲突」。
-> **对应项目定位**：pi-bot 要做像 pi-coding-agent 那样的多 bot 基座 ——
-> 那边能力靠 `registerTool()` + 事件声明扩展，我们这边对应的是**一份能力清单**。
-
-**做什么**
-
-新建 `server/src/capabilities.js`（**纯数据，零 import 业务模块**）。一个能力一条声明：
+> **对应项目定位**：Orbis 作为可嵌入的多 Agent 基座，能力声明全部收口在 `server/src/capabilities.js`（纯数据叶子模块，分为 **`ACTIONS` 动作层** 与 **`TOOL_SPECS` 工具层**，避免同一动作下只读工具与动手工具属性打架）。
 
 ```js
-export const CAPABILITIES = Object.freeze({
-  'desktop.observe': {
-    label: '看屏幕',
-    risk: 'medium',          // 审计/界面用
-    irreversible: false,     // 确认框架用（拿不准就 true）
-    needsTarget: false,      // 窄范围授权是否必须先认出目标
-    readonly: true,          // 只读档（dangerous=deny）放不放行
-    chiefOnly: true,         // 是否只给主 Bot
-    migration: 'chief',      // 迁移授权怎么给：'all' | 'chief' | 'never'
-    tools: ['desktop_observe', 'desktop_screenshot'],
-    targets: null,           // 目标认法：{ kind, fields } 或 null
+// server/src/capabilities.js —— 双层单一事实源（示意，非完整清单）
+export const ACTIONS = Object.freeze({
+  [ACTION.desktopObserve]: {
+    label: '看屏幕', risk: RISK.medium, irreversible: false, needsTarget: false, migration: 'all',
   },
-  // ... 每个能力一条
+  [ACTION.desktopInput]: {
+    label: '操作屏幕', risk: RISK.critical, irreversible: true, needsTarget: false, migration: 'never',
+  },
+});
+
+export const TOOL_SPECS = Object.freeze({
+  desktop_observe:        { action: ACTION.desktopObserve, readonly: true, chiefOnly: true },
+  desktop_island_observe: { action: ACTION.desktopObserve, readonly: true }, // T1 独立桌面按动作授权
+  desktop_input:          { action: ACTION.desktopInput,   mutating: true, chiefOnly: true },
 });
 ```
 
-然后**四处改为派生**（不复制、不改行为）：
+三处派生层只转发、不手写工具名：
+- `server/src/action-catalog.js`：派生 `ACTIONS`、`TOOLS`、`TARGET_RULES`
+- `server/src/role-tools.js`：派生 `READONLY_ALLOW`、`CHIEF_ONLY_TOOLS` 等工具白名单
+- `server/src/migration-grants.js`：从 `ACTIONS.migration` 派生迁移授权范围
 
-| 文件 | 现在 | 之后 |
-|---|---|---|
-| `action-catalog.js` | 手写 `ACTIONS` / `TOOLS` / `TARGET_RULES` | 从 `CAPABILITIES` 派生，保留原导出名 |
-| `role-tools.js` | 手写 `READONLY_ALLOW` / `CHIEF_ONLY_TOOLS` | 从 `CAPABILITIES` 派生 |
-| `migration-grants.js` | 手写 `MIGRATION_WITHHELD` / `CHIEF_ONLY_ACTIONS` | 从 `CAPABILITIES.migration` 派生 |
-| `tools.js` | `defineTool` 各自实现 | 不变（实现和声明本来就该分开） |
-
-**关键：不能有任何行为变化。** 105 个测试文件必须原封不动全绿 ——
-这就是这项改造的验收标准：**只换结构，不换语义**。
-
-**加一条自检**（`capabilities.js` 里的 `auditCapabilities()`）：
-
-- 每个 `tools` 里的工具名，在 `tools.js` 里真的有 `defineTool`
-- 每个 `tools` 里的工具名，只对应一个能力（不允许一个工具两个身份）
-- `needsTarget: true` 但 `targets: null` → 报错（那是"窄范围授权对它失效"）
-- `risk: 'critical'` 但 `irreversible: false` → 报错（critical 不该可撤销）
-
-**验收**
-
+**验收命令**：
 ```bash
-node server/tests/capabilities.mjs      # 新增 ≥ 15 项
-cd server && node tests/all.mjs          # 105/105 必须仍是这个数
-node scripts/check-capability-drift.mjs  # 新增：确认没有第二份手写清单
-```
-
-`check-capability-drift.mjs` 的判据：在 `action-catalog.js` / `role-tools.js` /
-`migration-grants.js` 里**不允许**再出现 `'desktop_observe'` 这种硬编码工具名字符串
-（排除注释与派生逻辑本身）。
-
-**做完后的收益（可量化）**
-
-```
-新增一个能力：7 处跨 4 文件  →  1 处 1 文件
+cd server
+node tests/capabilities.mjs
+node scripts/check-capability-drift.mjs
+node scripts/check-consistency.mjs
 ```
 
 ---
 
-### W1 · 规格与台账入仓 〔10 分钟〕
+### W1 · 规格与台账入仓及自检守卫 〔✅ 已完成〕
 
-**做什么**
-- 复制规格到 `docs/spec-permissions-v1.0.1.md`，加状态头
-- 重写 `docs/PERMISSIONS-INVENTORY.md` 进度表：按 §11 三层重列，P0 逐条带 commit
-- 欠账进 GitHub Issues：每条带「下一步最小动作」（此前是一张 TODO 台账，2026-11 删除）
-- 新建 `scripts/check-spec-progress.mjs`：进度表里写的 commit 是否真在 `git log` 里
+- 主权限规格入仓：`docs/spec-permissions-v1.0.1.md`
+- 执行入口盘点同步：`docs/PERMISSIONS-INVENTORY.md`
+- 欠账台账已转 GitHub Issues（每条附「下一步最小动作」）
+- 新增并接入 CI（`.github/workflows/ci.yml`）：
+  - `scripts/check-spec-progress.mjs`：核对规格/台账里的 commit SHA 是否存在于 `git log`（浅克隆自动跳过历史查重），且标注为已落地的仓库文件路径全部真实存在；
+  - `scripts/check-style.mjs`：执行 §1 的三条机器可检查规范（纯逻辑隔离 + 对应回归测试 + `pi-runner.js` / `runner/*.js` 单向模块体积预算）。
 
-**验收**
+**验收命令**：
 ```bash
-ls docs/spec-permissions-v1.0.1.md
-node scripts/check-spec-progress.mjs   # 进度表与 git log 对得上
-node scripts/check-style.mjs           # §1 的三条机器可判断约定
+node scripts/check-spec-progress.mjs
+node scripts/check-style.mjs
+node scripts/check-secrets.mjs
 ```
 
 ---
 
-### W2 · P0-3b 桌面输入（分五步，每步可停）
+### W2 · P0-3b 桌面输入与分级隔离 〔🟡 推进中〕
 
-> 规格 §5.2：*「同一 OS 桌面会话只有一个能注入输入的租约……租约有到期、心跳和
-> 世代号；用户显式接管立即吊销租约、丢弃尚未执行输入。」*
+> 规格 §5.2 与 §5.6 将桌面操作划分为两级：**T2 用户真实桌面**（仅主 Bot、`desktop_observe` / `desktop_input`）与 **T1 独立虚拟桌面**（Bot 隔离会话可按动作授权的 `desktop_island_observe` / `desktop_island_launch` / `desktop_island_input`）。两级共用同一套 `desktop-lease` 互斥租约思想与能力骨架。
 
-**W2a · 租约状态机（纯逻辑）**
-`server/src/desktop-lease.js`：`acquire / renew / release / revoke / isValid`
-字段：`taskId` `botId` `generation` `epoch`（转让即 +1）`expiresAt` `heartbeatAt`
-规则：同一桌面同时只有一个有效租约；旧 epoch 请求一律拒；过期自动失效
-**验收**：`tests/desktop-lease.mjs` ≥ 15 项
-
-**W2b · 接管检测（纯逻辑 + 探针接口）**
-`server/src/desktop-takeover.js`：判断"用户是否真的动过手"（人类最后输入时间 > 我们最后注入时间）
-平台探针**注入式**（Windows `GetLastInputInfo` / macOS `CGEventSourceSecondsSinceLastEventType`），测试用假探针
-**验收**：`tests/desktop-takeover.mjs` ≥ 8 项。**探针不可用时保守判定为"用户在"并拒绝注入**
-
-**W2c / W2d · Windows / macOS 实现**（需实机）
-
-> 进度：W2c 已完成（`d3b77fc`，实机记录在 `docs/WINDOWS.md`）。
-> W2d 的空壳已就位：`server/src/desktop-input-mac.js` 六个函数返回
-> `not_platform`，`describePlatform('darwin').supported === false`，
-> 13 项测试守着"空壳不许谎报成功"。要填什么、改哪些文件、先验哪三件事
-> 全写在 `docs/MACOS-DESKTOP-INPUT.md`。
-`SendInput` / `CGEvent` 封装；坐标带显示器与缩放版本；布局变化使旧坐标失效
-辅助功能未授权时**明确交还用户**，不静默降级
-**验收**：`docs/WINDOWS.md` / `docs/MACOS.md` 各加一节实机记录（锁屏 / 多屏 / 125% 缩放）
-
-**W2e · 接骨架与网关**
-在 `capabilities.js` **加一条**（不再改 7 处）：
-```js
-'desktop.input': {
-  label: '操作屏幕', risk: 'critical', irreversible: true, needsTarget: false,
-  readonly: false, chiefOnly: true, migration: 'never',
-  tools: ['desktop_input'], targets: null,
-},
-```
-**验收**：`tests/capabilities.mjs` 自动覆盖到；无租约时调用被拒且文案说明"先申请租约"
-
-**可以停的地方**：W2a + W2b 做完就有价值，任何平台实现都能挂上去，且不产生半截平台代码。
+- **W2a · 租约状态机（✅）**：`server/src/desktop-lease.js` + `server/tests/desktop-lease.mjs`（24 项）
+- **W2b · 接管检测（✅）**：`server/src/desktop-takeover.js` + `server/tests/desktop-takeover.mjs`（31 项）
+- **W2c · Windows 实现（✅ 基础实机，`d3b77fc`）**：`server/src/desktop-input.js` + `docs/WINDOWS.md` + `server/tests/desktop-input.mjs`（50 项）；**待补实机**：锁屏（#31）、多屏与混合缩放（#32）、拖拽（#33）
+- **W2d · macOS 实现（❌ 空壳，#30）**：`server/src/desktop-input-mac.js` + `docs/MACOS-DESKTOP-INPUT.md` + `server/tests/desktop-input-mac.mjs`（13 项守门）
+- **W2e · 能力骨架接入（✅）**：`desktop_observe` / `desktop_screenshot` / `desktop_lease` / `desktop_input`（T2）与 `desktop_island_*`（T1）已在 `server/src/capabilities.js` 声明并经网关校验
 
 ---
 
-### W3 · 用户自定义覆盖层（P0-2 的第②层）〔半天〕
+### W3 · 用户自定义覆盖层（P0-2 第②层）〔✅ 已完成〕
 
-**做什么**：`server/src/overrides.js`（纯逻辑）
-- 记录「用户对某个模板实例改了职责/范围/偏好」，带 `templateVersion` 与 `conflicts[]`
-- 规格 §13.1 逐条落地：
-  - 模板升级**不覆盖**用户改过的字段
-  - 冲突要**明示**（模板改了同一字段 → 列出让用户选）
-  - **覆盖值不得突破有效授权上限**（覆盖不能变成扩权入口）
-
-**验收**：`tests/overrides.mjs` ≥ 12 项
+- `server/src/overrides.js`（纯逻辑）实现用户覆盖优先、冲突显式标注、`checkOverrideBounds` 禁止覆盖突破有效授权上限
+- **验收**：`server/tests/overrides.mjs`（29 项全过）
 
 ---
 
-### W4 · TaskRun 引擎启用 〔1 天，前置调研〕
+### W4 · TaskRun 引擎启用与全双工 / SDK 协同 〔🟡 推进中，#35〕
 
-**为什么单列**：2900 行代码 + 默认关 + 数据为空 = 最坏的一种状态。**不允许第三种状态（界面画空数据）**。
+**为什么单列**：不能在关键并发与验收路径零覆盖、且与全双工实时插话冲突时盲目打开 `TASK_INTAKE=1`。
 
-**W4a · 缺口评估**（半天）：逐条对照 `docs/TASK-RUN-PROTOCOL.md`，产出 `docs/taskrun-gaps.md`，
-列出「代码有、测试没有」的断言，每条要么补测试要么标「已知未覆盖 + 理由」
-**W4b · 关键路径补测**：准入三模式（direct / createOnly / 新部门）、命令重放幂等、
-撤销后旧后台句柄不续命、预算耗尽 —— 预期 ≥ 20 项
-**W4c · 默认开启**：`PI_BOT_TASK_INTAKE` 默认 `1`，保留 `=0` 关闭；
-开启后必须验证「用户加一条任务 → 真被派出去执行 → 看板出现」
-**验收**：`tests/task-intake-e2e.mjs`（新）走一遍真实链路（假模型替身）
+- **W4a · 缺口评估（✅）**：`docs/taskrun-gaps.md`（梳理 45 模块 / 14,691 行与 19 条协议缺口）
+- **W4b · 关键路径补测（🟡）**：
+  - **已补 5 块共 68 项断言**（覆盖率 23% → 38%）：
+    - `server/tests/task-commands.mjs`（14 项，`7cd6147`）
+    - `server/tests/task-budget.mjs`（15 项，`7088c5a`）
+    - `server/tests/task-reduce.mjs`（16 项，`0483814`）
+    - `server/tests/run-managed-attempt.mjs`（10 项）
+    - `server/tests/task-controls.mjs`（13 项）
+  - **开启前必补的剩余 4 块**：
+    1. 准入三模式与讨论态不建单（`server/src/coordination/task-admission.js` / `server/src/coordination/intake.js`）
+    2. 请求闸门与坏回执 corrupt 拒绝（`server/src/coordination/task-request-gate.js` / `server/src/tasks/task-request-receipts.js`）
+    3. 专业验收 `needsReview` 与缺失文件 `blocked`（`server/src/tasks/task-verification.js`）
+    4. `server/src/tasks/task-run-store.js` 并发写入与根授权一致性
 
----
-
-### W5 · 任务看板（新）〔1.5 天〕
-
-**形态**（参照 Grok Bot Team Kanban）：四列 **待办 / 进行中 / 已完成 / 等你处理**
-+ 顶部四格统计 + 「只看等我的」开关 + 卡片（头像+名字+标题+一句摘要+时间）
-+ Bot 头像 chip 过滤 + 入口挂主界面左侧
-
-**W5a · 归类模型先落地（纯逻辑，照 §1 风格）**
-`app/lib/task_kanban_model.dart`：11 个状态 → 4 列的映射、优先级、截断规则
-**验收**：`app/test/task_kanban_model_test.dart` ≥ 10 项（四列归类不丢信息、等你处理优先、空列、超长标题、无负责人）
-
-**W5b · 看板页**
-`app/lib/widgets/task_kanban.dart`（只做展示，状态判定不写在这里）
-**说明**：服务端**不需要改** —— `/api/task-runs` 已返回 `phase`（四类）/`waiting`/`leadBotId`
-
-**W5c · 旧数据迁移**
-现有 39 条 `TaskItem`（3 未完成 / 36 已完成）迁成 TaskRun 历史
-**Done 列只显示有交付物的**：36 条里大部分是对话片段（"收到。先看基线和色板…"整段被记成任务），
-迁移时标 `legacy-note` 并**默认折叠**
-**验收**：`tests/legacy-task-migration.mjs` —— 幂等、原 ID 可追溯、不产生重复
+- **W4c · 默认开启与全双工 / Jarvis / Orbis SDK 协同契约（❌ 待 W4b 收口后执行）**：
+  1. **品牌环境变量与宿主边界**：
+     - 统一经 `server/src/brand.js` `readBrandEnv(env, 'TASK_INTAKE')` 读取 **`ORBIS_TASK_INTAKE`**（向后兼容 `PI_BOT_TASK_INTAKE`）；
+     - 完整桌面/服务端宿主（`server/src/server-main.js`）默认开启（显式设 `0` 可关闭）；
+     - **SDK 轻量嵌入边界**：`createOrbisRuntime`（`server/src/sdk/index.js`）默认 `taskIntake: false`（支持 `options.taskIntake: true` 显式打开），确保外部调用 `rt.askMain()` 不因未挂 `taskHost` 而被接单作用域卡死。
+  2. **日常私聊与 Jarvis 即时控制“零额外延迟”（已拍板）**：
+     - 在 `server/src/runner/task-bridge.js`（`withRequestEnvelope`）中，当主控直接回复用户、或调用 Jarvis 即时配置/查询工具、且本轮未产生部门建单或长任务派活意图时，直接按 `'answer'` 结束该次请求生命周期 —— **严禁强跑第二次 `runner.run()` 追问模型补调 `accept_task`**；
+     - 只有真正创建/修订长任务或向部门派活时才写入 `TaskRun` 账本并进入看板。
+  3. **与全双工三路分流协同（`server/src/runner/duplex-lane.js`）**：
+     - `side_reply`：走独立旁路 Talk 会话并返回 `'answer'` 关停该次 `request.scope`，不影响后台在跑的 `TaskRun`；
+     - `amend`：主控工作轮忙碌时，用户的补充微调直通 `entry.session.steer()`（写入 `turnAmends`），**不得因携带 `request` 信封就被 `requestQueues` 拦截干等下一轮**；仅明确独立的后续新任务才排队；
+     - `abort_replace`：用户要求换方向重来时，若被打断轮绑有受管 `TaskRun`，同步调用 `abortManagedTask` 收口旧尝试后再开启新轮。
+  4. **验收（待新增）**：`server/tests/task-intake-e2e.mjs`（用假模型替身端到端验证：日常聊天/Jarvis 零追问、部门派活建 `TaskRun`、全双工 `side_reply`/`amend`/`abort_replace` 与 `createOrbisRuntime` 默认隔离）。
 
 ---
 
-### W6 · §12 验收矩阵实机 〔分批〕
+### W5 · 任务看板与房间面板数据源统一 〔❌ 未开始，依赖 W4c，#36〕
 
-14 行逐行填 Windows + macOS 证据（版本/输入/预期/原始结果/证据引用/静态or实机）
-**优先序**：P0 五行先做 —— 用户确认 / 撤销与后台 / 凭据与隐私 / 模板安全 / push-merge
-**验收**：`docs/acceptance-matrix.md`（新），每行标 `静态 | 实机 ✓ | 实机 ✗`，✗ 的写明「交还用户」的条件
+**产品形态（对照全双工与团队协作界面）**：
+- **全局四列看板**（主界面左侧入口）：**待办 / 进行中 / 已完成 / 等你处理** + 顶部四格统计 + 「只看等我的」开关 + Bot 头像 chip 过滤 + 卡片（头像、名字、标题、当前状态/摘要、时间，遵循 `docs/SPEC-MOTION-V1.md` 动效规范与全双工在跑/旁路状态视觉）。
+- **保留房间内任务面板并统一数据源（已拍板）**：保留右侧栏 `app/lib/widgets/room_task_panel.dart` 与聊天顶栏 `app/lib/widgets/task_board.dart`（`showTaskBoard`），将其读写数据源**全部统一到 `TaskRun`（`app/lib/task_run_controller.dart`）**，按当前房间/关联部门过滤展示，淘汰旧版独立 `TaskItem` 双轨维护。
+
+**细分步序**：
+- **W5a · 归类纯逻辑模型**：（待新增）`app/lib/task_kanban_model.dart`（状态到四列映射、等你处理优先排序、标题截断）+（待新增）`app/test/task_kanban_model_test.dart`（≥ 10 项）。
+- **W5b · 全局看板页 + 房间面板接线**：（待新增）`app/lib/widgets/task_kanban.dart`（只负责展示与交互），复用 `app/lib/task_run_controller.dart`、`app/lib/widgets/task_run_card.dart`、`app/lib/widgets/task_run_sheet.dart`，并同步切换 `app/lib/widgets/task_board.dart` 数据源到 `TaskRun`。
+- **W5c · 通用旧数据幂等迁移**：（待新增）`server/tests/legacy-task-migration.mjs` —— 把历史 `TaskItem` 无损迁成历史 `TaskRun`；采用通用内容启发式规则（无产物链接或属对话回复片段的已完成项自动标 `legacy-note` 并默认折叠，避免刷屏污染「已完成」列），不硬编码特定本机条数。
 
 ---
 
-### W7 · P1/P2 欠账登记（不实现）
-把 §2.3 里未开始的（worktree 授权图、审计对账、公平排队、优先级、截图增量、
-证据外置、模板权限差异预览、许可证清单）写进 GitHub Issues，每条带「阻塞谁 / 最小下一步」
+### W6 · §12 验收矩阵实机 〔🟡 分批推进〕
+
+对照 `docs/acceptance-matrix.md`（14 组），在原有 Windows + macOS 实机项基础上补充三项必验门禁：
+1. **Jarvis 高危操作确认门禁（`isJarvisApprovalCall`）**：删除 Bot / 清理知识库 / 修改全局安全策略在手机/桌面端的确认绑定；
+2. **T1 独立桌面 vs T2 用户桌面隔离实机**：成员 Bot 调用 `desktop_island_*` 无法越界观察或操控用户真实桌面；
+3. **Windows `sandbox-win` worktree 环境修复**：查清并修复 `.git` 为指针文件时 AppContainer SID 写入失败的问题。
 
 ---
 
-## 4. 集成规则（写下来是因为最容易破）
+### W7 · P1/P2 欠账登记 〔✅ 已完成〕
 
-新能力接入现有系统时，**按这个顺序**，每一步都有对应的自检：
+`P1/P2` 未实现项（worktree 授权图、审计对账、公平排队、截图增量、许可证清单等）已登记在 GitHub Issue #37，每条附阻塞对象与下一步最小动作。
 
-| 步骤 | 在哪 | 自检 |
+---
+
+## 4. 集成规则（Orbis 四层单骨架，写下来防止结构回退）
+
+新增或扩展能力时，**按固定顺序落盘，严禁跳层写逻辑**：
+
+| 步骤 | 落点 | 自检 |
 |---|---|---|
-| ① 声明能力 | `capabilities.js` 加一条 | `auditCapabilities()` 通过 |
-| ② 实现工具 | `tools.js` `defineTool` | `check-capability-drift.mjs`：工具名在清单里 |
-| ③ 走网关 | 无需改（`policy-hook` 自动读清单） | `tests/grants.mjs` 的工具覆盖用例 |
-| ④ 要人确认 | `capabilities.irreversible = true` 自动生效 | `tests/confirm.mjs` |
-| ⑤ 只读档 | `capabilities.readonly` 自动生效 | `tests/action-catalog.mjs` 的漂移用例 |
-| ⑥ 进 HTTP | `http-admin.js` 加一条路由分级 | `tests/http-admin.mjs` |
-| ⑦ 有界面 | App 侧独立 model + widget 两层 | `app/test/*_model_test.dart` |
+| ① 声明能力 | `server/src/capabilities.js`（`ACTIONS` + `TOOL_SPECS`） | `auditCapabilities()` + `server/scripts/check-capability-drift.mjs` |
+| ② 领域服务 | `server/src/services/*.js`（纯协调逻辑，不绑传输协议） | HTTP、Jarvis 工具、Orbis SDK 三端共用 |
+| ③ 工具/执行 | `server/src/tools.js` / `jarvis-tools.js`；长流程逻辑入 `server/src/runner/*.js` | `scripts/check-style.mjs`（`pi-runner.js` `<= 850` 行、无反向循环引用） |
+| ④ 权限与确认 | 自动经 `policy-hook.js` → `grant-gate.js`；高危标 `irreversible: true` | `server/scripts/check-consistency.mjs` + `grants.mjs` / `confirm.mjs` |
+| ⑤ HTTP 管理面 | 危险管理路由在 `server/src/http-admin.js` 分级并挂 nonce/审计 | `server/tests/http-admin.mjs` |
+| ⑥ 界面呈现 | App 侧遵循 `*_model.dart` 纯逻辑与 `widgets/*.dart` 展示分离 | `flutter test` / `flutter analyze` |
 
-**禁止**：在 `tools.js` 的 `execute` 里写授权判定（那是网关的事）、
-在 `policy-hook` 里写业务规则（那是 capability 声明的事）。
+**禁止**：在 `tools.js` 的 `execute` 里手写授权分支；在 `http.js`、`jarvis-tools.js` 与 `sdk/index.js` 里各写一份重复业务代码；把已拆分的运行逻辑堆回 `server/src/pi-runner.js`。
 
 ---
 
 ## 5. 顺序与依赖
 
 ```
-W0（能力骨架）  ← 必须先做，否则后面每个新能力都要改 7 处
- ├─→ W1（规格/台账入仓）
- ├─→ W3（覆盖层）              ← 独立
- ├─→ W2a → W2b                 ← 纯逻辑
- │     └─→ W2c / W2d           ← 需实机，可分开
- │           └─→ W2e           ← 骨架里加一条即可
- ├─→ W4a → W4b → W4c
- │                 └─→ W5（看板）   ← W4c 没完成就不做 W5b
- └─→ W6（验收矩阵）            ← 每项做完补自己的行
-W7 最后一次性登记
+W0（✅ 能力骨架）
+ ├─→ W1（✅ 规格/台账与 CI 守卫）
+ ├─→ W3（✅ 用户覆盖层）
+ ├─→ W2a → W2b → W2c/W2e（✅）→ W2d macOS & 实机补齐（#30/#31/#32/#33）
+ ├─→ W4a（✅）→ W4b 补齐剩余 4 块（🟡）→ W4c 接全双工/Jarvis/SDK 默认开启（#35）
+ │                                         └─→ W5 全局四列看板 + 房间面板统一 TaskRun（#36）
+ └─→ W6（🟡 验收矩阵补实机 + sandbox-win 修复）
+W7（✅ Issue #37）
 ```
 
-**最小可停线**：W0 + W1 + W2a + W2b —— 骨架站住、账目清楚、租约与接管的纯逻辑成立。
+**当前可安全停线**：W0 + W1 + W3 + W2a/b/c/e + `PiRunner` 模块化 + Orbis SDK 与全双工已完成并入仓；在 W4b 剩余 4 块未绿前，**继续保持 `TASK_INTAKE` 默认关闭**。
 
 ---
 
-## 6. 明确不做（边界）
+## 6. 明确不做与边界约定
 
-| 不做 | 理由 |
+| 边界 | 说明 |
 |---|---|
-| Git merge / rebase / force / reset --hard / clean | 规格 §7.1 的 G2/G3，属**产品决策** |
-| 桌面输入给非主 Bot | 规格 §5.3：普通桌面输入默认仅主 Bot |
-| 让模板携带授权 | 规格 §13.1 明令禁止，已有用例守着 |
-| 把「先派后干」写成硬规则（禁止自己上） | 用户 2026-11-15 已明确否掉 |
-| 改沙箱策略 | 规格 §8 撤销旧全局规则，但那是产品决策 |
-| **再加一层权限抽象** | `capabilities → {catalog, role-tools, migration, gate}` 四层已经够；W0 是把 7 处收成 1 处，不是加第 8 处 |
+| 不做无确认的破坏性 Git | `git-ops.js` 严格拒绝未经确认的 `force` / `--no-verify`；`git_destructive`（merge/rebase/reset/clean）必须经 `git.destructive` 授权 + 目标摘要 + 手机强确认方可执行 |
+| T2 用户真实桌面严格仅主 Bot | `desktop_observe` / `desktop_input`（T2）保持 `chiefOnly: true`、`migration: 'never'`；非主 Bot 仅能按授权使用 T1 隔离虚拟桌面（`desktop_island_*`） |
+| 禁止模板自带授权 | 规格 §13.1 明令禁止，由 `server/tests/template-grants.mjs` 守门 |
+| 禁止把“先派后干”写成死规则 | 保留主 Bot 自主决定直接动手或拆部门分派（用户 2026-11-15 已明确否掉硬限制） |
+| 禁止在网关外再包第八层权限抽象 | `capabilities → {catalog, role-tools, migration, gate}` 足够覆盖权限判断 |
+| 禁止绕开 `services/` 在 SDK/Jarvis/HTTP 三端复制代码 | 领域动作统一收口 `server/src/services/*.js` |
 
 ---
 
-## 7. 风险与不做假承诺
+## 7. 风险与应对
 
 | 风险 | 应对 |
 |---|---|
-| W0 改造引入行为变化 | **验收标准就是 105/105 不变**；`check-capability-drift.mjs` 保证没有第二份手写清单 |
-| W2c/W2d 实机不可控（锁屏、UAC、TCC） | 平台实现单独一项，失败整块回退；租约/接管逻辑仍有效 |
-| W4c 打开引擎后任务乱跑 | W4a/W4b 是前置门；保留 `=0` 关闭开关 |
-| W5 看板显示空数据 | 依赖 W4c；**W4c 没完成就不做 W5b** |
-| 迁移 36 条对话片段污染看板 | 默认折叠 + 标 `legacy-note` |
-| 台账再次过期 | `check-spec-progress.mjs` 进 CI，commit 不在 git log 就红 |
+| W4c 打开后劫持全双工 `amend` 或拖慢日常聊天 | 日常回答与 Jarvis 配置零追问按 `'answer'` 收口；忙碌 `amend` 直通 `steer` 不进 `requestQueues` |
+| W4c 打开后外部 SDK `createOrbisRuntime` 被卡死 | SDK 运行时默认 `taskIntake: false`，由宿主显式装配开启 |
+| W5 看板显示空数据或与房间面板打架 | W4c 完成前不开 W5b；保留房间内任务面板并统一数据源到 `state.taskRuns` |
+| 历史闲聊型 `TaskItem` 迁移后刷屏已完成列 | 通用启发式识别无交付物对话片段并标 `legacy-note` 默认折叠 |
+| 规格台账或代码规范随开发再次退化 | `check-spec-progress.mjs`、`check-style.mjs`、`check-capability-drift.mjs`、`check-consistency.mjs` 全量接入 CI |
 
 ---
 
-## 8. 审核点（请你定这六个）
+## 8. 已拍板决议（含 2026-11-18 确认项）
 
-1. **W0 骨架**：`capabilities.js` 一份清单 + 四处派生，这个结构你认可吗？
-   （这是 rev.2 的核心，也是"多 bot 基座"的地基）
-2. **顺序**：W0 → W1 → W3 → W2a/b → W2c/d → W2e → W4 → W5 → W6 → W7？
-3. **看板数据源**：坚持建在 TaskRun 上（要先做 W4），还是先做个只看旧 TaskItem 的临时板？
-4. **W4 的胆量**：补完测试再开（我推荐），还是先开 + 真机观察？
-5. **W2c/W2d**：现在就做实机（需要你配合验几个场景），还是先只做 W2a/W2b 逻辑层？
-6. **W6 验收矩阵**：14 行全填，还是先只填 P0 那 5 行？
-
----
-
-*本 spec 未执行任何改动。你审完后我按 W0 开工，每项独立 commit + 独立验证。*
+1. **W0 能力骨架**：采用双层清单（`ACTIONS` + `TOOL_SPECS`）+ 三处派生（已完成）。
+2. **推进主序**：W0 → W1 → W3 → W2（逻辑与 Windows 先行，macOS 单独推进）→ W4 → W5 → W6 / W7。
+3. **W4 胆量**：先补齐 W4b 剩余 4 块测试（准入/回执/验收/并发写），并与全双工/Jarvis 契约对齐后再默认开启 W4c。
+4. **W4c 日常问答与 Jarvis 延迟控制（2026-11-18 用户确认）**：日常私聊与 Jarvis 即时动作保持**零额外轮次延迟**，不强迫多调一次 `accept_task(answer)`，仅明确派活/长任务建 `TaskRun`。
+5. **W5 任务看板数据源策略（2026-11-18 用户确认）**：新增全局四列看板同时**保留房间内任务面板入口**，两者数据源统一收敛到 `TaskRun`，废弃旧 `TaskItem` 独立维护链路。
+6. **W6 验收矩阵**：先确保 P0 核心门禁、Jarvis 高危确认、T1/T2 隔离与 `sandbox-win` 实机收口。

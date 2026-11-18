@@ -198,7 +198,14 @@ await rt.dispose();
 server/
   src/
     index.js          启动 + 终端打印地址与配对码
-    pi-runner.js      ★ 核心：会话管理、单轮运行、部门轮次引擎（并发/打断/心跳）
+    pi-runner.js      ★ 核心外观：会话池/模型与熔断/生命周期管理（向 runner/* 委派）
+    runner/           运行时模块化子层
+      turn-executor.js       单轮会话执行主干（流式事件/恢复/产物）
+      group-orchestrator.js  部门轮次引擎（并发派发/打断/收尾/游标）
+      duplex-lane.js         全双工旁路 Talk 与发信分流
+      task-bridge.js         请求信封/受管报告门控/看门狗升级
+      memory-compactor.js    主动压缩阈值校准与记忆摘要
+      runner-utils.js        无状态基础常量与助手
     tools.js          工具集（通用 + 总经理专属）
     store.js          状态与持久化（bot/部门/消息/游标/轮次预算）
     mentions.js       ★ @提及解析（调度信号）

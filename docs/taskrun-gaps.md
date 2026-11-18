@@ -162,28 +162,9 @@ PY
 | 3 | 归约器不变量：暂停阻塞不擦门槛 / 旧版本结果归档 / 事件身份绑定 / 完成候选只认 returned | `tests/task-reduce.mjs`（新） | 16 | ✅ `0483814` |
 | 4 | 未知副作用：unknown_outcome 不结算不退款 / 结算被拒不退款 / 派发失败才退款 | `tests/run-managed-attempt.mjs`（新） | 10 | ✅ 本提交 |
 | 5 | 撤销与后台句柄：控制事实身份 / 旧版本批准不放行 / 重复消费只一次 / 取消级联不连坐 / 旧句柄标取消 | `tests/task-controls.mjs`（新） | 13 | ✅ 本提交 |
+| 6 | 准入三模式与讨论态不建单：`discussion` / `direct` / `createOnly` / `new` & `existing` / 专家验收 Route 守卫 | `server/tests/task-admission.mjs` | 11 | ✅ W4b 收口 |
+| 7 | 请求闸门与坏回执：`inflight` 并发抑制 / 租约抢占 / `EISDIR`·坏 JSON·残缺字段 `corrupt` / 权威 TaskRun 优先 | `server/tests/task-request-gate.mjs` | 7 | ✅ W4b 收口 |
+| 8 | 产出验收门禁：`expert` 无审核 `needs_review` / `format` 缺文件 `blocked` / 不可信完成声明拒收 / 改版重验 | `server/tests/task-verification.mjs` | 9 | ✅ W4b 收口 |
+| 9 | 存储并发事务与根授权：10 路并发 `mutate` / 并发 `acceptRequest` / CAS 守卫 / 子任务根授权全分支 | `server/tests/task-run-store.mjs` | 5 | ✅ W4b 收口 |
 
-**五步全部补齐：68 项新断言。** 零覆盖区里有 2 283 行现在有了直接测试：
-
-```
-task-commands.js        266 行  →  14 项
-task-budget.js          260 行  →  15 项
-task-reduce.js        1 198 行  →  16 项
-run-managed-attempt.js  152 行  →  10 项
-task-controls.js        407 行  →  13 项
-                     ─────────      ─────
-                     2 283 行       68 项
-```
-
-覆盖率从 23% 升到 **38%**（3 509 + 2 283 = 5 792 / 14 691）。
-
-**但 W4b 的门仍然没过** —— 按本文第一节的 P0/P1/P2 排序，还有这些零覆盖且危险：
-准入三模式（`task-admission.js` 376 行）、请求闸门与回执（`task-request-gate`
-149 + `task-request-receipts` 200）、`task-verification.js` 795 行（专业验收）、
-`task-run-store.js` 961 行（并发写与根授权）。
-
-所以 `PI_BOT_TASK_INTAKE` 继续默认关闭。下一步先补**准入三模式**与**回执**，
-再补**产出验收**，最后才是端到端（W4c）。
-
-**未开始之前，`PI_BOT_TASK_INTAKE` 保持默认关闭** —— 有代码、没数据、
-默认关是"三种状态里最坏的一种"，但它比"开了然后静默出错"好。
+**九步全部补齐**：准入三模式、请求闸门与回执、专业验收门禁、存储并发写与根授权全部已有直接回归测试，W4b 门禁已通过（接下来转入 W4c 全双工/Jarvis/SDK 协同开启与端到端测试）。
