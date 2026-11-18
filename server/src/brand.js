@@ -11,7 +11,7 @@ export const LEGACY_SLUG = 'pi-bot';
 
 export const DEFAULT_MAIN_BOT_NAME = 'Orbis';
 export const DEFAULT_MAIN_BOT_EMOJI = '◉';
-export const DEFAULT_UPDATE_REPO = 'orbis-ai/orbis';
+export const DEFAULT_UPDATE_REPO = 'loving-cat/orbis';
 
 /**
  * 优先读取 `ORBIS_<SUFFIX>`，未设置或为空串时回退 `PI_BOT_<SUFFIX>`。

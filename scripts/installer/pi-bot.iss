@@ -16,7 +16,7 @@
 
 #define MyAppName "pi-bot"
 #define MyAppPublisher "Orbis Contributors"
-#define MyAppUrl "https://github.com/orbis-ai/orbis"
+#define MyAppUrl "https://github.com/loving-cat/orbis"
 #define MyAppExeName "pi_bot.exe"
 
 ; Stable across versions: the same AppId makes an upgrade replace the previous

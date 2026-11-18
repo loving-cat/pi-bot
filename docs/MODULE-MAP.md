@@ -11,7 +11,7 @@
 | `pi-args.js` | 判断「这次是 pi CLI 调用还是服务端」并委派；扩展派子 agent 会拿 `argv[1]` 当 pi 入口 |
 | `server-main.js` | 服务端装配：reap 一次性消息 → runner/pairing/services → HTTP/WS → 定时任务调度器 → 信号收工 |
 | `config.js` | 配置工厂（`createConfig`）与默认实例；数据目录定位与一次性迁移；优先读取 `ORBIS_*` 环境变量（兼容 `PI_BOT_*`） |
-| `brand.js` | 品牌常量与 `readBrandEnv` 单一真源（`Orbis` / `orbis-ai/orbis`） |
+| `brand.js` | 品牌常量与 `readBrandEnv` 单一真源（`Orbis` / `loving-cat/orbis`） |
 | `bus.js` | 实例级事件总线工厂（`createBus`）与默认总线 |
 | `sdk/index.js` | 进程内 Agent SDK 门面（`createOrbisRuntime` / 兼容别名 `createPiBotRuntime`、能力声明与 `defineTool` 重导出） |
 | `sdk/client.js` | 远程 HTTP + WS 客户端 SDK（`createOrbisClient` / 兼容别名 `createPiBotClient`，自动读取本机 token 与申请 nonce） |

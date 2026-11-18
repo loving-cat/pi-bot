@@ -26,8 +26,8 @@
 
 | 平台 | 文件 |
 |---|---|
-| **Windows** | [Windows 免安装包](https://github.com/orbis-ai/orbis/releases/latest)（`pi-bot-windows-*.zip`）— 解压双击运行；从源码打包见 [Windows 构建说明](docs/WINDOWS.md) |
-| **Android** | [Android APK](https://github.com/orbis-ai/orbis/releases/latest)（`pi-bot-android-*.apk`）— 手机浏览器直接下载安装 |
+| **Windows** | [Windows 免安装包](https://github.com/loving-cat/orbis/releases/latest)（`pi-bot-windows-*.zip`）— 解压双击运行；从源码打包见 [Windows 构建说明](docs/WINDOWS.md) |
+| **Android** | [Android APK](https://github.com/loving-cat/orbis/releases/latest)（`pi-bot-android-*.apk`）— 手机浏览器直接下载安装 |
 | **macOS** | 从源码运行 `./scripts/pack-macos.sh` 生成 App 与 DMG，见 [macOS 构建说明](docs/MACOS.md) |
 
 **包里不含任何地址和密钥**——服务端地址、配对码、模型 baseUrl/API key 全部由你自己填（见下面「快速开始」）。

@@ -84,7 +84,7 @@ const okRelease = {
 
 await test('默认地址指向 GitHub 最新发布', () => {
   const { url } = updateEndpoint({});
-  assert.match(url, /api\.github\.com\/repos\/orbis-ai\/orbis\/releases\/latest/);
+  assert.match(url, /api\.github\.com\/repos\/loving-cat\/orbis\/releases\/latest/);
 });
 
 await test('可用环境变量覆盖地址（ORBIS_* 与兼容 PI_BOT_*）', () => {
