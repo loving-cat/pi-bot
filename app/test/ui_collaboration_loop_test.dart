@@ -329,6 +329,14 @@ void main() {
     await mouse.moveTo(tester.getCenter(find.text('建议先收敛接口契约').first));
     await tester.pump();
 
+    // 悬停操作条必须浮在气泡上方，不能压住正文（第一行常常就是结论）
+    final iconRect = tester.getRect(find.byIcon(LucideIcons.reply));
+    final textRect = tester.getRect(find.text('建议先收敛接口契约').first);
+    expect(
+      iconRect.bottom <= textRect.top + 1,
+      isTrue,
+      reason: '操作条压在正文上了：icon=$iconRect text=$textRect',
+    );
     await tester.tap(find.byIcon(LucideIcons.reply));
     await tester.pump();
     expect(find.byKey(const ValueKey('composer-reply-bar')), findsOneWidget);

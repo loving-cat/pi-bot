@@ -3551,13 +3551,133 @@ class _BubbleQuickActions extends StatefulWidget {
 }
 
 class _BubbleQuickActionsState extends State<_BubbleQuickActions> {
+  /// 悬停操作条走 Overlay，不画在气泡里。
+  ///
+  /// ★ 为什么不满足于 Positioned(top: -24)：
+  ///   Stack 的 hit test 只在自身 size 内生效，画到外面虽然「看得见」，
+  ///   但点不到 —— 挪出去等于把按钮弄坏。放进气泡里又会挡住第一行正文
+  ///   （长消息第一行往往就是结论）。所以用 OverlayEntry 另起一层：
+  ///   视觉在气泡上方，点击命中由 Overlay 保证，气泡里的排版一动不动。
+  OverlayEntry? _bar;
+  Timer? _hideTimer;
   bool _hovered = false;
+  bool _barHovered = false;
   double _dragX = 0;
+
+  bool get _hasActions =>
+      widget.onReply != null ||
+      widget.onMention != null ||
+      widget.textToCopy.trim().isNotEmpty;
+
+  @override
+  void dispose() {
+    _hideTimer?.cancel();
+    _removeBar();
+    super.dispose();
+  }
 
   void _copy(BuildContext context) {
     HapticFeedback.selectionClick();
     Clipboard.setData(ClipboardData(text: widget.textToCopy));
     toast(context, L10n.s(context).t('msg.copied'), kind: ToastKind.success);
+  }
+
+  void _onEnter() {
+    _hideTimer?.cancel();
+    _hovered = true;
+    _syncBar();
+  }
+
+  void _onExit() {
+    _hovered = false;
+    // 气泡与操作条之间有几像素缝，鼠标穿过去会先触发 onExit；
+    // 给一点宽限，别把条子瞬移掉导致点不中。
+    _hideTimer?.cancel();
+    _hideTimer = Timer(const Duration(milliseconds: 160), () {
+      if (mounted && !_hovered && !_barHovered) _removeBar();
+    });
+  }
+
+  void _syncBar() {
+    if (!_hasActions || !mounted) return;
+    if (_hovered || _barHovered) {
+      _insertBar();
+    } else {
+      _removeBar();
+    }
+  }
+
+  void _removeBar() {
+    _bar?.remove();
+    _bar = null;
+  }
+
+  void _insertBar() {
+    if (_bar != null) return;
+    final box = context.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return;
+    final rect = box.localToGlobal(Offset.zero) & box.size;
+    final overlay = Overlay.of(context, rootOverlay: true);
+    _bar = OverlayEntry(
+      builder: (ctx) {
+        final screen = MediaQuery.sizeOf(ctx);
+        return Positioned(
+          top: math.max(4.0, rect.top - 32),
+          left: widget.isUser ? null : rect.left,
+          right: widget.isUser ? math.max(8.0, screen.width - rect.right) : null,
+          child: MouseRegion(
+            onEnter: (_) {
+              _hideTimer?.cancel();
+              _barHovered = true;
+            },
+            onExit: (_) {
+              _barHovered = false;
+              _syncBar();
+            },
+            child: _barContent(ctx),
+          ),
+        );
+      },
+    );
+    overlay.insert(_bar!);
+  }
+
+  Widget _barContent(BuildContext ctx) {
+    return Material(
+      color: PB.bgElevated.withValues(alpha: 0.96),
+      borderRadius: BorderRadius.circular(PB.rFull),
+      elevation: 6,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(PB.rFull),
+          border: Border.all(color: PB.borderSecondary),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (widget.onReply != null)
+              _QuickBtn(
+                icon: LucideIcons.reply,
+                tooltip: L10n.s(ctx).t('msg.reply'),
+                onTap: widget.onReply!,
+              ),
+            if (widget.onMention != null)
+              _QuickBtn(
+                icon: LucideIcons.atSign,
+                tooltip: L10n.s(ctx).t('msg.mentionBot'),
+                onTap: widget.onMention!,
+              ),
+            if (widget.textToCopy.trim().isNotEmpty)
+              _QuickBtn(
+                icon: LucideIcons.copy,
+                tooltip: L10n.s(ctx).t('msg.copyContent'),
+                onTap: () => _copy(ctx),
+              ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -3586,66 +3706,13 @@ class _BubbleQuickActionsState extends State<_BubbleQuickActions> {
       );
     }
 
-    final hasActions =
-        widget.onReply != null ||
-        widget.onMention != null ||
-        widget.textToCopy.trim().isNotEmpty;
-    if (!hasActions) return body;
+    if (!_hasActions) return body;
 
     return MouseRegion(
       opaque: false,
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          body,
-          if (_hovered)
-            Positioned(
-              top: 4,
-              right: widget.isUser ? null : 4,
-              left: widget.isUser ? 4 : null,
-              child: Material(
-                color: PB.bgElevated.withValues(alpha: 0.94),
-                borderRadius: BorderRadius.circular(PB.rFull),
-                elevation: 4,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 4,
-                    vertical: 2,
-                  ),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(PB.rFull),
-                    border: Border.all(color: PB.borderSecondary),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (widget.onReply != null)
-                        _QuickBtn(
-                          icon: LucideIcons.reply,
-                          tooltip: L10n.s(context).t('msg.reply'),
-                          onTap: widget.onReply!,
-                        ),
-                      if (widget.onMention != null)
-                        _QuickBtn(
-                          icon: LucideIcons.atSign,
-                          tooltip: L10n.s(context).t('msg.mentionBot'),
-                          onTap: widget.onMention!,
-                        ),
-                      if (widget.textToCopy.trim().isNotEmpty)
-                        _QuickBtn(
-                          icon: LucideIcons.copy,
-                          tooltip: L10n.s(context).t('msg.copyContent'),
-                          onTap: () => _copy(context),
-                        ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
+      onEnter: (_) => _onEnter(),
+      onExit: (_) => _onExit(),
+      child: body,
     );
   }
 }
