@@ -3115,10 +3115,13 @@ class _MessageRow extends StatelessWidget {
                       const SizedBox(width: 3),
                       Text(
                         // ★ 用户的新要求会让它**立刻停下**，不是排队等。
-                        //   followUp 那种"排在后面"只发生在成员互相 @ 的场景。
+                        //   followUp 那种"排在后面"只发生在成员互相 @ 的场景；
+                        //   amend 是「补一句约束、这一轮继续跑」，不能说成打断重来（P0-2）。
                         msg.meta?['queued'] == 'followUp'
                             ? L10n.s(context).t('chat.steerQueued')
-                            : L10n.s(context).t('chat.steerInterrupted'),
+                            : msg.meta?['duplex'] == 'amend'
+                                ? L10n.s(context).t('chat.amendApplied')
+                                : L10n.s(context).t('chat.steerInterrupted'),
                         style: TextStyle(
                           fontSize: PB.fsXxs,
                           color: PB.colors(context).link,

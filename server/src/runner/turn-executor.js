@@ -304,11 +304,39 @@ async function runWithLease(
   entry.liveSteps = steps;
   entry.liveDraft = render;
   entry.turnAmends = [];
+  /** 插话换条（P0-2 情形 B）：见 applyPendingReseat。 */
+  const reseatLiveMessage = () => {
+    const next = applyPendingReseat({
+      store: runner.store,
+      roomId,
+      entry,
+      botMsgId: botMsg.id,
+      render,
+      meta,
+      bot,
+      bus: runner.bus,
+      log,
+      resetDraft: () => {
+        committed.length = 0;
+        buffer = '';
+        steps.length = 0;
+      },
+    });
+    if (next) botMsg = next;
+  };
+
   const pushDelta = throttle(() => {
+    reseatLiveMessage();
     beat();
-    runner.bus.emit('event', { t: 'msg.delta', roomId, msgId: botMsg.id, text: render() });
+    const text = render();
+    // ★ 同步落库（静默）：duplex-lane 判「这一轮到底写出正文没有」读的就是
+    //   store 里这条消息的 text。只 emit 不落库，那边永远看到空字符串，
+    //   于是“已写半截”会被误判成“空占位”，FD-0 直接破。
+    runner.store.updateMessage(roomId, botMsg.id, { text }, { silent: true });
+    runner.bus.emit('event', { t: 'msg.delta', roomId, msgId: botMsg.id, text });
   }, 80);
   const pushSteps = () => {
+    reseatLiveMessage();
     beat();
     runner.bus.emit('event', { t: 'msg.steps', roomId, msgId: botMsg.id, steps: [...steps] });
     runner.store.updateMessage(roomId, botMsg.id, { steps: [...steps] }, { silent: true });
@@ -651,6 +679,10 @@ async function runWithLease(
 
     collectedArtifacts = produced;
 
+    // ★ 收尾前再兜一次：这一轮可能全是工具调用，一个 delta 都没发过，
+    //   于是 pushDelta 里的换条从未触发 —— 最终内容仍会写进插话之前的气泡。
+    reseatLiveMessage();
+
     if (!finalText && !stepCapHit) {
       const digest = steps.length
         ? `（${bot.name} 执行了 ${steps.length} 步但没有给出说明）\n\n${steps
@@ -838,4 +870,59 @@ async function runWithLease(
     }
     runner.maybeAutoSummarize(roomId, bot.id);
   }
+}
+
+/**
+ * 把「这一轮的在途气泡」按插话位置重新安置（P0-2 情形 B 的落地实现）。
+ *
+ * 为什么单独抽出来：它要同时做四件事（封口旧条、清空草稿、新开一条、
+ * 把新条挪到插话之后），而它只在**流式过程中**被触发 —— 端到端跑需要真模型。
+ * 抽成函数后可以直接单测：给定一条已写正文的 bot 消息 + 一条 user 插话，
+ * 断言旧条定稿、新条排在 user 之后、且新条从空开始（内容不重复）。
+ *
+ * @returns {object|null} 新建的那条消息；没有待换条任务时返回 null
+ */
+export function applyPendingReseat({
+  store, roomId, entry, botMsgId, render, meta = null, bot, bus = null, log: logFn = () => {},
+  resetDraft = null,
+} = {}) {
+  const pending = entry?.pendingReseat;
+  if (!pending) return null;
+  entry.pendingReseat = null;
+
+  const sealed = typeof render === 'function' ? render() : '';
+  const oldMsg = store.getMessage(roomId, botMsgId);
+  try {
+    store.updateMessage(roomId, botMsgId, {
+      text: sealed,
+      status: 'done',
+      meta: { ...(oldMsg?.meta ?? {}), reseatAfterId: pending.afterId },
+    }, { silent: false });
+  } catch (err) {
+    logFn('封口旧气泡失败：', err?.message || err);
+  }
+
+  if (typeof resetDraft === 'function') resetDraft();
+
+  let next;
+  try {
+    next = store.appendMessage({
+      roomId,
+      authorType: 'bot',
+      authorId: bot?.id ?? null,
+      authorName: bot?.name ?? '',
+      authorEmoji: bot?.emoji ?? null,
+      text: '',
+      status: 'streaming',
+      meta: { ...(meta ?? {}), continuedFrom: botMsgId },
+    });
+  } catch (err) {
+    logFn('插话后新建气泡失败：', err?.message || err);
+    return null;
+  }
+  store.moveMessageAfter(roomId, next.id, pending.afterId, { touch: true });
+  entry.liveMsgId = next.id;
+  bus?.emit?.('event', { t: 'msg.new', msg: next });
+  bus?.emit?.('event', { t: 'typing', roomId, botId: bot?.id ?? null, active: true, lane: 'work', msgId: next.id });
+  return next;
 }

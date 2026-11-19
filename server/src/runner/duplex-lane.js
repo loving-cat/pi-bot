@@ -17,7 +17,7 @@ import { deliverDirectInput } from '../direct-message-delivery.js';
 import { releaseEntry } from '../session-pool.js';
 import { createSessionBuilder } from '../session-factory.js';
 import { decide as decidePoint, shouldUseJev } from '../decision-router.js';
-import { looksLikeSupplement } from '../duplex-router.js';
+import { looksLikeSupplement, hasVisibleBody } from '../duplex-router.js';
 import { routeBusyInput, DUPLEX_KIND } from '../duplex-router.js';
 import {
   buildLiveWorkSnapshot,
@@ -26,6 +26,29 @@ import {
   formatGroupWorkSnapshotPrompt,
 } from '../live-work-snapshot.js';
 import { hydrate, sessionKey, sleep, textOf, throttle } from './runner-utils.js';
+
+/**
+ * 插话之后，把「这一轮的在途气泡」安置到正确位置（P0-2）。
+ *
+ * 两种情形：
+ * - 气泡还没有可见正文 → 直接挪到 userMessage 之后（用户看不到跳动）；
+ * - 已经写出半截 → 原地封口，并给这一轮打 `pendingReseat`，
+ *   由 turn-executor 在下次输出前另起一条排在 userMessage 之后（FD-0 不破）。
+ *
+ * @returns {'moved'|'reseat'|'none'}
+ */
+function settleLiveAfterInsert(runner, { roomId, entry, userMessage }) {
+  const liveMsgId = entry?.liveMsgId;
+  if (!liveMsgId || liveMsgId === userMessage?.id) return 'none';
+  const live = runner.store.getMessage(roomId, liveMsgId);
+  if (!live) return 'none';
+  if (hasVisibleBody(live)) {
+    entry.pendingReseat = { afterId: userMessage.id, oldMsgId: liveMsgId };
+    return 'reseat';
+  }
+  runner.store.moveMessageAfter(roomId, liveMsgId, userMessage.id, { touch: true });
+  return 'moved';
+}
 
 export function recordSideContext(runner, roomId, botId, userText, replyText) {
   const key = sessionKey(roomId, botId);
@@ -748,6 +771,12 @@ export async function sendUserMessage(
         text: clean,
         messageId: userMessage.id,
       });
+      // ★ 不管全双工开没开，在途气泡都要安置到插话之后（P0-2）。
+      //
+      //   以前全双工开着就完全跳过这一步（为了 FD-0「不挪已写出的文字」），
+      //   结果连**空占位**（还在思考、一个字没写）也不挪 —— 于是回复排到了
+      //   用户插话的上面。现在交给 settleLiveAfterInsert 按“有没有正文”分流。
+      settleLiveAfterInsert(runner, { roomId, entry, userMessage });
       if (runner.fullDuplexEnabled) {
         runner.bus.emit('event', {
           t: 'duplex.routed',
@@ -758,11 +787,6 @@ export async function sendUserMessage(
           decidedBy: decision.decidedBy,
           duringMsgId: entry.liveMsgId ?? null,
         });
-      } else {
-        const liveMsgId = entry.liveMsgId;
-        if (liveMsgId && liveMsgId !== userMessage.id) {
-          runner.store.moveMessageAfter(roomId, liveMsgId, userMessage.id, { touch: true });
-        }
       }
       if (request?.scope) {
         runner.requestLifecycle?.close?.(request.scope, null, 'answer');
@@ -904,6 +928,13 @@ export async function sendUserMessage(
             attachments: hydrate(files),
           });
           runner.store.answerPendingAsk(roomId, clean);
+          // ★ 群聊也一样：把被 steer 的那位（负责人或 @ 到的人）的在途气泡安置好。
+          //   群里其他成员的气泡不动 —— 他们没被插话，内容也不该跳位。
+          settleLiveAfterInsert(runner, {
+            roomId,
+            entry: runner.sessions.get(sessionKey(roomId, amendTargetId)),
+            userMessage,
+          });
           runner.bus.emit('event', {
             t: 'duplex.routed',
             roomId,
@@ -980,13 +1011,12 @@ export async function sendUserMessage(
         runner.store.updateMessage(roomId, userMessage.id,
           { meta: { ...(userMessage.meta ?? {}), queued: effective, queuedState: queued ?? 'queued' } });
         runner.bus.emit('event', { t: 'steer.accepted', roomId, mode: effective, text: clean, messageId: userMessage.id });
-        if (!runner.fullDuplexEnabled) {
-          const racing = runner.sessions.get(sessionKey(roomId, botId));
-          const liveMsgId = racing?.liveMsgId;
-          if (liveMsgId && liveMsgId !== userMessage.id) {
-            runner.store.moveMessageAfter(roomId, liveMsgId, userMessage.id, { touch: true });
-          }
-        }
+        // ★ 竞态路径同样要安置（原来只在全双工关闭时做）。
+        settleLiveAfterInsert(runner, {
+          roomId,
+          entry: runner.sessions.get(sessionKey(roomId, botId)),
+          userMessage,
+        });
         if (request?.scope) {
           scopeSettled = true;
           runner.requestLifecycle?.close?.(request.scope, null, 'answer');

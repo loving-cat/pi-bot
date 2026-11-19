@@ -129,6 +129,9 @@ const areaChat = StringArea(
     'chat.leadBadge': '负责人',
     'chat.steerQueued': '排在它后面，做完会看',
     'chat.steerInterrupted': '已打断它，按这条重新开始',
+    // ★ amend 是「补一句约束」，不是打断重来（P0-2）。以前两种都显示
+    //   「已打断它，按这条重新开始」，用户会以为这一轮白跑了。
+    'chat.amendApplied': '已把它作为补充要求发过去',
     'chat.replyingTo': '回复 {name}',
     'chat.quoteNotFound': '原消息不在当前列表',
     'chat.cmdNew': '开新会话',
@@ -371,6 +374,7 @@ const areaChat = StringArea(
     'chat.steerQueued':
         'Queued behind the current turn; it will read it when done',
     'chat.steerInterrupted': 'Interrupted — restarted from this message',
+    'chat.amendApplied': 'Sent as an additional requirement',
     'chat.replyingTo': 'Replying to {name}',
     'chat.quoteNotFound': 'Original message not in view',
     'chat.cmdNew': 'New session',

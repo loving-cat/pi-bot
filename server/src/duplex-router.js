@@ -150,6 +150,23 @@ export function classifyBusyInputSync({
 const SUPPLEMENT_HINT_RE =
   /(顺便|补一句|补充|再加|加上|记得|注意|只(?:看|要|算|保留|用)|收窄|限制|范围|口径|格式|先别|先按)/;
 
+/**
+ * 这条在途消息是否已经写出**用户看得见的正文**（只有思考/工具过程不算）。
+ *
+ * 为什么需要这个判定：忙时插话之后，针对插话的回复必须落在消息流最底部。
+ * 但"怎么落"取决于旧气泡有没有内容：
+ *
+ * | 旧气泡状态 | 做法 | 理由 |
+ * |---|---|---|
+ * | 还没有一个字 | 直接把气泡挪到插话之后 | 用户看不到任何跳动 |
+ * | 已经写出半截 | 原位封口 + 插话之后另起一条 | 挪走会让读过的文字从上方消失（FD-0） |
+ *
+ * 判据只看 `text`：`steps` 是工具过程，`status: 'streaming'` 只说明它还在跑。
+ */
+export function hasVisibleBody(msg) {
+  return String(msg?.text ?? '').trim().length > 0;
+}
+
 export function looksLikeSupplement(text) {
   const clean = String(text ?? '').trim();
   if (!clean) return false;

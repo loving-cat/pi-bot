@@ -29,6 +29,7 @@ globalThis.fetch = () => { throw new Error('test forbids network'); };
 const { store } = await import('../src/store.js');
 const { bus } = await import('../src/bus.js');
 const { PiRunner } = await import('../src/pi-runner.js');
+const { applyPendingReseat } = await import('../src/runner/turn-executor.js');
 const { createSessionBuilder } = await import('../src/session-factory.js');
 const { buildCommonTools } = await import('../src/tools.js');
 const { openRequest, createRequestLifecycle } = await import('../src/coordination/task-request-gate.js');
@@ -231,6 +232,89 @@ await test('FD-0 非受管态下带 requestId 忙时 amend 不再死进 requestQ
   const ids = store.listMessages(dm.id).map((m) => m.id);
   assert.ok(ids.indexOf(workMsg.id) < ids.indexOf(res.userMessage.id), '不应调用 moveMessageAfter 乱挪旧气泡');
   assert.equal(terminals.find((t) => t.scope.requestId === 'req_amend_003')?.out?.receipt?.stage, 'answered');
+});
+
+await test('★ P0-2 情形 A：空占位被插话后要挪到 userMessage 之后（不能排在提问上面）', async () => {
+  const bot = store.createBot({ name: '工匠A2', persona: '认真' });
+  const dm = store.ensureDm(bot.id);
+  const runner = makeRunner();
+
+  // 空占位：还在思考/跑工具，一个字都没写出来
+  const placeholder = store.appendMessage({
+    roomId: dm.id,
+    authorType: 'bot',
+    authorId: bot.id,
+    authorName: bot.name,
+    text: '',
+    status: 'streaming',
+  });
+  runner.sessions.set(`${dm.id}:${bot.id}`, {
+    busy: true,
+    bot,
+    liveMsgId: placeholder.id,
+    turnAmends: [],
+    session: {
+      model,
+      steer: async () => 'steered',
+      followUp: async () => 'queued',
+    },
+  });
+
+  const res = await runner.send(dm.id, '周末适合去哪里', {});
+  assert.ok(res.userMessage, '应当落一条 user 消息');
+  const ids = store.listMessages(dm.id).map((m) => m.id);
+  assert.ok(
+    ids.indexOf(res.userMessage.id) < ids.indexOf(placeholder.id),
+    '空占位必须被挪到插话之后（否则回复排在提问上面）',
+  );
+});
+
+await test('★ P0-2 情形 B：已写出正文时封口旧气泡，并在插话之后另起一条', async () => {
+  const bot = store.createBot({ name: '工匠A3', persona: '认真' });
+  const dm = store.ensureDm(bot.id);
+  const runner = makeRunner();
+
+  const live = store.appendMessage({
+    roomId: dm.id,
+    authorType: 'bot',
+    authorId: bot.id,
+    authorName: bot.name,
+    text: '我先看一下这个报错……',
+    status: 'streaming',
+  });
+  const entry = {
+    busy: true,
+    bot,
+    liveMsgId: live.id,
+    turnAmends: [],
+    session: { model, steer: async () => 'steered', followUp: async () => 'queued' },
+  };
+  runner.sessions.set(`${dm.id}:${bot.id}`, entry);
+
+  const res = await runner.send(dm.id, '先别管那个了，周末去哪儿', {});
+  // 已写半截：不能挪（FD-0），但要给这一轮打上“换条”标记
+  assert.equal(entry.pendingReseat?.afterId, res.userMessage.id, '应当挂上换条标记');
+  const ids = store.listMessages(dm.id).map((m) => m.id);
+  assert.ok(ids.indexOf(live.id) < ids.indexOf(res.userMessage.id), '旧气泡不挪（用户读过的文字不能消失）');
+
+  // 模拟 turn-executor 在下次输出前的换条
+  const next = applyPendingReseat({
+    store,
+    roomId: dm.id,
+    entry,
+    botMsgId: live.id,
+    render: () => '我先看一下这个报错……',
+    bot,
+  });
+  assert.ok(next, '应当新建一条继续写');
+  assert.equal(store.getMessage(dm.id, live.id).status, 'done', '旧气泡要封口定稿');
+  assert.equal(store.getMessage(dm.id, live.id).text, '我先看一下这个报错……', '旧气泡内容保留');
+  assert.equal(next.text, '', '新气泡从空开始（不能重复上一段）');
+  const after = store.listMessages(dm.id).map((m) => m.id);
+  assert.ok(
+    after.indexOf(res.userMessage.id) < after.indexOf(next.id),
+    '新回复必须排在插话之后（永远在最底部）',
+  );
 });
 
 await test('FD-2 群聊成员忙碌时问进度：只唤醒负责人走 Talk 秒答，在跑成员与 roundQueue 零中断', async () => {
