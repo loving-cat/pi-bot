@@ -11,6 +11,7 @@
 | [`MODULE-MAP.md`](MODULE-MAP.md) | 每个源文件干什么（改代码前先看这里） |
 | [`PLATFORMS.md`](PLATFORMS.md) | 平台边界与共享规则（为什么平台差异不进版本号） |
 | [`PITFALLS.md`](PITFALLS.md) | 踩过的坑，按主题汇总 —— 血泪史，别踩第二遍 |
+| [`REAL-MACHINE-CHECKLIST.md`](REAL-MACHINE-CHECKLIST.md) | 真机验收清单：哪几行还挂在“静态”、用哪个脚本/哪几步把它填掉 |
 
 ## 安装与发布
 

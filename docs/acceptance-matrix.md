@@ -30,8 +30,8 @@
 | 移动到位、左键点击坐标正确 | 实机 ✓ | Windows 11 x64 / 2560x1440 / 125% / 2026-11-15 | `server/scripts/probes/desktop-input-click-target.ps1`：靶子窗口记录的 `MouseDown` 坐标与目标逐像素一致 |
 | 中文 / emoji / `$` / 反引号 / 双引号输入 | 实机 ✓ | 同上 | `server/scripts/probes/desktop-input-paste-target.ps1`：靶子 TextBox 落盘内容与原文逐字相符，且原剪贴板已还原 |
 | `type_text` 不会被当成 PowerShell 执行 | 实机 ✓ | 同上 | `server/scripts/probes/desktop-input-injection-probe.mjs`：输出 `MATCH true` / `INJECTION_HAPPENED false` |
-| 锁屏后不盲点 | 静态 | — | `desktop-input-session.js` 用 `OpenInputDesktop` 判会话；失败 → `no_session` 且吊销租约。**未实机验证** |
-| 多屏 / 混合缩放不盲点 | 静态 | — | 屏幕矩形取自 `SM_XVIRTUALSCREEN` 一族（天然支持负坐标），屏幕外坐标一律拒绝。**未实机验证** |
+| 锁屏后不盲点 | 静态 | — | `desktop-input-session.js` 用 `OpenInputDesktop` 判会话；失败 → `no_session` 且吊销租约。实机验证脚本已备：`server/scripts/probes/acceptance-lock-screen.mjs`（交互式，见 `docs/REAL-MACHINE-CHECKLIST.md` §1）。**待跑** |
+| 多屏 / 混合缩放不盲点 | 静态 | — | 屏幕矩形取自 `SM_XVIRTUALSCREEN` 一族（天然支持负坐标），屏幕外坐标一律拒绝。实机验证脚本已备：`server/scripts/probes/acceptance-multiscreen.mjs`（单屏会明确打印“没有拿到证据”）。**待跑** |
 
 > ⚠ 组内仍有未实机项，所以这一组**不标通过**。
 
@@ -64,6 +64,7 @@
 | 下级借主 Bot 代办越界读取被拒 | 静态 | — | `server/tests/security-p0.mjs` 26 项 |
 | 不能借终端 / 文件对话框 / 浏览器上传越过权限 | 静态 | — | `shell-bypass-regress.mjs`（`write_stdin` 绕过）、`opaqueScriptBlockReason`（`ego_browser` 在命令白名单下关闭） |
 | 只换任务标识不能扩权 | 静态 | — | `grants.mjs` 的任务绑定用例 |
+| T1 独立桌面不能越界操控 T2 用户桌面 | 静态 | — | `server/scripts/probes/acceptance-island-vs-desktop.mjs`（临时 dataDir，走真实装配）：成员工具集 68 个、缺 `desktop_observe`/`screenshot`/`input`/`lease` 四件套；`desktop.input` 动作 `action_not_covered`；真实 `createPolicyExtension` 驱动 `tool_call` 时成员调 `desktop_observe` 被 `no_grant` 拦下、主控同一调用放行 |
 
 ### 5. 用户确认
 
