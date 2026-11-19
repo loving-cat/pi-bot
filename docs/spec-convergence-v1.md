@@ -1,7 +1,7 @@
 # Spec：收束与交付 v1（rev.7）
 
-> **状态**：🔥 **P0 待办：进度回执「i + 1」连续聚合（置顶，待 ds 立刻收口）**；其余纯代码项（W0 / W1 / W3 / W4 / W5 / W6-3 / W7 / `#33` / `A1`–`A3`）✅ 已收口；W2 🟡 只剩 W2d macOS（#30）与多屏/锁屏实机（#31/#32）；W6 🟡 剩两项真机
-> **日期**：2026-11-19（rev.7：新增 P0 置顶需求——私聊/群聊进度回执「i + 1」连续聚合，同步 `main` @ `a345eea`）
+> **状态**：🔥 **P0 两项已收口（P0-1 `c7e140a` / P0-2 `71a18e8`，验证见各自小节）**；其余纯代码项（W0 / W1 / W3 / W4 / W5 / W6-3 / W7 / `#33` / `A1`–`A3`）✅ 已收口；W2 🟡 只剩 W2d macOS（#30）与多屏/锁屏实机（#31/#32）；W6 🟡 剩两项真机
+> **日期**：2026-11-19（rev.7：新增两条 P0 置顶需求——进度回执「i + 1」连续聚合、插话后 Bot 回复必须落在最新位置，同步 `main` @ `a345eea`）
 > **对应主干**：`main` @ `a345eea`（已合入 `W4` `527040f`、`W5` `c0aaeea`..`4f0cfb1`、`#33` 拖拽、`#38` 安全/配额/Jev 熔断与 `A1`–`A3` 二级强确认 `a345eea`）
 > **实测基线（2026-11-19 复跑）**：服务端 **157/157** 测试文件通过（含 `sandbox-win` **30/30**，口径以 `cd server && node tests/all.mjs` 输出为准）、App `flutter test` **931** 通过 / 3 跳过、`check-capability-drift`（16 动作 / 72 工具）、`check-consistency`、`check-style`（21 个纯逻辑模块）、`check-spec-progress`、`scripts/tests/all.mjs`（打包脚本单测）全绿。
 > **项目定位**：**Orbis**（兼容 `PI_BOT_*` 与旧导出名）要做**像 `pi-coding-agent` 那样的可嵌入多 Agent 基座** ——
@@ -17,7 +17,15 @@
 
 ---
 
-## P0 · 当前最高优先级待办：进度回执「i + 1」连续聚合 〔❌ 待 ds 立刻执行〕
+## P0 · 当前最高优先级待办（供 ds 立刻执行）
+
+### P0-1 · 进度回执「i + 1」连续聚合 〔✅ 已收口 `c7e140a`〕
+
+**收口记录（2026-11-19）**：`groupProgressMessages` 去掉 `dispatchId` 断组条件，改为
+「同 `roomId` + 同 `meta.fromRoomId` + 时间窗内连续」；`dispatchId`/`re` 保留在 meta 里，
+点开明细由 `startsNewDispatchBatch()` 按批次留一道空隙。
+验证：`cd app && flutter test test/progress_group_source_test.dart test/progress_messages_test.dart`
+（6 + 12 项），全量 `flutter test` **934 通过 / 3 跳过**。
 
 > **现象（2026-11-19 用户实机截图）**：私聊里连续出现一整屏 `在「AI投顾评测组」那边 1 件事`，原本设计的 `N 件事` 累加聚合完全失效。
 >
@@ -37,6 +45,37 @@
 3. **测试更新与验收**：
    - 更新 `app/test/progress_group_source_test.dart`（将原“不同 `dispatchId` 断组”旧断言改为“同 `roomId` + 同 `fromRoomId` + 窗口内不同 `dispatchId` 连续合并成 1 组、计数累加”；保留“不同 `fromRoomId` 必须断组”与“超窗口断组”）与 `app/test/progress_messages_test.dart`；
    - 验收：`cd app && flutter analyze && flutter test test/progress_group_source_test.dart test/progress_messages_test.dart` 及全量 `flutter test` 全绿。
+
+### P0-2 · 忙时插话（`amend` / `steer`）后 Bot 回复必须落在最新位置 〔✅ 已收口 `71a18e8`〕
+
+**收口记录（2026-11-19）**：判定抽成 `hasVisibleBody()`；三条路径统一走
+`settleLiveAfterInsert()`（空占位 → 直接 `moveMessageAfter`；已写正文 → 打
+`entry.pendingReseat`，由 `applyPendingReseat()` 封口旧条并在插话之后新开一条）。
+`pushDelta` 改为同步落库（否则判定永远读到空文本、FD-0 会被误判）。
+前端 `amend` 不再显示「已打断它」。
+验证：`cd server && node tests/full-duplex.mjs`（**9/9**，含新增的空占位/已写正文两条）、
+`node tests/all.mjs`（**157/157**）。
+
+> **现象（2026-11-19 用户实机连续两张截图）**：
+> - Bot 正在思考或执行工具时（空占位 `liveMsgId` 建于插话之前），用户插话发送「周末适合去哪里」（带 `⚡ 已打断它，按这条重新开始`）以及补充「前面那个问题没有回答」；
+> - Bot 针对这两条插话的新回复却**出现在插话气泡上方**（倒挂成「先回答、再看到用户插话提问」），且最后停留成底部的旧插话像没收到回答。
+>
+> **根因定位**：
+> 1. `server/src/runner/duplex-lane.js` 在开启 `fullDuplexEnabled === true` 时，为了避免 `FD-0`「旧有字气泡瞬移」，三条路径（私聊直通第 751–766 行、私聊竞态 `accepted` 第 983–989 行、群聊 `amend` 第 892–916 行）**完全跳过了 `runner.store.moveMessageAfter`**，导致插话后 Bot 把新回复继续写进**排在 `userMessage` 之前的 `liveMsgId`**；
+> 2. 前端 `app/lib/screens/chat_screen.dart` 的 `displayOrderMsgs`（第 63–68 行）只把“还没有一个字”的空占位临时浮在最底部；一旦服务端通过 `msg.delta` 吐出第一个字（`app/lib/app_state.dart`），消息立刻回到插话之前的 `store` 原位置，造成答案排在提问前面。
+
+**必须落地的改动契约**：
+1. **情形 A · 原在途 `liveMsgId` 尚未输出可见正文（仅思考/跑工具中，或文本为空）**：
+   - 在 `server/src/runner/duplex-lane.js` 所有 `amend` / `steer` 成功落盘 `userMessage` 之后（包括私聊直通、私聊竞态 `accepted` 以及群聊 `amend` 场景下负责人/目标 Bot 的在途 `liveMsgId`），立即调用 `runner.store.moveMessageAfter(roomId, liveMsgId, userMessage.id, { touch: true })`；
+   - 既然还没有可见正文，不存在“瞬移已写文字”的问题，必须让即将开始输出的新回复直接排在 `userMessage` 之后（时间戳随之更新为最新）。
+2. **情形 B · 原在途 `liveMsgId` 在插话前已写出可见正文（对应 `server/tests/full-duplex.mjs` 的 `FD-0` 保护语义）**：
+   - 保留已写出的旧气泡在 `userMessage` 之前（不把已经读过的半截文字从上方拽走）；
+   - 当被 `steer` 的模型回合在 `server/src/runner/turn-executor.js` 开始输出后续回复时（检测到该轮曾被插入新 `userMessage` / `turnAmends` 且原 `botMsg` 已有前置正文），先将原 `botMsg` 定稿留在插话之前，**在 `userMessage` 之后新建一条回复消息**继续流式输出，确保针对用户插话的回复永远落在消息流最底部（最新）。
+3. **标签语义对齐（`app/lib/screens/chat_screen.dart` 第 3116–3126 行）**：
+   - 当 `msg.meta?['duplex'] == 'amend'` 时，区分于强制打断的 `chat.steerInterrupted`（`已打断它，按这条重新开始`），避免把仅注入约束的 `amend` 误标成「已打断重开」。
+4. **测试更新与验收**：
+   - 在 `server/tests/full-duplex.mjs` 更新/新增两条核心断言：① 空占位 `liveMsgId` 忙时 `amend`/`steer` 后新回复位于 `userMessage` 之后；② 已有正文 `liveMsgId`（`FD-0`）不回挪原气泡、而是封口旧气泡并在 `userMessage` 之后产出新回复消息；
+   - 验收：`cd server && node tests/full-duplex.mjs` 与 `node tests/all.mjs`，以及 `cd app && flutter test` 全绿。
 
 ---
 
@@ -385,3 +424,4 @@ W7（✅ Issue #37）
 6. **W6 验收矩阵**：先确保 P0 核心门禁、Jarvis 高危确认、T1/T2 隔离与 `sandbox-win` 实机收口。
 7. **Jarvis 高危操作二级强确认范围（2026-11-19 用户确认）**：主控执行 `delete_bot`、`manage_department(delete)`、`manage_knowledge(delete_skill/delete_lesson)`、`set_policy(update)`、`manage_model_group(delete)` 以及首次启用 MCP（`manage_mcp_server` / `import_local_capabilities`）与 `git_destructive` 一律纳入二级强确认（`/api/confirmations`，优先手机设备确认、默认拒绝本机自批）。
 8. **进度回执连续「i + 1」聚合（2026-11-19 用户拍板，P0 置顶）**：私聊/群聊里同房间同部门来源的连续进度回执不再按每次生成的唯一 `dispatchId` 拆条，而是在 6 小时聚合窗口内就地累加为 `i + 1`（`1 件事 → 2 件事 → … → N 件事`），弹窗明细内按 `re` / `dispatchId` 分隔保留完整上下文。
+9. **插话/补充要求后 Bot 回复落点（2026-11-19 用户拍板，P0 置顶）**：用户插话（`amend` / `steer`）后，Bot 针对该插话产生的新回复必须始终落在用户插话气泡之后（最新位置）；若原占位尚未产出正文则立即后移（`moveMessageAfter`），若原占位在插话前已有可见正文则封口旧气泡并在用户插话后新建一条回复消息，禁止“答案倒挂在提问上面”。
