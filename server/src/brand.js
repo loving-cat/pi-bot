@@ -20,6 +20,7 @@ export const DEFAULT_UPDATE_REPO = 'loving-cat/orbis';
 export function readBrandEnv(env = process.env, suffix) {
   const modern = env?.[`ORBIS_${suffix}`];
   if (modern !== undefined && modern !== '') return modern;
+  // @remove-2.0 2.0 起只认 ORBIS_*；现在兼容是为了不打断老配置
   const legacy = env?.[`PI_BOT_${suffix}`];
   if (legacy !== undefined && legacy !== '') return legacy;
   return undefined;

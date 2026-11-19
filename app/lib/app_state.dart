@@ -994,6 +994,7 @@ class AppState extends ChangeNotifier {
   /// 前者不存在时沿用（与服务端 config.js 的 resolveHomeDir 同一条规则）。
   static String _pickDataDir(String base) {
     final next = '$base/orbis/data';
+    // @remove-2.0 与 server/src/config.js 的目录回退一起删
     final legacy = '$base/pi-bot/data';
     try {
       if (!Directory(next).existsSync() && Directory(legacy).existsSync()) {

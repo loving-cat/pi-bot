@@ -223,6 +223,7 @@ export const LOCAL_DEVICE = {
  * 浏览器跨站发自定义头必须先过 CORS 预检，而本服务从不放行预检，
  * 所以恶意网页伪造不了它（text/plain 表单、no-cors fetch 都带不上）。
  */
+// @remove-2.0 2.0 起用 ORBIS_CLIENT_HEADER，旧头一并删（客户端同版本切换）
 export const CLIENT_HEADER = 'x-pi-bot-client';
 export const ORBIS_CLIENT_HEADER = 'x-orbis-client';
 const STATE_CHANGING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -577,7 +578,8 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
           //
           //   校验点集中在这里之后，各路由**不再自己消费** ——
           //   两处都消费会让第二次必然失败。
-          const check = consumeNonce(req.headers['x-orbis-nonce'] ?? req.headers['x-pi-bot-nonce'], adminPlan.nonce);
+          const check = consumeNonce(// @remove-2.0 旧头 x-pi-bot-nonce 在 2.0 删掉
+          req.headers['x-orbis-nonce'] ?? req.headers['x-pi-bot-nonce'], adminPlan.nonce);
           if (!check.ok) {
             log(`🔒 ${adminPlan.label} 被拒：${check.reason}（${req.method} ${pathname}）`);
             return fail(
@@ -852,6 +854,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
 
       // 客户端自报通道：桌面端带 x-orbis-channel / x-pi-bot-channel: local，手机端带 device。
       // 不信任头本身 —— 用它只是"降权"，声称 local 只会让确认更难通过。
+      // @remove-2.0 旧头 x-pi-bot-channel 在 2.0 删掉
       const rawChannel = req.headers['x-orbis-channel'] ?? req.headers['x-pi-bot-channel'] ?? '';
       const clientChannel = String(rawChannel).toLowerCase() === 'device'
         && !device?.isLocal

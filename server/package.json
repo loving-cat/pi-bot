@@ -1,6 +1,6 @@
 {
   "name": "orbis-agent",
-  "version": "1.4.3",
+  "version": "1.7.0",
   "private": true,
   "type": "module",
   "description": "Orbis: Multi-Agent Foundation & Jarvis Runtime",

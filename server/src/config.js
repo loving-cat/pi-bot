@@ -26,6 +26,7 @@ const pkgRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
  * 2026-11-19 品牌统一：新装用 `orbis`，但**老用户的数据还在 `pi-bot` 下**。
  */
 const HOME_DIR_NAME = 'orbis';
+// @remove-2.0 2.0 起把旧目录回退整段删掉（届时给用户一次“手动重命名目录”的说明）
 const LEGACY_HOME_DIR_NAME = 'pi-bot';
 
 /**
