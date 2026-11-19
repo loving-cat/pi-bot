@@ -258,6 +258,69 @@ await test('★ B2：卡片过期后同一目标能重新发卡（不死锁）',
   assert.equal(mine()[1].decision, null, '新卡应当是待确认');
 });
 
+
+await test('★ C1：SECOND_FACTOR_TOOLS 与 needsSecondFactor 同口径（漏一个卡片就灰不掉）', async () => {
+  const { SECOND_FACTOR_TOOLS, needsSecondFactor } = await import('../src/capabilities.js');
+  const cases = [
+    ['git_destructive', {}],
+    ['delete_bot', {}],
+    ['manage_department', { op: 'delete' }],
+    ['manage_knowledge', { op: 'delete_skill' }],
+    ['set_policy', { op: 'update' }],
+    ['manage_model_group', { op: 'delete' }],
+    ['manage_mcp_server', { op: 'enable' }],
+    ['import_local_capabilities', { kind: 'mcp', enable: true }],
+  ];
+  for (const [tool, input] of cases) {
+    assert.equal(needsSecondFactor(tool, input), true, `${tool} 应判为二级强确认`);
+    // http.js 拿这份名单决定「写回 meta.decision + 自动续跑」；名单漏了就永远灰不掉
+    assert.ok(SECOND_FACTOR_TOOLS.includes(tool), `${tool} 必须出现在 SECOND_FACTOR_TOOLS`);
+  }
+});
+
+await test('★ C2：导入本地能力绑 names/all —— 批 A 不能拿去导入 B', async () => {
+  store.state.confirmations = [];
+  const handler = chiefSetup();
+  const a = handler({
+    type: 'tool_call', toolName: 'import_local_capabilities', toolCallId: 'i1',
+    input: { kind: 'mcp', names: ['a_server'], enable: true },
+  });
+  assert.equal(a?.block, true);
+  const card = (store.state.confirmations ?? []).find((c) => c.action === 'import_local_capabilities');
+  assert.ok(card, '应当建了确认');
+  store.decideConfirmation(card.id, { approved: true, channel: 'device', device: { id: 'd1', name: '手机' } });
+
+  const other = handler({
+    type: 'tool_call', toolName: 'import_local_capabilities', toolCallId: 'i2',
+    input: { kind: 'mcp', names: ['b_server'], enable: true },
+  });
+  assert.equal(other?.block, true, '换了要导入的名字必须重新确认');
+
+  const same = handler({
+    type: 'tool_call', toolName: 'import_local_capabilities', toolCallId: 'i3',
+    input: { kind: 'mcp', names: ['a_server'], enable: true },
+  });
+  assert.notEqual(same?.block, true, '原目标应当放行');
+});
+
+await test('★ C3：awayAfterMs 0 与「没传这个字段」是两个目标', async () => {
+  store.state.confirmations = [];
+  const handler = chiefSetup();
+  handler({
+    type: 'tool_call', toolName: 'set_policy', toolCallId: 's1',
+    input: { op: 'update', awayAfterMs: 0 },
+  });
+  const card = (store.state.confirmations ?? []).find((c) => c.action === 'set_policy');
+  assert.ok(card);
+  store.decideConfirmation(card.id, { approved: true, channel: 'device', device: { id: 'd1', name: '手机' } });
+
+  const other = handler({
+    type: 'tool_call', toolName: 'set_policy', toolCallId: 's2',
+    input: { op: 'update', requireProof: true },
+  });
+  assert.equal(other?.block, true, '批了 awayAfterMs:0 不等于批了别的策略改动');
+});
+
 const passed = results.filter((r) => r.ok).length;
 console.log('\n================ 命令拦截测试 ================');
 for (const r of results) {

@@ -57,7 +57,9 @@ function secondFactorTargetOf(tool, input = {}) {
       //   dangerous:'allow' + allowLocalApproval:true 就是另一件事了 ——
       //   只绑 op 等于给了一个万能确认。
       const boolOrNull = (v) => (v === undefined ? null : v === true);
-      const numOrNull = (v) => (v === undefined ? null : (Number(v) || null));
+      // ★ 用 isFinite 而不是 `|| null`：`awayAfterMs: 0` 是**合法配置**
+      //   （安静就动手），被折成 null 之后会和“根本没传”算出同一个摘要。
+      const numOrNull = (v) => (Number.isFinite(Number(v)) && v !== null && v !== '' ? Number(v) : null);
       return {
         tool,
         op: 'update',
@@ -73,7 +75,16 @@ function secondFactorTargetOf(tool, input = {}) {
     case 'manage_mcp_server':
       return { tool, op: pick('op') || (raw.enabled === true ? 'enable' : ''), id: pick('id'), name: pick('name') };
     case 'import_local_capabilities':
-      return { tool, kind: pick('kind'), id: pick('id'), name: pick('name') };
+      // ★ 这个工具没有 id/name，参数是 kind / names / all / enable。
+      //   取错字段 = 不绑目标：names:['a'] 和 names:['b']、甚至 all:true
+      //   会算出同一个摘要，一张票就能导入/启用别的批次。
+      return {
+        tool,
+        kind: pick('kind'),
+        all: raw.all === true,
+        names: list(raw.names),
+        enable: raw.enable === true,
+      };
     default:
       return { tool, key: pick('id') || pick('name') || pick('target') };
   }

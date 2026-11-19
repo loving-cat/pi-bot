@@ -482,6 +482,12 @@ export const SECOND_FACTOR_TOOLS = Object.freeze([
   'manage_knowledge',
   'set_policy',
   'manage_model_group',
+  // ★ 这两项是 2026-11-19 后并入的（启用 MCP = 新增一条执行入口）。
+  //   必须同时出现在这里：http.js 的确认路由是拿这份名单判断
+  //   “要不要写回卡片 meta.decision、要不要自动续跑”的 ——
+  //   只加在 needsSecondFactor 里会让卡片批完永远灰不掉、会话也不继续。
+  'manage_mcp_server',
+  'import_local_capabilities',
 ]);
 
 /**
