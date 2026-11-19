@@ -77,12 +77,20 @@ Map<int, List<Msg>> groupProgressMessages(
     //   标题只取首条的部门 → 显示「在「研发」那边 2 件事」，
     //   但点开明细第二条写的是「市场」—— 标题和内容自相矛盾。
     //
-    //   同一次派活用 dispatchId 串，跨派活也断组。
+    // ★ 不再按 dispatchId 断组（2026-11-19）。
+    //
+    //   以前每次派活都生成全新的 dispatchId，而 dm.js 已按 spec-peer-dialog
+    //   停写 phase==='start' 回执 —— 于是每个 dispatchId 永远只有 1 条 done 消息。
+    //   拿它当断组条件等于「每条回执各成一组」，界面退化成满屏「1 件事」，
+    //   6 小时窗口形同虚设。
+    //
+    //   现在的合并条件只看「同一来源房间 + 时间窗内连续」，于是新回执到达时
+    //   计数就地累加：1 件事 → 2 件事 → … → N 件事。
+    //   dispatchId / re 仍然原样保存在 meta 里（点开明细按它分组展示）。
     final sameSource =
         previous != null &&
         previous.roomId == message.roomId &&
-        previous.meta?['fromRoomId'] == message.meta?['fromRoomId'] &&
-        previous.meta?['dispatchId'] == message.meta?['dispatchId'];
+        previous.meta?['fromRoomId'] == message.meta?['fromRoomId'];
     if (previous == null || !sameSource || gap! < 0 || gap > maxGapMs) {
       current = <Msg>[];
       groups[i] = current;

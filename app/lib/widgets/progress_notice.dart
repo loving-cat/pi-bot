@@ -294,10 +294,22 @@ class _ProgressPeekLayerState extends State<_ProgressPeekLayer>
   /// 平铺成一排独立卡片时，读的人找不出谁在接谁的话 —— 那看起来像
   /// 播报。有引用关系就缩进一层，视觉上就是「A 说 → B 接」的对话。
   List<Widget> _threads(AppState state, List<Msg> messages) {
-    return [
-      for (final entry in threadLayout(messages))
-        _receipt(state, entry.message, depth: entry.depth),
-    ];
+    final out = <Widget>[];
+    Msg? previous;
+    for (final entry in threadLayout(messages)) {
+      // ★ 跨派活批次留一道空隙（2026-11-19）。
+      //
+      //   折叠层不再按 dispatchId 分组（那样会退化成满屏「1 件事」），
+      //   于是「这几条是同一次派活的往返、那几条是下一次」这件事只能在
+      //   点开的明细里靠 dispatchId 区分。dispatchId 一直原样存在 meta 里，
+      //   这里只是把它重新用起来做视觉分段。
+      if (entry.depth == 0 && startsNewDispatchBatch(previous, entry.message)) {
+        out.add(const SizedBox(height: 10));
+      }
+      out.add(_receipt(state, entry.message, depth: entry.depth));
+      previous = entry.message;
+    }
+    return out;
   }
 
   Widget _receipt(AppState state, Msg m, {int depth = 0}) {
@@ -462,6 +474,17 @@ class ThreadEntry {
 ///   （A.re=B 且 B.re=A），它们都进不了 roots（各自都有 re），
 ///   于是永远不会被渲染 —— 弹窗少几条，而且没有任何报错。
 ///   实测纯循环时两条消息会渲染出 0 条。宁可平铺，也不能让消息消失。
+/// 相邻两条回执是否属于**不同派活批次**（弹窗里在这里留一道空隙）。
+///
+/// ★ 只在两侧都带 dispatchId 且不相等时判为新批次：没有 dispatchId 的
+///   老数据/普通消息不参与分段，避免凭空多出一条缝。
+bool startsNewDispatchBatch(Msg? previous, Msg current) {
+  final before = previous?.meta?['dispatchId'];
+  final after = current.meta?['dispatchId'];
+  if (before is! String || after is! String) return false;
+  if (before.isEmpty || after.isEmpty) return false;
+  return before != after;
+}
 List<ThreadEntry> threadLayout(List<Msg> messages) {
   final byId = <String, Msg>{for (final m in messages) m.id: m};
   final childrenOf = <String, List<Msg>>{};
