@@ -129,7 +129,8 @@ class Api {
     if (isPath('/api/decision') && (m == 'PATCH' || m == 'PUT')) return 'policy';
     if (isPath('/api/skills') && (m == 'POST' || m == 'PATCH' || m == 'DELETE')) return 'policy';
     // 应用连接分配给 Bot：改的是“谁能用哪个应用”，和改规矩同一档。
-    if (m == 'PUT' && isPath('/api/connections') && path.endsWith('/bots')) return 'policy';    if (isPath('/api/bots') && (m == 'PATCH' || m == 'DELETE')) return 'policy';
+    if (m == 'PUT' && isPath('/api/connections') && path.endsWith('/bots')) return 'policy';
+    if (isPath('/api/bots') && (m == 'PATCH' || m == 'DELETE')) return 'policy';
     if (isPath('/api/rooms') && m == 'DELETE') return 'policy';
     // 撤销设备不要 nonce：它是"降低权限"的动作，冒充者做这件事只会让自己更不方便。
     // 用户在手机上将另一台设备踢下线，恰恰是发现异常时最想立刻能做的事。

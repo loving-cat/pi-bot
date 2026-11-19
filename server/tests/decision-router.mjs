@@ -447,3 +447,44 @@ test('★ 一次成功就把连续失败清零（偶发抖动不会攒成熔断�
   assert.equal(jevStats().openUntil, 0);
   resetJevState();
 });
+
+test('★ jevStats 不外透 configKey（里面有 key 尾号）', async () => {
+  resetJevState();
+  const okFetch = stubFetch(200, {
+    answers: { kind: { type: 'choice', choice: 'coding', confidence: 0.9 } },
+  });
+  await decide('assign-model', { task: 'x' }, ON, { fetchImpl: okFetch });
+  const stats = jevStats();
+  assert.equal('configKey' in stats, false, 'configKey 不该出现在对外统计里');
+  assert.equal(stats.hits, 1);
+  resetJevState();
+});
+
+test('★ 改 model 也算配置变更：立即清熔断', async () => {
+  resetJevState();
+  const bad = async () => stubFetch(401, { message: 'bad key' })();
+  await decide('assign-model', { task: 'x' }, ON, { fetchImpl: bad });
+  await decide('assign-model', { task: 'x' }, ON, { fetchImpl: bad });
+  assert.ok(jevStats().openUntil > Date.now(), '两次 401 之后应该已熔断');
+
+  const okFetch = stubFetch(200, {
+    answers: { kind: { type: 'choice', choice: 'coding', confidence: 0.9 } },
+  });
+  const recovered = await decide('assign-model', { task: 'x' }, { ...ON, model: 'another-model' }, { fetchImpl: okFetch });
+  assert.equal(recovered.ok, true, '只改 model 也要清熔断');
+  resetJevState();
+});
+
+test('★ Jev 没开时不该累计降级次数（否则诊断页会显示一堆假故障）', async () => {
+  resetJevState();
+  const off = { ...ON, enabled: false };
+  const out = await decide('assign-model', { task: 'x' }, off, { fetchImpl: async () => { throw new Error('不该被调用'); } });
+  assert.equal(out.ok, false);
+  assert.equal(jevStats().fallbacks, 0, '没开 Jev 不算降级');
+
+  // 开了但缺配置：这才是“本该走却走不了”，要计
+  const missing = await decide('assign-model', { task: 'x' }, { ...ON, apiKey: '' }, { fetchImpl: async () => { throw new Error('不该被调用'); } });
+  assert.equal(missing.ok, false);
+  assert.equal(jevStats().fallbacks, 1);
+  resetJevState();
+});

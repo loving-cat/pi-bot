@@ -263,7 +263,10 @@ const jevRuntime = {
  * 这里只留 key 的尾 6 位，不把密钥本身放进运行态。
  */
 function syncJevConfigKey(settings) {
-  const key = `${settings?.mode ?? ''}|${settings?.baseUrl ?? ''}|${String(settings?.apiKey ?? '').slice(-6)}`;
+  // ★ 必须带上 model：custom 模式下改错了模型名也是“配置变了”，
+  //   不清熔断的话用户会看到“我明明改了还提示冷却中”。
+  const key = `${settings?.mode ?? ''}|${settings?.baseUrl ?? ''}|${String(settings?.model ?? '')}`
+    + `|${String(settings?.apiKey ?? '').slice(-6)}`;
   if (key !== jevRuntime.configKey) {
     jevRuntime.configKey = key;
     jevRuntime.consecutiveFailures = 0;
@@ -274,7 +277,10 @@ function syncJevConfigKey(settings) {
 
 /** 查询 Jev 决策路由的运行统计（含冷却截止时间），界面/诊断用。 */
 export function jevStats() {
-  return { ...jevRuntime };
+  // configKey 里含 key 尾 6 位，只用于内部判“配置变没变”，不往外透：
+  // 这个对象会被界面/诊断接口读，别让它顺手变成凭据泄露的一条缝。
+  const { configKey, ...rest } = jevRuntime;
+  return rest;
 }
 
 /** 重置运行态与熔断（测试或用户手动恢复时用）。 */
@@ -301,7 +307,9 @@ export async function decide(point, payload, settings = {}, { fetchImpl, timeout
   syncJevConfigKey(settings);
   const gate = shouldUseJev(point, settings);
   if (!gate.use) {
-    jevRuntime.fallbacks++;
+    // 只有“确实开了 Jev 却没走成”才算降级。后台没开时也计数的话，
+    // 设置页/诊断页上会看到一堆降级数字，像是它一直在坏。
+    if (settings?.enabled === true) jevRuntime.fallbacks++;
     return { ok: false, source: 'fallback', why: gate.why };
   }
   // ★ 冷却期内不发起请求：这才是熔断的意义（省掉的是等待，不是错误）

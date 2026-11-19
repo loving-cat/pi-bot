@@ -429,7 +429,7 @@ export class ShellRegistry {
   stopAll() {
     for (const entry of this.shells.values()) {
       this.#terminateEntry(entry);
-      }
+    }
     this.shells.clear();
     clearInterval(this.timer);
   }
