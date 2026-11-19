@@ -256,12 +256,34 @@ node scripts/check-secrets.mjs
 
 ---
 
-### W6 · §12 验收矩阵实机 〔🟡 三项门禁里第 3 项已收口，剩两项真机〕
+### W6 · §12 验收矩阵实机 〔🟡 三项门禁里第 3 项已收口，剩两项待先收 `A1`–`A3` 后跑真机〕
 
-对照 `docs/acceptance-matrix.md`（14 组），在原有 Windows + macOS 实机项基础上补充三项必验门禁：
-1. **Jarvis 高危操作确认门禁（`isJarvisApprovalCall`）**：删除 Bot / 清理知识库 / 修改全局安全策略在手机/桌面端的确认绑定（🟡 待真机）；
-2. **T1 独立桌面 vs T2 用户桌面隔离实机**：成员 Bot 调用 `desktop_island_*` 无法越界观察或操控用户真实桌面（🟡 待真机）；
+对照 `docs/acceptance-matrix.md`（14 组），在原有 Windows + macOS 实机项基础上补充三项必验门禁（实机脚本与步骤清单已建于 `docs/REAL-MACHINE-CHECKLIST.md`，`1a6e7fe`）：
+1. **Jarvis 高危操作确认门禁（`isJarvisApprovalCall` + 二级强确认）**：删除 Bot / 解散部门 / 清理知识库（删技能/删经验）/ 修改全局安全策略 / 删模型组 / 启用 MCP，全部弹出 `/api/confirmations` 二级强确认卡并验证手机确认与本机拒绝（🟡 待收口 `A2` 后跑真机）；
+2. **T1 独立桌面 vs T2 用户桌面隔离实机**：成员 Bot 调用 `desktop_island_*` 无法越界观察或操控用户真实桌面（🟡 待收口 `A1` 后重跑真机脚本）；
 3. **Windows `sandbox-win` worktree 环境修复**：✅ 已收口 —— 沙箱启动器不再把 `.git` 当目录（是文件只锁指针，是目录才锁 `hooks`/`config`），`server/tests/sandbox-win.mjs` 的「worktree 的 .git 是文件时不能崩」用例实测通过（`--workdir` 指到真 worktree，落地写文件成功、无 `GIT_HOOKS_MKDIR_FAILED`），本机 `sandbox-win` 30/30、全量 157/157 复跑通过；坑与结论记在 `docs/WINDOWS-SANDBOX.md`「worktree 的坑」一节。
+
+#### W6 前置补丁与 Review 交接清单（`A1`–`A3` 已全部收口，下一步只剩真机）
+
+1. **A1（P1 · `policy-hook.js` 补 `CHIEF_ONLY_TOOLS` 执行边界兜底 + 修 W6-2 脚本假绿）〔✅ 已收口 `83e8216`〕**
+   - **涉及文件**：`server/src/policy-hook.js`（`createPolicyExtension`）、`server/src/role-tools.js`（`CHIEF_ONLY_TOOLS`）、`server/scripts/probes/acceptance-island-vs-desktop.mjs`、`server/tests/` 对应回归单测
+   - **问题**：
+     1. 因 `desktop.observe` 动作与 T1 共用 `migration: 'all'`，成员 Bot 在真实 `mode: 'project'` 下持有 `desktop.observe` 迁移授权，而 `policy-hook.js` 未校验 `CHIEF_ONLY_TOOLS`——实测用 `mode: 'project'` 驱动 `createPolicyExtension` 让成员调用 `desktop_observe`，钩子直接返回 `undefined`（放行）；
+     2. `acceptance-island-vs-desktop.mjs` 第 40 行解构了不存在的 `{ defaultConfig }`（实际是 `{ config }`），第 172 行驱动 `bot_worker` 时硬编码传 `mode: 'host'`，靠模式不匹配造成“假绿”。
+   - **要求**：
+     - 在 `server/src/policy-hook.js` 的 `tool_call` 中，紧接只读校验后增加兜底：若 `currentBot?.role !== 'main'` 且工具在 `CHIEF_ONLY_TOOLS` 内，直接返回 `{ block: true, reason }`，并补对应单测；
+     - 修复 `acceptance-island-vs-desktop.mjs` 第 40 行导入 `{ config }`、第 172 行按实际角色传 `botId === 'bot_main' ? 'host' : 'project'`，并同时断言成员在 `project` 模式下调用 `desktop_observe` **被拦**、调用 `desktop_island_observe` **放行**。
+2. **A2（P0 · Jarvis 高危操作统一接入二级强确认 `/api/confirmations`，用户 2026-11-19 已拍板）〔✅ 已收口〕**
+   - **涉及文件**：`server/src/capabilities.js`（`isJarvisApprovalCall`）、`server/src/policy-hook.js`、`server/src/store.js`、`server/src/http.js`、`docs/REAL-MACHINE-CHECKLIST.md`（§4）、`server/tests/confirm.mjs` 及 Jarvis 确认回归测试
+   - **问题**：当前 `isJarvisApprovalCall` 只覆盖 `git_destructive`、`manage_mcp_server`（首次启用）、`import_local_capabilities`（导入并启用 MCP），不含删除 Bot / 清知识库 / 改策略，且非 `git_destructive` 的 `isJarvisApprovalCall` 走 `/api/approvals`（本机可直接点）而非二级强确认 `/api/confirmations`；按清单 §4 让主控“删临时 Bot”不会弹任何确认卡。
+   - **要求**：
+     - 在 `capabilities.js` 扩展 `isJarvisApprovalCall` 覆盖：`delete_bot`、`manage_department`（`op === 'delete'`）、`manage_knowledge`（`op === 'delete_skill' || op === 'delete_lesson'`）、`set_policy`（`op === 'update'`）、`manage_model_group`（`op === 'delete'`），以及原 `git_destructive`、`manage_mcp_server`（启用未启用项）、`import_local_capabilities`（`kind: 'mcp' && enable: true`）；
+     - 将 Jarvis 高危工具接入 `store.requestConfirmation` 二级强确认体系（`/api/confirmations`，`minChannel: 'device'`，复用 `buildConfirmation` / `checkConfirmation` / `consumeConfirmation` 目标摘要绑定与一次一用；去重与防凭据泄露，默认拒绝 `local` 本机批准除非用户开启 `allowLocalApproval`；`git_destructive` 由 `server/src/git-tools.js` 自身走 `requestConfirmation`，注意**不要双重弹卡**）；
+     - 会话内发 `kind: 'confirmation'` 卡片，手机端通过 `POST /api/confirmations/:id` 批准后更新卡片 `meta.decision` 并自动续跑执行该高危调用；
+     - 在 `server/tests/` 补全单测与集成测试（覆盖 `delete_bot` / `manage_knowledge(delete_*)` / `set_policy(update)` / 本机拒批 / 手机批准与一次一用 / 无凭据泄露），并同步更新 `docs/REAL-MACHINE-CHECKLIST.md` §4 操作步骤。
+3. **A3（P2 · 其余两份验收脚本打磨）〔✅ 已收口〕**
+   - `server/scripts/probes/acceptance-lock-screen.mjs`：解锁后先用锁屏前拿到的旧 `epoch` 调一次 `session.act` 并断言被拒（直接证明旧租约未随解锁复活），再重新申请租约并移动；启动前提示本机若存在 `#34` 合成输入可能影响锁屏前正常移动；
+   - `server/scripts/probes/acceptance-multiscreen.mjs`：将每块屏中心移动改走真实 `desktopInputSession()` 装配层，或在脚本头明确注明该探针直验 `perform({ plan })` 多屏物理像素坐标对齐。
 
 ---
 
@@ -330,7 +352,7 @@ W7（✅ Issue #37）
 
 ---
 
-## 8. 已拍板决议（含 2026-11-18 确认项）
+## 8. 已拍板决议（含 2026-11-18 / 2026-11-19 确认项）
 
 1. **W0 能力骨架**：采用双层清单（`ACTIONS` + `TOOL_SPECS`）+ 三处派生（已完成）。
 2. **推进主序**：W0 → W1 → W3 → W2（逻辑与 Windows 先行，macOS 单独推进）→ W4 → W5 → W6 / W7。
@@ -338,3 +360,4 @@ W7（✅ Issue #37）
 4. **W4c 日常问答与 Jarvis 延迟控制（2026-11-18 用户确认）**：日常私聊与 Jarvis 即时动作保持**零额外轮次延迟**，不强迫多调一次 `accept_task(answer)`，仅明确派活/长任务建 `TaskRun`。
 5. **W5 任务看板数据源策略（2026-11-18 用户确认）**：新增全局四列看板同时**保留房间内任务面板入口**，两者数据源统一收敛到 `TaskRun`，废弃旧 `TaskItem` 独立维护链路。
 6. **W6 验收矩阵**：先确保 P0 核心门禁、Jarvis 高危确认、T1/T2 隔离与 `sandbox-win` 实机收口。
+7. **Jarvis 高危操作二级强确认范围（2026-11-19 用户确认）**：主控执行 `delete_bot`、`manage_department(delete)`、`manage_knowledge(delete_skill/delete_lesson)`、`set_policy(update)`、`manage_model_group(delete)` 以及首次启用 MCP（`manage_mcp_server` / `import_local_capabilities`）与 `git_destructive` 一律纳入二级强确认（`/api/confirmations`，优先手机设备确认、默认拒绝本机自批）。

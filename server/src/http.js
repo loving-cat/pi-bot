@@ -35,6 +35,7 @@ import { planAdminRoute } from './http-admin.js';
 import { createPairRequests } from './pair-requests.js';
 import { activeTls } from './tls.js';
 import { describeConfirmation } from './confirm.js';
+import { SECOND_FACTOR_TOOLS } from './capabilities.js';
 import { shells } from './shells.js';
 import { VERSION } from './version.js';
 import { checkForUpdate } from './update-checker.js';
@@ -925,6 +926,32 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
           log(`🔑 授权申请已批准：${created.length} 条（${(req.actions ?? []).join(',')}）`);
           bus.emit('event', { t: 'grants.issued', grantIds: created });
           return send(res, 200, { confirmation: c, granted: created });
+        }
+
+        // ★ 二级强确认（高危工具）：结论写回卡片，并让会话继续。
+        //
+        //   卡片更新：前端据此把按钮置灰；消息里留一条结果，用户回头能看见“当时批了什么”。
+        //   自动续跑：复用 approval 那条续跑入口（它只用到 roomId/botId/tool/summary）。
+        //   为什么值得自动续跑：批准发生在手机上，用户批完通常已经离开会话 ——
+        //   不续跑的话，模型会一直卡在“等用户批准”那句话上。
+        if (SECOND_FACTOR_TOOLS.includes(c.action) && c.roomId) {
+          const card = (store.listMessages(c.roomId, { limit: 200 }) ?? []).find(
+            (m) => m?.meta?.confirmationId === c.id,
+          );
+          if (card) {
+            store.updateMessage(c.roomId, card.id, {
+              meta: { ...(card.meta ?? {}), decision: approved ? 'approved' : 'denied' },
+            });
+          }
+          if (approved && c.requestedBy) {
+            runner.resumeAfterApproval({
+              id: c.id,
+              roomId: c.roomId,
+              botId: c.requestedBy,
+              tool: c.action,
+              summary: c.summary ?? '',
+            }).catch((err) => log('高危确认批准后继续失败：', err?.message || err));
+          }
         }
 
         bus.emit('event', { t: 'confirmation.updated', confirmation: c });

@@ -57,6 +57,8 @@ console.log('锁屏前的一次移动：OK（这条路本来是通的）');
 // ────────────────────────────── 2. 等用户锁屏
 console.log('');
 console.log('请在 20 秒内按 **Win+L** 锁屏。锁上之后不用回来，脚本自己继续。');
+console.log('（提示：这台机器若装了远程控制软件，它可能持续合成鼠标输入（issue #34），'
+  + '锁屏前的“正常移动”那一步会更严格；跑不过先看是不是它。）');
 console.log('不想测就 Ctrl+C，这一项记「未做」。');
 let locked = false;
 for (let i = 0; i < 40; i += 1) {
@@ -104,7 +106,23 @@ if (!unlocked) {
 }
 console.log('会话已恢复。');
 
-// ────────────────────────────── 5. 解锁后必须重新申请租约
+// ────────────────────────────── 5. 解锁后：旧 epoch 必须失效
+console.log('');
+console.log('解锁后先验一件事：拿**锁屏前那个旧 epoch** 还能不能用（期望：被拒）。');
+const stale = session.act({
+  identity: { taskId, botId, epoch: lease.epoch },
+  input: { action: 'move', point: POINT },
+});
+if (stale.ok) {
+  problems.push('解锁后旧 epoch 的调用居然成功了（旧租约随解锁复活了）');
+} else {
+  console.log(`  旧 epoch → ${stale.code}（应拒 ✓）`);
+  if (stale.code === 'no_session') {
+    problems.push('旧 epoch 的拒绝理由是 no_session，说明会话判定没恢复（解锁没生效？）');
+  }
+}
+
+// ────────────────────────────── 6. 解锁后必须重新申请租约
 const reacquired = session.acquireLease({ taskId, botId });
 if (!reacquired.ok) {
   problems.push(`解锁后重新申请租约失败：${reacquired.text ?? reacquired.code}`);

@@ -116,11 +116,16 @@ HOOK_BLOCKS_MEMBER true
 
 | 检查点 | 期望 |
 |---|---|
-| App 里出现确认卡片 | 卡片写明「删除 Bot」+ 目标名，且提示**需要在手机上确认** |
-| 本机（桌面）批准 | **被拒**，理由指向"不可撤销动作要在已配对设备上确认" |
-| 手机端能看到同一条确认 | 能看到，且能点确认 |
-| 手机确认后 | 动作真的执行：那个临时 Bot 从花名册消失 |
-| 同一条确认不能再批一次 | 第二次会被拒（一次一用） |
+| App 里出现确认卡片 | `kind: 'confirmation'`，卡片写到「需要在手机上确认」+ 目标摘要 |
+| 本机（桌面）批准 | **HTTP 403 `WEAK_CHANNEL`**，理由指向"不可撤销动作要在已配对设备上确认" |
+| 手机端能看到同一条确认 | `GET /api/confirmations` 里有这一条（`minChannel: 'device'`） |
+| 手机确认后 | 后端更新卡片 `meta.decision` 并**自动续跑**会话（你不用再催它一句），那个临时 Bot 从花名册消失 |
+| 同一条确认不能再批一次 | 第二次会被拒（一次一用，`consumedAt` 已经写上） |
+
+> 覆盖的工具（`capabilities.js` 的 `needsSecondFactor`）：
+> `delete_bot` / `manage_department(op=delete)` / `manage_knowledge(op=delete_skill|delete_lesson)`
+> / `set_policy(op=update)` / `manage_model_group(op=delete)` / `git_destructive`。
+> 其中 `git_destructive` 由 `git-tools.js` 自己在动手前建确认 —— **不要在两条路上重复弹卡**。
 
 查状态用（`TOKEN` 换成 App「系统 → 连接」里的 API token，端口按实际）：
 
@@ -131,7 +136,8 @@ curl -s -H "authorization: Bearer $TOKEN" http://127.0.0.1:8787/api/confirmation
 
 ### 4.4 如果失败了
 
-- 卡片没出现 → 说明 `isJarvisApprovalCall` 没认出来，把主控那条回复整段留下
+- 卡片没出现 → 先看 `needsSecondFactor(tool, input)` 有没有覆盖这个工具/这个 op，
+  再看那条回复；两样都留下（这是"以为拦了其实没拦"的典型）
 - 本机批准居然成功了 → **安全底线破了**，立刻停下并把 `relevant audit` 贴出来
 - 手机确认后没执行 → 看 `GET /api/grant-audit` 里那条 `deny` 的 `code`
 

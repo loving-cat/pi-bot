@@ -15,7 +15,8 @@ import { verdictForTool } from './shell-policy.js';
 import { log } from './util.js';
 import { bus as defaultBus } from './bus.js';
 import { loadHooks, applyHooks } from './hooks.js';
-import { readonlyBlockReason, opaqueScriptBlockReason, MUTATING_TOOLS, isSecurityConfigCall, isJarvisApprovalCall, CHIEF_ONLY_TOOLS } from './role-tools.js';
+import { readonlyBlockReason, opaqueScriptBlockReason, MUTATING_TOOLS, isSecurityConfigCall, isJarvisApprovalCall, CHIEF_ONLY_TOOLS, needsSecondFactor } from './role-tools.js';
+import { buildConfirmation, checkConfirmation, digestOf } from './confirm.js';
 import { isExternalMcpTool, externalApprovalSummary, mcpAccessSignature } from './mcp-access.js';
 import { mcpApprovalSummary } from './mcp-approval-summary.js';
 
@@ -25,6 +26,18 @@ import { mcpApprovalSummary } from './mcp-approval-summary.js';
 //   带着已经不该给它的工具句柄继续跑。工具集那道门在“造工具”时生效，这道在“真调用”时生效。
 const CHIEF_ONLY_SET = new Set(CHIEF_ONLY_TOOLS);
 
+/**
+ * 二级强确认的“目标”：用来绑定“用户批的就是这件事”。
+ *
+ * 只取会影响结果的标识（哪个 bot / 哪个技能 / 哪条策略），**不含凭据**。
+ * 摘要绑定的意义：用户批的是“删掉 X”，模型就不能拿这张票去删 Y。
+ */
+function secondFactorTargetOf(tool, input = {}) {
+  const raw = input ?? {};
+  const key = String(raw.id ?? raw.botId ?? raw.name ?? raw.slug ?? raw.target ?? '').trim();
+  return { tool, key: key.slice(0, 120) };
+}
+
 /** 执行命令的工具名 */
 const SHELL_TOOLS = new Set(['bash', 'powershell']);
 
@@ -331,6 +344,8 @@ export function createPolicyExtension({
         //   挂 MCP 时，**所有能执行/注入命令的工具**都逐次审批 ——
         //   包括 write_stdin（往已批准的后台 shell 里灌命令）。
         const shellWithMcp = !externalMcp && SHELL_LIKE.has(tool) && botHasMcp(currentBot, store);
+        // 注：二级强确认那几类已经在上面的专门分支处理（git_destructive 由 git-tools 自己弹），
+        // 这里用 !needsSecondFactor 把它们排除掉 —— 否则同一个动作会同时收到 approval 与 confirmation 两张卡。
 
         // ★ 改安全配置本身：有些工具**不论档位**都必须逐次审批。
         //
@@ -339,7 +354,7 @@ export function createPolicyExtension({
         //   新执行入口。这条链上每一步都不该让模型自己走完：
         //   它不是"做活"，是**改防线**。
         const securityConfig = isSecurityConfigCall(tool, event?.input);
-        const jarvisNeedsApproval = isJarvisHost && isJarvisApprovalCall(tool, event?.input, {
+        const jarvisNeedsApproval = isJarvisHost && !needsSecondFactor(tool, event?.input) && isJarvisApprovalCall(tool, event?.input, {
           isMcpAlreadyEnabled: (inp) => {
             const target = String(inp?.id ?? inp?.name ?? '').trim().toLowerCase();
             if (!target) return false;
@@ -347,6 +362,79 @@ export function createPolicyExtension({
               (s.id.toLowerCase() === target || s.name.toLowerCase() === target) && s.enabled === true);
           },
         });
+
+        // ★ 二级强确认（2026-11-19 拍板）：高危、不可撤销的动作**本机批准不算**。
+        //
+        //   规格 §9 已经承认：主 Bot 拿到宿主 shell 之后能自己弹卡自己点。
+        //   所以删 Bot / 解散部门 / 删技能与经验 / 改全局策略 / 删模型组 / 破坏性 git
+        //   这几类必须走 /api/confirmations（minChannel=device，即已配对手机）。
+        //
+        //   git_destructive 刻意排除：它自己（git-tools.js）在动手前已经
+        //   requestConfirmation 了，这里再弹一张就是双卡。
+        if (isJarvisHost && tool !== 'git_destructive' && needsSecondFactor(tool, event?.input)) {
+          const target = secondFactorTargetOf(tool, event?.input);
+          const digest = digestOf(target);
+          const live = (store.state.confirmations ?? []).find(
+            (c) => c.action === tool && c.targetDigest === digest
+              && c.decision === 'approved' && !c.consumedAt,
+          );
+          if (live) {
+            const chk = checkConfirmation({
+              confirmation: live,
+              target,
+              policyRevision: store.policyVersion(),
+              allowLocal: store.desktopSettings().allowLocalApproval === true,
+            });
+            if (chk.ok) {
+              store.consumeConfirmation(live.id);
+              log(`✅ 手机已确认过，放行一次：${tool}`);
+              return undefined;
+            }
+          }
+          const summary = summarizeToolCall(tool, event?.input);
+          const pending = (store.state.confirmations ?? []).find(
+            (c) => c.action === tool && c.targetDigest === digest && c.decision === null,
+          );
+          const card = pending ?? store.requestConfirmation(buildConfirmation({
+            // buildConfirmation 不会自己生成 id（它只是把字段冻结成一条记录），
+            // 不给 id 的话 requestConfirmation 会直接返回 null —— 这里别省。
+            id: `cf_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+            action: tool,
+            target,
+            summary,
+            minChannel: 'device',
+            roomId,
+            requestedBy: bot?.id ?? null,
+            policyRevision: store.policyVersion(),
+          }));
+          if (pending) {
+            return {
+              block: true,
+              reason: '这次高危操作还在等用户**在手机上**确认（卡片已经在会话里），先别重复调用。',
+            };
+          }
+          if (card) {
+            const msg = store.appendMessage({
+              roomId,
+              authorType: 'bot',
+              authorId: bot?.id ?? null,
+              authorName: bot?.name ?? '',
+              authorEmoji: bot?.emoji ?? null,
+              kind: 'confirmation',
+              text: `${bot?.name ?? '它'} 想执行：${summary} —— 需要在手机上确认`
+                + `${card.minChannel === 'device' ? '（本机批准不算）' : ''}`,
+              status: 'done',
+              meta: { confirmationId: card.id, tool, minChannel: card.minChannel ?? null },
+            });
+            bus.emit('event', { t: 'msg.new', msg });
+          }
+          log(`🛡 二级强确认：${bot?.name ?? 'bot'} 的 ${tool} 需要手机确认`);
+          return {
+            block: true,
+            reason: '这次操作是不可撤销的高危动作，需要在**手机上**确认（本机桌面批准不算）。'
+              + '确认卡已经发在会话里；用户在手机上点批准后，再调用一次就会执行（一次一用）。',
+          };
+        }
 
         // ---- 第三档：每一次"会动手"的调用都要用户点批准 ----
         if (

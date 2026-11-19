@@ -95,6 +95,86 @@ await test('非法规则在写入时被丢弃', () => {
   assert.deepEqual(p.denyCommands, ['rm -rf *']);
 });
 
+// ---------------------------------------------------------------- A2：二级强确认
+/** 造一个主控 bot + 房间，返回装了处理器的主控。 */
+function chiefSetup() {
+  store.state.rooms ??= {};
+  store.state.rooms.r_test = {
+    id: 'r_test', name: 'A2 验收房', kind: 'dm', botIds: ['b_main'], createdAt: Date.now(),
+  };
+  const bot = { id: 'b_main', name: '主控', role: 'main', emoji: '🤖', persona: '' };
+  store.state.bots ??= {};
+  store.state.bots.b_main = bot;
+  return installWithBot(bot);
+}
+
+await test('★ A2：主控删 Bot 必须走手机强确认（本机批准不算）', async () => {
+  const handler = chiefSetup();
+  const input = { name: '临时Bot' };
+  const first = handler({ type: 'tool_call', toolName: 'delete_bot', toolCallId: 'c1', input });
+  assert.equal(first?.block, true, '删 Bot 必须先拦下');
+  assert.match(String(first.reason ?? ''), /手机/);
+
+  const cards = () => (store.state.confirmations ?? []).filter((c) => c.action === 'delete_bot');
+  assert.equal(cards().length, 1, '应当建了一条二级强确认');
+  assert.equal(cards()[0].minChannel, 'device', '这条确认必须要求设备通道');
+
+  // 同目标再来一次：不许堆卡
+  const again = handler({ type: 'tool_call', toolName: 'delete_bot', toolCallId: 'c2', input });
+  assert.equal(again?.block, true);
+  assert.equal(cards().length, 1, '同一目标不该重复建卡');
+
+  // 本机批准：必须被拒（规格 §9：主 Bot 能自己点本机卡片）
+  const local = store.decideConfirmation(cards()[0].id, { approved: true, channel: 'local' });
+  assert.equal(local.rejected, true, '本机批准不可撤销动作应被拒');
+
+  // 手机批准：通过
+  const phone = store.decideConfirmation(cards()[0].id, {
+    approved: true, channel: 'device', device: { id: 'd_phone', name: '我的手机' },
+  });
+  assert.ok(!phone.rejected, '设备通道应当批准成功');
+
+  // 再调用一次：放行，并且这条确认要被消费（一次一用）
+  const allowed = handler({ type: 'tool_call', toolName: 'delete_bot', toolCallId: 'c3', input });
+  assert.notEqual(allowed?.block, true, '手机批准后这一次应当放行');
+  assert.ok(store.getConfirmation(cards()[0].id).consumedAt, '确认必须被消费');
+
+  // 第三次：又得重新确认（不能拿旧批准反复用）
+  const third = handler({ type: 'tool_call', toolName: 'delete_bot', toolCallId: 'c4', input });
+  assert.equal(third?.block, true, '一次一用：旧批准不能复用');
+});
+
+await test('★ A2：改策略 / 删技能 走强确认，而列表类操作不拦', async () => {
+  const handler = chiefSetup();
+  const policyUpdate = handler({
+    type: 'tool_call', toolName: 'set_policy', toolCallId: 'p1', input: { op: 'update', dangerous: 'allow' },
+  });
+  assert.equal(policyUpdate?.block, true, '改全局策略必须强确认');
+  assert.match(String(policyUpdate.reason ?? ''), /手机/);
+
+  const policyGet = handler({ type: 'tool_call', toolName: 'set_policy', toolCallId: 'p2', input: { op: 'get' } });
+  assert.notEqual(policyGet?.block, true, '读策略不该被这道门拦');
+
+  const delSkill = handler({
+    type: 'tool_call', toolName: 'manage_knowledge', toolCallId: 'k1', input: { op: 'delete_skill', id: 's1' },
+  });
+  assert.equal(delSkill?.block, true, '删技能必须强确认');
+
+  const listLessons = handler({
+    type: 'tool_call', toolName: 'manage_knowledge', toolCallId: 'k2', input: { op: 'list_lessons' },
+  });
+  assert.notEqual(listLessons?.block, true, '看经验列表不该被这道门拦');
+});
+
+await test('★ A2：破坏性 git 不在这一层重复弹卡（git-tools 自己会弹）', async () => {
+  const handler = chiefSetup();
+  const r = handler({
+    type: 'tool_call', toolName: 'git_destructive', toolCallId: 'g1', input: { operation: 'reset', repo: '.' },
+  });
+  // 这一层放行；真正弹卡的是 git-tools 里的 requestConfirmation
+  assert.notEqual(r?.block, true, 'git_destructive 不该在这里被拦（会双卡）');
+});
+
 const passed = results.filter((r) => r.ok).length;
 console.log('\n================ 命令拦截测试 ================');
 for (const r of results) {

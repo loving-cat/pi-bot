@@ -14,6 +14,11 @@
  *
  * 只有一块显示器时会明确打印“多屏项跳过”，不假装通过 —— 混合缩放这一项
  * 必须有第二块屏（最好是不同缩放）才算有证据。
+ *
+ * **验证范围说明**：这里直调 `perform({ plan })` + `planInput`，验的是“多屏物理
+ * 像素坐标对齐”这一层（屏幕矩形、每块屏可达、屏外拒绝）。租约/接管/角色那几条
+ * 判定属于 `desktop-input-session`，由 `desktop-input.mjs` 与锁屏脚本覆盖 ——
+ * 刻意不在这里再套一层 session，免得“多屏错位”和“会话判定”两类失败混在一起。
  */
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';

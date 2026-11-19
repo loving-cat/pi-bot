@@ -467,8 +467,51 @@ export function needsTarget(action) {
  *   2. `manage_mcp_server` 从未启用状态开启（`op === 'enable'` 或 `enabled === true` 且尚未启用）
  *   3. `import_local_capabilities` 导 MCP 时同时传 `enable: true`
  */
+/**
+ * 需要**二级强确认**的高危工具（`/api/confirmations`，设备通道）。
+ *
+ * 为什么单独一份，而不复用 `isJarvisApprovalCall`：那个判定里混着两档 ——
+ * “本机桌面能点”的普通审批（装 MCP、导入本地能力）和“本机点了也不算”的强确认。
+ * 规范 §9 明确承认：主 Bot 拿到宿主 shell 之后能自己弹卡自己点，所以
+ * **不可撤销的高危动作必须在已配对的独立设备上确认**。这两档不能混。
+ */
+export const SECOND_FACTOR_TOOLS = Object.freeze([
+  'git_destructive',
+  'delete_bot',
+  'manage_department',
+  'manage_knowledge',
+  'set_policy',
+  'manage_model_group',
+]);
+
+/**
+ * 这次调用是不是“必须手机确认”的那一类。
+ *
+ * 按操作细分（不是按工具整包）：`manage_knowledge` 的列表/加经验不需要强确认，
+ * 删技能/删经验才需要；`set_policy` 只有 update 动防线；`manage_department` 只有 delete。
+ */
+export function needsSecondFactor(tool, input = null) {
+  switch (tool) {
+    case 'git_destructive':
+      return true;
+    case 'delete_bot':
+      return true;
+    case 'manage_department':
+      return input?.op === 'delete';
+    case 'manage_knowledge':
+      return input?.op === 'delete_skill' || input?.op === 'delete_lesson';
+    case 'set_policy':
+      return input?.op === 'update';
+    case 'manage_model_group':
+      return input?.op === 'delete';
+    default:
+      return false;
+  }
+}
+
 export function isJarvisApprovalCall(tool, input = null, { isMcpAlreadyEnabled = null } = {}) {
-  if (tool === 'git_destructive') return true;
+  // 二级强确认那几类同样属于“Jarvis 要拦”的范围（拦下来之后再分流到确认体系）
+  if (needsSecondFactor(tool, input)) return true;
   if (tool === 'manage_mcp_server') {
     const wantsEnable = input?.op === 'enable' || input?.enabled === true;
     if (!wantsEnable) return false;
@@ -632,6 +675,8 @@ export function snapshotEvidence() {
     COORDINATION_TOOLS,
     CHIEF_ONLY_TOOLS,
     CHIEF_ONLY_ACTIONS,
+  SECOND_FACTOR_TOOLS,
+  needsSecondFactor,
     MIGRATION_WITHHELD,
     migrationActions: {
       allowChief: deriveMigrationActions({ readonly: false, chief: true }),
