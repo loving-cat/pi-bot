@@ -363,9 +363,13 @@ export function createDesktopInputSession({
             });
           }
           // ③ 用户接手了吗：光标不在我们刚放的位置，就是有人在动它
+          //   ★ 容差 2px 必须和平台层同口径：平台段后允许 ±2px（真实鼠标/取整会有
+          //   1~2px 抖动），这里若用 0 容差，平台刚放行的位置会被立刻判成“用户接管”，
+          //   拖拽必然被自己中止且租约被吊销。
           const cur = cursorPosition();
           if (cur?.ok && expectedCursor
-            && (Number(cur.x) !== expectedCursor.x || Number(cur.y) !== expectedCursor.y)) {
+            && (Math.abs(Number(cur.x) - expectedCursor.x) > 2
+              || Math.abs(Number(cur.y) - expectedCursor.y) > 2)) {
             return abortDrag(
               REFUSE.yielded,
               `拖到一半发现鼠标不在我们放的位置（(${cur.x},${cur.y}) ≠ (${expectedCursor.x},${expectedCursor.y})）`

@@ -157,20 +157,33 @@ public class DeskIn {
   public const uint MOUSEEVENTF_VIRTUALDESK = 0x4000;
   public const uint KEYEVENTF_KEYUP = 0x0002;
 
-  // ★ 拖拽必须用“SetCursorPos + 零位移移动事件”，不能用 SetCursorPos 就完事：
-  //   实测（本机 2560x1440 / 125%）：SetCursorPos 只改光标位置，**不给目标窗口
-  //   发 WM_MOUSEMOVE** —— 靶子窗口只收到 down 和 up，中间一条 move 都没有，
-  //   拖拽就退化成“瞬移”，文件列表/滑块根本不认。
-  //   再补一个 dx=dy=0 的相对移动事件，系统就会给光标下的窗口投递 move。
+  // ★ 拖拽移动必须走 SendInput 的相对移动（MOUSEEVENTF_MOVE），不能用 SetCursorPos：
+  //   实测（本机 2560x1440 / 125%）：SetCursorPos 只改光标位置，**不给窗口发
+  //   WM_MOUSEMOVE** —— 靶子只记录到 down 和 up，中间一条 move 都没有，拖拽退化成
+  //   “瞬移”，文件列表/滑块根本不认。相对移动则会像真实鼠标一样产生 move。
   //
-  // ★ 为什么不用 MOUSEEVENTF_ABSOLUTE 直接定位：本机实测不准（目标 350,320，
-  //   光标只挪到了 1499,640），这台机器上有程序在持续合成输入（见 issue #34），
-  //   绝对移动会被劫。SetCursorPos 在这种环境下反而是准的。
+  // ★ 为什么不用 MOUSEEVENTF_ABSOLUTE：本机实测不准（目标 350,320 落在 1499,640）。
+  //   相对移动实测是准的：每步 +20,+12 走五步后正好 +100,+60。
   public static INPUT MoveRel(int dx, int dy) {
     INPUT i = new INPUT(); i.type = 0; i.u.mi = new MOUSEINPUT();
     i.u.mi.dx = dx; i.u.mi.dy = dy;
     i.u.mi.dwFlags = MOUSEEVENTF_MOVE;
     return i;
+  }
+
+  // 移动到绝对坐标：SetCursorPos 定位 + 一次 ±1px 相对移动来把 move 投递给窗口。
+  //   ★ 为什么不能只靠相对移动：大位移会被系统“提高指针精确度”（加速曲线）放大，
+  //     实测要移到 (350,320)，五步累加后落在 (0,252)（撞到屏幕左边被 clamp）。
+  //     小位移（20px 级）是准的，所以拿 ±1px 这一下只负责“通知窗口”，不负责位移。
+  //   ★ 为什么不能只靠 SetCursorPos：它只改光标位置，不发 WM_MOUSEMOVE。
+  //   返回 1 = 光标已到位（位置差在 1px 内），0 = 没到位，上层应当报错而不是继续。
+  public static int MoveTo(int x, int y) {
+    if (!SetCursorPos(x, y)) return 0;
+    int[] c = Cursor();
+    if (c[0] != x || c[1] != y) return 0;
+    Send(new INPUT[] { MoveRel(1, 0) });
+    Send(new INPUT[] { MoveRel(-1, 0) });
+    return 1;
   }
 
   public static bool MakeAware() {
@@ -493,55 +506,70 @@ Write-Output ("result=up n=" + $u)
     return released;
   };
 
-  /** 中断/失败统一出口：先抬起再报错。 */
+  /** 按住的是哪个键（文案要说对：拖拽支持 right / middle）。 */
+  const heldName = button === 'right' ? '右键' : button === 'middle' ? '中键' : '左键';
+
+  /** 中断/失败统一出口：**先抬起再报错**。 */
   const stop = (code, text) => {
     const ok = up();
     return {
       ok: false,
       code,
-      text: ok ? `${text}（鼠标已松开）` : `${text}（⚠ 松开鼠标失败，请手动点一下左键）`,
+      text: ok
+        ? `${text}（${heldName}已松开）`
+        : `${text}（⚠ ${heldName}松开失败，请手动点一下${heldName}）`,
       released: ok,
     };
   };
+
+  /**
+   * 还没按下鼠标就失败：**没有需要松开的东西**。
+   * 走 `stop()` 会多发一次 up —— 虽然无害，但审计里会看起来像"按了又松"，
+   * 而真实情况是"一次都没按"。并且多一次 PS 进程启动约 100ms。
+   */
+  const failBeforeDown = (code, text) => ({
+    ok: false,
+    code,
+    text: `${text}（还没按下鼠标，不需要松开）`,
+    released: true,
+  });
 
   // ① 移到位 + 按下（同一条脚本，减少中途被抢的机会）
   const down = run(`${WIN_PRELUDE}
 $aware = [DeskIn]::MakeAware()
 if (-not $aware) { Write-Output 'result=not_aware'; exit 0 }
-$sp = [DeskIn]::SetCursorPos(${Math.round(Number(plan.from.x))}, ${Math.round(Number(plan.from.y))})
-if (-not $sp) { Write-Output 'result=setpos_failed'; exit 0 }
-[void][DeskIn]::Send(@([DeskIn]::MoveRel(0, 0)))
-Start-Sleep -Milliseconds 40
+$n0 = [DeskIn]::MoveTo(${Math.round(Number(plan.from.x))}, ${Math.round(Number(plan.from.y))})
+if ($n0 -ne 1) { Write-Output 'result=move_failed'; exit 0 }
+Start-Sleep -Milliseconds 30
 $c0 = [DeskIn]::Cursor()
+# ★ 偏移判断必须写在**按下之前**：先按再判，等于已经在错的位置点了一下，
+#   回 Node 再抬起也收不回那一下点击。
+if ([Math]::Abs($c0[0] - ${Math.round(Number(plan.from.x))}) -gt 2 -or [Math]::Abs($c0[1] - ${Math.round(Number(plan.from.y))}) -gt 2) {
+  Write-Output ("result=misaligned at=" + $c0[0] + "," + $c0[1]); exit 0
+}
 $d = [DeskIn]::Send(@([DeskIn]::Btn([DeskIn]::${downFlag})))
 Write-Output ("result=down n=" + $d + " at=" + $c0[0] + "," + $c0[1])
 `);
-  if (!down.ok) return stop(INPUT_FAIL.callFailed, `拖拽按下失败：${down.error}`);
+  // ★ 到这里鼠标**一次都还没按下**：失败一律走 failBeforeDown，不发多余的 up。
+  if (!down.ok) return failBeforeDown(INPUT_FAIL.callFailed, `拖拽按下失败：${down.error}`);
   if ((down.stdout || '').includes('result=not_aware')) {
-    return stop(INPUT_FAIL.notAware, 'DPI 感知声明失败，没发输入');
+    return failBeforeDown(INPUT_FAIL.notAware, 'DPI 感知声明失败，没发输入');
   }
-  if ((down.stdout || '').includes('result=setpos_failed')) {
-    return stop(INPUT_FAIL.callFailed, '光标没移到起点（SetCursorPos 被拒）—— 没按下去');
+  if ((down.stdout || '').includes('result=move_failed')) {
+    return failBeforeDown(INPUT_FAIL.callFailed, '光标没移到起点（相对移动没发出去）');
   }
-  // ★ 按下前校一次光标：这台机器上有程序在持续合成鼠标输入（issue #34），
-  //   SetCursorPos 能返回 true、光标却被拉回原处 —— 那一下会按在别的地方。
-  //   “按之前先看见它在哪”，比事后猜“为什么点错了”便宜得多。
-  {
+  // 偏移判断在 PowerShell 里做完了（在按下之前），这里只把结论翻译成人话。
+  if ((down.stdout || '').includes('result=misaligned')) {
     const at = (down.stdout || '').match(/at=(-?\d+),(-?\d+)/);
-    if (at) {
-      const ax = Number(at[1]);
-      const ay = Number(at[2]);
-      if (Math.abs(ax - Number(plan.from.x)) > 2 || Math.abs(ay - Number(plan.from.y)) > 2) {
-        return stop(
-          INPUT_FAIL.callFailed,
-          `按下前光标不在起点（要到 (${plan.from.x},${plan.from.y})，实际 (${ax},${ay})）`
-          + ' —— 这台机器上可能有程序在合成鼠标输入',
-        );
-      }
-    }
+    const where = at ? `(${at[1]},${at[2]})` : '别处';
+    return failBeforeDown(
+      INPUT_FAIL.callFailed,
+      `按下前光标不在起点（要到 (${plan.from.x},${plan.from.y})，实际 ${where}）`
+      + ' —— 这台机器上可能有程序在合成鼠标输入',
+    );
   }
   if (!/result=down n=1/.test(down.stdout || '')) {
-    return stop(INPUT_FAIL.callFailed, `鼠标没按下去：${(down.stdout || '').slice(0, 200)}`);
+    return failBeforeDown(INPUT_FAIL.callFailed, `鼠标没按下去：${(down.stdout || '').slice(0, 200)}`);
   }
 
   // ② 分段走：每段一次 PS 调用，段间回来判一次要不要停
@@ -552,12 +580,11 @@ Write-Output ("result=down n=" + $d + " at=" + $c0[0] + "," + $c0[1])
       .map((p) => {
         const x = Math.round(Number(p.x));
         const y = Math.round(Number(p.y));
-        // ★ SetCursorPos 定位 + 零位移 move 通知窗口：只 SetCursorPos 不给窗口
-        //   发 WM_MOUSEMOVE，拖拽在真机上退化成“瞬移”（见 MoveRel 的注释）。
-        //   返回值必须查：SetCursorPos 被拒时返回 false，但光标不会报错、也不会动。
-        return `$sp = [DeskIn]::SetCursorPos(${x}, ${y})\n`
-          + `if (-not $sp) { Write-Output 'result=setpos_failed'; exit 0 }\n`
-          + `[void][DeskIn]::Send(@([DeskIn]::MoveRel(0, 0)))\n`
+        // ★ 用相对移动（MoveTo）而不是 SetCursorPos：只有相对移动才会给窗口
+        //   发 WM_MOUSEMOVE，拖拽语义才成立（见 prelude 里 MoveRel 的注释）。
+        //   返回值必须查：SendInput 没插进去时返回 0，光标不会报错、也不会动。
+        return `$n = [DeskIn]::MoveTo(${x}, ${y})\n`
+          + `if ($n -ne 1) { Write-Output 'result=move_failed'; exit 0 }\n`
           + `Start-Sleep -Milliseconds ${stepMs}`;
       })
       .join('\n');
@@ -572,34 +599,33 @@ Write-Output ("result=moved at=" + $c[0] + "," + $c[1])
     if ((seg.stdout || '').includes('result=not_aware')) {
       return stop(INPUT_FAIL.notAware, 'DPI 感知声明失败，没发输入');
     }
-    if ((seg.stdout || '').includes('result=setpos_failed')) {
-      return stop(INPUT_FAIL.callFailed, '拖拽途中 SetCursorPos 被拒 —— 已松开鼠标');
+    if ((seg.stdout || '').includes('result=move_failed')) {
+      return stop(INPUT_FAIL.callFailed, '拖拽途中移动事件没发出去');
     }
     if (!(seg.stdout || '').includes('result=moved')) {
       return stop(INPUT_FAIL.callFailed, `拖拽没走动：${(seg.stdout || '').slice(0, 200)}`);
     }
     // ★ 段后核对光标真的到了：这台机器上有程序在合成鼠标输入（issue #34），
-    //   SetCursorPos 可以返回 true、光标却被拉回 —— 不核对就会“报告成功但没拖到”。
-    {
-      const at = (seg.stdout || '').match(/at=(-?\d+),(-?\d+)/);
-      const last = batch[batch.length - 1];
-      if (at) {
-        const ax = Number(at[1]);
-        const ay = Number(at[2]);
-        if (Math.abs(ax - Number(last.x)) > 2 || Math.abs(ay - Number(last.y)) > 2) {
-          return stop(
-            INPUT_FAIL.callFailed,
-            `拖到第 ${i + batch.length}/${stops.length} 站时光标没到位`
-            + `（要到 (${last.x},${last.y})，实际 (${ax},${ay})）`
-            + ' —— 这台机器上可能有程序在合成鼠标输入',
-          );
-        }
-      }
-    }    const last = batch[batch.length - 1];
+    //   移动事件可以返回成功、光标却被拉回 —— 不核对就会“报告成功但没拖到”。
+    const last = batch[batch.length - 1];
     moved = i + batch.length;
+    const at = (seg.stdout || '').match(/at=(-?\d+),(-?\d+)/);
+    const actual = at
+      ? { x: Number(at[1]), y: Number(at[2]) }
+      : { x: Number(last.x), y: Number(last.y) };
+    if (Math.abs(actual.x - Number(last.x)) > 2 || Math.abs(actual.y - Number(last.y)) > 2) {
+      return stop(
+        INPUT_FAIL.callFailed,
+        `拖到第 ${moved}/${stops.length} 站时光标没到位`
+        + `（要到 (${last.x},${last.y})，实际 (${actual.x},${actual.y})）`
+        + ' —— 这台机器上可能有程序在合成鼠标输入',
+      );
+    }
     // ★ 顺序不能反：先报位置（上层据此更新“鼠标该在哪”），再问要不要停。
     //   反过来的话上层还拿着上一段的位置去比光标，会把自己刚走的一段误判成用户接管。
-    if (typeof onStep === 'function') onStep({ at: last, index: moved, total: stops.length });
+    // ★ 报的是**实测**坐标，不是理论站号：平台允许 ±2px，报理论值会让装配层
+    //   把 1~2px 的正常抖动当成“用户动了鼠标”，然后中止拖拽并吊销租约。
+    if (typeof onStep === 'function') onStep({ at: actual, index: moved, total: stops.length });
     if (typeof shouldAbort === 'function') {
       const verdict = shouldAbort({ at: last, index: moved, total: stops.length });
       if (verdict) return stop(verdict.code || INPUT_FAIL.yielded, verdict.text || '拖拽被中断');
@@ -611,7 +637,7 @@ Write-Output ("result=moved at=" + $c[0] + "," + $c[1])
     return {
       ok: false,
       code: INPUT_FAIL.callFailed,
-      text: '拖到终点了，但松开鼠标失败 —— 请手动点一下左键确认已松开',
+      text: `拖到终点了，但${heldName}松开失败 —— 请手动点一下${heldName}确认已松开`,
       released: false,
     };
   }

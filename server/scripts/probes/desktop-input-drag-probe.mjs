@@ -120,7 +120,6 @@ const check = (events, label, { expectOk, expectFinish }) => {
   const moves = events.filter((e) => e.kind === 'move');
   if (downs.length !== 1) problems.push(`${label}：down 应 1 次，实际 ${downs.length} 次`);
   if (ups.length !== 1) problems.push(`${label}：up 应 1 次，实际 ${ups.length} 次（**鼠标可能没松开**）`);
-  if (moves.length < 3) problems.push(`${label}：move 只有 ${moves.length} 条（没到 3 条说明进不了拖拽状态）`);
   if (downs.length === 1 && !(near(downs[0].x, expectOk.x) && near(downs[0].y, expectOk.y))) {
     problems.push(`${label}：按下位置 (${downs[0].x},${downs[0].y}) ≠ 起点 (${expectOk.x},${expectOk.y})`);
   }
@@ -128,9 +127,21 @@ const check = (events, label, { expectOk, expectFinish }) => {
     && !(near(ups[0].x, expectFinish.x) && near(ups[0].y, expectFinish.y))) {
     problems.push(`${label}：抬起位置 (${ups[0].x},${ups[0].y}) ≠ 终点 (${expectFinish.x},${expectFinish.y})`);
   }
-  const kinds = events.map((e) => e.kind).join(',');
-  if (!/^down(,move)+,up$/.test(kinds)) problems.push(`${label}：事件顺序不对：${kinds}`);
-  return { moves: moves.length, downs, ups };
+  // ★ 关键断言是“**按住期间**有没有 move”，而不是整个序列以 down 开头：
+  //   把光标移到起点的那几步（SetCursorPos + ±1px 通知）也会产生 move，
+  //   那是正常的准备动作；真正决定“能不能拖动控件”的是 down 和 up 之间有没有轨迹。
+  const kinds = events.map((e) => e.kind);
+  const di = kinds.indexOf('down');
+  const ui = kinds.lastIndexOf('up');
+  const movesBetween = di >= 0 && ui > di
+    ? events.slice(di, ui).filter((e) => e.kind === 'move').length
+    : 0;
+  if (di >= 0 && ui > di && movesBetween < 3) {
+    problems.push(`${label}：按下到抬起之间只有 ${movesBetween} 条 move（拖拽要求看到轨迹）`);
+  }
+  return {
+    moves: moves.length, movesBetween, downs, ups,
+  };
 };
 
 const A = check(segA, 'A 完整拖拽', { expectOk: from, expectFinish: to });
@@ -144,8 +155,8 @@ if (B.ups.length === 1 && !(near(B.ups[0].x, 400, 20) || true)) {
   // 中断位置随段数变化，不硬比较；这里只保证"抬起了"
 }
 
-console.log(`A 完整拖拽：${A.moves} 条 move，down=(${A.downs[0]?.x},${A.downs[0]?.y}) up=(${A.ups[0]?.x},${A.ups[0]?.y})`);
-console.log(`B 第 ${abortedAt} 站中断：${B.moves} 条 move，up ${B.ups.length} 次，released=${b.released}，code=${b.code}`);
+console.log(`A 完整拖拽：${A.moves} 条 move（按住期间 ${A.movesBetween} 条），down=(${A.downs[0]?.x},${A.downs[0]?.y}) up=(${A.ups[0]?.x},${A.ups[0]?.y})`);
+console.log(`B 第 ${abortedAt} 站中断：${B.moves} 条 move（按住期间 ${B.movesBetween} 条），up ${B.ups.length} 次，released=${b.released}，code=${b.code}`);
 if (problems.length) {
   for (const p of problems) console.error(`✗ ${p}`);
   if (noise?.ok && noise.synthetic) {

@@ -29,7 +29,6 @@ $form.Size = New-Object System.Drawing.Size(900, 700)
 $form.BackColor = [System.Drawing.Color]::FromArgb(30, 30, 40)
 $form.TopMost = $true
 
-$script:lastMove = 0
 $form.Add_MouseDown({
   # ★ 必须 capture：真实可拖拽控件（列表/滑块）在按下时都会 SetCapture，
   #   系统才会把后续的移动消息都路由给它。不 capture 的窗口收不到 move，
@@ -39,13 +38,14 @@ $form.Add_MouseDown({
   Add-Content -Path $log -Value ("down button=" + $_.Button + " cursor=" + $p.X + "," + $p.Y) -Encoding UTF8
 })
 $form.Add_MouseMove({
-  # 30ms 节流：够看轨迹，又不至于一条拖拽写几千行
-  $now = [Environment]::TickCount64
-  if (($now - $script:lastMove) -ge 30) {
-    $script:lastMove = $now
-    $p = [System.Windows.Forms.Cursor]::Position
-    Add-Content -Path $log -Value ("move cursor=" + $p.X + "," + $p.Y) -Encoding UTF8
-  }
+  # 这里**刻意不做节流**，踩过两个坑：
+  #   ① [Environment]::TickCount64 是 .NET Core 3.0+ 的属性，Windows PowerShell 5.1
+  #      跑在 .NET Framework 上，它**静默返回 $null** —— 节流条件永远 false，
+  #      于是一条 move 都记不下来（实测过，差一点把探针 bug 当成"系统不发 move"）；
+  #   ② 事件 scriptblock 里的 $script:lastMove 不会跨事件保留，同一个坑再来一次。
+  # 一次拖拽最多几十条记录，不值得为省这点 IO 冒"静默丢证据"的险。
+  $p = [System.Windows.Forms.Cursor]::Position
+  Add-Content -Path $log -Value ("move cursor=" + $p.X + "," + $p.Y) -Encoding UTF8
 })
 $form.Add_MouseUp({
   $form.Capture = $false

@@ -518,6 +518,23 @@ test('★ 拖拽落点漂移要如实传上去（不能假装到了终点）', (
   assert.match(r.note, /90,90/);
 });
 
+test('★ 1~2px 光标抖动不能判成用户接管（与平台层 ±2px 同口径）', () => {
+  const plat = makeFakePlatform({
+    // 起点 (10,10)，光标报 (11,11) —— 真实鼠标/取整的常见抖动幅度
+    cursor: { ok: true, x: 11, y: 11 },
+    perform: (input) => {
+      const abort = input.shouldAbort?.({ at: { x: 11, y: 11 }, index: 1, total: 2 }) ?? null;
+      return abort
+        ? { ok: false, code: abort.code, text: abort.text, released: true }
+        : { ok: true, at: { x: 100, y: 100 }, foreground: '', released: true };
+    },
+  });
+  const { session, identity } = withLease(plat);
+  const r = session.act({ identity, input: { action: 'drag', point: { x: 10, y: 10 }, to: { x: 100, y: 100 } } });
+  assert.equal(r.ok, true, '偏 1px 不该中止拖拽（否则平台刚放行就被自己掐断）');
+  assert.equal(session.lease.status, LEASE.held, '也不该吊销租约');
+});
+
 test('★ 拖到一半用户接管 → 交还控制权、吊销租约、审计记 abort', () => {
   let abortResult = null;
   const plat = makeFakePlatform({
