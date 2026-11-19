@@ -1134,44 +1134,6 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// 在任务板里加一条任务。
-  ///
-  /// ★ 必须建**真实任务**（TaskRun），不能只写备忘清单。
-  ///   以前这里 POST /api/tasks —— 那是纯待办列表，和任务执行引擎
-  ///   没有任何关系，用户加的任务永远不会被派出去执行。
-  ///   用户原话：「待办进了 但是也没有真实去执行」。
-  ///
-  ///   现在两者都建：先建可执行的 TaskRun（会真的被调度执行），
-  ///   再往会话里落一条可见的待办，让用户和 bot 都能在板上看到。
-  Future<void> createTask({
-    required String roomId,
-    required String title,
-  }) async {
-    final client = api;
-    if (client == null) return;
-    try {
-      final res = await client.post('/api/task-runs', {
-        'roomId': roomId,
-        'title': title,
-      });
-      final taskRunId = res['taskRunId'];
-      if (taskRunId is String && taskRunId.isNotEmpty) {
-        // 立刻拉一次任务面，板子上就能看到它
-        await taskRuns.refresh();
-      } else {
-        lastError = '任务没有建成（服务端未返回任务 ID）';
-        _notify();
-        return;
-      }
-      // 会话里也留一条可见记录（用户与 bot 共用同一块板）
-      await client.post('/api/tasks', {'roomId': roomId, 'title': title});
-      await refreshTasks();
-    } catch (err) {
-      lastError = '$err';
-      _notify();
-    }
-  }
-
   /// 从资料库删掉附件（一个或一批）。
   ///
   /// 只动存储层：消息上那条附件引用保留，历史聊天记录照常能读 ——
