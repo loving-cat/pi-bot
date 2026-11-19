@@ -128,7 +128,8 @@ class Api {
     }
     if (isPath('/api/decision') && (m == 'PATCH' || m == 'PUT')) return 'policy';
     if (isPath('/api/skills') && (m == 'POST' || m == 'PATCH' || m == 'DELETE')) return 'policy';
-    if (isPath('/api/bots') && (m == 'PATCH' || m == 'DELETE')) return 'policy';
+    // 应用连接分配给 Bot：改的是“谁能用哪个应用”，和改规矩同一档。
+    if (m == 'PUT' && isPath('/api/connections') && path.endsWith('/bots')) return 'policy';    if (isPath('/api/bots') && (m == 'PATCH' || m == 'DELETE')) return 'policy';
     if (isPath('/api/rooms') && m == 'DELETE') return 'policy';
     // 撤销设备不要 nonce：它是"降低权限"的动作，冒充者做这件事只会让自己更不方便。
     // 用户在手机上将另一台设备踢下线，恰恰是发现异常时最想立刻能做的事。
@@ -254,8 +255,12 @@ class Api {
     String path,
     Map<String, dynamic> body,
   ) async {
+    // ★ 和 post / patch / delete 一样走 _adminHeaders：PUT 里也有需要 nonce 的管理路由
+    //   （例如 PUT /api/connections/:id/bots —— 把一个应用连接分配给某个 Bot，
+    //   改的是"谁能动什么"）。以前这里固定用 _headers，那条路由必然 403 nonce_required。
+    final headers = await _adminHeaders('PUT', path);
     final res = await http
-        .put(_uri(path), headers: _headers, body: jsonEncode(body))
+        .put(_uri(path), headers: headers, body: jsonEncode(body))
         .timeout(const Duration(seconds: 20));
     return _decode(res);
   }

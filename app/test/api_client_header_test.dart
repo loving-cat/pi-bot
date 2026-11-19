@@ -56,4 +56,27 @@ void main() {
           reason: '${entry.key} 缺少 ${Api.clientHeader}');
     }
   });
+
+  test('★ PUT 管理路由要带 nonce（例：把应用连接分配给 Bot）', () async {
+    final seen = <String, Map<String, String>>{};
+    final client = MockClient((req) async {
+      seen['${req.method} ${req.url.path}'] = req.headers;
+      if (req.url.path == '/api/local-nonce') {
+        return http.Response(jsonEncode(const {'nonce': 'fake-nonce'}), 200,
+            headers: const {'content-type': 'application/json'});
+      }
+      return http.Response(jsonEncode(const {'ok': true}), 200,
+          headers: const {'content-type': 'application/json'});
+    });
+
+    await http.runWithClient(() async {
+      final api = Api('http://127.0.0.1:1', 'fake-token');
+      await api.put('/api/connections/c_fake/bots', const {'botIds': <String>[]});
+    }, () => client);
+
+    final put = seen['PUT /api/connections/c_fake/bots'];
+    expect(put, isNotNull, reason: 'PUT 请求本身要发出去');
+    expect(put!['x-pi-bot-nonce'], 'fake-nonce',
+        reason: '服务端对这条路由要求 nonce，不带就是 403 nonce_required');
+  });
 }
