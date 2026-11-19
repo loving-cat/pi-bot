@@ -381,7 +381,8 @@ export class ShellRegistry {
     const entry = this.shells.get(id);
     if (!entry) return { ok: false, error: '没有这个后台进程' };
     try {
-      this.#terminateEntry(entry);      return { ok: true, wasRunning: entry.running };
+      this.#terminateEntry(entry);
+      return { ok: true, wasRunning: entry.running };
     } catch (err) {
       return { ok: false, error: String(err?.message || err) };
     }
@@ -398,7 +399,8 @@ export class ShellRegistry {
     let n = 0;
     for (const [id, entry] of this.shells) {
       if (entry.roomId !== roomId) continue;
-      this.#terminateEntry(entry);      this.shells.delete(id);
+      this.#terminateEntry(entry);
+      this.shells.delete(id);
       n++;
     }
     return n;
@@ -415,7 +417,8 @@ export class ShellRegistry {
         continue;
       }
       if (entry.running && at - entry.lastOutputAt > limit) {
-        this.#terminateEntry(entry);        this.shells.delete(id);
+        this.#terminateEntry(entry);
+        this.shells.delete(id);
         n++;
         log(`后台进程空闲超时已结束：${entry.command.slice(0, 60)}`);
       }
@@ -425,7 +428,8 @@ export class ShellRegistry {
 
   stopAll() {
     for (const entry of this.shells.values()) {
-      this.#terminateEntry(entry);    }
+      this.#terminateEntry(entry);
+      }
     this.shells.clear();
     clearInterval(this.timer);
   }

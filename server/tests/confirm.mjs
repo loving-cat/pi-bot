@@ -233,6 +233,52 @@ await test('确认记录里不含凭据字段', () => {
   }
 });
 
+// ---------------------------------------------------------------- 本机批准开关
+await test('★ 没打开「允许本机批准」时：本机批准不可恢复动作必须被拒', () => {
+  const built = buildConfirmation({
+    action: 'git.push',
+    target: { branches: ['main'] },
+    summary: '推一下 main',
+  });
+  const approved = {
+    ...built,
+    channel: 'local',
+    decision: 'approved',
+    decidedAt: Date.now(),
+    channelWeakened: true,
+  };
+  const verdict = checkConfirmation({ confirmation: approved, target: { branches: ['main'] } });
+  assert.equal(verdict.ok, false);
+  assert.equal(verdict.code, 'weak_channel');
+});
+
+await test('★ 打开了「允许本机批准」：执行边界也要认这个开关（否则设置等于没开）', () => {
+  const built = buildConfirmation({
+    action: 'git.push',
+    target: { branches: ['main'] },
+    summary: '推一下 main',
+  });
+  const approved = {
+    ...built,
+    channel: 'local',
+    decision: 'approved',
+    decidedAt: Date.now(),
+    channelWeakened: true,
+  };
+  const relaxed = checkConfirmation({
+    confirmation: approved, target: { branches: ['main'] }, allowLocal: true,
+  });
+  assert.equal(relaxed.ok, true, '设置打开 + 记录标了 weakened 就该放行');
+
+  // 只传 allowLocal 不够：记录里必须真的标过 weakened，否则等于给所有确认开后门
+  const notWeakened = checkConfirmation({
+    confirmation: { ...approved, channelWeakened: false },
+    target: { branches: ['main'] },
+    allowLocal: true,
+  });
+  assert.equal(notWeakened.ok, false, '记录没标 weakened 时不许借这个开关放行');
+});
+
 const failed = results.filter((r) => !r.ok);
 for (const r of results) {
   console.log(`${r.ok ? '✓' : '✗'} ${r.name}${r.ok ? '' : ' —— ' + r.err}`);

@@ -384,6 +384,9 @@ export function buildGitTools({ runner, store, roomId, botId, config: scopedConf
             confirmation: existing,
             target: nowTarget.target,
             policyRevision: store.policyVersion(),
+            // ★ 必须带上：用户打开了「允许本机批准」时，通道被削弱的确认要靠它放行。
+            //   不传就等于那个开关永远不生效（decideConfirmation 标了 weakened，执行时又被拒）。
+            allowLocal: store.desktopSettings().allowLocalApproval === true,
           });
           if (!verdict.ok) {
             return fail(`这次 push 不能执行：${verdict.text}（${verdict.code}）`);
@@ -551,6 +554,7 @@ export function buildGitTools({ runner, store, roomId, botId, config: scopedConf
             confirmation: existing,
             target: nowTarget,
             policyRevision: store.policyVersion(),
+            allowLocal: store.desktopSettings().allowLocalApproval === true,
           });
           if (!verdict.ok) {
             return fail(`这次 ${key} 不能执行：${verdict.text}（${verdict.code}）`);

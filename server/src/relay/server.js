@@ -377,6 +377,11 @@ function pickHeaders(url, headers = {}) {
     'x-pi-bot-client',
     'x-pi-bot-nonce',
     'x-pi-bot-channel',
+    // 品牌统一后客户端会发 x-orbis-*（http.js 两侧都认），转发时漏掉就等于
+    // 经过中转的连接突然变成“没有客户端标记 / 没有 nonce / 通道算本机”。
+    'x-orbis-client',
+    'x-orbis-nonce',
+    'x-orbis-channel',
     'x-file-name',
   ]) {
     if (headers[key]) out[key] = headers[key];

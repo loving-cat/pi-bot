@@ -191,6 +191,26 @@ await test('审计里有 push 记录', () => {
   assert.ok(actions.some((a) => a.action === 'git.push'), 'push 应留审计');
 });
 
+await test('★ 打开「允许本机批准」后，本机批准能真的推上去（执行边界必须认这个开关）', async () => {
+  newCommit('本机批准场景');
+  const out0 = await call('git_push', { repo: 'proj' });
+  assert.equal(out0.err, false, out0.text);
+  const id = out0.details.ticket;
+
+  store.setDesktopSettings({ allowLocalApproval: true });
+  try {
+    const r = store.decideConfirmation(id, { approved: true, channel: 'local' });
+    assert.ok(!r.rejected, '设置打开后本机批准应当被接受');
+    assert.equal(store.getConfirmation(id).channelWeakened, true, '要落 weakened 痕迹');
+    // ★ 关键：执行边界也要拿到 allowLocal，否则会在 checkConfirmation 再被拒一次
+    const pushed = await call('git_push', { repo: 'proj', ticket: id });
+    assert.equal(pushed.err, false, pushed.text);
+    assert.match(pushed.text, /已推送/);
+  } finally {
+    store.setDesktopSettings({ allowLocalApproval: false });
+  }
+});
+
 const failed = results.filter((r) => !r.ok);
 for (const r of results) {
   console.log(`${r.ok ? '✓' : '✗'} ${r.name}${r.ok ? '' : ' —— ' + r.err}`);
