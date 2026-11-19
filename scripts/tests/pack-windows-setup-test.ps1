@@ -10,7 +10,7 @@ if (Test-Path variable:PSNativeCommandUseErrorActionPreference) {
 
 $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $script = Join-Path $PSScriptRoot "..\pack-windows-setup.ps1"
-$testRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("pi-bot-setup-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
+$testRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("orbis-setup-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
 New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
 $pass = 0
 
@@ -48,7 +48,7 @@ try {
   # 2) Bundle without server: still a broken input, still a clean stop.
   $bareBundle = Join-Path $testRoot "bare-bundle"
   New-Item -ItemType Directory -Path $bareBundle -Force | Out-Null
-  Set-Content -LiteralPath (Join-Path $bareBundle "pi_bot.exe") -Value "stub" -Encoding Ascii
+  Set-Content -LiteralPath (Join-Path $bareBundle "orbis.exe") -Value "stub" -Encoding Ascii
   $result = Invoke-Pack @("-Bundle", $bareBundle)
   Assert-True ($result.Code -ne 0) "bundle without server should exit non-zero"
   Assert-True ($result.Text -match "server/src/index.js") "bundle without server should say what is missing"
@@ -56,7 +56,7 @@ try {
   # 3) Bad -Iscc: refuse instead of silently skipping the installer.
   $fullBundle = Join-Path $testRoot "full-bundle"
   New-Item -ItemType Directory -Path (Join-Path $fullBundle "server\src") -Force | Out-Null
-  Set-Content -LiteralPath (Join-Path $fullBundle "pi_bot.exe") -Value "stub" -Encoding Ascii
+  Set-Content -LiteralPath (Join-Path $fullBundle "orbis.exe") -Value "stub" -Encoding Ascii
   Set-Content -LiteralPath (Join-Path $fullBundle "server\src\index.js") -Value "// stub" -Encoding Ascii
   $result = Invoke-Pack @("-Bundle", $fullBundle, "-Iscc", (Join-Path $testRoot "no-such-iscc.exe"))
   Assert-True ($result.Code -ne 0) "bad -Iscc should exit non-zero"
@@ -72,7 +72,7 @@ try {
     $result = Invoke-Pack @("-Bundle", $fullBundle, "-Iscc", $iscc)
     Assert-True ($result.Code -eq 0) "fixture compile should succeed: $($result.Text)"
     $version = (& node -e "process.stdout.write(require(process.argv[1]).version)" (Join-Path $repo "server\package.json")).Trim()
-    $expected = Join-Path $result.OutDir ("pi-bot-windows-v$version-setup.exe")
+    $expected = Join-Path $result.OutDir ("orbis-windows-v$version-setup.exe")
     Assert-True (Test-Path -LiteralPath $expected) "expected $expected"
     Assert-True ($result.Text -match "sha256: [0-9a-f]{64}") "should print a sha256 for the installer"
     Assert-True (@(Get-ChildItem -LiteralPath $result.OutDir -Filter ".setup-*" -Force).Count -eq 0) "temp compile dir should be cleaned up"

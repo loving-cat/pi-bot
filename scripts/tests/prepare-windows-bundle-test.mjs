@@ -66,7 +66,7 @@ function buildPe(codeViewPath, extra = Buffer.alloc(0)) {
 function bundle(name = `fixture-${passed}`) {
   const dir = path.join(root, name);
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, 'pi_bot.exe'), 'fixture exe');
+  fs.writeFileSync(path.join(dir, 'orbis.exe'), 'fixture exe');
   return dir;
 }
 const opts = { home: otherHome, verifyDependencies: false };
@@ -81,21 +81,21 @@ try {
     assert.equal(computePeChecksum(overflow, 8), (0xffff + 4) >>> 0);
   });
   test('只缩短 CodeView 绝对路径，文件其余绝对路径保持原样', () => {
-    const abs = `${home}\\build\\pi_bot.pdb`;
+    const abs = `${home}\\build\\orbis.pdb`;
     const extra = Buffer.from(abs);
     const original = buildPe(abs, extra);
     assert.equal(count(original, abs), 2);
     const result = rewritePeDebugPaths(original);
     assert.equal(result.changed, true);
     assert.equal(count(result.buffer, abs), 1);
-    assert.ok(result.buffer.includes(Buffer.from('pi_bot.pdb\0')));
+    assert.ok(result.buffer.includes(Buffer.from('orbis.pdb\0')));
     const checksumOffset = 0x80 + 4 + 20 + 64;
     assert.equal(result.buffer.readUInt32LE(checksumOffset), computePeChecksum(result.buffer, checksumOffset));
     assert.deepEqual(original.subarray(original.length - extra.length), extra);
     assert.deepEqual(result.buffer.subarray(result.buffer.length - extra.length), extra);
   });
   test('相对 PDB 路径不改写', () => {
-    const original = buildPe('pi_bot.pdb');
+    const original = buildPe('orbis.pdb');
     const result = rewritePeDebugPaths(original);
     assert.equal(result.changed, false);
     assert.equal(result.buffer, original);
@@ -114,35 +114,35 @@ try {
   });
   test('前端 PDB 删除且调试路径改成文件名，重复执行不再改写', () => {
     const dir = bundle();
-    const abs = `${home}\\build\\pi_bot.pdb`;
-    fs.writeFileSync(path.join(dir, 'pi_bot.exe'), buildPe(abs));
+    const abs = `${home}\\build\\orbis.pdb`;
+    fs.writeFileSync(path.join(dir, 'orbis.exe'), buildPe(abs));
     fs.writeFileSync(path.join(dir, 'flutter_windows.pdb'), 'fixture symbols');
     const once = prepareWindowsBundle(dir, { ...opts, markers: [home] });
     assert.equal(once.removedPdbs, 1);
     assert.equal(once.rewrittenDebugPaths, 1);
     assert.equal(fs.existsSync(path.join(dir, 'flutter_windows.pdb')), false);
-    assert.equal(count(fs.readFileSync(path.join(dir, 'pi_bot.exe')), home), 0);
+    assert.equal(count(fs.readFileSync(path.join(dir, 'orbis.exe')), home), 0);
     const twice = prepareWindowsBundle(dir, { ...opts, markers: [home] });
     assert.equal(twice.removedPdbs, 0);
     assert.equal(twice.rewrittenDebugPaths, 0);
   });
   test('只读检查不删除 PDB 也不改 PE', () => {
     const dir = bundle();
-    const abs = `${home}\\build\\pi_bot.pdb`;
+    const abs = `${home}\\build\\orbis.pdb`;
     const original = buildPe(abs);
-    fs.writeFileSync(path.join(dir, 'pi_bot.exe'), original);
-    fs.writeFileSync(path.join(dir, 'pi_bot.pdb'), 'fixture symbols');
+    fs.writeFileSync(path.join(dir, 'orbis.exe'), original);
+    fs.writeFileSync(path.join(dir, 'orbis.pdb'), 'fixture symbols');
     assert.throws(() => prepareWindowsBundle(dir, { ...opts, checkOnly: true, markers: [home] }), /调试符号/);
-    assert.deepEqual(fs.readFileSync(path.join(dir, 'pi_bot.exe')), original);
-    assert.equal(fs.readFileSync(path.join(dir, 'pi_bot.pdb'), 'utf8'), 'fixture symbols');
+    assert.deepEqual(fs.readFileSync(path.join(dir, 'orbis.exe')), original);
+    assert.equal(fs.readFileSync(path.join(dir, 'orbis.pdb'), 'utf8'), 'fixture symbols');
   });
   test('CodeView 以外的本机路径不会被替换掉', () => {
     const dir = bundle();
-    const abs = `${home}\\build\\pi_bot.pdb`;
+    const abs = `${home}\\build\\orbis.pdb`;
     const original = buildPe(abs, Buffer.from(abs));
-    fs.writeFileSync(path.join(dir, 'pi_bot.exe'), original);
+    fs.writeFileSync(path.join(dir, 'orbis.exe'), original);
     assert.throws(() => prepareWindowsBundle(dir, { home, verifyDependencies: false }), /1 个文件包含本机路径/);
-    const after = fs.readFileSync(path.join(dir, 'pi_bot.exe'));
+    const after = fs.readFileSync(path.join(dir, 'orbis.exe'));
     assert.equal(count(after, abs), 1);
     assert.equal(after.includes(Buffer.from(home)), true);
   });
@@ -267,7 +267,7 @@ try {
     fs.writeFileSync(path.join(utf16, 'note.txt'), Buffer.from(home, 'utf16le'));
     assertRejected(utf16, /1 个文件包含本机路径/);
     const pdb = cleanPackage('pdb');
-    fs.writeFileSync(path.join(pdb, 'pi_bot.pdb'), 'symbols');
+    fs.writeFileSync(path.join(pdb, 'orbis.pdb'), 'symbols');
     assertRejected(pdb, /1 个调试符号文件/);
     const pi = cleanPackage('state-pi');
     fs.mkdirSync(path.join(pi, '.pi'));
@@ -324,7 +324,7 @@ try {
       assert.throws(() => prepareWindowsBundle(dir, opts), /链接/);
     }
     const dir = bundle('inside');
-    fs.symlinkSync('pi_bot.exe', path.join(dir, 'alias.exe'));
+    fs.symlinkSync('orbis.exe', path.join(dir, 'alias.exe'));
     assert.equal(prepareWindowsBundle(dir, opts).files >= 1, true);
   });
   test('Runner 工程把 PDB 路径限制为文件名', () => {
@@ -348,7 +348,7 @@ try {
   });
 
   // ★ 构建根路径会以编译期字符串留在 app.so / 插件 dll 里，调试路径改写碰不到它们。
-  const BUILD_ROOT = 'D:\\.pi-bot-build\\pi-bot-windows-build-abc12345';
+  const BUILD_ROOT = 'D:\\.pi-bot-build\\orbis-windows-build-abc12345';
   test('构建根占位串本身不含盘符目录与用户名', () => {
     assert.equal(BUILD_ROOT_PLACEHOLDER.includes('Users'), false);
     assert.equal(BUILD_ROOT_PLACEHOLDER.includes('.pi-bot'), false);
@@ -380,10 +380,10 @@ try {
     assert.deepEqual(buildRootNeedles('D:\\x'), ['D:\\x', 'D:/x', 'D:\\\\x'].sort((a, b) => b.length - a.length));
   });
   test('★ 回归：app.so 里的 file:/// URI 用的是基目录，不带运行 id', () => {
-    // 真实踩到的形态：pack 传的是 …/.pi-bot-build/pi-bot-windows-build-<id>，
+    // 真实踩到的形态：pack 传的是 …/.pi-bot-build/orbis-windows-build-<id>，
     // 而 app.so 里是 file:///D:/.pi-bot-build/ —— 必须能换掉基目录那一层。
     const sample = Buffer.from(
-      'x file:///D:/.pi-bot-build/pi-bot-windows-build-abc12345/app/.dart_tool/flutter y',
+      'x file:///D:/.pi-bot-build/orbis-windows-build-abc12345/app/.dart_tool/flutter y',
       'utf8',
     );
     const { buffer, rewritten } = rewriteBuildRootPaths(sample, BUILD_ROOT);

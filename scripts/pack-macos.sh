@@ -4,6 +4,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="Orbis"
+# 产物名用小写前缀（与 orbis-windows-* / orbis-android-* 保持一致）
+ARTIFACT_PREFIX="orbis"
 BUILD="$ROOT/app/build/macos/Build/Products/Release"
 OUT="$ROOT/dist"
 APP="$OUT/${APP_NAME}.app"
@@ -61,7 +63,7 @@ done
 [[ -f "$ENTITLEMENTS" ]] || fail "缺少 macOS Runner 的 Release.entitlements"
 VERSION="$(node -e 'const fs = require("node:fs"); const p = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); if (typeof p.version !== "string") process.exit(1); process.stdout.write(p.version)' "$ROOT/server/package.json")"
 [[ "$VERSION" =~ ^[0-9A-Za-z][0-9A-Za-z._+-]*$ ]] || fail "服务端版本不能用作产物文件名：$VERSION"
-DMG="$OUT/${APP_NAME}-${VERSION}.dmg"
+DMG="$OUT/${ARTIFACT_PREFIX}-${VERSION}.dmg"
 STAGE=''
 BUILD_WORK=''
 BUILD_COPY=''

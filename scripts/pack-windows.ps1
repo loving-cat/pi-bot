@@ -270,7 +270,7 @@ try {
         throw "build root is busy: another pack holds its lock"
       }
       $newId = [guid]::NewGuid().ToString("N")
-      $runDir = Join-Path $buildBase ("pi-bot-windows-build-" + $newId.Substring(0, 8))
+      $runDir = Join-Path $buildBase ("orbis-windows-build-" + $newId.Substring(0, 8))
       if (Test-Path -LiteralPath $runDir) { throw "build folder name collision; retry" }
       New-Item -ItemType Directory -Path $runDir | Out-Null
       $buildWork = $runDir

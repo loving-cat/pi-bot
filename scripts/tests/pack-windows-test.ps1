@@ -10,7 +10,7 @@ if (Test-Path variable:PSNativeCommandUseErrorActionPreference) {
 }
 
 $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$testRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("pi-bot-pack-win-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
+$testRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("orbis-pack-win-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
 New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
 $fixture = Join-Path $testRoot "repo"
 $stubs = Join-Path $testRoot "stubs"
@@ -128,13 +128,13 @@ try {
 
   $release = Join-Path $app "build\windows\x64\runner\Release"
   New-Item -ItemType Directory -Path $release -Force | Out-Null
-  Set-Content -LiteralPath (Join-Path $release "pi_bot.exe") -Value "old exe`n" -Encoding Ascii
-  Set-Content -LiteralPath (Join-Path $release "pi_bot.pdb") -Value "old pdb`n" -Encoding Ascii
+  Set-Content -LiteralPath (Join-Path $release "orbis.exe") -Value "old exe`n" -Encoding Ascii
+  Set-Content -LiteralPath (Join-Path $release "orbis.pdb") -Value "old pdb`n" -Encoding Ascii
   Set-Content -LiteralPath (Join-Path $release "sentinel.txt") -Value "old release`n" -Encoding Ascii
 
   New-Item -ItemType Directory -Path (Join-Path $fixture "dist") -Force | Out-Null
   Set-Content -LiteralPath (Join-Path $fixture "dist\keep.txt") -Value "preserve this file`n" -Encoding Ascii
-  Set-Content -LiteralPath (Join-Path $fixture "dist\pi-bot-windows.zip") -Value "old zip`n" -Encoding Ascii
+  Set-Content -LiteralPath (Join-Path $fixture "dist\orbis-windows.zip") -Value "old zip`n" -Encoding Ascii
 
   @'
 const fs = require("fs");
@@ -166,8 +166,8 @@ if (!debug || !debug.startsWith(path.dirname(process.cwd()))) process.exit(6);
 if (fail === "no-exe") process.exit(0);
 const release = path.join("build", "windows", "x64", "runner", "Release");
 fs.mkdirSync(path.join(release, "data"), { recursive: true });
-fs.writeFileSync(path.join(release, "pi_bot.exe"), "fixture exe\n");
-fs.writeFileSync(path.join(release, "pi_bot.pdb"), "fixture pdb\n");
+fs.writeFileSync(path.join(release, "orbis.exe"), "fixture exe\n");
+fs.writeFileSync(path.join(release, "orbis.pdb"), "fixture pdb\n");
 fs.writeFileSync(path.join(release, "data", "ok.txt"), "ok\n");
 if (fail === "no-debug") process.exit(0);
 fs.mkdirSync(debug, { recursive: true });
@@ -209,7 +209,7 @@ if (process.env.PACK_PLANT === "dotenv") fs.writeFileSync(".env", "TOKEN=fixture
   $previousPath = $env:PATH
   $sep = [System.IO.Path]::PathSeparator
   $env:PATH = "$stubs$sep$nugetDir$sep$previousPath"
-  $dist = Join-Path $fixture "dist\pi-bot-windows"
+  $dist = Join-Path $fixture "dist\orbis-windows"
   $debugInfo = Join-Path $app "build\debug-info\windows"
 
   function Invoke-Pack {
@@ -247,7 +247,7 @@ if (process.env.PACK_PLANT === "dotenv") fs.writeFileSync(".env", "TOKEN=fixture
     Assert-True ((Read-Norm (Join-Path $app ".dart_tool\marker")) -eq "keep-cache") "cache marker changed"
     if (Test-Path -LiteralPath $trace) {
       foreach ($line in (Get-Content -LiteralPath $trace)) {
-        if ($line -and (Test-Path -LiteralPath $line) -and $line.Contains("pi-bot-windows-build-")) {
+        if ($line -and (Test-Path -LiteralPath $line) -and $line.Contains("orbis-windows-build-")) {
           throw "temp build directory was left behind"
         }
       }
@@ -294,17 +294,17 @@ if (process.env.PACK_PLANT === "dotenv") fs.writeFileSync(".env", "TOKEN=fixture
   Assert-True ((Read-Norm (Join-Path $fixture "dist\keep.txt")) -eq "preserve this file") "keep file changed"
   Assert-Clean
   New-Item -ItemType Directory -Path $release -Force | Out-Null
-  Set-Content -LiteralPath (Join-Path $release "pi_bot.exe") -Value "old exe`n" -Encoding Ascii
-  Set-Content -LiteralPath (Join-Path $release "pi_bot.pdb") -Value "old pdb`n" -Encoding Ascii
+  Set-Content -LiteralPath (Join-Path $release "orbis.exe") -Value "old exe`n" -Encoding Ascii
+  Set-Content -LiteralPath (Join-Path $release "orbis.pdb") -Value "old pdb`n" -Encoding Ascii
   Set-Content -LiteralPath (Join-Path $release "sentinel.txt") -Value "old release`n" -Encoding Ascii
   $pass++
   Write-Host "PASS: -NoBuild without a Release build fails"
 
   Assert-True ((Invoke-Pack -ArgList @("-NoBuild")) -eq 0) "-NoBuild should succeed: $(Read-Log)"
   Assert-True ((Read-Trace).Trim().Length -eq 0) "-NoBuild invoked flutter"
-  Assert-True ((Read-Norm (Join-Path $dist "pi_bot.exe")) -eq "old exe") "exe was not packed"
-  Assert-True (-not (Test-Path -LiteralPath (Join-Path $dist "pi_bot.pdb"))) "pdb was shipped"
-  Assert-True ((Read-Norm (Join-Path $release "pi_bot.pdb")) -eq "old pdb") "local pdb was removed"
+  Assert-True ((Read-Norm (Join-Path $dist "orbis.exe")) -eq "old exe") "exe was not packed"
+  Assert-True (-not (Test-Path -LiteralPath (Join-Path $dist "orbis.pdb"))) "pdb was shipped"
+  Assert-True ((Read-Norm (Join-Path $release "orbis.pdb")) -eq "old pdb") "local pdb was removed"
   Assert-True ((Read-Norm (Join-Path $dist "server\src\index.js")) -eq "fixture server version one") "server entry missing"
   Assert-True (Test-Path -LiteralPath (Join-Path $dist "server\node_modules\installed.txt")) "deps were not installed"
   Assert-True (Test-Path -LiteralPath (Join-Path $dist "server\.env.example")) "env example missing"
@@ -327,7 +327,7 @@ if (process.env.PACK_PLANT === "dotenv") fs.writeFileSync(".env", "TOKEN=fixture
 
   Assert-ErrorText (Invoke-Pack -ArgList @("-NoBuild", "-Zip") -Fail "npm") "npm install failed" "npm failure"
   Assert-True ((Read-Norm (Join-Path $dist "server\src\index.js")) -eq "fixture server version two") "npm failure destroyed the package"
-  Assert-True ((Read-Norm (Join-Path $fixture "dist\pi-bot-windows.zip")) -eq "old zip") "npm failure destroyed the zip"
+  Assert-True ((Read-Norm (Join-Path $fixture "dist\orbis-windows.zip")) -eq "old zip") "npm failure destroyed the zip"
   Assert-True ((Read-Norm (Join-Path $fixture "dist\keep.txt")) -eq "preserve this file") "keep file changed"
   Assert-Clean
   $pass++
@@ -416,13 +416,13 @@ if (process.env.PACK_PLANT === "dotenv") fs.writeFileSync(".env", "TOKEN=fixture
 
   Assert-True ((Invoke-Pack -ArgList @("-NoBuild", "-SkipDeps")) -eq 0) "-SkipDeps should succeed: $(Read-Log)"
   Assert-True (-not (Test-Path -LiteralPath (Join-Path $dist "server\node_modules"))) "-SkipDeps installed node_modules"
-  Assert-True (-not (Test-Path -LiteralPath (Join-Path $dist "pi_bot.pdb"))) "-SkipDeps shipped a pdb"
+  Assert-True (-not (Test-Path -LiteralPath (Join-Path $dist "orbis.pdb"))) "-SkipDeps shipped a pdb"
   Assert-Clean
   $pass++
   Write-Host "PASS: -SkipDeps still scans and does not install dependencies"
 
   Assert-True ((Invoke-Pack -ArgList @("-NoBuild", "-Zip")) -eq 0) "zip should succeed: $(Read-Log)"
-  $zipPath = Join-Path $fixture "dist\pi-bot-windows.zip"
+  $zipPath = Join-Path $fixture "dist\orbis-windows.zip"
   $zipBytes = [System.IO.File]::ReadAllBytes($zipPath)
   Assert-True ($zipBytes.Length -gt 2 -and $zipBytes[0] -eq 0x50 -and $zipBytes[1] -eq 0x4b) "zip was not replaced"
   Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -432,7 +432,7 @@ if (process.env.PACK_PLANT === "dotenv") fs.writeFileSync(".env", "TOKEN=fixture
   } finally {
     $archive.Dispose()
   }
-  Assert-True (($names | Where-Object { $_ -match 'pi_bot\.exe$' }).Count -ge 1) "zip missing exe"
+  Assert-True (($names | Where-Object { $_ -match 'orbis\.exe$' }).Count -ge 1) "zip missing exe"
   Assert-True (($names | Where-Object { $_ -match '\.pdb$' }).Count -eq 0) "zip contains pdb"
   Assert-True (($names | Where-Object { $_ -match 'index\.js$' }).Count -ge 1) "zip missing server entry"
   Assert-Clean
@@ -440,19 +440,19 @@ if (process.env.PACK_PLANT === "dotenv") fs.writeFileSync(".env", "TOKEN=fixture
   Write-Host "PASS: zip is published without pdb files"
 
   Assert-True ((Invoke-Pack) -eq 0) "clean build should succeed: $(Read-Log)"
-  Assert-True ((Read-Norm (Join-Path $release "pi_bot.exe")) -eq "fixture exe") "neutral build was not copied back"
-  Assert-True ((Read-Norm (Join-Path $release "pi_bot.pdb")) -eq "fixture pdb") "local pdb was not kept"
-  Assert-True ((Read-Norm (Join-Path $dist "pi_bot.exe")) -eq "fixture exe") "dist exe mismatch"
-  Assert-True (-not (Test-Path -LiteralPath (Join-Path $dist "pi_bot.pdb"))) "dist shipped pdb"
+  Assert-True ((Read-Norm (Join-Path $release "orbis.exe")) -eq "fixture exe") "neutral build was not copied back"
+  Assert-True ((Read-Norm (Join-Path $release "orbis.pdb")) -eq "fixture pdb") "local pdb was not kept"
+  Assert-True ((Read-Norm (Join-Path $dist "orbis.exe")) -eq "fixture exe") "dist exe mismatch"
+  Assert-True (-not (Test-Path -LiteralPath (Join-Path $dist "orbis.pdb"))) "dist shipped pdb"
   Assert-True ((Read-Norm (Join-Path $debugInfo "app.symbols")) -eq "fixture symbols") "debug info was not saved"
-  Assert-True (Test-Path -LiteralPath (Join-Path $debugInfo "pdb\pi_bot.pdb")) "pdb was not saved beside debug info"
+  Assert-True (Test-Path -LiteralPath (Join-Path $debugInfo "pdb\orbis.pdb")) "pdb was not saved beside debug info"
   Assert-True ((Read-Norm (Join-Path $dist "server\src\index.js")) -eq "fixture server version two") "build pack dropped server changes"
   Assert-True ((Read-Trace).Contains("--split-debug-info=")) "build did not split debug info"
   Assert-True ((Read-Trace).Contains("build windows --release")) "flutter release args missing"
   Assert-True ((Read-Trace).Contains("pub get --enforce-lockfile --no-example")) "locked dependency resolution missing"
   Assert-True ((Read-Trace).Contains("build windows --release --no-pub")) "build can resolve dependencies again"
   if ($env:OS -eq "Windows_NT") {
-    $defaultBase = (Split-Path -Qualifier $fixture) + "\.pi-bot-build\pi-bot-windows-build-"
+    $defaultBase = (Split-Path -Qualifier $fixture) + "\.orbis-build\orbis-windows-build-"
     Assert-True ((Read-Trace).Contains($defaultBase)) "default build root is not on the checkout drive"
   }
   Assert-Clean
@@ -465,7 +465,7 @@ if (process.env.PACK_PLANT === "dotenv") fs.writeFileSync(".env", "TOKEN=fixture
   $pass++
   Write-Host "PASS: relative -BuildRoot is rejected"
 
-  $profileRoot = Join-Path $script:UserHome ("pi-bot-build-test-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
+  $profileRoot = Join-Path $script:UserHome ("orbis-build-test-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
   Assert-ErrorText (Invoke-Pack -ArgList @("-BuildRoot", $profileRoot)) "outside the user profile" "profile build root"
   Assert-True ((Read-Trace).Trim().Length -eq 0) "profile build root invoked flutter"
   Assert-True (-not (Test-Path -LiteralPath $profileRoot)) "profile build root was created"
@@ -493,19 +493,19 @@ if (process.env.PACK_PLANT === "dotenv") fs.writeFileSync(".env", "TOKEN=fixture
     Write-Host "PASS: missing nuget stops before Flutter and does not download it"
   }
 
-  $customName = ".pi-bot-build-test-" + [guid]::NewGuid().ToString("N").Substring(0, 8)
+  $customName = ".orbis-build-test-" + [guid]::NewGuid().ToString("N").Substring(0, 8)
   if ($env:OS -eq "Windows_NT") {
     $customRoot = (Split-Path -Qualifier $testRoot) + "\" + $customName
   } else {
     $customRoot = Join-Path ([System.IO.Path]::GetTempPath()) $customName
   }
-  $foreign = Join-Path $customRoot "pi-bot-windows-build-foreign"
+  $foreign = Join-Path $customRoot "orbis-windows-build-foreign"
   New-Item -ItemType Directory -Path $foreign -Force | Out-Null
   Set-Content -LiteralPath (Join-Path $foreign "keep.txt") -Value "not ours`n" -Encoding Ascii
   Assert-True ((Invoke-Pack -ArgList @("-BuildRoot", $customRoot)) -eq 0) "custom build root should succeed: $(Read-Log)"
-  Assert-True ((Read-Trace).Contains((Join-Path $customRoot "pi-bot-windows-build-"))) "custom build root was not used"
+  Assert-True ((Read-Trace).Contains((Join-Path $customRoot "orbis-windows-build-"))) "custom build root was not used"
   Assert-True ((Read-Norm (Join-Path $foreign "keep.txt")) -eq "not ours") "another folder in the build root was touched"
-  $runs = @(Get-ChildItem -LiteralPath $customRoot -Force | Where-Object { $_.Name -ne "pi-bot-windows-build-foreign" })
+  $runs = @(Get-ChildItem -LiteralPath $customRoot -Force | Where-Object { $_.Name -ne "orbis-windows-build-foreign" })
   Assert-True ($runs.Count -eq 0) "build run folder or lock was left in the build root"
   Assert-Clean
   $pass++
@@ -527,10 +527,10 @@ if (process.env.PACK_PLANT === "dotenv") fs.writeFileSync(".env", "TOKEN=fixture
   $pass++
   Write-Host "PASS: a held build root lock stops a second pack"
 
-  Set-Content -LiteralPath (Join-Path $release "pi_bot.exe") -Value "previous exe`n" -Encoding Ascii
+  Set-Content -LiteralPath (Join-Path $release "orbis.exe") -Value "previous exe`n" -Encoding Ascii
   Set-Content -LiteralPath (Join-Path $release "sentinel.txt") -Value "previous release`n" -Encoding Ascii
   Assert-ErrorText (Invoke-Pack -Fail "build") "flutter build failed" "flutter failure"
-  Assert-True ((Read-Norm (Join-Path $release "pi_bot.exe")) -eq "previous exe") "flutter failure replaced Release"
+  Assert-True ((Read-Norm (Join-Path $release "orbis.exe")) -eq "previous exe") "flutter failure replaced Release"
   Assert-True ((Read-Norm (Join-Path $release "sentinel.txt")) -eq "previous release") "flutter failure dropped sentinel"
   Assert-True ((Read-Norm (Join-Path $dist "server\src\index.js")) -eq "fixture server version two") "flutter failure destroyed dist"
   Assert-Clean
@@ -540,7 +540,7 @@ if (process.env.PACK_PLANT === "dotenv") fs.writeFileSync(".env", "TOKEN=fixture
   Assert-ErrorText (Invoke-Pack -Fail "no-exe") "did not produce" "missing exe"
   Assert-True ((Read-Norm (Join-Path $release "sentinel.txt")) -eq "previous release") "invalid output replaced Release"
   Assert-ErrorText (Invoke-Pack -Fail "no-debug") "split debug info" "missing debug info"
-  Assert-True ((Read-Norm (Join-Path $release "pi_bot.exe")) -eq "previous exe") "missing debug info replaced Release"
+  Assert-True ((Read-Norm (Join-Path $release "orbis.exe")) -eq "previous exe") "missing debug info replaced Release"
   Assert-Clean
   $pass++
   Write-Host "PASS: incomplete neutral build does not replace Release"

@@ -87,7 +87,7 @@ test('带空格的路径要被引号包住（否则 Windows 上 C:/Program Files
 });
 
 test('产物名带平台词和纯 semver', () => {
-  assert.equal(apkFileName('1.4.1'), 'pi-bot-android-v1.4.1.apk');
+  assert.equal(apkFileName('1.4.1'), 'orbis-android-v1.4.1.apk');
 });
 
 test('元数据对得上才放行', () => {
