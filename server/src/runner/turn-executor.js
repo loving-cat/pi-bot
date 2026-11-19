@@ -304,18 +304,32 @@ async function runWithLease(
   entry.liveSteps = steps;
   entry.liveDraft = render;
   entry.turnAmends = [];
-  /** 插话换条（P0-2 情形 B）：见 applyPendingReseat。 */
-  const reseatLiveMessage = () => {
+  /**
+   * 插话换条（P0-2 情形 B），**只能在消息轮次边界调用**。
+   *
+   * 为什么不能放在 delta 里（D1）：`message_update` 是先 `buffer += delta` 再 push，
+   * 此时 render() 已经把**新回复的首段**算进去了 —— 在那里换条会把新内容封进旧气泡，
+   * 接着清空草稿，新气泡直接缺开头。
+   *
+   * 所以时机固定在两处：
+   * - `message_start`：新 turn 还没吐 delta，render() 里全是旧内容；
+   * - `message_end` 之后：旧正文已 committed 进旧气泡，再换条不会污染新气泡。
+   *
+   * @param {boolean} createNext 收尾兜底时传 false —— 只封口旧气泡，不凭空建一条空的
+   */
+  const reseatAtBoundary = (createNext = true) => {
     const next = applyPendingReseat({
       store: runner.store,
       roomId,
       entry,
       botMsgId: botMsg.id,
       render,
+      steps,
       meta,
       bot,
       bus: runner.bus,
       log,
+      createNext,
       resetDraft: () => {
         committed.length = 0;
         buffer = '';
@@ -326,7 +340,6 @@ async function runWithLease(
   };
 
   const pushDelta = throttle(() => {
-    reseatLiveMessage();
     beat();
     const text = render();
     // ★ 同步落库（静默）：duplex-lane 判「这一轮到底写出正文没有」读的就是
@@ -336,7 +349,7 @@ async function runWithLease(
     runner.bus.emit('event', { t: 'msg.delta', roomId, msgId: botMsg.id, text });
   }, 80);
   const pushSteps = () => {
-    reseatLiveMessage();
+    // 工具步骤属于**当前**气泡：换条只发生在消息边界，这里不能动
     beat();
     runner.bus.emit('event', { t: 'msg.steps', roomId, msgId: botMsg.id, steps: [...steps] });
     runner.store.updateMessage(roomId, botMsg.id, { steps: [...steps] }, { silent: true });
@@ -398,6 +411,9 @@ async function runWithLease(
       }
       case 'message_start':
         if (event.message?.role === 'assistant') {
+          // ★ 换条的最佳时机（D1）：新 turn 还没吐任何 delta，render() 里全是旧内容。
+          //   在这里封口，旧的 steps 一并写进旧气泡，新气泡从空开始。
+          reseatAtBoundary(true);
           buffer = '';
           turns++;
           if (turnCap > 0 && turns >= turnCap && !stepCapHit) {
@@ -432,6 +448,9 @@ async function runWithLease(
           if (finalText.trim()) committed.push(finalText.trim());
           buffer = '';
           pushDelta.flush();
+          // ★ 旧正文已经 committed 进**旧**气泡，此时再换条（D1 第 2 条）：
+          //   早一步换会让这条 message_end 把整段旧正文 push 进新气泡，两边内容重复。
+          reseatAtBoundary(true);
         }
         break;
       case 'tool_execution_start': {
@@ -679,9 +698,10 @@ async function runWithLease(
 
     collectedArtifacts = produced;
 
-    // ★ 收尾前再兜一次：这一轮可能全是工具调用，一个 delta 都没发过，
-    //   于是 pushDelta 里的换条从未触发 —— 最终内容仍会写进插话之前的气泡。
-    reseatLiveMessage();
+    // ★ 收尾兜底（D1 第 3 条）：走到这里还有 pendingReseat，说明插话之后
+    //   这一轮**没有任何新的 assistant 轮**（纯工具 / 直接结束）。此时只能把旧气泡
+    //   封口，**不能**再建一条 —— 否则下面把缓存的 finalText 写进新气泡就是复制一份。
+    reseatAtBoundary(false);
 
     if (!finalText && !stepCapHit) {
       const digest = steps.length
@@ -861,6 +881,9 @@ async function runWithLease(
     entry.liveSteps = null;
     entry.liveDraft = null;
     entry.turnAmends = null;
+    // ★ 必须清（D2）：本轮若挂着 pendingReseat 就超时/报错/被 abort，
+    //   标志会残留在持久化的 entry 上，下一轮一吐字就被强行封口挪走。
+    entry.pendingReseat = null;
     entry.slotTicket?.release?.();
     entry.slotTicket = null;
     runner.bus.emit('event', { t: 'typing', roomId, botId: bot.id, active: false, lane: 'work', msgId: botMsg?.id ?? null });
@@ -885,6 +908,10 @@ async function runWithLease(
 export function applyPendingReseat({
   store, roomId, entry, botMsgId, render, meta = null, bot, bus = null, log: logFn = () => {},
   resetDraft = null,
+  /** 这一轮已产生的工具步骤：封口旧气泡时要一起写进去，否则会被清空丢弃（D1 第 3 条） */
+  steps = null,
+  /** false = 只封口旧气泡，不新建（收尾兜底用，避免复制出第二份内容） */
+  createNext = true,
 } = {}) {
   const pending = entry?.pendingReseat;
   if (!pending) return null;
@@ -896,6 +923,8 @@ export function applyPendingReseat({
     store.updateMessage(roomId, botMsgId, {
       text: sealed,
       status: 'done',
+      // ★ 工具步骤属于这一轮：封口时一并写进去，别让随后的 resetDraft 把它们清丢
+      ...(Array.isArray(steps) ? { steps: [...steps] } : {}),
       meta: { ...(oldMsg?.meta ?? {}), reseatAfterId: pending.afterId },
     }, { silent: false });
   } catch (err) {
@@ -903,6 +932,9 @@ export function applyPendingReseat({
   }
 
   if (typeof resetDraft === 'function') resetDraft();
+
+  // 收尾兜底：只封口，不新建 —— 否则调用方接着把同一份 finalText 写进新气泡就是复制
+  if (!createNext) return null;
 
   let next;
   try {
@@ -922,7 +954,8 @@ export function applyPendingReseat({
   }
   store.moveMessageAfter(roomId, next.id, pending.afterId, { touch: true });
   entry.liveMsgId = next.id;
-  bus?.emit?.('event', { t: 'msg.new', msg: next });
+  // ★ 不再手动补发 msg.new：store.appendMessage 内部已经发过一次（D3 第 1 条）。
+  //   重复广播会让总线 / SDK 订阅者收到两条同样的新建事件。
   bus?.emit?.('event', { t: 'typing', roomId, botId: bot?.id ?? null, active: true, lane: 'work', msgId: next.id });
   return next;
 }

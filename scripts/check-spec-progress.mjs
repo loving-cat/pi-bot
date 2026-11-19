@@ -69,6 +69,17 @@ for (const relDoc of LEDGER_FILES) {
         const objType = runGit(['cat-file', '-t', sha]);
         if (objType !== 'commit') {
           problems.push(`${relDoc}:${idx + 1} 引用 \`${sha}\` 不是 commit（实际为 ${objType}）`);
+        } else {
+          // ★ 光「对象存在」不够（2026-11-19 实测踩到）：rebase 之后旧提交对象
+          //   还躺在 .git/objects 里，cat-file 查得到，但它不在任何分支上 ——
+          //   换台机器 clone 就核验不到了。必须真的在 HEAD 的祖先链上。
+          try {
+            runGit(['merge-base', '--is-ancestor', sha, 'HEAD']);
+          } catch {
+            problems.push(
+              `${relDoc}:${idx + 1} 引用的 commit \`${sha}\` 不在 HEAD 的历史上（rebase 前的孤儿？）`,
+            );
+          }
         }
       } catch {
         problems.push(`${relDoc}:${idx + 1} 引用的 commit \`${sha}\` 在当前 git 历史中不存在`);

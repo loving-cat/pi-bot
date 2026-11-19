@@ -1,6 +1,6 @@
 # Spec：收束与交付 v1（rev.7）
 
-> **状态**：🔥 **P0 两项已收口（P0-1 `c7e140a` / P0-2 `71a18e8`，验证见各自小节）**；其余纯代码项（W0 / W1 / W3 / W4 / W5 / W6-3 / W7 / `#33` / `A1`–`A3`）✅ 已收口；W2 🟡 只剩 W2d macOS（#30）与多屏/锁屏实机（#31/#32）；W6 🟡 剩两项真机
+> **状态**：🔥 **P0 两项已收口（P0-1 `1f17642` / P0-2 `93f8b1a`，验证见各自小节）**；其余纯代码项（W0 / W1 / W3 / W4 / W5 / W6-3 / W7 / `#33` / `A1`–`A3`）✅ 已收口；W2 🟡 只剩 W2d macOS（#30）与多屏/锁屏实机（#31/#32）；W6 🟡 剩两项真机
 > **日期**：2026-11-19（rev.7：新增两条 P0 置顶需求——进度回执「i + 1」连续聚合、插话后 Bot 回复必须落在最新位置，同步 `main` @ `a345eea`）
 > **对应主干**：`main` @ `a345eea`（已合入 `W4` `527040f`、`W5` `c0aaeea`..`4f0cfb1`、`#33` 拖拽、`#38` 安全/配额/Jev 熔断与 `A1`–`A3` 二级强确认 `a345eea`）
 > **实测基线（2026-11-19 复跑）**：服务端 **157/157** 测试文件通过（含 `sandbox-win` **30/30**，口径以 `cd server && node tests/all.mjs` 输出为准）、App `flutter test` **931** 通过 / 3 跳过、`check-capability-drift`（16 动作 / 72 工具）、`check-consistency`、`check-style`（21 个纯逻辑模块）、`check-spec-progress`、`scripts/tests/all.mjs`（打包脚本单测）全绿。
@@ -19,7 +19,7 @@
 
 ## P0 · 当前最高优先级待办（供 ds 立刻执行）
 
-### P0-1 · 进度回执「i + 1」连续聚合 〔✅ 已收口 `c7e140a`〕
+### P0-1 · 进度回执「i + 1」连续聚合 〔✅ 已收口 `1f17642`〕
 
 **收口记录（2026-11-19）**：`groupProgressMessages` 去掉 `dispatchId` 断组条件，改为
 「同 `roomId` + 同 `meta.fromRoomId` + 时间窗内连续」；`dispatchId`/`re` 保留在 meta 里，
@@ -46,7 +46,7 @@
    - 更新 `app/test/progress_group_source_test.dart`（将原“不同 `dispatchId` 断组”旧断言改为“同 `roomId` + 同 `fromRoomId` + 窗口内不同 `dispatchId` 连续合并成 1 组、计数累加”；保留“不同 `fromRoomId` 必须断组”与“超窗口断组”）与 `app/test/progress_messages_test.dart`；
    - 验收：`cd app && flutter analyze && flutter test test/progress_group_source_test.dart test/progress_messages_test.dart` 及全量 `flutter test` 全绿。
 
-### P0-2 · 忙时插话（`amend` / `steer`）后 Bot 回复必须落在最新位置 〔✅ 已收口 `71a18e8`〕
+### P0-2 · 忙时插话（`amend` / `steer`）后 Bot 回复必须落在最新位置 〔✅ 已收口 `93f8b1a`〕
 
 **收口记录（2026-11-19）**：判定抽成 `hasVisibleBody()`；三条路径统一走
 `settleLiveAfterInsert()`（空占位 → 直接 `moveMessageAfter`；已写正文 → 打

@@ -42,7 +42,11 @@ function settleLiveAfterInsert(runner, { roomId, entry, userMessage }) {
   if (!liveMsgId || liveMsgId === userMessage?.id) return 'none';
   const live = runner.store.getMessage(roomId, liveMsgId);
   if (!live) return 'none';
-  if (hasVisibleBody(live)) {
+  // ★ 不能只看 store（D3 第 2 条）：pushDelta 有 80ms 节流，首包可能是空白
+  //   （例如只发了一个空格 / 换行），此时正文还在 entry.liveDraft 的缓冲里没落库。
+  //   只判 store 会把“已经写出来了”误判成空占位，直接挪走已显示的气泡（FD-0 破）。
+  const draftText = typeof entry?.liveDraft === 'function' ? entry.liveDraft() : '';
+  if (hasVisibleBody(live) || hasVisibleBody({ text: draftText })) {
     entry.pendingReseat = { afterId: userMessage.id, oldMsgId: liveMsgId };
     return 'reseat';
   }

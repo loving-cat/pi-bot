@@ -29,7 +29,7 @@ globalThis.fetch = () => { throw new Error('test forbids network'); };
 const { store } = await import('../src/store.js');
 const { bus } = await import('../src/bus.js');
 const { PiRunner } = await import('../src/pi-runner.js');
-const { applyPendingReseat } = await import('../src/runner/turn-executor.js');
+const { applyPendingReseat, executeTurn } = await import('../src/runner/turn-executor.js');
 const { createSessionBuilder } = await import('../src/session-factory.js');
 const { buildCommonTools } = await import('../src/tools.js');
 const { openRequest, createRequestLifecycle } = await import('../src/coordination/task-request-gate.js');
@@ -565,6 +565,74 @@ await test('FD-1 session-factory 旁路 talkLane 强制纯内存与只读工具�
   assert.equal(capturedOptions.resourceLoader.options.noExtensions, true);
   assert.equal(capturedOptions.resourceLoader.options.noMcp, true);
   assert.equal(store.sessionFileFor(dm.id, bot.id), null, 'Talk 不写 store sessionFile');
+});
+
+
+await test('★ D1：换条落在消息边界 —— 旧气泡只留旧正文、新气泡完整保留首段且不重复', async () => {
+  const bot = store.createBot({ name: '工匠D1', persona: 'x' });
+  const dm = store.ensureDm(bot.id);
+  const runner = makeRunner();
+
+  const listeners = [];
+  let releaseOld;
+  const oldDone = new Promise((r) => { releaseOld = r; });
+  let openGate;
+  const gate = new Promise((r) => { openGate = r; });
+
+  const session = {
+    model,
+    subscribe: (fn) => { listeners.push(fn); return () => {}; },
+    abort: async () => {},
+    prompt: async () => {
+      const emit = (ev) => { for (const fn of listeners) fn(ev); };
+      // 旧轮：吐出一段正文并收尾
+      emit({ type: 'message_start', message: { role: 'assistant' } });
+      emit({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: '旧正文' } });
+      emit({ type: 'message_end', message: { role: 'assistant', usage: {}, content: [{ type: 'text', text: '旧正文' }] } });
+      releaseOld();
+      await gate; // 等测试把插话塞进来
+      // 插话之后的新轮
+      emit({ type: 'message_start', message: { role: 'assistant' } });
+      emit({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: '新回复' } });
+      emit({ type: 'message_end', message: { role: 'assistant', usage: {}, content: [{ type: 'text', text: '新回复' }] } });
+    },
+  };
+  const entry = {
+    bot, busy: false, session, liveMsgId: null, turnAmends: [], pendingReseat: null,
+  };
+  runner.sessions.set(`${dm.id}:${bot.id}`, entry);
+  // 装配点打桩：这一轮就用我们造的 entry（不测 ensureSession 本身）
+  runner.ensureSession = async () => entry;
+
+  const running = executeTurn(runner, dm.id, bot.id, '测试', { skipUserMessage: true });
+  await oldDone;
+
+  const liveId = entry.liveMsgId;
+  assert.ok(liveId, '旧轮应当已经建了气泡');
+  // 模拟情形 B：插话落盘 + 标记换条（duplex-lane 的 settleLiveAfterInsert 做同一件事）
+  const userMessage = store.appendMessage({
+    roomId: dm.id, authorType: 'user', authorName: '我', text: '周末去哪儿', status: 'done',
+    meta: { duplex: 'amend' },
+  });
+  entry.pendingReseat = { afterId: userMessage.id, oldMsgId: liveId };
+
+  openGate();
+  const out = await running;
+
+  const msgs = store.listMessages(dm.id);
+  const order = msgs.map((m) => m.id);
+  const oldMsg = msgs.find((m) => m.id === liveId);
+  const newBots = msgs.filter((m) => m.authorType === 'bot' && m.id !== liveId);
+
+  assert.equal(oldMsg.status, 'done', '旧气泡要封口');
+  assert.equal(oldMsg.text, '旧正文', '旧气泡不能混入新回复的首段（D1 第 1 条）');
+  assert.equal(newBots.length, 1, '只能多出一条新气泡，不能把旧正文复制一份（D1 第 2/3 条）');
+  assert.equal(newBots[0].text, '新回复', '新气泡必须完整保留新回复首段');
+  assert.ok(
+    order.indexOf(userMessage.id) < order.indexOf(newBots[0].id),
+    '新回复要排在插话之后',
+  );
+  assert.equal(out.ok, true, out.error ?? '');
 });
 
 let failed = 0;
