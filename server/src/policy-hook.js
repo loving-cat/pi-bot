@@ -26,18 +26,18 @@ import { mcpApprovalSummary } from './mcp-approval-summary.js';
 //   带着已经不该给它的工具句柄继续跑。工具集那道门在“造工具”时生效，这道在“真调用”时生效。
 const CHIEF_ONLY_SET = new Set(CHIEF_ONLY_TOOLS);
 
-/**
- * 二级强确认的“目标”：用来绑定“用户批的就是这件事”。
- *
- * 只取会影响结果的标识（哪个 bot / 哪个技能 / 哪条策略），**不含凭据**。
- * 摘要绑定的意义：用户批的是“删掉 X”，模型就不能拿这张票去删 Y。
- */
-function secondFactorTargetOf(tool, input = {}) {
-  const raw = input ?? {};
-  const key = String(raw.id ?? raw.botId ?? raw.name ?? raw.slug ?? raw.target ?? '').trim();
-  return { tool, key: key.slice(0, 120) };
-}
-
+/**
+ * 二级强确认的“目标”：用来绑定“用户批的就是这件事”。
+ *
+ * 只取会影响结果的标识（哪个 bot / 哪个技能 / 哪条策略），**不含凭据**。
+ * 摘要绑定的意义：用户批的是“删掉 X”，模型就不能拿这张票去删 Y。
+ */
+function secondFactorTargetOf(tool, input = {}) {
+  const raw = input ?? {};
+  const key = String(raw.id ?? raw.botId ?? raw.name ?? raw.slug ?? raw.target ?? '').trim();
+  return { tool, key: key.slice(0, 120) };
+}
+
 /** 执行命令的工具名 */
 const SHELL_TOOLS = new Set(['bash', 'powershell']);
 
