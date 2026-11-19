@@ -166,7 +166,7 @@ const areaChat = StringArea(
     'bots.modelSummary': '{model} · thinking {thinking}',
 
     // ---- 配对 ----
-    'pair.tagline': '连上你自己的 pi agent',
+    'pair.tagline': '连上你自己的 Orbis',
     'pair.orManual': '或者手动填',
     'pair.serverUrl': '服务器地址',
     'pair.codeLabel': '6 位配对码',
@@ -408,7 +408,7 @@ const areaChat = StringArea(
     'bots.modelSummary': '{model} · thinking {thinking}',
 
     // ---- Pairing ----
-    'pair.tagline': 'Connect to your own pi agent',
+    'pair.tagline': 'Connect to your own Orbis',
     'pair.orManual': 'or fill it in manually',
     'pair.serverUrl': 'Server address',
     'pair.codeLabel': '6-digit pairing code',
