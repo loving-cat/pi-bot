@@ -86,7 +86,7 @@ export function createRelay({ secret = '', port = 8788, host = '0.0.0.0' } = {})
       socket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n');
       return socket.destroy();
     }
-    return wss.handleUpgrade(req, socket, head, (ws) => onClientWs(ws, room, url, code));
+    return wss.handleUpgrade(req, socket, head, (ws) => onClientWs(ws, room, url, code, req.headers));
   });
 
   function onAgent(ws, url) {
@@ -200,12 +200,12 @@ export function createRelay({ secret = '', port = 8788, host = '0.0.0.0' } = {})
     }
   }
 
-  function onClientWs(client, room, url, code) {
+  function onClientWs(client, room, url, code, reqHeaders = {}) {
     const id = `ws_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     const path = `${url.pathname}${url.search}`.replace(`/${code}`, '');
     room.streams.set(id, client);
     try {
-      room.socket.send(encodeFrame({ t: 'ws-open', id, path, headers: pickHeaders(url) }));
+      room.socket.send(encodeFrame({ t: 'ws-open', id, path, headers: pickHeaders(url, reqHeaders) }));
     } catch (err) {
       log(`中转：ws-open 发送失败：${err?.message || err}`);
       room.streams.delete(id);
@@ -365,12 +365,20 @@ function json(res, status, body) {
 }
 
 /**
- * 转发时只带必要头：鉴权、内容类型，以及客户端标记头 x-pi-bot-client
- * （电脑侧服务端要求所有改状态的请求都带它，少了会 403）。
+ * 转发时只带必要头：鉴权、内容类型、客户端标记、管理 nonce、通道标记与上传文件名
+ * （电脑侧服务端要求这些自定义头，少了会 403 或丢通道信息）。
  */
 function pickHeaders(url, headers = {}) {
   const out = {};
-  for (const key of ['authorization', 'content-type', 'accept', 'x-pi-bot-client']) {
+  for (const key of [
+    'authorization',
+    'content-type',
+    'accept',
+    'x-pi-bot-client',
+    'x-pi-bot-nonce',
+    'x-pi-bot-channel',
+    'x-file-name',
+  ]) {
     if (headers[key]) out[key] = headers[key];
   }
   // token 也可能在 query 里（附件 URL 就是这么用的）

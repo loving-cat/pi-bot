@@ -15,8 +15,9 @@ import { createRequestResultService, createTerminalPublisher } from './tasks/tas
 import { createRequestReceipts } from './tasks/task-request-receipts.js';
 import { projectTaskRunList } from './tasks/task-projection.js';
 import { attachmentDeletionRevision, withoutDeletedAttachments } from './attachments.js';
-import { serverInfo, LOCAL_DEVICE, hostAllowed, isLocalToken } from './http.js';
+import { serverInfo, LOCAL_DEVICE, hostAllowed, isLoopback, isLocalToken } from './http.js';
 import { log, timingSafeEqual } from './util.js';
+import { activeTls } from './tls.js';
 
 /**
  * 首次接单请求的发送：预约 → 作用域 → 理解轮 → 收尾。
@@ -127,7 +128,9 @@ export function attachWs(server, { runner }) {
         return { id: 'static', name: 'static-token' };
       }
       // ★ 本机 token：和 HTTP 用同一份凭据（见 http.js 的 isLocalTokenValid）。
-      if (config.trustLocal && isLocalToken(token, config.dataDir)) {
+      // ★ 必须同时来自 loopback：只校验 token 就等于“谁拿到这串 token 都能冒充本机设备”，
+      //   而本机 token 的强度远低于设备 token（它经常出现在本地脚本/日志里）。
+      if (config.trustLocal && isLoopback(req) && isLocalToken(token, config.dataDir)) {
         return { ...LOCAL_DEVICE };
       }
       const device = store.findDeviceByToken(token);
@@ -318,6 +321,12 @@ export function verifyWsClient({ origin, req }, cfg = defaultConfig) {
     return false;
   }
   if (o.protocol !== 'http:' && o.protocol !== 'https:') return false;
+  // 反代 / HTTPS：浏览器发的 Origin 和 Host 完全同源时直接放行 ——
+  // 那个端口可能是 TLS 端口或反代端口，跟明文 HTTP 的 cfg.port 不是同一个数。
+  const reqHost = String(req.headers.host ?? '').trim().toLowerCase();
+  if (reqHost && o.host.toLowerCase() === reqHost && hostAllowed(o.host, cfg)) return true;
   const port = o.port || (o.protocol === 'https:' ? '443' : '80');
-  return hostAllowed(o.host, cfg) && port === String(cfg.port);
+  const tlsPort = activeTls()?.port;
+  return hostAllowed(o.host, cfg) && (port === String(cfg.port) || (tlsPort && port === String(tlsPort)));
+
 }

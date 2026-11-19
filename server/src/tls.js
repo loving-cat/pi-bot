@@ -62,6 +62,11 @@ const octetString = (buf) => tlv(0x04, buf);
 const utf8 = (text) => tlv(0x0c, Buffer.from(text, 'utf8'));
 const ia5 = (text) => tlv(0x16, Buffer.from(text, 'ascii'));
 const utcTime = (date) => tlv(0x17, Buffer.from(stamp(date), 'ascii'));
+const asn1Time = (date) => (
+  date.getUTCFullYear() < 2050
+    ? utcTime(date)
+    : tlv(0x18, Buffer.from(`${date.getUTCFullYear()}${stamp(date).slice(2)}`, 'ascii'))
+);
 const nullValue = () => tlv(0x05);
 
 function stamp(date) {
@@ -122,10 +127,24 @@ function subjectAltName({ hostnames, ips }) {
 
 /**
  * 签一张自签证书。
+ * @param {string|null} [opts.keyPem] 复用已有私钥 PEM，失败时回退重新生成 RSA 2048 密钥对
  * @returns {{certPem:string, keyPem:string, certDer:Buffer, fingerprint:string}}
  */
-export function createSelfSignedCertificate({ commonName = 'pi-bot', ips = [], days = VALID_DAYS } = {}) {
-  const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+export function createSelfSignedCertificate({ commonName = 'pi-bot', ips = [], days = VALID_DAYS, keyPem = null } = {}) {
+  let privateKey = null;
+  let publicKey = null;
+  if (keyPem) {
+    try {
+      privateKey = crypto.createPrivateKey(keyPem);
+      publicKey = crypto.createPublicKey(privateKey);
+    } catch {
+      privateKey = null;
+      publicKey = null;
+    }
+  }
+  if (!privateKey || !publicKey) {
+    ({ publicKey, privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 }));
+  }
   const spki = publicKey.export({ type: 'spki', format: 'der' });
   const hostnames = ['localhost', 'pi-bot.local'];
   const ipList = Array.from(new Set(['127.0.0.1', ...ips]));
@@ -156,7 +175,7 @@ export function createSelfSignedCertificate({ commonName = 'pi-bot', ips = [], d
     int(serial),
     signatureAlg,
     subject, // issuer == subject（自签）
-    seq(utcTime(notBefore), utcTime(notAfter)),
+    seq(asn1Time(notBefore), asn1Time(notAfter)),
     subject,
     spki,
     explicit(3, extensions),
@@ -166,10 +185,10 @@ export function createSelfSignedCertificate({ commonName = 'pi-bot', ips = [], d
   const certDer = seq(tbs, signatureAlg, bitString(signature));
 
   const certPem = pem('CERTIFICATE', certDer);
-  const keyPem = privateKey.export({ type: 'pkcs8', format: 'pem' });
+  const exportedKeyPem = privateKey.export({ type: 'pkcs8', format: 'pem' });
   return {
     certPem,
-    keyPem: String(keyPem),
+    keyPem: String(exportedKeyPem),
     certDer,
     fingerprint: crypto.createHash('sha256').update(certDer).digest('hex'),
   };
@@ -212,28 +231,36 @@ export function ensureTlsMaterial({ dir, commonName = 'pi-bot', log = () => {} }
   const keyPath = path.join(dir, 'key.pem');
   const wanted = lanAddresses().map((entry) => entry.address);
 
+  let prevIps = [];
+  let prevKeyPem = null;
   let certPem = null;
   if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
     const existing = fs.readFileSync(certPath, 'utf8');
-    const covered = new Set(certificateIps(existing));
-    const missing = wanted.filter((ip) => !covered.has(ip));
-    let expired = false;
+    prevKeyPem = fs.readFileSync(keyPath, 'utf8');
     try {
-      expired = new Date(new crypto.X509Certificate(existing).validTo).getTime() < Date.now() + 86_400_000;
+      prevIps = certificateIps(existing);
+      const covered = new Set(prevIps);
+      const missing = wanted.filter((ip) => !covered.has(ip));
+      const expired = new Date(new crypto.X509Certificate(existing).validTo).getTime() < Date.now() + 86_400_000;
+      if (missing.length === 0 && !expired) {
+        certPem = existing;
+      } else {
+        log(
+          `[tls] 证书需要重签：${expired ? '快过期了' : `缺这些地址 ${missing.join(', ')}`}`,
+        );
+      }
     } catch {
-      expired = true;
-    }
-    if (missing.length === 0 && !expired) {
-      certPem = existing;
-    } else {
-      log(
-        `[tls] 证书需要重签：${expired ? '快过期了' : `缺这些地址 ${missing.join(', ')}`}`,
-      );
+      prevIps = [];
+      log('[tls] 证书无法解析，将重新签发');
     }
   }
 
   if (!certPem) {
-    const created = createSelfSignedCertificate({ commonName, ips: wanted });
+    const created = createSelfSignedCertificate({
+      commonName,
+      ips: Array.from(new Set([...prevIps, ...wanted])).slice(-32),
+      keyPem: prevKeyPem,
+    });
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(certPath, created.certPem, { mode: 0o600 });
     fs.writeFileSync(keyPath, created.keyPem, { mode: 0o600 });

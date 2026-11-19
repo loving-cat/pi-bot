@@ -276,6 +276,8 @@ export function windowsSandboxMessage(reason, detail = '') {
       return `创建进程作业对象失败${tail}，拒绝执行`;
     case 'CREATE_FAILED':
       return `在沙箱里启动进程失败${tail}，拒绝执行`;
+    case 'PROCESS_NTSTATUS':
+      return `沙箱内进程异常终止${tail}（非交互桌面或系统组件初始化失败），拒绝执行`;
     case 'ATTR_FAILED':
       return `设置 AppContainer 启动属性失败${tail}，拒绝执行`;
     case 'BAD_ENV':

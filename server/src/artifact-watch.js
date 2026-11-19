@@ -42,7 +42,7 @@ export function collectArtifacts(root, before, opts = {}) {
 
   let diff;
   try {
-    diff = diffSnapshots(before, snapshotWorkspace(root));
+    diff = diffSnapshots(before, opts.after ?? snapshotWorkspace(root));
   } catch {
     return [];
   }
