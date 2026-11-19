@@ -21,7 +21,7 @@
 ## 构建
 
 ```bash
-node scripts/pack-android.mjs                  # → dist/pi-bot-android-v<版本>.apk
+node scripts/pack-android.mjs                  # → dist/orbis-android-v<版本>.apk
 node scripts/pack-android.mjs --abi arm64      # 只打 arm64（体积约减半）
 node scripts/pack-android.mjs --no-build       # 复用已有构建，只重新校验 + 改名
 ```
@@ -31,7 +31,7 @@ node scripts/pack-android.mjs --no-build       # 复用已有构建，只重新�
 | 需要 | 版本 | 脚本怎么查 |
 |---|---|---|
 | Flutter SDK | 3.47.7（和 CI 一致） | `flutter --version`，PATH 里必须有 |
-| JDK | **17+** | 读 `java -version`，1.8 直接拒 |
+| JDK | **17+** | 读 `java -version`，1.8 直接拒。本机（2026-11-19）可用的是 `%USERPROFILE%\.jdks\openjdk-21.0.2`：`JAVA_HOME="C:\Users\<you>\.jdks\openjdk-21.0.2" node scripts/pack-android.mjs` |
 | Android SDK | platform 36 + build-tools | `app/android/local.properties` 的 `sdk.dir` 或 `ANDROID_HOME`，用来找 `apksigner` |
 
 脚本不是 `flutter build apk` 的包装皮，它自己判四件事，判不过就不产出包：
@@ -213,7 +213,7 @@ UDP 8788 三个都要放行**（允许的是同一个程序，通常一次就够
 模拟器只能验到"能不能起来 + 配对页排版"，其余必须真机：
 
 ```bash
-adb install -r dist/pi-bot-android-v1.4.1.apk
+adb install -r dist/orbis-android-v1.7.0.apk
 adb shell am start -n com.pibot.pi_bot/.MainActivity
 ```
 

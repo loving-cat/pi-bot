@@ -14,20 +14,20 @@
 
 ```powershell
 flutter config --enable-windows-desktop
-.\scripts\pack-windows.ps1                 # dist/pi-bot-windows
-.\scripts\pack-windows.ps1 -Zip            # + dist/pi-bot-windows.zip
+.\scripts\pack-windows.ps1                 # dist/orbis-windows
+.\scripts\pack-windows.ps1 -Zip            # + dist/orbis-windows.zip
 .\scripts\pack-windows.ps1 -WithNode -Zip  # 把本机 node.exe 一起打进去
 .\scripts\pack-windows.ps1 -NoBuild        # 复用已有 Release 产物
 .\scripts\pack-windows.ps1 -SkipDeps       # 不预装依赖（首启动时 npm install）
 .\scripts\pack-windows.ps1 -BuildRoot E:\builds  # 指定中立构建根目录
 .\scripts\pack-windows.ps1 -Help
 
-.\scripts\pack-windows-setup.ps1           # + dist/pi-bot-windows-v<ver>-setup.exe
+.\scripts\pack-windows-setup.ps1           # + dist/orbis-windows-v<ver>-setup.exe
 .\scripts\pack-windows-setup.ps1 -Help     # 安装包打包的选项
 ```
 
 **一键安装包（setup.exe）**：`pack-windows-setup.ps1` 不重新构建，它把
-`dist/pi-bot-windows` 现成的目录整个封进 Inno Setup，所以要先跑上面那个带 `-WithNode -Zip`
+`dist/orbis-windows` 现成的目录整个封进 Inno Setup，所以要先跑上面那个带 `-WithNode -Zip`
 的目录打包（封的就是那边已经扫过的字节：无本机路径、无 `.pdb`、无本地状态）。
 它需要 Inno Setup 6：`winget install JRSoftware.InnoSetup`（按用户安装即可，脚本从 PATH
 和常见安装位置找 `ISCC.exe`，也可以用 `-Iscc` 指定）。
@@ -56,7 +56,7 @@ flutter config --enable-windows-desktop
 
 - `-BuildRoot` 必须是绝对路径（带盘符或 UNC），相对路径直接报错；
 - 不能落在用户目录（`USERPROFILE`）或源码目录里面，报错时不打印具体路径；
-- 每次运行在根目录下新建 `pi-bot-windows-build-<rand>/`，写入标记文件 `.pi-bot-build-run`，
+- 每次运行在根目录下新建 `orbis-windows-build-<rand>/`，写入标记文件 `.orbis-build-run`，
   结束时只删除标记和本次一致的那个子目录，根目录里的其他东西不碰；默认根目录若是本次新建且已空，会顺手删掉；
 - 运行期间持有根目录下 `.pack-windows.lock` 的独占锁，同一根目录上的第二个打包会报「build root is busy」并直接退出。
 
@@ -78,7 +78,7 @@ PE 的 CodeView 绝对路径收成文件名，并删掉发行目录里的前端 
 包内布局：
 
 ```
-pi-bot-windows/
+orbis-windows/
   pi_bot.exe
   <flutter_windows.dll / *_plugin.dll / data/>
   node.exe          （仅 -WithNode）
@@ -88,7 +88,7 @@ pi-bot-windows/
 ```
 
 **打包是「先暂存再换成品」**：内容先铺在 `dist/.pack-windows-<rand>/`，装完依赖并做完下面的
-检查，才替换 `dist/pi-bot-windows`。失败时把上一版目录和 zip 搬回去。本地 Release 的替换也是
+检查，才替换 `dist/orbis-windows`。失败时把上一版目录和 zip 搬回去。本地 Release 的替换也是
 同一套备份；构建失败不会拿一份残缺产物覆盖它。
 
 换成品之前，`scripts/prepare-windows-bundle.mjs` 会让这次发布失败（而不是悄悄发出去），如果暂存目录里还有：
@@ -289,7 +289,7 @@ idle 与光标位置，分成三类说出来：
 | `flutter test` | 689 passed / 3 skipped |
 | `pack-windows.ps1 -WithNode -Zip` | 成功；中立构建根构建，Flutter 构建 307s |
 | 发行包扫描 | `{"files":18442,"removedPdbs":0,"rewrittenDebugPaths":1,"rewrittenBuildRoots":2,"serverPeFiles":3,"nativeAssets":0,"dependencies":8}` |
-| 产物 | `dist/pi-bot-windows` 391MB / zip 123.7MB（18538 个文件） |
+| 产物 | `dist/orbis-windows` 391MB / zip 123.7MB（18538 个文件） |
 | 真机启动 | 包内 node 拉起 `server/src/index.js`，监听 8787，本机连接正常 |
 | `GET /health` | `ok=true version=1.3.14` |
 | `pack-windows-setup.ps1` | 成功；setup.exe 71.8MB，编译 57s |

@@ -1,8 +1,8 @@
-# Spec：收束与交付 v1（rev.6）
+# Spec：收束与交付 v1（rev.7）
 
-> **状态**：执行中（W0 / W1 / W3 / W4 / W5 / W7 ✅ 已收口；W2 🟡 只剩 W2d macOS 实机（#30）；W6 🟡 只剩两项真机门禁）
-> **日期**：2026-11-19（rev.6：W5 全项收口、补上 R6 漏提交的死代码清理、W6-3 worktree 修复入账并复跑基线）
-> **对应主干**：`main` @ `4f0cfb1`（在 `fe4e501` 后已合入 W4 收口 `527040f`、W5 看板 `c0aaeea`、`R1`–`R4` 收口 `47fefb3`、`R5`–`R6` 收口 `6724f7d` + `4f0cfb1`）
+> **状态**：🔥 **P0 待办：进度回执「i + 1」连续聚合（置顶，待 ds 立刻收口）**；其余纯代码项（W0 / W1 / W3 / W4 / W5 / W6-3 / W7 / `#33` / `A1`–`A3`）✅ 已收口；W2 🟡 只剩 W2d macOS（#30）与多屏/锁屏实机（#31/#32）；W6 🟡 剩两项真机
+> **日期**：2026-11-19（rev.7：新增 P0 置顶需求——私聊/群聊进度回执「i + 1」连续聚合，同步 `main` @ `a345eea`）
+> **对应主干**：`main` @ `a345eea`（已合入 `W4` `527040f`、`W5` `c0aaeea`..`4f0cfb1`、`#33` 拖拽、`#38` 安全/配额/Jev 熔断与 `A1`–`A3` 二级强确认 `a345eea`）
 > **实测基线（2026-11-19 复跑）**：服务端 **157/157** 测试文件通过（含 `sandbox-win` **30/30**，口径以 `cd server && node tests/all.mjs` 输出为准）、App `flutter test` **931** 通过 / 3 跳过、`check-capability-drift`（16 动作 / 72 工具）、`check-consistency`、`check-style`（21 个纯逻辑模块）、`check-spec-progress`、`scripts/tests/all.mjs`（打包脚本单测）全绿。
 > **项目定位**：**Orbis**（兼容 `PI_BOT_*` 与旧导出名）要做**像 `pi-coding-agent` 那样的可嵌入多 Agent 基座** ——
 > 能力靠**声明式清单 + 统一领域服务**扩展，不靠散落的 `if` 分支；以单骨架（`Capabilities + Services + Runner 子模块 + GrantGate`）同时支撑 App、主控 Jarvis 总管家与 SDK（`createOrbisRuntime` / `createOrbisClient`）。
@@ -14,6 +14,29 @@
 > 4. 补充 **W4c 与全双工（Full-Duplex）/ Jarvis / Orbis SDK 的协同契约**（日常问答与 Jarvis 零二次追问、`amend` 不被接单队列劫持、SDK 默认隔离）；
 > 5. 明确 **W5 任务看板与房间内任务面板保留并统一 `TaskRun` 数据源**、通用旧数据启发式迁移规则；
 > 6. 更新 §6 边界（`git_destructive` 经手机确认开放、`T1 独立桌面` 与 `T2 用户真实桌面` 分级）并完成 **W1** 进度/风格 CI 自检。
+
+---
+
+## P0 · 当前最高优先级待办：进度回执「i + 1」连续聚合 〔❌ 待 ds 立刻执行〕
+
+> **现象（2026-11-19 用户实机截图）**：私聊里连续出现一整屏 `在「AI投顾评测组」那边 1 件事`，原本设计的 `N 件事` 累加聚合完全失效。
+>
+> **根因定位（前后端规则打架）**：
+> 1. `server/src/runner/group-orchestrator.js`（第 554 行）每次派发都会生成全新的 `dispatchId: newId('dispatch_')`；
+> 2. `server/src/dm.js`（第 81 行）按 `docs/spec-peer-dialog.md` 已停写 `phase === 'start'` 回执，导致每个 `dispatchId` 永远只有 **1 条** `phase === 'done'` 消息；
+> 3. 但 `app/lib/progress_messages.dart`（第 85 行）仍把 `previous.meta?['dispatchId'] == message.meta?['dispatchId']` 作为合并前提——结果每条消息 `dispatchId` 都不同，相邻回执 100% 断组，6 小时聚合窗口（`kProgressGroupGapMs`）彻底失效，界面退化成满屏 `1 件事`。
+
+**必须落地的改动契约（i + 1 连续聚合）**：
+1. **折叠层（`app/lib/progress_messages.dart`）**：
+   - `groupProgressMessages` 去掉 `previous.meta?['dispatchId'] == message.meta?['dispatchId']` 断组条件；
+   - **合并条件**：相邻两条均为 `isProgress`、同 `roomId`、同 `meta['fromRoomId']`（同一个来源部门）、时间差 `0 <= gap <= maxGapMs`（`kProgressGroupGapMs = 6 小时`）——即合并为同一组，前端自然随新回执到达从 `1 件事 → 2 件事 → … → N 件事` 就地累加；
+   - **断组条件（继续保留）**：中间穿插普通聊天消息、`fromRoomId` 不同（跨部门禁止合并，防止标题与明细部门打架）、时间倒序或间隔超过 `maxGapMs` 必须断成两组。
+2. **弹窗明细层（`app/lib/widgets/progress_notice.dart`）**：
+   - `meta.dispatchId` 与 `meta.re` 在数据上完整保留；
+   - 点开聚合条进入 `showProgressPeek` 后，延续线程化展示（`threadLayout`），并可按不同 `dispatchId` 或派活批次清晰分隔每次派活往返（点开不混成一团）。
+3. **测试更新与验收**：
+   - 更新 `app/test/progress_group_source_test.dart`（将原“不同 `dispatchId` 断组”旧断言改为“同 `roomId` + 同 `fromRoomId` + 窗口内不同 `dispatchId` 连续合并成 1 组、计数累加”；保留“不同 `fromRoomId` 必须断组”与“超窗口断组”）与 `app/test/progress_messages_test.dart`；
+   - 验收：`cd app && flutter analyze && flutter test test/progress_group_source_test.dart test/progress_messages_test.dart` 及全量 `flutter test` 全绿。
 
 ---
 
@@ -361,3 +384,4 @@ W7（✅ Issue #37）
 5. **W5 任务看板数据源策略（2026-11-18 用户确认）**：新增全局四列看板同时**保留房间内任务面板入口**，两者数据源统一收敛到 `TaskRun`，废弃旧 `TaskItem` 独立维护链路。
 6. **W6 验收矩阵**：先确保 P0 核心门禁、Jarvis 高危确认、T1/T2 隔离与 `sandbox-win` 实机收口。
 7. **Jarvis 高危操作二级强确认范围（2026-11-19 用户确认）**：主控执行 `delete_bot`、`manage_department(delete)`、`manage_knowledge(delete_skill/delete_lesson)`、`set_policy(update)`、`manage_model_group(delete)` 以及首次启用 MCP（`manage_mcp_server` / `import_local_capabilities`）与 `git_destructive` 一律纳入二级强确认（`/api/confirmations`，优先手机设备确认、默认拒绝本机自批）。
+8. **进度回执连续「i + 1」聚合（2026-11-19 用户拍板，P0 置顶）**：私聊/群聊里同房间同部门来源的连续进度回执不再按每次生成的唯一 `dispatchId` 拆条，而是在 6 小时聚合窗口内就地累加为 `i + 1`（`1 件事 → 2 件事 → … → N 件事`），弹窗明细内按 `re` / `dispatchId` 分隔保留完整上下文。
