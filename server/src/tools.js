@@ -707,11 +707,13 @@ export function buildCommonTools({
         name: 'desktop_input',
         label: '★ 操作这台电脑（鼠标/键盘）',
         description:
-          '在**当前用户登录的桌面**上动鼠标或键盘：移动、点击、滚动、按组合键、输入文字。\n'
+          '在**当前用户登录的桌面**上动鼠标或键盘：移动、点击、滚动、按组合键、输入文字、拖拽。\n'
           + '★ 必须先 desktop_lease 拿到 epoch，并且每次调用都带上它。\n'
           + '用户只要碰了鼠标键盘，这次动作会被取消并把控制权交还给他（规格 §5.2）—— '
           + '看到「已交还控制权」就停下，不要重试。\n'
-          + '不支持拖拽（没做完就不上线）。要输入中文/emoji 用 type_text，它走剪贴板粘贴。\n'
+          + '拖拽用 action=drag：x/y 是**起点**，toX/toY 是**终点**；中途会被分成几段走，'
+          + '一旦发现用户在动鼠标 / 锁屏 / 租约被撤，**会先把左键松开再回来报错**，不会留鼠标按着不放。\n'
+          + '要输入中文/emoji 用 type_text，它走剪贴板粘贴。\n'
           + '坐标是**物理像素**，从 desktop_observe 拿到的窗口矩形直接减半不起作用 —— '
           + '它给的已经是同一套物理坐标。',
         parameters: Type.Object({
@@ -723,9 +725,16 @@ export function buildCommonTools({
             Type.Literal('key'),
             Type.Literal('keyCombo'),
             Type.Literal('type_text'),
-          ], { description: '做什么（不支持 drag）' }),
-          x: Type.Optional(Type.Number({ description: 'move/click 的目标 x（物理像素）' })),
-          y: Type.Optional(Type.Number({ description: 'move/click 的目标 y（物理像素）' })),
+            Type.Literal('drag'),
+          ], { description: '做什么（drag = 按住起点拖到终点）' }),
+          x: Type.Optional(Type.Number({ description: 'move/click 的目标 x；drag 时是**起点** x（物理像素）' })),
+          y: Type.Optional(Type.Number({ description: 'move/click 的目标 y；drag 时是**起点** y（物理像素）' })),
+          toX: Type.Optional(Type.Number({ description: 'drag 的终点 x（物理像素）' })),
+          toY: Type.Optional(Type.Number({ description: 'drag 的终点 y（物理像素）' })),
+          steps: Type.Optional(Type.Number({
+            description: 'drag 分几步走（不传就按距离自适应，最少 3、最多 40）。'
+              + '步数越小越快、越大越平滑；中断粒度按 4 站一段算。',
+          })),
           button: Type.Optional(Type.Union([
             Type.Literal('left'), Type.Literal('right'), Type.Literal('middle'),
           ], { description: 'click 用哪个键，默认 left' })),
@@ -747,11 +756,16 @@ export function buildCommonTools({
           const point = Number.isFinite(input.x) && Number.isFinite(input.y)
             ? { x: Number(input.x), y: Number(input.y) }
             : null;
+          const to = Number.isFinite(input.toX) && Number.isFinite(input.toY)
+            ? { x: Number(input.toX), y: Number(input.toY) }
+            : null;
           const r = session.act({
             identity: { taskId, botId, epoch: Number(input.epoch) },
             input: {
               action: input.action,
               point,
+              to,
+              steps: input.steps,
               button: input.button,
               clicks: input.clicks,
               delta: input.delta,
@@ -796,11 +810,16 @@ export function buildCommonTools({
             ? '\n⚠ 动作发完之后前台窗口变了（不是你说的那个），这次可能打在了别处 —— '
               + '先 desktop_observe 看一眼再决定，不要接着按旧坐标点。'
             : '';
-          return ok(`${describePlan(r.plan)}${where}${fg}${warn}`, {
+          // ★ 拖拽落点漂移：已经松开鼠标了，回不了头，但要告诉模型“它到底落在哪”。
+          const drift = r.drifted === true
+            ? `\n⚠ ${r.note || '松开时光标不在终点，拖拽结果要重新观察一次'}`
+            : '';
+          return ok(`${describePlan(r.plan)}${where}${fg}${warn}${drift}`, {
             at: r.at,
             action: r.plan.action,
             screen: r.screen,
             targetKept: r.targetKept !== false,
+            drifted: r.drifted === true,
           });
         },
       }),

@@ -145,13 +145,68 @@ test('滚轮：要有 delta，且一次最多 10 格', () => {
   assert.equal(planInput({ action: 'scroll', screen: SCREEN, delta: 1, point: { x: 99999, y: 50 } }).ok, false);
 });
 
-test('★ 拖拽明确拒绝（半截实现会留下"鼠标按着不放"）', () => {
-  const r = planInput({ action: 'drag', point: { x: 10, y: 10 }, screen: SCREEN });
+test('★ 拖拽：分步直线、终点逐像素精确、两端都要在屏内', () => {
+  const r = planInput({ action: 'drag', point: { x: 100, y: 200 }, to: { x: 900, y: 700 }, screen: SCREEN });
+  assert.equal(r.ok, true);
+  assert.equal(r.plan.action, 'drag');
+  assert.deepEqual(r.plan.from, { x: 100, y: 200 });
+  assert.deepEqual(r.plan.stops.at(-1), { x: 900, y: 700 }, '最后一步必须精确落在终点上');
+  assert.ok(r.plan.steps >= 3, '至少 3 步（1~2 个移动事件多数应用认不出拖拽）');
+  // 路径必须单调向前，不能回头（回头在滑块/画布上会抖）
+  let prev = r.plan.from;
+  for (const p of r.plan.stops) {
+    assert.ok(p.x >= prev.x && p.y >= prev.y, '左下→右上的路径要单调');
+    prev = p;
+  }
+  // 起点屏外 = 允许"从屏幕外飞进来"，必须拒
+  const fromOut = planInput({ action: 'drag', point: { x: -10, y: 10 }, to: { x: 200, y: 200 }, screen: SCREEN });
+  assert.equal(fromOut.ok, false);
+  assert.equal(fromOut.code, INPUT_FAIL.outOfScreen);
+  // 终点屏外同样拒
+  const toOut = planInput({ action: 'drag', point: { x: 10, y: 10 }, to: { x: 99_999, y: 10 }, screen: SCREEN });
+  assert.equal(toOut.ok, false);
+  assert.equal(toOut.code, INPUT_FAIL.outOfScreen);
+});
+
+test('★ 拖拽：起点=终点 / 缺终点 / 超长距离 / 步数被夹紧 都有明确结论', () => {
+  const same = planInput({ action: 'drag', point: { x: 10, y: 10 }, to: { x: 10, y: 10 }, screen: SCREEN });
+  assert.equal(same.ok, false, '原地拖拽没有意义，不许静默通过');
+  assert.match(same.text, /同一个点/);
+
+  const noTo = planInput({ action: 'drag', point: { x: 10, y: 10 }, screen: SCREEN });
+  assert.equal(noTo.ok, false);
+  assert.match(noTo.text, /终点/);
+
+  // 超距离：屏幕得足够大，否则先被屏外挡住了（两件事要分开测）
+  const bigScreen = { x: 0, y: 0, width: 5000, height: 5000 };
+  const tooFar = planInput({ action: 'drag', point: { x: 0, y: 0 }, to: { x: 3000, y: 0 }, screen: bigScreen });
+  assert.equal(tooFar.ok, false);
+  assert.match(tooFar.text, /最多拖/);
+
+  const few = planInput({ action: 'drag', point: { x: 0, y: 0 }, to: { x: 120, y: 0 }, screen: SCREEN, steps: 1 });
+  assert.equal(few.ok, true);
+  assert.ok(few.plan.steps >= 2, '太少步会被夹到最小步数');
+  const many = planInput({ action: 'drag', point: { x: 0, y: 0 }, to: { x: 2400, y: 0 }, screen: SCREEN, steps: 999 });
+  assert.equal(many.ok, true);
+  assert.ok(many.plan.steps <= 40, '步数不能无限多（那是 40 次平台调用）');
+});
+
+test('★ drag_drop 不做别名：OLE 拖放不是鼠标事件', () => {
+  const r = planInput({ action: 'drag_drop', point: { x: 10, y: 10 }, to: { x: 50, y: 50 }, screen: SCREEN });
   assert.equal(r.ok, false);
-  assert.match(r.text, /拖拽/);
-  assert.match(r.text, /中断|租约/, '要说清为什么不支持');
-  assert.equal(planInput({ action: 'drag_drop', point: { x: 10, y: 10 }, screen: SCREEN }).ok, false);
-  assert.equal(INPUT_ACTIONS.includes('drag'), false);
+  assert.match(r.text, /drag_drop/);
+  assert.match(r.text, /OLE/);
+  assert.equal(INPUT_ACTIONS.includes('drag'), true, 'drag 必须在动作表里（否则永远发不出去）');
+  assert.equal(INPUT_ACTIONS.includes('drag_drop'), false);
+});
+
+test('拖拽的审计文案说清按住哪个键、从哪到哪、几步', () => {
+  const r = planInput({ action: 'drag', point: { x: 1, y: 2 }, to: { x: 300, y: 400 }, screen: SCREEN, button: 'left' });
+  const text = describePlan(r.plan);
+  assert.match(text, /左键/);
+  assert.match(text, /\(1,2\)/);
+  assert.match(text, /\(300,400\)/);
+  assert.match(text, /步/);
 });
 
 test('组合键：最多 4 个，且每个都必须认识', () => {
@@ -257,7 +312,7 @@ function makeFakePlatform(over = {}) {
     // 默认模拟"用户已经离开 10 分钟"（离开门槛 90 秒）—— 大多数用例
     // 关心的是别的判断，不该被"他在看书"挡住
     lastInput: { ok: true, lastInputAt: T0 - 10 * 60_000, idleMs: 10 * 60_000 },
-    perform: () => ({ ok: true, at: { x: 10, y: 10 }, foreground: 'Notepad' }),
+    perform: ({ plan } = {}) => ({ ok: true, at: { x: 10, y: 10 }, foreground: 'Notepad' }),
     ...over,
   };
   return {
@@ -266,7 +321,10 @@ function makeFakePlatform(over = {}) {
       now: () => T0,
       probeEnvironment: () => { calls.env += 1; return fake.env; },
       probeLastInput: () => { calls.probe += 1; return fake.lastInput; },
-      perform: (plan) => { calls.perform.push(plan); return fake.perform(plan); },
+      // ★ 假平台也要走**和真实平台一样的契约**（`{plan}` 包裹）。
+      //   以前这里写成位置参数的 `(plan) =>`，结果把装配层传裸 plan 的 bug
+      //   完全掩盖了 —— 测试全绿、真机全挂。
+      perform: (input) => { calls.perform.push(input); return fake.perform(input); },
       // 下面四个默认"探不到"：老用例的行为因此完全不变。
       sampleNoise: () => fake.noise ?? { ok: false },
       cursorPosition: () => fake.cursor ?? { ok: false },
@@ -301,7 +359,8 @@ test('拿到租约后能正常发一次动作，并且记了审计', () => {
   const r = session.act({ identity, input: { action: 'move', point: { x: 10, y: 10 } } });
   assert.equal(r.ok, true);
   assert.equal(plat.calls.perform.length, 1);
-  assert.equal(plat.calls.perform[0].action, 'move');
+  assert.ok(plat.calls.perform[0].plan, '交给平台的必须是 {plan} 包裹（平台解构的是 plan 字段）');
+  assert.equal(plat.calls.perform[0].plan.action, 'move');
   const audit = session.recentAudit();
   const last = audit.at(-1);
   assert.equal(last.kind, 'inject');
@@ -407,12 +466,62 @@ test('屏幕外坐标在**平台调用之前**就被拦掉', () => {
   assert.equal(plat.calls.perform.length, 0, '规划层拦下的事不该走到平台层');
 });
 
-test('拖拽在装配层也走不通（不是只有纯函数拦）', () => {
-  const { session, identity, plat } = withLease();
-  const r = session.act({ identity, input: { action: 'drag', point: { x: 10, y: 10 } } });
+test('★ 拖拽：装配层把 shouldAbort / onStep 交给平台（中断在平台里完成松开）', () => {
+  const seen = [];
+  const plat = makeFakePlatform({
+    perform: (input) => {
+      seen.push(input);
+      // 模拟平台走了两站之后回来问：还要继续吗
+      const abort = input.shouldAbort?.({ at: { x: 60, y: 60 }, index: 2, total: 4 });
+      if (abort) return { ok: false, code: abort.code, text: abort.text, released: true };
+      input.onStep?.({ at: { x: 60, y: 60 }, index: 2, total: 4 });
+      return { ok: true, at: { x: 100, y: 100 }, foreground: 'Notepad', released: true };
+    },
+  });
+  const { session, identity } = withLease(plat);
+  const r = session.act({ identity, input: { action: 'drag', point: { x: 10, y: 10 }, to: { x: 100, y: 100 } } });
+  assert.equal(r.ok, true);
+  assert.equal(seen.length, 1, '整条拖拽只调一次平台 perform（内部自己分段）');
+  assert.equal(typeof seen[0].shouldAbort, 'function', '拖拽必须能中途问"要不要停"');
+  assert.equal(typeof seen[0].onStep, 'function', '每走一段要回来报位置，否则判不了用户接管');
+  assert.equal(seen[0].shouldAbort({ at: { x: 60, y: 60 } }), null, '一切正常时应当说"继续"');
+});
+
+test('★ 拖拽落点漂移要如实传上去（不能假装到了终点）', () => {
+  const plat = makeFakePlatform({
+    perform: () => ({
+      ok: true, at: { x: 90, y: 90 }, foreground: '', released: true, drifted: true,
+      note: '松开时光标在 (90,90)，不在终点 (100,100)',
+    }),
+  });
+  const { session, identity } = withLease(plat);
+  const r = session.act({ identity, input: { action: 'drag', point: { x: 10, y: 10 }, to: { x: 100, y: 100 } } });
+  assert.equal(r.ok, true);
+  assert.equal(r.drifted, true, '平台报漂移就要透传，不能吃掉');
+  assert.match(r.note, /90,90/);
+});
+
+test('★ 拖到一半用户接管 → 交还控制权、吊销租约、审计记 abort', () => {
+  let abortResult = null;
+  const plat = makeFakePlatform({
+    // 平台刚走一段，用户就把鼠标挪走了：光标不在我们放的位置
+    cursor: { ok: true, x: 999, y: 888 },
+    perform: (input) => {
+      abortResult = input.shouldAbort?.({ at: { x: 60, y: 60 }, index: 2, total: 4 }) ?? null;
+      return abortResult
+        ? { ok: false, code: abortResult.code, text: abortResult.text, released: true }
+        : { ok: true, at: { x: 100, y: 100 }, foreground: '' };
+    },
+  });
+  const { session, identity } = withLease(plat);
+  const r = session.act({ identity, input: { action: 'drag', point: { x: 10, y: 10 }, to: { x: 100, y: 100 } } });
   assert.equal(r.ok, false);
-  assert.match(r.text, /拖拽/);
-  assert.equal(plat.calls.perform.length, 0);
+  assert.ok(abortResult, '平台应该拿到一个中止结论');
+  assert.equal(abortResult.code, REFUSE.yielded);
+  assert.match(abortResult.text, /松开|抬起/, '中止文案必须说明鼠标已经松开');
+  const audit = session.recentAudit();
+  assert.ok(audit.some((a) => a.kind === 'abort' && a.code === REFUSE.yielded), '中断要单独记一笔审计');
+  assert.equal(session.lease.status, LEASE.revoking, '用户接管后租约要交还（revoking 等持有者确认）');
 });
 
 test('平台发送失败 → 原样上抛原因，且不记成"注入成功"', () => {

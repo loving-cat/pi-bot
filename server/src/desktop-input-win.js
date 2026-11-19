@@ -152,7 +152,26 @@ public class DeskIn {
   public const uint MOUSEEVENTF_MIDDLEDOWN = 0x0020;
   public const uint MOUSEEVENTF_MIDDLEUP = 0x0040;
   public const uint MOUSEEVENTF_WHEEL = 0x0800;
+  public const uint MOUSEEVENTF_MOVE = 0x0001;
+  public const uint MOUSEEVENTF_ABSOLUTE = 0x8000;
+  public const uint MOUSEEVENTF_VIRTUALDESK = 0x4000;
   public const uint KEYEVENTF_KEYUP = 0x0002;
+
+  // ★ 拖拽必须用“SetCursorPos + 零位移移动事件”，不能用 SetCursorPos 就完事：
+  //   实测（本机 2560x1440 / 125%）：SetCursorPos 只改光标位置，**不给目标窗口
+  //   发 WM_MOUSEMOVE** —— 靶子窗口只收到 down 和 up，中间一条 move 都没有，
+  //   拖拽就退化成“瞬移”，文件列表/滑块根本不认。
+  //   再补一个 dx=dy=0 的相对移动事件，系统就会给光标下的窗口投递 move。
+  //
+  // ★ 为什么不用 MOUSEEVENTF_ABSOLUTE 直接定位：本机实测不准（目标 350,320，
+  //   光标只挪到了 1499,640），这台机器上有程序在持续合成输入（见 issue #34），
+  //   绝对移动会被劫。SetCursorPos 在这种环境下反而是准的。
+  public static INPUT MoveRel(int dx, int dy) {
+    INPUT i = new INPUT(); i.type = 0; i.u.mi = new MOUSEINPUT();
+    i.u.mi.dx = dx; i.u.mi.dy = dy;
+    i.u.mi.dwFlags = MOUSEEVENTF_MOVE;
+    return i;
+  }
 
   public static bool MakeAware() {
     try { if (SetProcessDpiAwarenessContext(new IntPtr(-4))) return true; } catch { }
@@ -305,13 +324,15 @@ Write-Output ("tick=" + [DeskIn]::LastInputTick() + " uptime=" + [DeskIn]::Uptim
  * @param {boolean} [p.verifyCursor] 移动类动作是否需要复核光标（默认 true）
  * @returns {{ok:true, at:object|null, foreground:string} | {ok:false, code:string, text:string}}
  */
-export function perform({ plan, verifyCursor = true } = {}) {
+export function perform({ plan, verifyCursor = true, shouldAbort = null, onStep = null } = {}) {
   if (!isSupported()) {
     return { ok: false, code: INPUT_FAIL.notPlatform, text: `当前平台（${process.platform}）没有 Windows 输入实现` };
   }
   if (!plan || !plan.action) return { ok: false, code: INPUT_FAIL.invalid, text: '没有可执行的输入计划' };
   const fg = foregroundTitle();
   const foreground = fg.ok ? fg.title : '';
+
+  if (plan.action === 'drag') return performDrag({ plan, shouldAbort, onStep });
 
   if (plan.action === 'move' || plan.action === 'click') {
     const { x, y } = plan.point;
@@ -411,6 +432,207 @@ Write-Output 'result=sent'
     return { ok: false, code: INPUT_FAIL.callFailed, text: `文字没输入成功：${out.slice(0, 200)}` };
   }
   return { ok: true, at: null, foreground };
+}
+
+/** 拖拽时每段最多走几站。段内一次 PS 调用，段间回 Node 判一次中断。 */
+const DRAG_BATCH = 4;
+
+/**
+ * 按住 → 分段移动 → 抬起。
+ *
+ * ★ 为什么分段，而不是一条脚本拖到底
+ *
+ * 一条脚本里我们**没法中断**：用户中途接管、租约被撤、锁屏，都只能等脚本
+ * 跑完才知道 —— 那时鼠标已经拖到终点了。分段后每段之间都能回头问一句
+ * `shouldAbort`，所以中断粒度是“最多 4 站”。
+ *
+ * ★ 任何一条返回路径都先抬起
+ *
+ * 用户桌面上留一个“按住不放”的鼠标，比不实现拖拽危险得多 —— 下一个鼠标
+ * 移动就会变成继续拖拽（可能把文件拖进回收站）。所以：成功也抬起、失败也
+ * 抬起、中断更要抬起；抬起失败要在文案里明确让人手动点一下左键。
+ *
+ * @param {object} p
+ * @param {object} p.plan 来自 `planInput({action:'drag'})`
+ * @param {(info:{at?:object,index?:number,total?:number}) => ({code:string,text:string}|null)} [p.shouldAbort]
+ * @param {(info:{at:object,index:number,total:number}) => void} [p.onStep]
+ * @returns {{ok:true, at:object, foreground:string, released:true}
+ *   | {ok:false, code:string, text:string, released:boolean}}
+ */
+export function performDrag({ plan, shouldAbort = null, onStep = null } = {}) {
+  if (!plan || plan.action !== 'drag') {
+    return { ok: false, code: INPUT_FAIL.invalid, text: '不是一条拖拽计划', released: true };
+  }
+  const stops = Array.isArray(plan.stops) ? plan.stops : [];
+  if (!plan.from || !plan.to || !stops.length) {
+    return {
+      ok: false, code: INPUT_FAIL.invalid, text: '拖拽路径不完整（缺起点/终点/中间站）', released: true,
+    };
+  }
+  const button = ['left', 'right', 'middle'].includes(plan.button) ? plan.button : 'left';
+  const [downFlag, upFlag] = {
+    left: ['MOUSEEVENTF_LEFTDOWN', 'MOUSEEVENTF_LEFTUP'],
+    right: ['MOUSEEVENTF_RIGHTDOWN', 'MOUSEEVENTF_RIGHTUP'],
+    middle: ['MOUSEEVENTF_MIDDLEDOWN', 'MOUSEEVENTF_MIDDLEUP'],
+  }[button];
+  const stepMs = Math.min(200, Math.max(5, Math.trunc(Number(plan.stepMs)) || 12));
+  const fg = foregroundTitle();
+  const foreground = fg.ok ? fg.title : '';
+  let released = false;
+
+  /** 松开鼠标键。幂等：已经松开就返回 true。 */
+  const up = () => {
+    if (released) return true;
+    const r = run(`${WIN_PRELUDE}
+$aware = [DeskIn]::MakeAware()
+if (-not $aware) { Write-Output 'result=not_aware'; exit 0 }
+$u = [DeskIn]::Send(@([DeskIn]::Btn([DeskIn]::${upFlag})))
+Write-Output ("result=up n=" + $u)
+`);
+    released = r.ok && /result=up n=1/.test(r.stdout || '');
+    return released;
+  };
+
+  /** 中断/失败统一出口：先抬起再报错。 */
+  const stop = (code, text) => {
+    const ok = up();
+    return {
+      ok: false,
+      code,
+      text: ok ? `${text}（鼠标已松开）` : `${text}（⚠ 松开鼠标失败，请手动点一下左键）`,
+      released: ok,
+    };
+  };
+
+  // ① 移到位 + 按下（同一条脚本，减少中途被抢的机会）
+  const down = run(`${WIN_PRELUDE}
+$aware = [DeskIn]::MakeAware()
+if (-not $aware) { Write-Output 'result=not_aware'; exit 0 }
+$sp = [DeskIn]::SetCursorPos(${Math.round(Number(plan.from.x))}, ${Math.round(Number(plan.from.y))})
+if (-not $sp) { Write-Output 'result=setpos_failed'; exit 0 }
+[void][DeskIn]::Send(@([DeskIn]::MoveRel(0, 0)))
+Start-Sleep -Milliseconds 40
+$c0 = [DeskIn]::Cursor()
+$d = [DeskIn]::Send(@([DeskIn]::Btn([DeskIn]::${downFlag})))
+Write-Output ("result=down n=" + $d + " at=" + $c0[0] + "," + $c0[1])
+`);
+  if (!down.ok) return stop(INPUT_FAIL.callFailed, `拖拽按下失败：${down.error}`);
+  if ((down.stdout || '').includes('result=not_aware')) {
+    return stop(INPUT_FAIL.notAware, 'DPI 感知声明失败，没发输入');
+  }
+  if ((down.stdout || '').includes('result=setpos_failed')) {
+    return stop(INPUT_FAIL.callFailed, '光标没移到起点（SetCursorPos 被拒）—— 没按下去');
+  }
+  // ★ 按下前校一次光标：这台机器上有程序在持续合成鼠标输入（issue #34），
+  //   SetCursorPos 能返回 true、光标却被拉回原处 —— 那一下会按在别的地方。
+  //   “按之前先看见它在哪”，比事后猜“为什么点错了”便宜得多。
+  {
+    const at = (down.stdout || '').match(/at=(-?\d+),(-?\d+)/);
+    if (at) {
+      const ax = Number(at[1]);
+      const ay = Number(at[2]);
+      if (Math.abs(ax - Number(plan.from.x)) > 2 || Math.abs(ay - Number(plan.from.y)) > 2) {
+        return stop(
+          INPUT_FAIL.callFailed,
+          `按下前光标不在起点（要到 (${plan.from.x},${plan.from.y})，实际 (${ax},${ay})）`
+          + ' —— 这台机器上可能有程序在合成鼠标输入',
+        );
+      }
+    }
+  }
+  if (!/result=down n=1/.test(down.stdout || '')) {
+    return stop(INPUT_FAIL.callFailed, `鼠标没按下去：${(down.stdout || '').slice(0, 200)}`);
+  }
+
+  // ② 分段走：每段一次 PS 调用，段间回来判一次要不要停
+  let moved = 0;
+  for (let i = 0; i < stops.length; i += DRAG_BATCH) {
+    const batch = stops.slice(i, i + DRAG_BATCH);
+    const body = batch
+      .map((p) => {
+        const x = Math.round(Number(p.x));
+        const y = Math.round(Number(p.y));
+        // ★ SetCursorPos 定位 + 零位移 move 通知窗口：只 SetCursorPos 不给窗口
+        //   发 WM_MOUSEMOVE，拖拽在真机上退化成“瞬移”（见 MoveRel 的注释）。
+        //   返回值必须查：SetCursorPos 被拒时返回 false，但光标不会报错、也不会动。
+        return `$sp = [DeskIn]::SetCursorPos(${x}, ${y})\n`
+          + `if (-not $sp) { Write-Output 'result=setpos_failed'; exit 0 }\n`
+          + `[void][DeskIn]::Send(@([DeskIn]::MoveRel(0, 0)))\n`
+          + `Start-Sleep -Milliseconds ${stepMs}`;
+      })
+      .join('\n');
+    const seg = run(`${WIN_PRELUDE}
+$aware = [DeskIn]::MakeAware()
+if (-not $aware) { Write-Output 'result=not_aware'; exit 0 }
+${body}
+$c = [DeskIn]::Cursor()
+Write-Output ("result=moved at=" + $c[0] + "," + $c[1])
+`);
+    if (!seg.ok) return stop(INPUT_FAIL.callFailed, `拖拽移动失败：${seg.error}`);
+    if ((seg.stdout || '').includes('result=not_aware')) {
+      return stop(INPUT_FAIL.notAware, 'DPI 感知声明失败，没发输入');
+    }
+    if ((seg.stdout || '').includes('result=setpos_failed')) {
+      return stop(INPUT_FAIL.callFailed, '拖拽途中 SetCursorPos 被拒 —— 已松开鼠标');
+    }
+    if (!(seg.stdout || '').includes('result=moved')) {
+      return stop(INPUT_FAIL.callFailed, `拖拽没走动：${(seg.stdout || '').slice(0, 200)}`);
+    }
+    // ★ 段后核对光标真的到了：这台机器上有程序在合成鼠标输入（issue #34），
+    //   SetCursorPos 可以返回 true、光标却被拉回 —— 不核对就会“报告成功但没拖到”。
+    {
+      const at = (seg.stdout || '').match(/at=(-?\d+),(-?\d+)/);
+      const last = batch[batch.length - 1];
+      if (at) {
+        const ax = Number(at[1]);
+        const ay = Number(at[2]);
+        if (Math.abs(ax - Number(last.x)) > 2 || Math.abs(ay - Number(last.y)) > 2) {
+          return stop(
+            INPUT_FAIL.callFailed,
+            `拖到第 ${i + batch.length}/${stops.length} 站时光标没到位`
+            + `（要到 (${last.x},${last.y})，实际 (${ax},${ay})）`
+            + ' —— 这台机器上可能有程序在合成鼠标输入',
+          );
+        }
+      }
+    }    const last = batch[batch.length - 1];
+    moved = i + batch.length;
+    // ★ 顺序不能反：先报位置（上层据此更新“鼠标该在哪”），再问要不要停。
+    //   反过来的话上层还拿着上一段的位置去比光标，会把自己刚走的一段误判成用户接管。
+    if (typeof onStep === 'function') onStep({ at: last, index: moved, total: stops.length });
+    if (typeof shouldAbort === 'function') {
+      const verdict = shouldAbort({ at: last, index: moved, total: stops.length });
+      if (verdict) return stop(verdict.code || INPUT_FAIL.yielded, verdict.text || '拖拽被中断');
+    }
+  }
+
+  // ③ 抬起（终点已经在 stops 里走过了）
+  if (!up()) {
+    return {
+      ok: false,
+      code: INPUT_FAIL.callFailed,
+      text: '拖到终点了，但松开鼠标失败 —— 请手动点一下左键确认已松开',
+      released: false,
+    };
+  }
+  // ★ 抬起后再看一眼光标：本机上实测过“段校都通过了、抬起时位置却被拉走”（issue #34
+  //   的那种合成输入）。消息已经发出去了，撤回不了 —— 所以这不算失败，但必须
+  //   如实告诉上层“落在哪儿”，而不是回一个理想的终点。
+  const cur = cursorPosition();
+  const at = cur?.ok ? { x: Number(cur.x), y: Number(cur.y) } : { x: Number(plan.to.x), y: Number(plan.to.y) };
+  const drifted = cur?.ok
+    && (Math.abs(at.x - Number(plan.to.x)) > 2 || Math.abs(at.y - Number(plan.to.y)) > 2);
+  return {
+    ok: true,
+    at,
+    foreground,
+    released: true,
+    drifted,
+    note: drifted
+      ? `松开时光标在 (${at.x},${at.y})，不在终点 (${plan.to.x},${plan.to.y}) —— `
+        + '这台机器上可能有程序在合成鼠标输入，拖拽结果要重新观察一次'
+      : '',
+  };
 }
 
 /** 一次移动 + 读回光标（不做重试）。 */

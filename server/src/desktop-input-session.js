@@ -89,7 +89,7 @@ export const REFUSE = Object.freeze({
  * @param {() => number} [o.now] 时钟注入（测试用）
  * @param {() => {ok:boolean, [k:string]:any}} [o.probeEnvironment] 平台环境探针
  * @param {() => {ok:boolean, lastInputAt?:number, [k:string]:any}} [o.probeLastInput] 最后输入时间探针
- * @param {(plan:object) => object} [o.perform] 平台发送
+ * @param {(input:{plan:object}) => object} [o.perform] 平台发送（必须接收 `{plan}` 包裹，与 `desktop-input-win.js` / `-mac.js` 一致）
  * @param {(line:string) => void} [o.log]
  * @returns {object}
  */
@@ -331,9 +331,66 @@ export function createDesktopInputSession({
       }
 
       // ⑥ 发送
-      const sent = perform(planned.plan);
+      //
+      // ★ 平台契约是 perform({plan, ...})，不是裸 plan —— 裸传会被平台
+      //   解构成 undefined（已实测：真机上所有 desktop_input 都会回
+      //   "没有可执行的输入计划"）。
+      //
+      // ★ 拖拽是"一个动作、多次平台调用"：平台层每走一段回来问一次要不要继续。
+      //   中断时**平台层必须先松开鼠标再返回** —— 否则用户桌面上会留一只按着不放的手。
+      //   所以这里给平台两个回调：shouldAbort（还要继续吗）/ onStep（这一段走完了）。
+      const isDrag = planned.plan.action === 'drag';
+      let expectedCursor = isDrag ? planned.plan.from : null;
+      const abortDrag = (code, text, { by = 'system', audit = {} } = {}) => {
+        pushAudit({ kind: 'abort', code, taskId, botId, action: 'drag', ...audit });
+        revoke(lease, { reason: text, by, now: now() });
+        return { code, text, released: true };
+      };
+      const shouldAbort = isDrag
+        ? ({ index, total } = {}) => {
+          // ① 租约还是我们的吗（被撤销 / 过期 / 换人）
+          const h = assertHolder(lease, { taskId, botId, epoch, now: now() });
+          if (!h.ok) {
+            return abortDrag(h.code, `拖到一半租约没了（${h.text ?? h.code}），已松开鼠标`, {
+              audit: { step: index, total, why: 'lease' },
+            });
+          }
+          // ② 会话还在吗（锁屏 / 断开 → 不能接着发输入）
+          const e = probeEnvironment();
+          if (e.ok && e.session === false) {
+            return abortDrag(REFUSE.noSession, '拖到一半会话断了（锁屏/断开），已松开鼠标', {
+              audit: { step: index, total, why: 'session' },
+            });
+          }
+          // ③ 用户接手了吗：光标不在我们刚放的位置，就是有人在动它
+          const cur = cursorPosition();
+          if (cur?.ok && expectedCursor
+            && (Number(cur.x) !== expectedCursor.x || Number(cur.y) !== expectedCursor.y)) {
+            return abortDrag(
+              REFUSE.yielded,
+              `拖到一半发现鼠标不在我们放的位置（(${cur.x},${cur.y}) ≠ (${expectedCursor.x},${expectedCursor.y})）`
+              + ' —— 你接管了，已松开鼠标',
+              { by: 'user', audit: { step: index, total, why: 'user', cursor: { x: cur.x, y: cur.y } } },
+            );
+          }
+          return null;
+        }
+        : undefined;
+      const onStep = isDrag
+        ? ({ at } = {}) => {
+          if (at) expectedCursor = at;
+          // ★ 每段都是我们自己发的输入：不记这一笔，下一段的
+          //   "用户接管"判定会把自己的移动当成用户在动。
+          noteInjection(watchState, { now: now() });
+        }
+        : undefined;
+      const sent = perform({ plan: planned.plan, shouldAbort, onStep });
       if (!sent.ok) {
-        pushAudit({ kind: 'refuse', code: sent.code, taskId, botId, action: planned.plan.action });
+        // 拖拽中断自己已经记过 abort 审计（带步数），不要重复记成 refuse
+        const alreadyAborted = isDrag && sent.released === true && sent.code !== INPUT_FAIL.callFailed;
+        if (!alreadyAborted) {
+          pushAudit({ kind: 'refuse', code: sent.code, taskId, botId, action: planned.plan.action });
+        }
         return { ok: false, ...sent };
       }
 
@@ -377,6 +434,10 @@ export function createDesktopInputSession({
         foreground: foregroundAfter,
         expectWindow: expectWindow || null,
         targetKept,
+        // 拖拽特有：抬起时光标实际在哪。平台报偏移就如实传上去，
+        // 不能回一个“理论上到了”的终点（消息已发出，改不了）。
+        drifted: sent.drifted === true,
+        note: sent.note ?? '',
       };
     },
 

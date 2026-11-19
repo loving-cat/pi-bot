@@ -20,7 +20,7 @@
  * |---|---|
  * | 屏幕外的坐标 | 布局变了（拔了外接屏、改了分辨率），旧坐标会点到别处 |
  * | 不认识的键 | 猜一个键码 = 在用户文档里乱打 |
- * | 拖拽 | 需要"按下—移动—抬起"持续持租约 + 中断恢复，没做完不许半截上线 |
+ * | 拖拽路径 | 一步到位等于"瞬移"：多数应用认不出，且中途没法中断 |
  * | 超长的连点 | 一次 20 下点击会把界面点穿 |
  *
  * 发送层拿到的是已经核对过的计划，它只做一件事：照着发。
@@ -69,11 +69,107 @@ export const INPUT_FAIL = Object.freeze({
 /**
  * 支持的动作。
  *
- * `drag` 和 `drag_drop` 刻意**不在**这里 —— 见 `planInput` 里的说明。
+ * `drag` 在这里：按下—分步移动—抬起算**一个动作**，由平台层在一次调用里连着走完
+ * （`desktop-input-win.js` 的 `performDrag`），中途每一步都可能被中断 —— 中断时
+ * 必须先把左键松开再退出，见 `planDragPath` 的说明。
+ *
+ * `drag_drop` 不做别名：OLE 拖放（跨进程 DnD）跟鼠标事件不是一回事。
  */
 export const INPUT_ACTIONS = Object.freeze([
-  'move', 'click', 'scroll', 'key', 'keyCombo', 'type_text',
+  'move', 'click', 'scroll', 'key', 'keyCombo', 'type_text', 'drag',
 ]);
+
+/** 一次拖拽最多分几步（再多就是 40 次平台调用，慢得没意义）。 */
+export const MAX_DRAG_STEPS = 40;
+
+/** 一次拖拽最长距离（物理像素）。超过就先重新观察、分两次拖。 */
+export const MAX_DRAG_DISTANCE = 2400;
+
+/** 每步之间最少隔多久（毫秒）—— 给目标窗口处理 WM_MOUSEMOVE 的时间。 */
+export const DRAG_STEP_MS = 12;
+
+/**
+ * 规划一条拖拽路径：起点 → 分步直线 → 终点。
+ *
+ * ## 为什么必须分步，不能"一步到位"
+ *
+ * `SetCursorPos(终点)` 一次跳过去，目标窗口收到的是**一个** `WM_MOUSEMOVE`，
+ * 中间没有轨迹。两类实测后果：
+ *
+ * | 场景 | 一步到位的表现 |
+ * |---|---|
+ * | 文件列表 / 时间轴滑块 | 拖不动，或只跳到终点不触发拖拽语义 |
+ * | 拖到一半用户接管 | 我们**没法停**——输入已经发出去了 |
+ *
+ * 所以路径是**离散的一串点**，平台层一段一段走，每段之间回来问一次"还要继续吗"。
+ *
+ * ## 为什么终点必须精确
+ *
+ * 中间点取整可以有误差（最多 1 像素，看不出），但最后一个点必须**逐像素等于**
+ * 调用方给的终点：拖到"差不多那里"在画布 / 滑块上是可累积的偏移。
+ *
+ * ## 为什么最少 3 步
+ *
+ * 1~2 个移动事件不足以让多数应用进入拖拽状态（按下后立即抬起会被当点击）。
+ * 3 步是最低门槛，实际按「每 120 像素一步」自适应。
+ *
+ * @param {object} p
+ * @param {{x:number,y:number}} p.from 起点（物理像素）
+ * @param {{x:number,y:number}} p.to 终点（物理像素）
+ * @param {number|null} [p.steps] 步数，不传就按距离自适应
+ * @param {number} [p.stepMs] 每步间隔毫秒（默认 `DRAG_STEP_MS`）
+ * @returns {{ok:true, path:object} | {ok:false, code:string, text:string}}
+ */
+export function planDragPath({ from, to, steps = null, stepMs = DRAG_STEP_MS } = {}) {
+  const f = { x: Number(from?.x), y: Number(from?.y) };
+  const t = { x: Number(to?.x), y: Number(to?.y) };
+  if (![f.x, f.y, t.x, t.y].every(Number.isFinite)) {
+    return { ok: false, code: INPUT_FAIL.invalid, text: '拖拽要给起点和终点两个坐标' };
+  }
+  const dx = t.x - f.x;
+  const dy = t.y - f.y;
+  // 用最大轴距离：鼠标每步位移由较大的那个轴决定，欧氏距离会让斜向拖拽步数偏多
+  const distance = Math.max(Math.abs(dx), Math.abs(dy));
+  if (distance === 0) {
+    return { ok: false, code: INPUT_FAIL.invalid, text: '起点和终点是同一个点（拖拽至少要移动 1 像素）' };
+  }
+  if (distance > MAX_DRAG_DISTANCE) {
+    return {
+      ok: false,
+      code: INPUT_FAIL.invalid,
+      text: `一次最多拖 ${MAX_DRAG_DISTANCE} 像素（这次 ${distance}）—— 分两次拖，中间重新观察一次`,
+    };
+  }
+  const auto = Math.ceil(distance / 120);
+  const want = steps === null || steps === undefined ? auto : Math.trunc(Number(steps));
+  if (!Number.isFinite(want)) {
+    return { ok: false, code: INPUT_FAIL.invalid, text: '步数必须是一个数字' };
+  }
+  const n = Math.min(MAX_DRAG_STEPS, Math.max(3, want));
+  const gap = Math.min(200, Math.max(5, Math.trunc(Number(stepMs)) || DRAG_STEP_MS));
+
+  const stops = [];
+  let prev = f;
+  for (let i = 1; i <= n; i += 1) {
+    // ★ 最后一步**精确落在调用方给的终点上**，不做插值取整
+    const p = i === n
+      ? { x: t.x, y: t.y }
+      : { x: Math.round(f.x + (dx * i) / n), y: Math.round(f.y + (dy * i) / n) };
+    // 取整后可能和上一站重合（短距离 + 多步），重合点不发 —— 发了也只是一次原地移动
+    if (p.x === prev.x && p.y === prev.y) continue;
+    stops.push(p);
+    prev = p;
+  }
+  if (!stops.length) {
+    return { ok: false, code: INPUT_FAIL.invalid, text: '路径取整后没有产生任何移动（起点和终点太近）' };
+  }
+  return {
+    ok: true,
+    path: {
+      from: f, to: t, stops, steps: stops.length, stepMs: gap, distance,
+    },
+  };
+}
 
 /** 一次动作最多连点几下（防"把界面点穿"）。 */
 export const MAX_CLICKS = 3;
@@ -161,8 +257,11 @@ export function checkPoint({ point, screen } = {}) {
  * 规划一次输入：**发之前**把能查的都查掉。
  *
  * @param {object} p
- * @param {string} p.action move / click / scroll / key / keyCombo / type_text
- * @param {{x:number,y:number}} [p.point] 物理像素坐标
+ * @param {string} p.action move / click / drag / scroll / key / keyCombo / type_text
+ * @param {{x:number,y:number}} [p.point] 物理像素坐标（drag 时是**起点**）
+ * @param {{x:number,y:number}} [p.to] drag 的终点（物理像素）
+ * @param {number} [p.steps] drag 分几步走
+ * @param {number} [p.stepMs] drag 每步间隔毫秒
  * @param {{x:number,y:number,width:number,height:number}} p.screen 当前屏幕矩形（平台层探到的）
  * @param {'left'|'right'|'middle'} [p.button]
  * @param {number} [p.clicks]
@@ -174,18 +273,17 @@ export function checkPoint({ point, screen } = {}) {
  */
 export function planInput({
   action, point = null, screen = null, button = 'left', clicks = 1,
-  delta = 0, key = null, keyCombo = null, text = '',
+  delta = 0, key = null, keyCombo = null, text = '', to = null, steps = null, stepMs = null,
 } = {}) {
   const act = String(action ?? '').trim();
   if (!act) return { ok: false, code: INPUT_FAIL.invalid, text: '没说要做什么（action）' };
-  if (act === 'drag' || act === 'drag_drop') {
-    // ★ 拖拽不是"少写一点"，是**另一套状态机**：按下之后、抬起之前
-    //   租约不能断、用户接管要能中断、键盘/鼠标意外断开要能释放。
-    //   半截实现会在用户桌面上留下"鼠标按着不放"，比不实现危险得多。
+  if (act === 'drag_drop') {
+    // OLE 拖放不是鼠标事件：要起拖放源、拿 IDataObject、跳进程投递，
+    // 这里只做鼠标层面的"按住拖过去再松开"，所以不做这个别名。
     return {
       ok: false,
       code: INPUT_FAIL.invalid,
-      text: '拖拽暂不支持：需要"按下—移动—抬起"之间持续持租约并处理中断恢复，做完之前不半截上线',
+      text: '没有 drag_drop 这个动作：鼠标拖拽用 drag（给起点 + 终点）；跳进程拖放（OLE）不支持',
     };
   }
   if (!INPUT_ACTIONS.includes(act)) {
@@ -219,6 +317,33 @@ export function planInput({
     return { ok: true, plan: { action: 'click', point, button: String(button), clicks: n, screen } };
   }
   if (act === 'move') return { ok: true, plan: { action: 'move', point, screen } };
+
+  if (act === 'drag') {
+    if (!to) {
+      return { ok: false, code: INPUT_FAIL.invalid, text: '拖拽要给终点（to：拖到哪个坐标）；起点用 point' };
+    }
+    // 起点和终点**都要**在屏幕内：只查终点等于允许"从屏幕外飞进来"，
+    // 那中途的轨迹会落在屏幕上别的地方。
+    const a = checkPoint({ point, screen });
+    if (!a.ok) return a;
+    const b = checkPoint({ point: to, screen });
+    if (!b.ok) return b;
+    const path = planDragPath({ from: a.point, to: b.point, steps, stepMs: stepMs ?? DRAG_STEP_MS });
+    if (!path.ok) return path;
+    return {
+      ok: true,
+      plan: {
+        action: 'drag',
+        button: String(button),
+        from: path.path.from,
+        to: path.path.to,
+        stops: path.path.stops,
+        steps: path.path.steps,
+        stepMs: path.path.stepMs,
+        screen,
+      },
+    };
+  }
   if (act === 'scroll') {
     const n = Math.trunc(Number(delta) || 0);
     if (!n) return { ok: false, code: INPUT_FAIL.invalid, text: 'scroll 要给 delta（正数向上，负数向下）' };
@@ -331,6 +456,12 @@ export function describePlan(plan) {
   const at = plan.point ? ` @${plan.point.x},${plan.point.y}` : '';
   switch (plan.action) {
     case 'move': return `移动鼠标${at}`;
+    case 'drag': {
+      const from = plan.from ? `(${plan.from.x},${plan.from.y})` : '';
+      const to = plan.to ? `(${plan.to.x},${plan.to.y})` : '';
+      const held = plan.button === 'right' ? '右键' : plan.button === 'middle' ? '中键' : '左键';
+      return `按住${held}从 ${from} 拖到 ${to}（${plan.steps} 步）`;
+    }
     case 'click': return `${plan.button} 键点 ${plan.clicks} 下${at}`;
     case 'scroll': return `滚轮 ${plan.delta > 0 ? '上' : '下'} ${Math.abs(plan.delta)} 格${at}`;
     case 'key': return `按键 ${plan.keys.join('')}`;
