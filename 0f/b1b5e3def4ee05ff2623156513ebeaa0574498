@@ -1,0 +1,18 @@
+app/lib/server/launcher.dart
+  h_c2e638ff76b3b9 20-56,72-78,92
+app/test/state_dir_test.dart
+  h_c2e638ff76b3b9 1-77
+docs/MACOS.md
+  h_c2e638ff76b3b9 32-37,145,210-251
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0fb1b5e3def4ee05ff2623156513ebeaa0574498",
+  "prompts": {},
+  "humans": {
+    "h_c2e638ff76b3b9": {
+      "author": "loving-cat <106512832+loving-cat@users.noreply.github.com>"
+    }
+  }
+}
