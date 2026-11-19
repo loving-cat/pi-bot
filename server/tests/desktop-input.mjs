@@ -191,6 +191,23 @@ test('★ 拖拽：起点=终点 / 缺终点 / 超长距离 / 步数被夹紧 �
   assert.ok(many.plan.steps <= 40, '步数不能无限多（那是 40 次平台调用）');
 });
 
+test('步数给 0 / 负数也不会退化成“一步到位”', () => {
+  for (const steps of [0, -5, 1, 2]) {
+    const r = planInput({ action: 'drag', point: { x: 0, y: 0 }, to: { x: 600, y: 0 }, screen: SCREEN, steps });
+    assert.equal(r.ok, true, `steps=${steps} 应当能规划`);
+    assert.ok(r.plan.steps >= 3, `steps=${steps} 要被夹到最小步数，否则一次跳过去进不了拖拽状态`);
+  }
+});
+
+test('右键 / 中键拖拽：按键要透传，文案不能都写“左键”', () => {
+  const right = planInput({ action: 'drag', point: { x: 0, y: 0 }, to: { x: 200, y: 100 }, screen: SCREEN, button: 'right' });
+  assert.equal(right.plan.button, 'right');
+  assert.match(describePlan(right.plan), /右键/);
+  const mid = planInput({ action: 'drag', point: { x: 0, y: 0 }, to: { x: 200, y: 100 }, screen: SCREEN, button: 'middle' });
+  assert.equal(mid.plan.button, 'middle');
+  assert.match(describePlan(mid.plan), /中键/);
+});
+
 test('★ drag_drop 不做别名：OLE 拖放不是鼠标事件', () => {
   const r = planInput({ action: 'drag_drop', point: { x: 10, y: 10 }, to: { x: 50, y: 50 }, screen: SCREEN });
   assert.equal(r.ok, false);
