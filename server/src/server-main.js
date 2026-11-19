@@ -74,7 +74,7 @@ async function banner(pairing, runner) {
 
   const snap = pairing.snapshot();
   console.log('  ┌─ 手机连接 ────────────────────────────────────┐');
-  console.log('  │  在 pi-bot App 的配对页填下面这两项             │');
+  console.log('  │  在 Orbis App 的配对页填下面这两项               │');
   console.log('  └───────────────────────────────────────────────┘');
   console.log(`  有效地址   ${snap.url}`);
   for (const { name, address } of lanAddresses()) {

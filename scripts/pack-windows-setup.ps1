@@ -1,9 +1,9 @@
 # Build the Windows installer (setup.exe) from an already packed folder.
 #
-#   .\scripts\pack-windows-setup.ps1              # dist/pi-bot-windows-v<ver>-setup.exe
+#   .\scripts\pack-windows-setup.ps1              # dist/orbis-windows-v<ver>-setup.exe
 #   .\scripts\pack-windows-setup.ps1 -Help        # this text
 #
-# Input is dist/pi-bot-windows, which scripts/pack-windows.ps1 produces. This
+# Input is dist/orbis-windows, which scripts/pack-windows.ps1 produces. This
 # script never builds Flutter and never installs dependencies: run the folder
 # pack first, so the installer wraps exactly the bytes that were scanned there
 # (no user paths, no .pdb, no local state).
@@ -19,7 +19,7 @@
 # Keep this file ASCII-only. PowerShell 5.1 decodes BOM-less scripts as ANSI.
 
 param(
-  [string]$Bundle = "dist/pi-bot-windows",
+  [string]$Bundle = "dist/orbis-windows",
   [string]$OutDir = "dist",
   [string]$Iscc = "",
   [switch]$Help
@@ -65,7 +65,7 @@ Build the Windows installer from the packed folder.
 
 Requires Inno Setup 6 (winget install JRSoftware.InnoSetup).
 The bundle must already exist: run .\scripts\pack-windows.ps1 -WithNode -Zip first.
-Produces dist/pi-bot-windows-v<version>-setup.exe.
+Produces dist/orbis-windows-v<version>-setup.exe.
 "@
   exit 0
 }
@@ -74,7 +74,7 @@ $root = Split-Path -Parent $PSScriptRoot
 $bundleDir = if ([System.IO.Path]::IsPathRooted($Bundle)) { $Bundle } else { Join-Path $root $Bundle }
 $outRoot = if ([System.IO.Path]::IsPathRooted($OutDir)) { $OutDir } else { Join-Path $root $OutDir }
 
-if (-not (Test-Path -LiteralPath (Join-Path $bundleDir "pi_bot.exe"))) {
+if (-not (Test-Path -LiteralPath (Join-Path $bundleDir "orbis.exe"))) {
   Fail "no packed build at $Bundle (run scripts/pack-windows.ps1 first)"
 }
 if (-not (Test-Path -LiteralPath (Join-Path $bundleDir "server\src\index.js"))) {
@@ -89,7 +89,7 @@ if (-not $isccPath) {
   Fail "ISCC.exe not found; install Inno Setup 6 (winget install JRSoftware.InnoSetup) or pass -Iscc"
 }
 
-$scriptPath = Join-Path $PSScriptRoot "installer\pi-bot.iss"
+$scriptPath = Join-Path $PSScriptRoot "installer\orbis.iss"
 $languagePath = Join-Path $PSScriptRoot "installer\ChineseSimplified.isl"
 $iconPath = Join-Path $root "app\windows\runner\resources\app_icon.ico"
 foreach ($required in @($scriptPath, $languagePath, $iconPath)) {
@@ -100,7 +100,7 @@ $version = (& node -e "const p=require(process.argv[1]);process.stdout.write(Str
 if (-not $version) { Fail "could not read server version" }
 if ($LASTEXITCODE -ne 0) { Fail "reading server version failed ($LASTEXITCODE)" }
 
-$setupName = "pi-bot-windows-v$version-setup.exe"
+$setupName = "orbis-windows-v$version-setup.exe"
 $setupPath = Join-Path $outRoot $setupName
 New-Item -ItemType Directory -Path $outRoot -Force | Out-Null
 

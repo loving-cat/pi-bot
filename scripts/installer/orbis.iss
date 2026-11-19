@@ -1,23 +1,26 @@
-; Inno Setup script for the pi-bot Windows installer.
+﻿; Inno Setup script for the Orbis Windows installer.
 ;
 ; Not compiled directly: scripts/pack-windows-setup.ps1 passes the defines below
 ; and calls ISCC on this file.
 ;
 ;   /DAppVersion=1.3.11
-;   /DStageDir=<absolute path to dist/pi-bot-windows>
+;   /DStageDir=<absolute path to dist/orbis-windows>
 ;   /DOutDir=<absolute path to dist>
 ;   /DIconFile=<absolute path to app_icon.ico>
 ;
-; Install target is per-user (%LOCALAPPDATA%\Programs\pi-bot), so it never asks
-; for admin rights. Runtime state lives in %LOCALAPPDATA%\pi-bot, which this
+; 2026-11-19 品牌统一：安装目录改到 Programs\Orbis（AppId 不变，升级会替换旧安装）。
+; 用户数据目录仍是 %LOCALAPPDATA%\pi-bot（服务端优先用 orbis，老目录存在就继续沿用），
+; 安装器不碰那里，所以升级后配对与聊天记录都在。
+; Install target is per-user (%LOCALAPPDATA%\Programs\Orbis), so it never asks
+; for admin rights. Runtime state lives in %LOCALAPPDATA%\pi-bot (legacy) or \orbis, which this
 ; installer does not touch, so upgrading keeps pairings and the data directory.
 ;
 ; This file is UTF-8 with BOM: the [CustomMessages] block below is Chinese.
 
-#define MyAppName "pi-bot"
+#define MyAppName "Orbis"
 #define MyAppPublisher "Orbis Contributors"
 #define MyAppUrl "https://github.com/loving-cat/orbis"
-#define MyAppExeName "pi_bot.exe"
+#define MyAppExeName "orbis.exe"
 
 ; Stable across versions: the same AppId makes an upgrade replace the previous
 ; install instead of stacking a second copy under "Apps & features".
@@ -42,14 +45,14 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppUrl}
 AppSupportURL={#MyAppUrl}/issues
 AppUpdatesURL={#MyAppUrl}/releases
-DefaultDirName={localappdata}\Programs\pi-bot
+DefaultDirName={localappdata}\Programs\Orbis
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir={#OutDir}
-OutputBaseFilename=pi-bot-windows-v{#AppVersion}-setup
+OutputBaseFilename=orbis-windows-v{#AppVersion}-setup
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
@@ -61,7 +64,7 @@ VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription={#MyAppName} {#AppVersion} Setup
 VersionInfoProductName={#MyAppName}
 VersionInfoProductVersion={#AppVersion}
-; The client holds pi_bot.exe and the bundled node.exe; both are locked while
+; The client holds orbis.exe and the bundled node.exe; both are locked while
 ; running, and the server child process outlives the window. CloseApplications
 ; asks the user to close the GUI, and the [Code] hook below stops the server.
 CloseApplications=yes
@@ -74,8 +77,8 @@ Name: "en"; MessagesFile: "compiler:Default.isl"
 [CustomMessages]
 cn.CreateDesktopIcon=创建桌面快捷方式
 en.CreateDesktopIcon=Create a desktop shortcut
-cn.LaunchApp=立即运行 pi-bot
-en.LaunchApp=Launch pi-bot now
+cn.LaunchApp=立即运行 Orbis
+en.LaunchApp=Launch Orbis now
 cn.StopServerHint=安装前需要结束正在运行的本机服务端。
 en.StopServerHint=The local server must be stopped before installing.
 
@@ -83,7 +86,7 @@ en.StopServerHint=The local server must be stopped before installing.
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
-; Whole staged package: pi_bot.exe, Flutter runtime, plugin DLLs, bundled
+; Whole staged package: orbis.exe, Flutter runtime, plugin DLLs, bundled
 ; node.exe and server/ (with node_modules already installed).
 Source: "{#StageDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
@@ -96,17 +99,17 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchApp}"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
-; Nothing here belongs to the user's data: that lives in %LOCALAPPDATA%\pi-bot
+; Nothing here belongs to the user's data: that lives in %LOCALAPPDATA%\orbis (or the legacy \pi-bot)
 ; and is intentionally left behind so a reinstall keeps pairings and history.
 
 [Code]
 const
-  SERVER_PID_SUBDIR = '\pi-bot\server.pid';
+  SERVER_PID_NAMES = 'orbis\server.pid;pi-bot\server.pid';
 
 { Stop the local server recorded in %LOCALAPPDATA%\pi-bot\server.pid.
 
   The GUI spawns node through a helper script and does not own the child
-  process: quitting pi_bot.exe leaves node running, and node.exe sits inside
+  process: quitting orbis.exe leaves node running, and node.exe sits inside
   the install dir, so the [Files] copy would fail on a locked image.
 
   Only the PID from our own pid file is killed, and only after tasklist
@@ -126,7 +129,10 @@ var
   Script: String;
   ResultCode: Integer;
 begin
-  PidPath := ExpandConstant('{localappdata}') + SERVER_PID_SUBDIR;
+  { 2026-11-19 品牌统一后新用户的数据目录是 orbis，老用户还在 pi-bot；两个都看。 }
+  PidPath := ExpandConstant('{localappdata}') + '\orbis\server.pid';
+  if not FileExists(PidPath) then
+    PidPath := ExpandConstant('{localappdata}') + '\pi-bot\server.pid';
   if not FileExists(PidPath) then
     exit;
   if not LoadStringFromFile(PidPath, PidText) then

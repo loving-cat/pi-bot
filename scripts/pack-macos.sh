@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_NAME="pi-bot"
+APP_NAME="Orbis"
 BUILD="$ROOT/app/build/macos/Build/Products/Release"
 OUT="$ROOT/dist"
 APP="$OUT/${APP_NAME}.app"
@@ -19,7 +19,7 @@ usage() {
   --clear-quarantine  清除本轮 App 与 DMG 的隔离属性，默认关闭
   --help              显示帮助
 
-产物：dist/pi-bot.app、dist/pi-bot-<服务端版本>.dmg
+产物：dist/Orbis.app、dist/orbis-<服务端版本>.dmg
 构建需要完整 Xcode、Flutter macOS desktop；打包需要 Node 22+ 与 npm。
 App 使用本机 ad-hoc 签名；目标机器仍需安装 Node 22+。
 USAGE

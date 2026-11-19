@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show Platform;
+import 'dart:io' show Directory, Platform;
 
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -990,22 +990,37 @@ class AppState extends ChangeNotifier {
   ///
   /// 只在用户没填 serverDataDir 时用作**候选**：读不到就返回 null，
   /// 由 401 兜底引导用户去填 token。
+  /// 在 base 下选数据目录：`orbis/data` 优先，旧 `pi-bot/data` 只在
+  /// 前者不存在时沿用（与服务端 config.js 的 resolveHomeDir 同一条规则）。
+  static String _pickDataDir(String base) {
+    final next = '$base/orbis/data';
+    final legacy = '$base/pi-bot/data';
+    try {
+      if (!Directory(next).existsSync() && Directory(legacy).existsSync()) {
+        return legacy;
+      }
+    } catch (_) {}
+    return next;
+  }
   String? _defaultLocalDataDir() {
     final home =
         Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
     if (home == null || home.isEmpty) return null;
+    // ★ 新品牌是 orbis，老安装的数据还在 pi-bot：与服务端 config.js 的
+    //   resolveHomeDir 同一套规则（新目录不存在、旧目录存在 → 用旧的）。
+    //   两处必须一致，否则这里显示/探测的目录和真正用的不是同一个。
     return switch (Platform.operatingSystem) {
-      'macos' => '$home/Library/Application Support/pi-bot/data',
+      'macos' => _pickDataDir('$home/Library/Application Support'),
       'windows' => () {
           // 跟服务端 config.js 用同一个环境变量（LOCALAPPDATA）；
           // 拿不到才退回 Roaming —— 至少不会因为变量缺失直接放弃。
           final localAppData = Platform.environment['LOCALAPPDATA'];
-          if (localAppData != null && localAppData.trim().isNotEmpty) {
-            return '${localAppData.trim()}/pi-bot/data';
-          }
           final appData =
               Platform.environment['APPDATA'] ?? '$home/AppData/Roaming';
-          return '$appData/pi-bot/data';
+          final base = (localAppData != null && localAppData.trim().isNotEmpty)
+              ? localAppData.trim()
+              : appData;
+          return _pickDataDir(base);
         }(),
       // 服务端优先 XDG_DATA_HOME，这里保持一致
       _ => () {
@@ -1013,7 +1028,7 @@ class AppState extends ChangeNotifier {
           final base = (xdg != null && xdg.trim().isNotEmpty)
               ? xdg.trim()
               : '$home/.local/share';
-          return '$base/pi-bot/data';
+          return _pickDataDir(base);
         }(),
     };
   }

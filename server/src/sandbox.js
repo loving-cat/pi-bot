@@ -420,7 +420,7 @@ export function assertSafeWorkDir({ workDir, dataDir = '' }) {
     return {
       ok: false,
       reason: 'workdir_contains_datadir',
-      message: `工作目录 ${workDir} 包含 pi-bot 的数据目录（token 就在里面）。`
+      message: `工作目录 ${workDir} 包含 Orbis 的数据目录（token 就在里面）。`
         + '请把工作目录移出数据目录再试。',
     };
   }

@@ -94,7 +94,7 @@ BEGIN
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "Orbis" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 Orbis contributors (MIT)" "\0"
-            VALUE "OriginalFilename", "pi_bot.exe" "\0"
+            VALUE "OriginalFilename", "orbis.exe" "\0"
             VALUE "ProductName", "Orbis" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END

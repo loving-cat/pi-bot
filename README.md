@@ -26,8 +26,8 @@
 
 | 平台 | 文件 |
 |---|---|
-| **Windows** | [Windows 免安装包](https://github.com/loving-cat/orbis/releases/latest)（`pi-bot-windows-*.zip`）— 解压双击运行；从源码打包见 [Windows 构建说明](docs/WINDOWS.md) |
-| **Android** | [Android APK](https://github.com/loving-cat/orbis/releases/latest)（`pi-bot-android-*.apk`）— 手机浏览器直接下载安装 |
+| **Windows** | [Windows 免安装包](https://github.com/loving-cat/orbis/releases/latest)（`orbis-windows-*.zip`）— 解压双击运行；从源码打包见 [Windows 构建说明](docs/WINDOWS.md) |
+| **Android** | [Android APK](https://github.com/loving-cat/orbis/releases/latest)（`orbis-android-*.apk`）— 手机浏览器直接下载安装 |
 | **macOS** | 从源码运行 `./scripts/pack-macos.sh` 生成 App 与 DMG，见 [macOS 构建说明](docs/MACOS.md) |
 
 **包里不含任何地址和密钥**——服务端地址、配对码、模型 baseUrl/API key 全部由你自己填（见下面「快速开始」）。
@@ -94,7 +94,7 @@ node src/index.js
 
 ```
   ┌─ 手机连接 ────────────────────────────────────┐
-  │  在 pi-bot App 的配对页填下面这两项             │
+  │  在 Orbis App 的配对页填下面这两项             │
   └───────────────────────────────────────────────┘
   有效地址   http://192.168.1.100:8787
              http://192.168.1.100:8787      (以太网)
@@ -107,7 +107,7 @@ node src/index.js
 
 ### 2. 电脑端（宿主）
 
-Windows 解压后打开 `pi_bot.exe`；macOS 打包后打开 `dist/pi-bot.app`。
+Windows 解压后打开 `orbis.exe`；macOS 打包后打开 `dist/Orbis.app`。
 目标机器需安装 Node 22+。桌面端就是宿主，启动时会自动把服务端跑起来：
 
 1. 先探本机 `127.0.0.1:8787`，已有服务端就直接连（不会重复启动）；
@@ -128,7 +128,7 @@ flutter config --enable-macos-desktop
 ./scripts/pack-macos.sh
 ```
 
-产物为 `dist/pi-bot.app` 和 `dist/pi-bot-<服务端版本>.dmg`；服务端和生产依赖在 App 内，
+产物为 `dist/Orbis.app` 和 `dist/orbis-<服务端版本>.dmg`；服务端和生产依赖在 App 内，
 Node 仍由目标机器提供。已有 Release App 时，`./scripts/pack-macos.sh --no-build` 可跳过
 Xcode 检查与 Flutter 构建，仅重新组装安装包。当前使用 ad-hoc 签名，未做 Developer ID
 公证；`--clear-quarantine` 为可选参数，默认关闭。完整步骤与待验项目见 [docs/MACOS.md](docs/MACOS.md)。
@@ -137,9 +137,9 @@ Xcode 检查与 Flutter 构建，仅重新组装安装包。当前使用 ad-hoc 
 
 | 平台 | 数据目录 |
 |---|---|
-| Windows | `%LOCALAPPDATA%\pi-bot\data` |
-| macOS | `~/Library/Application Support/pi-bot/data` |
-| Linux | `$XDG_DATA_HOME/pi-bot/data`（默认 `~/.local/share/pi-bot/data`） |
+| Windows | `%LOCALAPPDATA%\orbis\data`（老用户仍在 `\pi-bot\data`，自动沿用） |
+| macOS | `~/Library/Application Support/orbis/data` |
+| Linux | `$XDG_DATA_HOME/orbis/data`（默认 `~/.local/share/orbis/data`） |
 
 里面有 `rooms/`（会话消息）、`sessions/`（agent 会话）、`uploads/`（附件）、
 `workspace/`（bot 的工作目录）、`state.json`、`secret.key`（加密密钥）。备份就备份这一个目录。

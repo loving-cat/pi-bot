@@ -52,7 +52,7 @@ export function createRelay({ secret = '', port = 8788, host = '0.0.0.0' } = {})
     if (url.pathname === '/') {
       res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
       return res.end(
-        'pi-bot 中转\n\n' +
+        'Orbis 中转\n\n' +
           '电脑侧：RELAY_SECRET=... node src/relay-agent.js --relay wss://<这台>/agent --local http://127.0.0.1:8787\n' +
           '手机侧：服务器地址填 https://<这台>/<配对码>，token 用电脑上配的\n',
       );

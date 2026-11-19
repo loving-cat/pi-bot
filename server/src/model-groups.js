@@ -273,7 +273,7 @@ export async function testModelGroup({
   }
   const key = String(apiKey || '').trim();
   const headers = {
-    'user-agent': 'pi-bot/1.0',
+    'user-agent': 'orbis/1.0',
     ...(key ? { authorization: `Bearer ${key}` } : {}),
   };
   const t0 = Date.now();

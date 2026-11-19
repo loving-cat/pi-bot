@@ -64,7 +64,7 @@ export async function probeMcpServer(server = {}, options = {}) {
       const initialized = await request('initialize', {
         protocolVersion: PROBE_VERSIONS[0],
         capabilities: {},
-        clientInfo: { name: 'pi-bot', version: '1.0' },
+        clientInfo: { name: 'orbis', version: '1.0' },
       });
       validateInitialize(initialized);
       transport.setVersion(initialized.protocolVersion);

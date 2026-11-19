@@ -1,7 +1,7 @@
 # Build a self-contained Windows folder (and optionally a zip).
 #
-#   .\scripts\pack-windows.ps1                 # dist/pi-bot-windows
-#   .\scripts\pack-windows.ps1 -Zip            # + dist/pi-bot-windows.zip
+#   .\scripts\pack-windows.ps1                 # dist/orbis-windows
+#   .\scripts\pack-windows.ps1 -Zip            # + dist/orbis-windows.zip
 #   .\scripts\pack-windows.ps1 -WithNode -Zip  # bundle node.exe
 #   .\scripts\pack-windows.ps1 -NoBuild        # reuse the existing Release build
 #   .\scripts\pack-windows.ps1 -SkipDeps       # do not preinstall server deps
@@ -10,7 +10,7 @@
 #
 # The build copies app sources into a neutral build root, excluding caches and user
 # project state, enforces pubspec.lock, then builds with --no-pub. Output is copied
-# back to the Release folder. The build root defaults to .pi-bot-build at the root
+# back to the Release folder. The build root defaults to .orbis-build at the root
 # of the checkout's drive; -BuildRoot overrides it. It must be an absolute path
 # outside the user profile and outside the checkout. Each run builds in its own
 # marked folder, holds a lock on the build root, and removes only that folder.
@@ -24,7 +24,7 @@
 # Keep this file ASCII-only. PowerShell 5.1 decodes BOM-less scripts as ANSI.
 
 param(
-  [string]$Out = "dist/pi-bot-windows",
+  [string]$Out = "dist/orbis-windows",
   [switch]$WithNode,
   [switch]$SkipDeps,
   [switch]$NoBuild,
@@ -69,7 +69,7 @@ function Test-PathUnder([string]$Child, [string]$Parent) {
   return $c.StartsWith($p, $mode)
 }
 
-$BuildMarkerName = ".pi-bot-build-run"
+$BuildMarkerName = ".orbis-build-run"
 
 # Delete a build folder only when it carries this run's marker.
 function Remove-BuildRun([string]$Path, [string]$RunId) {
@@ -135,9 +135,9 @@ function Publish-ReleaseTree([string]$Built, [string]$Destination) {
   $previous = Join-Path $swap "previous"
   New-Item -ItemType Directory -Path $next -Force | Out-Null
   Copy-Item -Path (Join-Path $Built "*") -Destination $next -Recurse -Force
-  if (-not (Test-Path -LiteralPath (Join-Path $next "pi_bot.exe"))) {
+  if (-not (Test-Path -LiteralPath (Join-Path $next "orbis.exe"))) {
     Remove-Tree $swap
-    throw "copied release is missing pi_bot.exe"
+    throw "copied release is missing orbis.exe"
   }
   $moved = $false
   $published = $false
@@ -199,9 +199,9 @@ if (-not $NoBuild) {
     $qualifier = ""
     try { $qualifier = Split-Path -Qualifier $root -ErrorAction Stop } catch { $qualifier = "" }
     if ($qualifier) {
-      $buildBase = $qualifier + [System.IO.Path]::DirectorySeparatorChar + ".pi-bot-build"
+      $buildBase = $qualifier + [System.IO.Path]::DirectorySeparatorChar + ".orbis-build"
     } else {
-      $buildBase = Join-Path ([System.IO.Path]::GetTempPath()) ".pi-bot-build"
+      $buildBase = Join-Path ([System.IO.Path]::GetTempPath()) ".orbis-build"
     }
   }
   $profileDir = $env:USERPROFILE
@@ -305,8 +305,8 @@ try {
       }
 
       $built = Join-Under $buildWork @("app", "build", "windows", "x64", "runner", "Release")
-      if (-not (Test-Path -LiteralPath (Join-Path $built "pi_bot.exe"))) {
-        throw "neutral build did not produce pi_bot.exe"
+      if (-not (Test-Path -LiteralPath (Join-Path $built "orbis.exe"))) {
+        throw "neutral build did not produce orbis.exe"
       }
       if (-not (Test-Path -LiteralPath $debugDir)) { throw "flutter did not write split debug info" }
       Publish-DebugInfo $debugDir $built (Join-Under $root @("app", "build", "debug-info", "windows"))
@@ -326,7 +326,7 @@ try {
     }
   }
 
-  $exePath = Join-Path $release "pi_bot.exe"
+  $exePath = Join-Path $release "orbis.exe"
   if (-not (Test-Path -LiteralPath $exePath)) {
     throw "no release build (run without -NoBuild first)"
   }
@@ -394,7 +394,7 @@ try {
   }
 
   $requiredSets = @(
-    , @("pi_bot.exe")
+    , @("orbis.exe")
     , @("server", "src", "index.js")
     , @("server", "package.json")
   )

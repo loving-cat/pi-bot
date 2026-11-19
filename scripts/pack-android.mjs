@@ -1,7 +1,7 @@
 /**
  * 打 Android 安装包（apk）。
  *
- *   node scripts/pack-android.mjs                # dist/pi-bot-android-v<版本>.apk
+ *   node scripts/pack-android.mjs                # dist/orbis-android-v<版本>.apk
  *   node scripts/pack-android.mjs --no-build     # 复用已有构建，只重新打包
  *   node scripts/pack-android.mjs --abi arm64    # 只打 arm64（体积约减半）
  *   node scripts/pack-android.mjs --out <文件>   # 指定输出
@@ -93,7 +93,7 @@ export function parseJavaMajor(output) {
 
 /** 产物名：带平台词、纯 semver。CI 的更新检查靠 `.apk` 和 `-android-` 认它。 */
 export function apkFileName(version) {
-  return `pi-bot-android-v${version}.apk`;
+  return `orbis-android-v${version}.apk`;
 }
 
 /** 校验 Gradle 的元数据：包名、版本名、构建号三样都要对得上。 */export function verifyMetadata(metadata, { version, build }) {
@@ -235,7 +235,7 @@ const HELP = `打 Android 安装包（apk）。
 
   --no-build          不跑 flutter build，复用已有产物（只重新校验 + 改名）
   --abi <值>          universal（默认，三 ABI 合一）| arm64 | arm | x64
-  --out <文件>        输出路径（默认 dist/pi-bot-android-v<版本>.apk）
+  --out <文件>        输出路径（默认 dist/orbis-android-v<版本>.apk）
   --help              这段文字
 
 前置：JDK 17+（JAVA_HOME 或 PATH）、Android SDK、PATH 里的 flutter。

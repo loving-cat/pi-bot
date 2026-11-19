@@ -49,13 +49,13 @@ app/pubspec.yaml       version: 1.3.0+3
 
 **`server/tests/version.mjs` 会断言两者一致** —— 只 bump 一处，`node tests/all.mjs` 会红。
 
-## 4. 资产命名：`pi-bot-<平台>-v<版本>.<扩展名>`
+## 4. 资产命名：`orbis-<平台>-v<版本>.<扩展名>`
 
 ```
-pi-bot-windows-v1.3.0-setup.exe   ← Windows 一键安装（推荐给普通用户）
-pi-bot-windows-v1.3.0.zip         ← Windows 免安装（要解压自己运行）
-pi-bot-macos-v1.3.0.dmg
-pi-bot-android-v1.3.0.apk
+orbis-windows-v1.3.0-setup.exe   ← Windows 一键安装（推荐给普通用户）
+orbis-windows-v1.3.0.zip         ← Windows 免安装（要解压自己运行）
+orbis-macos-v1.3.0.dmg
+orbis-android-v1.3.0.apk
 ```
 
 平台词**两侧必须有分隔符**。`server/src/update-check.js` 的 `PLATFORM_RULES` 用的是
@@ -74,7 +74,7 @@ App 只能退化成「打开发布页」。
 各平台构建时间不同，不必等齐：
 
 ```bash
-gh release upload v1.3.0 dist/pi-bot-windows-v1.3.0.zip --clobber
+gh release upload v1.3.0 dist/orbis-windows-v1.3.0.zip --clobber
 ```
 
 找不到本平台资产的客户端会自动退到发布页（`UpdateInfo.canDownload == false`），
@@ -115,15 +115,15 @@ git tag v1.3.0
 git push origin main v1.3.0
 
 # 4. 各平台构建（从 tag 对应的提交构建，不要从半路的分支）
-powershell -File scripts/pack-windows.ps1 -WithNode -Zip   # dist/pi-bot-windows{,.zip}
-powershell -File scripts/pack-windows-setup.ps1            # dist/pi-bot-windows-v1.3.0-setup.exe
-./scripts/pack-macos.sh                                    # dist/pi-bot-<ver>.dmg
-node scripts/pack-android.mjs                              # dist/pi-bot-android-v<版本>.apk
+powershell -File scripts/pack-windows.ps1 -WithNode -Zip   # dist/orbis-windows{,.zip}
+powershell -File scripts/pack-windows-setup.ps1            # dist/orbis-windows-v1.3.0-setup.exe
+./scripts/pack-macos.sh                                    # dist/orbis-<ver>.dmg
+node scripts/pack-android.mjs                              # dist/orbis-android-v<版本>.apk
 
 # 5. 建 release（★普通 Release，不要勾 Pre-release），资产重命名后上传
-gh release create v1.3.0 --title "pi-bot v1.3.0" --notes-file <说明> \
-  dist/pi-bot-windows-v1.3.0-setup.exe dist/pi-bot-windows-v1.3.0.zip \
-  dist/pi-bot-android-v1.3.0.apk
+gh release create v1.3.0 --title "Orbis v1.3.0" --notes-file <说明> \
+  dist/orbis-windows-v1.3.0-setup.exe dist/orbis-windows-v1.3.0.zip \
+  dist/orbis-android-v1.3.0.apk
 ```
 
 ## 平台差异不要写进版本号

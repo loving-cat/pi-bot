@@ -378,7 +378,7 @@ export function buildJarvisTools({
       name: 'import_local_capabilities',
       label: '导入本机技能与 MCP',
       description:
-        '把用户电脑上本机 pi（~/.pi/agent）已装的技能或 MCP 一键导入 pi-bot 库。\n' +
+        '把用户电脑上本机 pi（~/.pi/agent）已装的技能或 MCP 一键导入 Orbis 库。\n' +
         '传 enable=true 可在导入 MCP 后顺便启用（启用需用户在聊天卡上点一次确认）。',
       parameters: Type.Object({
         kind: Type.Union([Type.Literal('skill'), Type.Literal('mcp')]),

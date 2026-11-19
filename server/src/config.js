@@ -20,15 +20,39 @@ const pkgRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
  * ~/Library/Application Support/pi-bot/data，Linux 为
  * $XDG_DATA_HOME/pi-bot/data。
  */
+/**
+ * 本组件在用户目录下的文件夹名。
+ *
+ * 2026-11-19 品牌统一：新装用 `orbis`，但**老用户的数据还在 `pi-bot` 下**。
+ */
+const HOME_DIR_NAME = 'orbis';
+const LEGACY_HOME_DIR_NAME = 'pi-bot';
+
+/**
+ * 选一个目录名：`orbis` 优先，旧 `pi-bot` 只在“新目录还不存在”时继续沿用。
+ *
+ * ★ 为什么不自动迁移：迁移一旦半途失败（磁盘满、权限、进程被结束），
+ *   用户看到的是“我的聊天记录全没了”。沿用旧目录零风险，想换的用户
+ *   可以手动搬（见 docs/WINDOWS.md 的升级说明）。
+ */
+function resolveHomeDir(base) {
+  const next = path.join(base, HOME_DIR_NAME);
+  const legacy = path.join(base, LEGACY_HOME_DIR_NAME);
+  try {
+    if (!fs.existsSync(next) && fs.existsSync(legacy)) return legacy;
+  } catch { /* 读不到就按新目录走 */ }
+  return next;
+}
+
 function userDataDir() {
   if (process.platform === 'win32' && process.env.LOCALAPPDATA) {
-    return path.join(process.env.LOCALAPPDATA, 'pi-bot', 'data');
+    return path.join(resolveHomeDir(process.env.LOCALAPPDATA), 'data');
   }
   if (process.platform === 'darwin') {
-    return path.join(os.homedir(), 'Library', 'Application Support', 'pi-bot', 'data');
+    return path.join(resolveHomeDir(path.join(os.homedir(), 'Library', 'Application Support')), 'data');
   }
   const base = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
-  return path.join(base, 'pi-bot', 'data');
+  return path.join(resolveHomeDir(base), 'data');
 }
 
 /**
