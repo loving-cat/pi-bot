@@ -174,7 +174,9 @@ mkdir -p "$OUT"
 STAGE="$(mktemp -d "$OUT/.pack-macos.XXXXXX")"
 PAYLOAD="$STAGE/payload"
 STAGED_APP="$PAYLOAD/${APP_NAME}.app"
-STAGED_DMG="$STAGE/${APP_NAME}-${VERSION}.dmg"
+# 暂存名直接取最终 DMG 的文件名：以前这里写 ${APP_NAME}（大写 Orbis），而最终名用
+# ARTIFACT_PREFIX（小写 orbis），两个名字不一致，测试里按最终名断言就对不上。
+STAGED_DMG="$STAGE/$(basename "$DMG")"
 mkdir -p "$PAYLOAD"
 ditto "$SOURCE_APP" "$STAGED_APP"
 SERVER_DST="$STAGED_APP/Contents/Resources/server"
