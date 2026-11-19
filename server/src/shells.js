@@ -115,8 +115,20 @@ export class ShellRegistry {
    * @returns {{id:string, pid:number|null, error?:string}}
    */
   start({ roomId, botId, taskId = null, command, cwd, env = null }) {
-    if (this.shells.size >= this.maxShells) {
+    // ★ 只数**还在跑**的：以前用 this.shells.size（含已结束的），死条目会永久占着
+    //   额度 —— 跑过几轮之后就再也起不来新的，而且报的还是“已达上限”。
+    const runningCount = [...this.shells.values()].filter((s) => s.running).length;
+    if (runningCount >= this.maxShells) {
       return { id: null, pid: null, error: `后台进程已达上限（${this.maxShells} 个），先结束不用的` };
+    }
+    // 顺手清一条已结束的旧记录：只清死的，不影响正在跑的
+    if (this.shells.size >= this.maxShells * 3) {
+      for (const [oldId, old] of this.shells) {
+        if (!old.running) {
+          this.shells.delete(oldId);
+          break;
+        }
+      }
     }
     const text = String(command ?? '').trim();
     if (!text) return { id: null, pid: null, error: '命令为空' };
@@ -215,6 +227,7 @@ export class ShellRegistry {
       //   以前是靠模型自己记得 kill_shell —— 那等于没回收）。
       taskId: taskId ? String(taskId) : null,
       cwd,
+      needsSandbox,
       child,
       pid: child.pid ?? null,
       running: true,
@@ -281,6 +294,17 @@ export class ShellRegistry {
     const entry = this.shells.get(id);
     if (!entry) return null;
     const deadline = Date.now() + Math.min(Math.max(Number(waitMs) || 0, 0), 10_000);
+    // ★ 正则只编译一次：以前每次轮询都 new RegExp，长 wait 会反复编译同一串；
+    //   无效正则也不再抛（回退成子串包含）。
+    let compiled = null;
+    let invalidPattern = false;
+    if (pattern) {
+      try {
+        compiled = new RegExp(String(pattern).slice(0, 512), 'm');
+      } catch {
+        invalidPattern = true;
+      }
+    }
 
     const snapshot = () => {
       const full = entry.chunks.join('');
@@ -295,7 +319,10 @@ export class ShellRegistry {
         truncated: entry.truncated,
         offset: full.length,
         output: chunk,
-        matched: pattern ? new RegExp(pattern, 'm').test(chunk) : false,
+        // 只看尾部 16KB：轮询是在“等新输出”，对几百 KB 的历史反复正则没有意义
+        matched: pattern
+          ? (invalidPattern ? chunk.includes(String(pattern)) : compiled.test(chunk.slice(-16384)))
+          : false,
       };
     };
 
@@ -354,8 +381,7 @@ export class ShellRegistry {
     const entry = this.shells.get(id);
     if (!entry) return { ok: false, error: '没有这个后台进程' };
     try {
-      if (entry.running) entry.child.kill();
-      return { ok: true, wasRunning: entry.running };
+      this.#terminateEntry(entry);      return { ok: true, wasRunning: entry.running };
     } catch (err) {
       return { ok: false, error: String(err?.message || err) };
     }
@@ -372,10 +398,7 @@ export class ShellRegistry {
     let n = 0;
     for (const [id, entry] of this.shells) {
       if (entry.roomId !== roomId) continue;
-      try {
-        if (entry.running) entry.child.kill();
-      } catch (_) {}
-      this.shells.delete(id);
+      this.#terminateEntry(entry);      this.shells.delete(id);
       n++;
     }
     return n;
@@ -392,10 +415,7 @@ export class ShellRegistry {
         continue;
       }
       if (entry.running && at - entry.lastOutputAt > limit) {
-        try {
-          entry.child.kill();
-        } catch (_) {}
-        this.shells.delete(id);
+        this.#terminateEntry(entry);        this.shells.delete(id);
         n++;
         log(`后台进程空闲超时已结束：${entry.command.slice(0, 60)}`);
       }
@@ -405,12 +425,30 @@ export class ShellRegistry {
 
   stopAll() {
     for (const entry of this.shells.values()) {
-      try {
-        if (entry.running) entry.child.kill();
-      } catch (_) {}
-    }
+      this.#terminateEntry(entry);    }
     this.shells.clear();
     clearInterval(this.timer);
+  }
+
+  /**
+   * 结束一个后台进程。
+   *
+   * ★ Windows 上必须 taskkill /T：child.kill() 只杀直接子进程，孙子进程
+   *   （命令里起的 node / python / 构建工具）会留在后台继续跑 —— 用户看到的
+   *   是“进程结束了但风扇还在转”。沙箱内跑的不走这条路：沙箱用 Job Object
+   *   KILL_ON_JOB_CLOSE 收尾，外面再 taskkill 反而会打失败。
+   */
+  #terminateEntry(entry) {
+    if (!entry?.running) return;
+    if (process.platform === 'win32' && !entry.needsSandbox && entry.pid) {
+      try {
+        spawn('taskkill', ['/PID', String(entry.pid), '/T', '/F'], {
+          windowsHide: true,
+          stdio: 'ignore',
+        }).unref();
+      } catch { /* taskkill 不可用就退回 child.kill */ }
+    }
+    try { entry.child.kill(); } catch {}
   }
 
   #notify(entry) {
