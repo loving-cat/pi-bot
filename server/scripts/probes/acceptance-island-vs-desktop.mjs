@@ -37,7 +37,9 @@ const R = await import(src('role-tools.js'));
 const { createGrantGate } = await import(src('grant-gate.js'));
 const { ensureLegacyGrant } = await import(src('migration-grants.js'));
 const { createPolicyExtension } = await import(src('policy-hook.js'));
-const { defaultConfig } = await import(src('config.js'));
+// config.js 只导出 `config`（没有 defaultConfig）—— 解构错名字会得到 undefined，
+// 展开成 `{}` 后不报错，只是悄悄用了一份残缺配置（假绿的经典来源）。
+const { config: appConfig } = await import(src('config.js'));
 
 const problems = [];
 const say = (s) => console.log(s);
@@ -157,6 +159,11 @@ if (memberInput.ok) problems.push('成员居然通过了 desktop.input 的网关
 say('');
 say('【3】执行边界钩子（真实 createPolicyExtension 驱动一次 tool_call）');
 function driveToolCall({ botId, tool, input = {} }) {
+  const bot = store.getBot(botId);
+  // ★ mode 必须按真实角色给：主控是 host（Jarvis 宿主），成员是 project。
+  //   早先这里给成员也传 'host'，结果是“模式不匹配”把它拦住了 —— 看起来像拦对了，
+  //   实际是假绿：真实会话里成员用的是 project，那条路根本没被验。
+  const mode = bot?.role === 'main' ? 'host' : 'project';
   const hooks = [];
   const fakePi = {
     on: (event, cb) => { if (event === 'tool_call') hooks.push(cb); },
@@ -165,11 +172,16 @@ function driveToolCall({ botId, tool, input = {} }) {
   };
   const ext = createPolicyExtension({
     roomId: 'room_accept',
-    bot: store.getBot(botId),
+    bot,
     grantGate: gate,
-    config: { ...defaultConfig, jarvisMode: true, workspace: path.join(root, 'ws'), dataDir: path.join(root, 'data') },
+    config: {
+      ...appConfig,
+      jarvisMode: true,
+      workspace: path.join(root, 'ws'),
+      dataDir: path.join(root, 'data'),
+    },
     store,
-    mode: 'host',
+    mode,
   });
   ext.factory(fakePi);
   if (!hooks.length) return { block: false, reason: '(没有注册 tool_call 钩子)' };
@@ -178,14 +190,22 @@ function driveToolCall({ botId, tool, input = {} }) {
 }
 
 const memberHook = driveToolCall({ botId: 'bot_worker', tool: 'desktop_observe' });
-say(`  成员 desktop_observe → ${memberHook.block ? 'block' : 'allow'}：${String(memberHook.reason ?? '').slice(0, 90)}`);
-if (!memberHook.block) problems.push('执行边界没拦住成员调 desktop_observe');
-if (memberHook.block && !/授权|没有权限|desktop/.test(String(memberHook.reason ?? ''))) {
-  problems.push(`拦住理由不够明确：${memberHook.reason}`);
+say(`  成员（project）desktop_observe → ${memberHook.block ? 'block' : 'allow'}：${String(memberHook.reason ?? '').slice(0, 80)}`);
+if (!memberHook.block) problems.push('执行边界没拦住成员调 desktop_observe（T2 越界）');
+// 成员被拦的理由应当是"只给主控"这一道（工具级 chiefOnly），不是别的偶然原因
+if (memberHook.block && !/只给主控/.test(String(memberHook.reason ?? ''))) {
+  problems.push(`拦住理由不是 chiefOnly 兜底，可能只是别的原因碰巧挡住：${memberHook.reason}`);
+}
+
+// T1 的 island 工具：成员本来就该能用，不能被 chiefOnly 这道门拦
+const islandHook = driveToolCall({ botId: 'bot_worker', tool: 'desktop_island_observe' });
+say(`  成员（project）desktop_island_observe → ${islandHook.block ? 'block' : 'allow'}：${String(islandHook.reason ?? '').slice(0, 80)}`);
+if (islandHook.block && /只给主控/.test(String(islandHook.reason ?? ''))) {
+  problems.push('T1 的 desktop_island_observe 被 chiefOnly 兜底误拦了（成员就废了）');
 }
 
 const mainHook = driveToolCall({ botId: 'bot_main', tool: 'desktop_observe' });
-say(`  主控 desktop_observe → ${mainHook.block ? 'block' : 'allow'}：${String(mainHook.reason ?? '').slice(0, 90)}`);
+say(`  主控（host）desktop_observe → ${mainHook.block ? 'block' : 'allow'}：${String(mainHook.reason ?? '').slice(0, 80)}`);
 if (mainHook.block) problems.push(`主控被自己的钩子拦了：${mainHook.reason}`);
 
 // ────────────────────────────── 结果

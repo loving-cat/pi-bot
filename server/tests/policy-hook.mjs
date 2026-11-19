@@ -38,6 +38,16 @@ function install() {
   return handler;
 }
 
+/** 用指定 bot（含角色）装一个处理器，测执行边界的角色判定。 */
+function installWithBot(bot) {
+  let handler = null;
+  const pi = { on: (event, fn) => { if (event === 'tool_call') handler = fn; return () => {}; } };
+  const ext = createPolicyExtension({ roomId: 'r_test', bot });
+  ext.factory(pi);
+  assert.ok(handler, '扩展应注册 tool_call 处理器');
+  return handler;
+}
+
 const call = (handler, toolName, command) =>
   handler({ type: 'tool_call', toolName, toolCallId: 'c1', input: { command } });
 
@@ -93,3 +103,28 @@ for (const r of results) {
 console.log(`\n${passed}/${results.length} 通过`);
 fs.rmSync(HOME, { recursive: true, force: true });
 process.exit(passed === results.length ? 0 : 1);
+
+await test('★ 成员用 T2 桌面工具必须在执行边界被拒（CHIEF_ONLY_TOOLS 兜底）', () => {
+  // 为什么需要这一道：desktop.observe 这个动作 migration 是 'all'（T1 共用），
+  // 成员在网关那层拿得到授权；T2 的边界在工具级 chiefOnly。而会话是缓存复用的，
+  // 旧句柄可能绕过“造工具”那一道，所以真调用时必须再判。
+  const member = installWithBot({ id: 'b_member', name: '成员', role: 'member' });
+  for (const tool of ['desktop_observe', 'desktop_screenshot', 'desktop_input', 'desktop_lease']) {
+    const r = member({ type: 'tool_call', toolName: tool, toolCallId: 'c1', input: {} });
+    assert.equal(r?.block, true, `${tool} 应被拦`);
+    assert.match(String(r?.reason ?? ''), /只给主控/);
+  }
+
+  // 主控用同一个工具不放行也不该“被这道门”拦（后面还有网关/审批各管一段）
+  const chief = installWithBot({ id: 'b_main', name: '主控', role: 'main' });
+  const ok = chief({ type: 'tool_call', toolName: 'desktop_observe', toolCallId: 'c2', input: {} });
+  assert.notEqual(ok?.block, true, '主控不该被这道门拦住');
+});
+
+await test('★ T1 独立桌面工具不属于 chiefOnly：成员调用不会被这道门拦', () => {
+  const member = installWithBot({ id: 'b_member', name: '成员', role: 'member' });
+  for (const tool of ['desktop_island_observe', 'desktop_island_input', 'desktop_island_launch']) {
+    const r = member({ type: 'tool_call', toolName: tool, toolCallId: 'c3', input: {} });
+    assert.notEqual(r?.block, true, `${tool} 是 T1 工具，不该被 chiefOnly 这道门拦`);
+  }
+});

@@ -15,9 +15,15 @@ import { verdictForTool } from './shell-policy.js';
 import { log } from './util.js';
 import { bus as defaultBus } from './bus.js';
 import { loadHooks, applyHooks } from './hooks.js';
-import { readonlyBlockReason, opaqueScriptBlockReason, MUTATING_TOOLS, isSecurityConfigCall, isJarvisApprovalCall } from './role-tools.js';
+import { readonlyBlockReason, opaqueScriptBlockReason, MUTATING_TOOLS, isSecurityConfigCall, isJarvisApprovalCall, CHIEF_ONLY_TOOLS } from './role-tools.js';
 import { isExternalMcpTool, externalApprovalSummary, mcpAccessSignature } from './mcp-access.js';
 import { mcpApprovalSummary } from './mcp-approval-summary.js';
+
+// ★ 工具级“只给主控”的执行边界兜底（工具集之外的第二道）。
+//   为什么执行边界还要再判一次：会话是按 roomId:botId 缓存复用的，能不能重建
+//   取决于 roleConfigurationKey —— 升级代码、改角色、或者旧版本留下的会话，都可能
+//   带着已经不该给它的工具句柄继续跑。工具集那道门在“造工具”时生效，这道在“真调用”时生效。
+const CHIEF_ONLY_SET = new Set(CHIEF_ONLY_TOOLS);
 
 /** 执行命令的工具名 */
 const SHELL_TOOLS = new Set(['bash', 'powershell']);
@@ -177,6 +183,23 @@ export function createPolicyExtension({
         // ★ 只读：默认拒绝。审批授权、命令白名单和会话里残留的工具都不能放行。
         const readonlyReason = readonlyBlockReason(policy, tool);
         if (readonlyReason) return { block: true, reason: readonlyReason };
+
+        // ★ 只给主控的工具，执行边界再兜一次（CHIEF_ONLY_TOOLS）。
+        //
+        //   为什么非要有这一道：`desktop.observe` 这个**动作**的 migration 是 'all'
+        //   （2026-11-16 起，因为 T1 独立桌面上的观察用的是同一个动作），于是成员
+        //   在网关那层是拿得到这类授权的 —— 真正的 T2 边界在**工具级**：
+        //   `desktop_observe` / `desktop_screenshot` / `desktop_input` / `desktop_lease`
+        //   都标了 chiefOnly。工具集那道门只在“造工具”时生效；会话缓存复用、
+        //   角色变更、旧版本残留的句柄都可能绕过它，所以真调用时必须再判一次。
+        if (currentBot?.role !== 'main' && CHIEF_ONLY_SET.has(tool)) {
+          return {
+            block: true,
+            reason: `「${tool}」只给主控用（它是 T2 用户桌面的工具）。`
+              + '成员要看自己的桌面请用 desktop_island_*（T1 独立桌面）；'
+              + '不要换成别的工具或让主控代做来绕开这条。',
+          };
+        }
         // 主控（贾维斯宿主模式）：非只读、非 Talk 旁路时享受宿主最高执行权限
         const isJarvisHost = !talkLane && currentBot?.role === 'main' && config.jarvisMode !== false && policy?.dangerous !== 'deny';
         const scriptReason = isJarvisHost ? null : opaqueScriptBlockReason(policy, tool);
