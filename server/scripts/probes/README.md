@@ -22,6 +22,11 @@ powershell -NoProfile -STA -ExecutionPolicy Bypass -File scripts/probes/desktop-
 node scripts/probes/desktop-input-drag-probe.mjs
 ```
 
+拖拽靶子刻意**不做日志节流**：`[Environment]::TickCount64` 是 .NET Core 3.0+ 的属性，
+Windows PowerShell 5.1 跑在 .NET Framework 上会**静默返回 `$null`**，节流条件永远为假
+—— 于是“一条 move 都没记录”看起来像“系统不发鼠标移动消息”，差点把探针 bug 当成产品 bug
+（2026-11-19 实测踩到）。要时间戳就用 `[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()`。
+
 两个靶子都必须**自己先声明 DPI 感知**：不声明的话它记录的坐标是逻辑坐标
 （本机 2048x1152 而不是 2560x1440），拿它去和物理坐标比就会误判成"点偏了"。
 这一点踩过，脚本里有注释。

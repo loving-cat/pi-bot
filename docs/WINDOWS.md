@@ -221,7 +221,7 @@ PowerShell（`-STA`）读 `[Windows.Forms.Clipboard]::GetImage()`，存成临时
 | 中文/emoji/`` ` ``/`$`/双引号粘贴 | ✅ 逐字相符 | 靶子 TextBox 每 1s 落盘，`scripts/probes/desktop-input-paste-target.ps1` |
 | 原剪贴板还原 | ✅ 粘贴后读回仍是原内容 | 同上脚本，前后各读一次剪贴板 |
 | 屏幕外坐标 | ✅ 拒绝（不夹到边缘） | 传 `(99999, 400)`，返回 `out_of_screen` |
-| 拖拽（按下—分步—抬起） | 🟡 分段与“中断必松开”已验证；本机拿不到 move 消息 | `scripts/probes/desktop-input-drag-probe.mjs`：靶子记录到 `down`@起点 (350,320)、`up`@终点 (850,700)，中断时也**真的抬起了**（`up` 1 次 + `released=true`）；但**中间 0 条 move** —— 本机有程序持续合成输入（见下面「环境噪声」），`SetCursorPos` 不回窗口发 `WM_MOUSEMOVE`。换到干净环境复跑这个探针才算完整实机证据 |
+| 拖拽（按下—分步—抬起） | ✅ 实机通过（含中断必松开） | `scripts/probes/desktop-input-drag-probe.mjs`：`down`@起点 (350,320)、`up`@终点 (850,700) 逐像素一致；**按住期间 15 条 move**（拖拽真的有轨迹，不是“瞬移”）；第 4 站报中断后靶子收到 1 次 `up`、`released=true` —— 探针输出 `MATCH true / DRAG_OK true / RELEASE_ON_ABORT true` |
 | 锁屏 / 断开会话 | ⚠ 静态实现，未实测 | `OpenInputDesktop` 打不开 → `no_session` 并自动吊销租约 |
 | 多屏 | ⚠ 未实测 | 屏幕矩形来自 `SM_XVIRTUALSCREEN` 一族，天然支持负坐标 |
 
@@ -232,10 +232,15 @@ PowerShell（`-STA`）读 `[Windows.Forms.Clipboard]::GetImage()`，存成临时
    （返回 `not_dpi_aware`），因为它没有任何可信的坐标基准。
    `desktop-observe.js` 原来也漏了这一步，已一并修掉 —— 否则"输入移到 A、截图看 B"。
 
-2. **`SendInput` 的绝对坐标在本机会偏。** 实测发 `2^16/2` 想点到 (1280,720)，
-   光标落在 (1611,1114)；加 `MOUSEEVENTF_VIRTUALDESK` 也没用。`SetCursorPos`
-   精确。所以：**移动用 `SetCursorPos`，按键/滚轮用 `SendInput`（不吃坐标）**。
+2. **移动这件事，只有 `SetCursorPos` 是准的。** 三条实测（同一台机器）：
+   · `SendInput` **绝对坐标**不准：发 `2^16/2` 想点到 (1280,720)，光标落在 (1611,1114)；
+   · `SendInput` **相对大位移**也被“提高指针精确度”（加速曲线）放大：想移到 (350,320)，
+     一次发 -1131,-325 之后落在 (0,252)（撞到屏幕左边被 clamp）；
+   · `SetCursorPos` 逐像素准确；`SendInput` 相对 **±1px 级**小位移也是准的。
+   所以：**位移用 `SetCursorPos`，按键/滚轮用 `SendInput`（不吃坐标）**。
    移动之后必须 `GetCursorPos` 复核，没到位绝不点击。
+   唯一例外是拖拽：它还要求“移动要被窗口看见”（`SetCursorPos` 不发 `WM_MOUSEMOVE`），
+   所以 `MoveTo` = `SetCursorPos` 定位 + 一次 ±1px 相对移动把 move 通知出去。
 
 3. **平台契约是 `perform({ plan })`，不是裸 plan。** `desktop-input-session.js`
    原来传的是 `perform(planned.plan)`，而 `desktop-input-win.js` / `-mac.js`

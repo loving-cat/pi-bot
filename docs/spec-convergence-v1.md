@@ -157,7 +157,7 @@ node scripts/check-secrets.mjs
 
 - **W2a · 租约状态机（✅）**：`server/src/desktop-lease.js` + `server/tests/desktop-lease.mjs`（24 项）
 - **W2b · 接管检测（✅）**：`server/src/desktop-takeover.js` + `server/tests/desktop-takeover.mjs`（31 项）
-- **W2c · Windows 实现（✅ 基础实机，`d3b77fc`；拖拽 2026-11-19 已实现）**：`server/src/desktop-input.js` + `docs/WINDOWS.md` + `server/tests/desktop-input.mjs`（55 项）；**待补实机**：锁屏（#31）、多屏与混合缩放（#32）、拖拽的 move 消息（#33 — 本机合成输入干扰，见 `docs/WINDOWS.md`）。
+- **W2c · Windows 实现（✅ 基础实机，`d3b77fc`；拖拽 2026-11-19 已实现）**：`server/src/desktop-input.js` + `docs/WINDOWS.md` + `server/tests/desktop-input.mjs`（55 项）；**待补实机**：锁屏（#31）、多屏与混合缩放（#32）；拖拽（#33）已实机通过 —— `desktop-input-drag-probe.mjs` 输出 `MATCH true / DRAG_OK true / RELEASE_ON_ABORT true`（down/up 逐像素一致、按住期间 15 条 move、中断必松开）。
   - 拖拽实现：`planDragPath` 分步直线（终点逐像素精确、步数夹紧 3..40、双端屏内校验）+ `performDrag` 分段执行（每段≤4 站）+ `shouldAbort`（租约被撤 / 锁屏 / 光标不在我们放的位置 → 中止）+ **任何返回路径先松开左键**，含段后光标实际位置核对（不谎报“到了”）。
   - 同步修掉一个 P0：装配层原来传裸 `plan` 给平台（契约是 `{plan}`），真机上所有 `desktop_input` 都回“没有可执行的输入计划”；现在契约两侧锁死并有断言守门。
 - **W2d · macOS 实现（❌ 空壳，#30）**：`server/src/desktop-input-mac.js` + `docs/MACOS-DESKTOP-INPUT.md` + `server/tests/desktop-input-mac.mjs`（13 项守门）
