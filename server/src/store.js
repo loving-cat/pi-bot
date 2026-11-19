@@ -1568,8 +1568,14 @@ export class Store {
   requestConfirmation(confirmation) {
     if (!confirmation?.id) return null;
     if (!Array.isArray(this.state.confirmations)) this.state.confirmations = [];
+    // ★ 过期的那条不算“重复”：它已经不可能被批准了（checkConfirmation 会判 expired）。
+    //   不判过期的话，一张超时未点的卡片会把同一目标**永久卡死** ——
+    //   新的卡片发不出来，旧的点不了，用户看到的是“点了没反应”。
+    const nowMs = Date.now();
     const dup = this.state.confirmations.find(
-      (c) => c.decision === null && c.action === confirmation.action && c.targetDigest === confirmation.targetDigest,
+      (c) => c.decision === null && c.action === confirmation.action
+        && c.targetDigest === confirmation.targetDigest
+        && nowMs < Number(c.expiresAt ?? 0),
     );
     if (dup) return dup;
     this.state.confirmations.push({ ...confirmation });

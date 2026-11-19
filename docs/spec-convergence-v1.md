@@ -273,7 +273,7 @@ node scripts/check-secrets.mjs
    - **要求**：
      - 在 `server/src/policy-hook.js` 的 `tool_call` 中，紧接只读校验后增加兜底：若 `currentBot?.role !== 'main'` 且工具在 `CHIEF_ONLY_TOOLS` 内，直接返回 `{ block: true, reason }`，并补对应单测；
      - 修复 `acceptance-island-vs-desktop.mjs` 第 40 行导入 `{ config }`、第 172 行按实际角色传 `botId === 'bot_main' ? 'host' : 'project'`，并同时断言成员在 `project` 模式下调用 `desktop_observe` **被拦**、调用 `desktop_island_observe` **放行**。
-2. **A2（P0 · Jarvis 高危操作统一接入二级强确认 `/api/confirmations`，用户 2026-11-19 已拍板）〔✅ 已收口〕**
+2. **A2（P0 · Jarvis 高危操作统一接入二级强确认 `/api/confirmations`，用户 2026-11-19 已拍板）〔✅ 已收口；Review 的 B1–B4 也已修：目标调包绑定、过期卡片死锁、测试位置、判定入口合并〕**
    - **涉及文件**：`server/src/capabilities.js`（`isJarvisApprovalCall`）、`server/src/policy-hook.js`、`server/src/store.js`、`server/src/http.js`、`docs/REAL-MACHINE-CHECKLIST.md`（§4）、`server/tests/confirm.mjs` 及 Jarvis 确认回归测试
    - **问题**：当前 `isJarvisApprovalCall` 只覆盖 `git_destructive`、`manage_mcp_server`（首次启用）、`import_local_capabilities`（导入并启用 MCP），不含删除 Bot / 清知识库 / 改策略，且非 `git_destructive` 的 `isJarvisApprovalCall` 走 `/api/approvals`（本机可直接点）而非二级强确认 `/api/confirmations`；按清单 §4 让主控“删临时 Bot”不会弹任何确认卡。
    - **要求**：

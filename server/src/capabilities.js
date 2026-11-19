@@ -490,7 +490,7 @@ export const SECOND_FACTOR_TOOLS = Object.freeze([
  * 按操作细分（不是按工具整包）：`manage_knowledge` 的列表/加经验不需要强确认，
  * 删技能/删经验才需要；`set_policy` 只有 update 动防线；`manage_department` 只有 delete。
  */
-export function needsSecondFactor(tool, input = null) {
+export function needsSecondFactor(tool, input = null, { isMcpAlreadyEnabled = null } = {}) {
   switch (tool) {
     case 'git_destructive':
       return true;
@@ -504,26 +504,27 @@ export function needsSecondFactor(tool, input = null) {
       return input?.op === 'update';
     case 'manage_model_group':
       return input?.op === 'delete';
+    // ★ 启用 MCP / 导入并启用本地能力：新增的是一条**新的执行入口**，
+    //   挂上之后那些 MCP 工具就成了它的手 —— 这属于“改防线”，不是做活。
+    //   已经启用过的再 enable 一次不算（幂等调用没必要弹卡）。
+    case 'manage_mcp_server': {
+      const wantsEnable = input?.op === 'enable' || input?.enabled === true;
+      if (!wantsEnable) return false;
+      if (typeof isMcpAlreadyEnabled === 'function' && isMcpAlreadyEnabled(input)) return false;
+      return true;
+    }
+    case 'import_local_capabilities':
+      return input?.kind === 'mcp' && input?.enable === true;
     default:
       return false;
   }
 }
 
-export function isJarvisApprovalCall(tool, input = null, { isMcpAlreadyEnabled = null } = {}) {
-  // 二级强确认那几类同样属于“Jarvis 要拦”的范围（拦下来之后再分流到确认体系）
-  if (needsSecondFactor(tool, input)) return true;
-  if (tool === 'manage_mcp_server') {
-    const wantsEnable = input?.op === 'enable' || input?.enabled === true;
-    if (!wantsEnable) return false;
-    if (typeof isMcpAlreadyEnabled === 'function' && isMcpAlreadyEnabled(input)) {
-      return false;
-    }
-    return true;
-  }
-  if (tool === 'import_local_capabilities') {
-    return input?.kind === 'mcp' && input?.enable === true;
-  }
-  return false;
+export function isJarvisApprovalCall(tool, input = null, opts = {}) {
+  // ★ 2026-11-19 起两档合并：以前这里分“本机可点的普通审批”和“必须手机的强确认”，
+  //   结果是删 Bot / 改策略这类高危动作落到了本机可点的那一档（规格 §9 的反面例子）。
+  //   现在统一按 needsSecondFactor 判 —— 一个判定点，不再有两份清单互相漂移。
+  return needsSecondFactor(tool, input, opts);
 }
 
 /** 迁移授权给谁能拿：`all` 全给，`chief` 只给主 Bot，`never` 不给。 */

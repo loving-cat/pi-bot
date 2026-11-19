@@ -175,15 +175,6 @@ await test('★ A2：破坏性 git 不在这一层重复弹卡（git-tools 自�
   assert.notEqual(r?.block, true, 'git_destructive 不该在这里被拦（会双卡）');
 });
 
-const passed = results.filter((r) => r.ok).length;
-console.log('\n================ 命令拦截测试 ================');
-for (const r of results) {
-  console.log(`${r.ok ? '✓' : '✗'} ${r.name}${r.ok ? '' : `\n     ${r.err}`}`);
-}
-console.log(`\n${passed}/${results.length} 通过`);
-fs.rmSync(HOME, { recursive: true, force: true });
-process.exit(passed === results.length ? 0 : 1);
-
 await test('★ 成员用 T2 桌面工具必须在执行边界被拒（CHIEF_ONLY_TOOLS 兜底）', () => {
   // 为什么需要这一道：desktop.observe 这个动作 migration 是 'all'（T1 共用），
   // 成员在网关那层拿得到授权；T2 的边界在工具级 chiefOnly。而会话是缓存复用的，
@@ -208,3 +199,70 @@ await test('★ T1 独立桌面工具不属于 chiefOnly：成员调用不会被
     assert.notEqual(r?.block, true, `${tool} 是 T1 工具，不该被 chiefOnly 这道门拦`);
   }
 });
+
+
+await test('★ B1：批了 A 不能拿这张票去删 B（目标调包必须拒）', async () => {
+  const handler = chiefSetup();
+  const a = handler({
+    type: 'tool_call', toolName: 'manage_department', toolCallId: 'd1', input: { op: 'delete', groupId: 'grp_test' },
+  });
+  assert.equal(a?.block, true);
+  const card = (store.state.confirmations ?? []).find((c) => c.action === 'manage_department');
+  assert.ok(card, '应当建了确认');
+  store.decideConfirmation(card.id, { approved: true, channel: 'device', device: { id: 'd1', name: '手机' } });
+
+  // 换一个部门：摘要对不上，必须重新确认
+  const other = handler({
+    type: 'tool_call', toolName: 'manage_department', toolCallId: 'd2', input: { op: 'delete', groupId: 'grp_prod' },
+  });
+  assert.equal(other?.block, true, '批了 A 却拿去删 B —— 必须被拒');
+
+  // 原目标：放行（并且消费掉）
+  const same = handler({
+    type: 'tool_call', toolName: 'manage_department', toolCallId: 'd3', input: { op: 'delete', groupId: 'grp_test' },
+  });
+  assert.notEqual(same?.block, true, '原目标应当放行');
+});
+
+await test('★ B1：批的是「requireProof」就不能拿去改 dangerous', async () => {
+  const handler = chiefSetup();
+  handler({
+    type: 'tool_call', toolName: 'set_policy', toolCallId: 'p1',
+    input: { op: 'update', requireProof: true },
+  });
+  const card = (store.state.confirmations ?? []).find((c) => c.action === 'set_policy');
+  assert.ok(card);
+  store.decideConfirmation(card.id, { approved: true, channel: 'device', device: { id: 'd1', name: '手机' } });
+
+  const swapped = handler({
+    type: 'tool_call', toolName: 'set_policy', toolCallId: 'p2',
+    input: { op: 'update', dangerous: 'allow', allowLocalApproval: true },
+  });
+  assert.equal(swapped?.block, true, '参数调包必须重新确认（不能拿一张票改整个策略）');
+});
+
+await test('★ B2：卡片过期后同一目标能重新发卡（不死锁）', async () => {
+  const handler = chiefSetup();
+  const input = { name: '临时Bot-过期用例' };
+  handler({ type: 'tool_call', toolName: 'delete_bot', toolCallId: 'x1', input });
+  const mine = () => (store.state.confirmations ?? [])
+    .filter((c) => c.action === 'delete_bot' && String(c.summary ?? '').includes('临时Bot-过期用例'));
+  assert.equal(mine().length, 1);
+
+  // 人为把它变过期
+  mine()[0].expiresAt = Date.now() - 1;
+
+  const again = handler({ type: 'tool_call', toolName: 'delete_bot', toolCallId: 'x2', input });
+  assert.equal(again?.block, true);
+  assert.equal(mine().length, 2, '过期后必须能发新卡（否则这个目标永久死锁）');
+  assert.equal(mine()[1].decision, null, '新卡应当是待确认');
+});
+
+const passed = results.filter((r) => r.ok).length;
+console.log('\n================ 命令拦截测试 ================');
+for (const r of results) {
+  console.log(`${r.ok ? '✓' : '✗'} ${r.name}${r.ok ? '' : `\n     ${r.err}`}`);
+}
+console.log(`\n${passed}/${results.length} 通过`);
+fs.rmSync(HOME, { recursive: true, force: true });
+process.exit(passed === results.length ? 0 : 1);

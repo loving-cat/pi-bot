@@ -234,13 +234,23 @@ await test('mainBot 在 ask 档 + 挂载 MCP + 无手建 grant 下免弹窗直�
     '宿主放行应落审计',
   );
 
-  // 极高危动作 1：启用未启用 MCP -> 弹一次确认卡，批准后放行
+  // 极高危动作 1：启用未启用 MCP -> **二级强确认**（/api/confirmations，手机通道）
+  //
+  //  2026-11-19 起“启用 MCP”从普通审批升级成强确认：它新增的是一条执行入口，
+  //  属于“改防线”—— 本机桌面能自己点（规格 §9 的反面例子）。
   const mcpBlock = runChief('manage_mcp_server', { op: 'enable', id: offMcp.server.id });
   assert.equal(mcpBlock?.block, true, '首次启用停用状态的 MCP 应弹确认卡');
-  const pending = store.listApprovals({ roomId: chiefDm.id, status: 'pending' });
-  assert.equal(pending.length, 1);
-  store.decideApproval(pending[0].id, { approved: true });
-  assert.equal(runChief('manage_mcp_server', { op: 'enable', id: offMcp.server.id }), undefined, '批准后同调用立即放行');
+  const pendingConfirmed = (store.state.confirmations ?? [])
+    .filter((c) => c.action === 'manage_mcp_server' && c.decision === null);
+  assert.equal(pendingConfirmed.length, 1, '应当建了一条二级强确认');
+  assert.equal(pendingConfirmed[0].minChannel, 'device', '这条确认必须要求设备通道');
+  store.decideConfirmation(pendingConfirmed[0].id, {
+    approved: true, channel: 'device', device: { id: 'd_j', name: '我的手机' },
+  });
+  assert.equal(
+    runChief('manage_mcp_server', { op: 'enable', id: offMcp.server.id }), undefined,
+    '手机批准后同调用立即放行（一次一用）',
+  );
 
   // 极高危动作 2：git_destructive -> 弹确认卡
   const gitBlock = runChief('git_destructive', { op: 'reset', ref: 'HEAD~1' });

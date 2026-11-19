@@ -169,13 +169,22 @@ await test('全部条件满足才通过', () => {
 // ---------------------------------------------------------------- store
 await test('store：同一个动作+目标不重复建卡片', () => {
   store.state.confirmations = [];
-  const a = mk({ id: 'cf_a' });
-  const b = mk({ id: 'cf_b' });
+  // 去重只对**还有效**的卡片成立，所以这里用当前时间（mk 默认 now 是 1970，早就过期了）
+  const now = Date.now();
+  const a = mk({ id: 'cf_a', now });
+  const b = mk({ id: 'cf_b', now });
   const first = store.requestConfirmation(a);
   const again = store.requestConfirmation(b);
   assert.equal(first.id, 'cf_a');
   assert.equal(again.id, 'cf_a', '重复请求应复用同一条');
   assert.equal(store.pendingConfirmations().length, 1);
+});
+
+await test('★ store：过期的旧卡片不能挡住新卡片（否则同一目标永久死锁）', () => {
+  store.state.confirmations = [];
+  store.requestConfirmation(mk({ id: 'cf_stale', now: 1_000_000 }));  // expiresAt 早在 1970
+  const fresh = store.requestConfirmation(mk({ id: 'cf_fresh', now: Date.now() }));
+  assert.equal(fresh.id, 'cf_fresh', '过期那条不该被当成重复');
 });
 
 await test('store：不同目标各建一条', () => {

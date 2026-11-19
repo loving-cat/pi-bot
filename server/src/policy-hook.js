@@ -34,8 +34,49 @@ const CHIEF_ONLY_SET = new Set(CHIEF_ONLY_TOOLS);
  */
 function secondFactorTargetOf(tool, input = {}) {
   const raw = input ?? {};
-  const key = String(raw.id ?? raw.botId ?? raw.name ?? raw.slug ?? raw.target ?? '').trim();
-  return { tool, key: key.slice(0, 120) };
+  const pick = (k) => String(raw[k] ?? '').trim().slice(0, 120);
+  const list = (v) => (Array.isArray(v)
+    ? v.map((x) => String(x).slice(0, 120)).sort().slice(0, 50)
+    : null);
+
+  switch (tool) {
+    case 'delete_bot':
+      return { tool, id: pick('id') || pick('botId'), name: pick('name') };
+    case 'manage_department':
+      // ★ 参数名是 groupId（见 jarvis-tools.js），不是 id。
+      //   漏了它就等于不绑目标：批删测试部门 A，模型可以拿这张票去删生产部门 B。
+      return { tool, op: 'delete', groupId: pick('groupId') || pick('id'), name: pick('name') };
+    case 'manage_knowledge':
+      // 带 op：删技能和删经验是两种动作，同 id 也不该撞摘要
+      return { tool, op: pick('op'), id: pick('id'), name: pick('name') };
+    case 'manage_model_group':
+      return { tool, op: 'delete', id: pick('id'), name: pick('name') };
+    case 'set_policy': {
+      // ★ 改策略必须把**所有会一起生效的字段**都绑进来。
+      //   用户批的是「requireProof: true」，模型重试时调包成
+      //   dangerous:'allow' + allowLocalApproval:true 就是另一件事了 ——
+      //   只绑 op 等于给了一个万能确认。
+      const boolOrNull = (v) => (v === undefined ? null : v === true);
+      const numOrNull = (v) => (v === undefined ? null : (Number(v) || null));
+      return {
+        tool,
+        op: 'update',
+        dangerous: pick('dangerous'),
+        requireProof: boolOrNull(raw.requireProof),
+        denyCommands: list(raw.denyCommands),
+        allowCommands: list(raw.allowCommands),
+        trustPhantomInput: boolOrNull(raw.trustPhantomInput),
+        allowLocalApproval: boolOrNull(raw.allowLocalApproval),
+        awayAfterMs: numOrNull(raw.awayAfterMs),
+      };
+    }
+    case 'manage_mcp_server':
+      return { tool, op: pick('op') || (raw.enabled === true ? 'enable' : ''), id: pick('id'), name: pick('name') };
+    case 'import_local_capabilities':
+      return { tool, kind: pick('kind'), id: pick('id'), name: pick('name') };
+    default:
+      return { tool, key: pick('id') || pick('name') || pick('target') };
+  }
 }
 
 /** 执行命令的工具名 */
@@ -344,6 +385,15 @@ export function createPolicyExtension({
         //   挂 MCP 时，**所有能执行/注入命令的工具**都逐次审批 ——
         //   包括 write_stdin（往已批准的后台 shell 里灌命令）。
         const shellWithMcp = !externalMcp && SHELL_LIKE.has(tool) && botHasMcp(currentBot, store);
+        // 启用 MCP 时用来判断「这个 server 是不是本来就开着」（幂等调用不该弹卡）
+        const mcpEnableOpts = {
+          isMcpAlreadyEnabled: (inp) => {
+            const target = String(inp?.id ?? inp?.name ?? '').trim().toLowerCase();
+            if (!target) return false;
+            return store.mcpLibrary().some((s) =>
+              (s.id.toLowerCase() === target || s.name.toLowerCase() === target) && s.enabled === true);
+          },
+        };
         // 注：二级强确认那几类已经在上面的专门分支处理（git_destructive 由 git-tools 自己弹），
         // 这里用 !needsSecondFactor 把它们排除掉 —— 否则同一个动作会同时收到 approval 与 confirmation 两张卡。
 
@@ -371,12 +421,17 @@ export function createPolicyExtension({
         //
         //   git_destructive 刻意排除：它自己（git-tools.js）在动手前已经
         //   requestConfirmation 了，这里再弹一张就是双卡。
-        if (isJarvisHost && tool !== 'git_destructive' && needsSecondFactor(tool, event?.input)) {
+        // ★ 刻意不再要求 isJarvisHost：jarvisMode=false 只是关掉「宿主豁免」，
+        //   不该顺手把高危动作的强确认也关掉 —— 那正好是最不该被跳过的场景。
+        if (tool !== 'git_destructive' && needsSecondFactor(tool, event?.input, mcpEnableOpts)) {
           const target = secondFactorTargetOf(tool, event?.input);
           const digest = digestOf(target);
+          const nowMs = Date.now();
           const live = (store.state.confirmations ?? []).find(
             (c) => c.action === tool && c.targetDigest === digest
-              && c.decision === 'approved' && !c.consumedAt,
+              && c.decision === 'approved' && !c.consumedAt
+              // ★ 必须判过期：过期批准还能用的话，「一次一用」就变成「一直能用」
+              && nowMs < Number(c.expiresAt ?? 0),
           );
           if (live) {
             const chk = checkConfirmation({
@@ -392,8 +447,11 @@ export function createPolicyExtension({
             }
           }
           const summary = summarizeToolCall(tool, event?.input);
+          // ★ 过期卡片不能让同一目标死锁：它既不会被批准（checkConfirmation 会判
+          //   expired），也不该继续挡住新卡片 —— 所以这里必须带过期判断。
           const pending = (store.state.confirmations ?? []).find(
-            (c) => c.action === tool && c.targetDigest === digest && c.decision === null,
+            (c) => c.action === tool && c.targetDigest === digest && c.decision === null
+              && nowMs < Number(c.expiresAt ?? 0),
           );
           const card = pending ?? store.requestConfirmation(buildConfirmation({
             // buildConfirmation 不会自己生成 id（它只是把字段冻结成一条记录），
@@ -424,7 +482,14 @@ export function createPolicyExtension({
               text: `${bot?.name ?? '它'} 想执行：${summary} —— 需要在手机上确认`
                 + `${card.minChannel === 'device' ? '（本机批准不算）' : ''}`,
               status: 'done',
-              meta: { confirmationId: card.id, tool, minChannel: card.minChannel ?? null },
+              meta: {
+                confirmationId: card.id,
+                tool,
+                action: tool,
+                summary,
+                irreversible: true,
+                minChannel: card.minChannel ?? null,
+              },
             });
             bus.emit('event', { t: 'msg.new', msg });
           }
