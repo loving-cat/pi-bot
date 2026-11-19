@@ -17,6 +17,43 @@ import 'supervisor.dart';
 ///      并校验版本（需 22+）；
 ///   4. `node_modules` 缺失时执行 `npm install`（并发/重试共享同一个 Future）；
 ///   5. 启动进程（stdout/stderr 由操作系统重定向到日志文件），轮询 `/health`。
+/// 状态目录名的两条来源：新版品牌名与旧版。
+///
+/// 与服务端 `server/src/config.js` 的 `HOME_DIR_NAME` / `LEGACY_HOME_DIR_NAME`
+/// 必须逐字一致 —— 它们决定 App 日志目录和服务端数据目录是不是同一个父目录。
+const stateDirNameNew = 'orbis';
+const stateDirNameLegacy = 'pi-bot';
+
+/// 选一个状态目录名：新版优先，旧版只在「新版目录还不存在、旧版存在」时沿用。
+///
+/// ★ 为什么不自动迁移：迁移半途失败（磁盘满 / 权限 / 进程被结束）会让用户
+///   失去 pid 记录 —— 而 pid 丢了会导致「服务端在跑、App 以为没起过」。
+///   沿用旧目录零风险；想换目录的用户可以手动搬。
+///
+/// @param base 父目录（如 `~/Library/Application Support`）
+/// @param exists 目录存在性判定，测试可注入
+String resolveStateDirName(String base, {bool Function(String path)? exists}) {
+  final sep = Platform.pathSeparator;
+  bool check(String name) {
+    final path = '$base$sep$name';
+    if (exists != null) return exists(path);
+    try {
+      return Directory(path).existsSync();
+    } catch (_) {
+      return false;
+    }
+  }
+
+  try {
+    if (!check(stateDirNameNew) && check(stateDirNameLegacy)) {
+      return stateDirNameLegacy;
+    }
+  } catch (_) {
+    // 判不出来就按新版走（建目录时会把错误暴露出来）
+  }
+  return stateDirNameNew;
+}
+
 class LocalServerLauncher {
   LocalServerLauncher({
     Directory? stateDir,
@@ -32,8 +69,13 @@ class LocalServerLauncher {
 
   /// 每个平台放本组件自己的小文件（日志 / pid / 启动脚本）的位置。
   ///
-  /// Windows 是 `%LOCALAPPDATA%\pi-bot`，macOS 是
-  /// `~/Library/Application Support/pi-bot` —— 不能用临时目录（重启就没了）。
+  /// Windows 是 `%LOCALAPPDATA%\<品牌>`，macOS 是
+  /// `~/Library/Application Support/<品牌>` —— 不能用临时目录（重启就没了）。
+  ///
+  /// ★ 品牌名 v1.7 起从 `pi-bot` 换成 `orbis`（服务端同样改了，见
+  ///   `server/src/config.js` 的 `resolveHomeDir`）。老用户的日志和 pid
+  ///   都在 `pi-bot` 下，服务端也还在读 `pi-bot/data` —— 两边必须用
+  ///   **同一个**判定，否则会出现「App 日志在新目录、服务端数据在旧目录」的分叉。
   static Directory defaultStateDir() {
     final sep = Platform.pathSeparator;
     String base;
@@ -47,7 +89,7 @@ class LocalServerLauncher {
           Platform.environment['XDG_STATE_HOME'] ??
           '${Platform.environment['HOME'] ?? '~'}/.local/state';
     }
-    final dir = Directory('$base${sep}pi-bot');
+    final dir = Directory('$base$sep${resolveStateDirName(base)}');
     try {
       dir.createSync(recursive: true);
     } catch (_) {}

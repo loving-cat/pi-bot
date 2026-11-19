@@ -29,9 +29,12 @@ App 复制回下述构建路径，并将调试信息保存到 `app/build/debug-i
 正常构建固定使用 `https://pub.dev`，先严格解析已提交的 `pubspec.lock`，再以 `--no-pub`
 构建；锁文件不匹配或被改动时停止打包。`--no-build` 复用现有产物，不验证其依赖锁版本。
 
-- 构建来源：`app/build/macos/Build/Products/Release/pi-bot.app`，兼容 `pi_bot.app`。
-- 发行 App：`dist/pi-bot.app`；服务端位于其 `Contents/Resources/server`。
-- DMG：`dist/pi-bot-<服务端版本>.dmg`，版本取自 `server/package.json`。
+- 构建来源：`app/build/macos/Build/Products/Release/Orbis.app`，兼容旧的
+  `pi-bot.app` / `pi_bot.app`（v1.7 品牌改名前的产物名）。
+- 发行 App：`dist/Orbis.app`；服务端位于其 `Contents/Resources/server`。
+- DMG：`dist/orbis-<服务端版本>.dmg`，版本取自 `server/package.json`。
+  App 名用品牌名（`Orbis`），产物前缀用小写 slug（`orbis`）—— 与
+  `orbis-windows-*` / `orbis-android-*` 一致。
 - 服务端目录内执行 `npm install --omit=dev` 并检查声明依赖可解析；包内不附带 Node。
 - 签名前整理前端原生文件的调试符号，仅移除已有系统及应用内回退的本机工具链搜索路径，
   再检查原生资产文件及架构。本机目录仍残留时停止打包，不静默发布。
@@ -139,7 +142,7 @@ macOS 侧只需要实现六个函数，签名与返回形状与 Windows 版完�
 HTTP 403 权限拒绝，相关聊天流程仍需在凭据及模型权限有效后复验。未勾选项不能
 因编译、单元测试或假模型测试通过而视为通过。
 
-- [x] 打开 `dist/pi-bot.app`，自动拉起服务端并进入主界面。
+- [x] 打开 `dist/Orbis.app`，自动拉起服务端并进入主界面。
 - [x] `/health` 返回 `ok:true`；本轮使用空闲端口 18787，保留原占用端口上的其他程序。
 - [x] 数据落在默认用户数据目录，而非临时目录。
 - [x] 正常退出 App 后原服务端 PID 仍在，再次打开复用同一进程。
@@ -203,6 +206,48 @@ macOS 首次监听局域网时会弹「是否允许 node 接受传入网络连�
 
 排查：系统设置 → 网络 → 防火墙 → 选项，确认允许该程序；或临时关掉防火墙对照一次。
 桌面端本机路径（回环 8787）不受影响，所以会出现「电脑上一切正常、手机连不上」。
+
+## v1.7 品牌改名在 Mac 上的落地
+
+v1.7 起产品名从 **pi-bot** 改成 **Orbis**（仓库也改名为 `loving-cat/orbis`，
+GitHub 会重定向旧地址）。Mac 上的影响面只有三处，且都带兼容：
+
+| 项 | 变化 | 兼容策略 |
+|---|---|---|
+| App 名 | `pi-bot.app` → `Orbis.app` | `pack-macos.sh` 两种构建名都认 |
+| DMG | `pi-bot-<版本>.dmg` → `orbis-<版本>.dmg` | 旧产物留在 `dist/` 不自动删 |
+| 用户目录 | `~/Library/Application Support/pi-bot` → `.../orbis` | 新目录优先；`orbis` 不存在而 `pi-bot` 存在时**沿用旧的** |
+
+**不做自动迁移**是刻意的：迁移半途失败（磁盘满 / 权限 / 进程被杀）会让用户
+看到「聊天记录都没了」。沿用旧目录零风险，想换的用户可以手动搬。
+
+### 桌面端与 App 端的目录判定必须一致
+
+服务端在 `server/src/config.js` 的 `resolveHomeDir()`，App 在
+`app/lib/server/launcher.dart` 的 `resolveStateDirName()` —— 两处都实现
+「新版优先、旧版存在则沿用」。
+
+两边不一致的后果是分叉：App 的 `server.log` / pid 在新目录，服务端数据在旧目录。
+pid 分叉尤其麻烦 —— 会出现「服务端在跑、App 以为自己没起过」而重复拉进程。
+
+`app/test/state_dir_test.dart` 守着 App 侧的判定，并断言两个品牌常量与服务端
+逐字一致（改一处必须改两处）。
+
+### 环境变量
+
+服务端统一走 `readBrandEnv`：`ORBIS_*` 优先，未设置或空串时回退 `PI_BOT_*`。
+桌面端传的 `PI_BOT_PORT` / `PI_BOT_TLS_PORT` / `PI_BOT_HOME` **继续有效**，
+不需要改；新代码/文档一律写 `ORBIS_*`。2.0 起只认 `ORBIS_*`。
+
+### 从旧版本升上来的自查
+
+```bash
+curl -s http://127.0.0.1:18787/health | python3 -m json.tool | head -8
+# 期望：serverName 变成 "Orbis"，version 是新版本，
+#       rooms/bots/messages 数量与升级前一致（数据沿用了旧目录）
+ls -d ~/Library/Application\ Support/pi-bot ~/Library/Application\ Support/orbis 2>/dev/null
+# 老用户：只有 pi-bot；新装用户：只有 orbis
+```
 
 ## 已知限制
 
