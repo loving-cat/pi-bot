@@ -31,7 +31,13 @@ import { mergeGroupModels } from './model-capacity.js';
 import { modelFailure } from './model-reply.js';
 import { publicFetch } from './net-guard.js';
 import { mergeModelEndpoints } from './model-endpoints.js';
-export { MAX_ENDPOINTS, normalizeEndpoints, endpointAt, rotateCursor } from './model-endpoints.js';
+export {
+  MAX_ENDPOINTS,
+  normalizeEndpoints,
+  endpointAt,
+  rotateCursor,
+  pickHealthyEndpoint,
+} from './model-endpoints.js';
 
 import {
   THINKING_LEVELS,

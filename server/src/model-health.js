@@ -324,11 +324,15 @@ export class ModelHealth {
   }
 
   /** 后台把所有模型跑一遍；只跑没新鲜结果的（force 可强制重跑） */
-  async runAll({ concurrency = 6, force = false, timeoutMs = 25_000 } = {}) {
+  async runAll({ concurrency = 6, force = false, timeoutMs = 25_000, onlySlugs = null } = {}) {
     if (this.running) return { skipped: true };
     this.running = true;
     try {
-      const all = this.runner.availableModels.map((m) => `${m.provider}/${m.id}`);
+      // onlySlugs：只测指定模型（界面上单点“重测”用它，避免每次都全量探测烧时间）
+      const allowSet = onlySlugs ? new Set(onlySlugs) : null;
+      const all = this.runner.availableModels
+        .filter((m) => !allowSet || allowSet.has(`${m.provider}/${m.id}`) || allowSet.has(m.id))
+        .map((m) => `${m.provider}/${m.id}`);
       const queue = force ? all : all.filter((slug) => !this.get(slug));
       this.progress = { done: 0, total: queue.length };
       if (!queue.length) {
