@@ -130,7 +130,7 @@ if [[ $SKIP_BUILD -eq 0 ]]; then
     || fail "Xcode 初始化未完成，请启动 Xcode 并完成许可与组件安装"
   xcrun --sdk macosx --show-sdk-path >/dev/null 2>&1 \
     || fail "找不到 macOS SDK，请检查 Xcode 安装与首次启动设置"
-  BUILD_WORK="$(mktemp -d /tmp/pi-bot-macos-build.XXXXXX)"
+  BUILD_WORK="$(mktemp -d /tmp/orbis-macos-build.XXXXXX)"
   node "$ROOT/scripts/stage-macos-build.mjs" "$ROOT/app" "$BUILD_WORK/app"
   echo "== flutter pub get --enforce-lockfile =="
   (cd "$BUILD_WORK/app" && PUB_HOSTED_URL=https://pub.dev flutter pub get --enforce-lockfile --no-example)
