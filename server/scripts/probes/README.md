@@ -1,6 +1,6 @@
 # 桌面输入的实机探针（Windows）
 
-这三个文件是**给人手动跑的一次性探针**，不在 CI 里、不被 `tests/all.mjs` 引用。
+这几个文件是**给人手动跑的一次性探针**，不在 CI 里、不被 `tests/all.mjs` 引用。
 留着的理由是它们记录了真机验证的方法：`docs/WINDOWS.md` 的「桌面输入」一节
 那几条结论，就是用它们在本机（Windows 11 / 2560x1440 / 125% 缩放）跑出来的。
 
@@ -16,6 +16,10 @@ node scripts/probes/desktop-input-session-probe.mjs
 # 2) 粘贴内容验证：靶子是一个只有 TextBox 的窗体，每秒把自己内容写到
 #    %TEMP%\pib-paste-target.txt，用来核对中文/emoji/特殊字符是否逐字相符
 powershell -NoProfile -STA -ExecutionPolicy Bypass -File scripts/probes/desktop-input-paste-target.ps1
+
+# 3) 拖拽验证（自己拉起靶子、自己收尾）：记录 down/move/up，
+#    A 段拖一次完整的，B 段在第 4 站报中断，验证“中断时鼠标真的松开了”
+node scripts/probes/desktop-input-drag-probe.mjs
 ```
 
 两个靶子都必须**自己先声明 DPI 感知**：不声明的话它记录的坐标是逻辑坐标

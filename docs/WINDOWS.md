@@ -221,11 +221,11 @@ PowerShell（`-STA`）读 `[Windows.Forms.Clipboard]::GetImage()`，存成临时
 | 中文/emoji/`` ` ``/`$`/双引号粘贴 | ✅ 逐字相符 | 靶子 TextBox 每 1s 落盘，`scripts/probes/desktop-input-paste-target.ps1` |
 | 原剪贴板还原 | ✅ 粘贴后读回仍是原内容 | 同上脚本，前后各读一次剪贴板 |
 | 屏幕外坐标 | ✅ 拒绝（不夹到边缘） | 传 `(99999, 400)`，返回 `out_of_screen` |
-| 拖拽 | ✅ 明确拒绝 | 传 `action: drag`，返回"没做完之前不半截上线" |
+| 拖拽（按下—分步—抬起） | 🟡 分段与“中断必松开”已验证；本机拿不到 move 消息 | `scripts/probes/desktop-input-drag-probe.mjs`：靶子记录到 `down`@起点 (350,320)、`up`@终点 (850,700)，中断时也**真的抬起了**（`up` 1 次 + `released=true`）；但**中间 0 条 move** —— 本机有程序持续合成输入（见下面「环境噪声」），`SetCursorPos` 不回窗口发 `WM_MOUSEMOVE`。换到干净环境复跑这个探针才算完整实机证据 |
 | 锁屏 / 断开会话 | ⚠ 静态实现，未实测 | `OpenInputDesktop` 打不开 → `no_session` 并自动吊销租约 |
 | 多屏 | ⚠ 未实测 | 屏幕矩形来自 `SM_XVIRTUALSCREEN` 一族，天然支持负坐标 |
 
-**两个必须记住的坑**
+**三个必须记住的坑**
 
 1. **不声明 DPI 感知就是整屏偏移。** 鼠标 API 用物理像素，没声明感知的进程
    拿到的是被系统缩小的逻辑坐标（本机 2048 而物理 2560）。声明失败时**不发输入**
@@ -236,6 +236,16 @@ PowerShell（`-STA`）读 `[Windows.Forms.Clipboard]::GetImage()`，存成临时
    光标落在 (1611,1114)；加 `MOUSEEVENTF_VIRTUALDESK` 也没用。`SetCursorPos`
    精确。所以：**移动用 `SetCursorPos`，按键/滚轮用 `SendInput`（不吃坐标）**。
    移动之后必须 `GetCursorPos` 复核，没到位绝不点击。
+
+3. **平台契约是 `perform({ plan })`，不是裸 plan。** `desktop-input-session.js`
+   原来传的是 `perform(planned.plan)`，而 `desktop-input-win.js` / `-mac.js`
+   解构的是 `{ plan }` —— 于是每次解构出 `undefined`，**所有 `desktop_input`
+   在真机上都回“没有可执行的输入计划”**（2026-11-19 实测）。它没被发现，是因为
+   测试里注入的假平台也写成了位置参数 `(plan) =>`：测的和实现的契约不一致，
+   两边各说各的，测试全绿、真机全挂。现在两边都锁在 `{ plan }` 上，
+   `desktop-input.mjs` 里有一条断言“交给平台的必须是 `{plan}` 包裹”。
+   跑实机探针时注意：`desktop-input-click-target.ps1` 直连 `performAction`，
+   **绕过装配层** —— 它绿不等于工具能跑。
 
 **当前机器的环境噪声（会让人误以为是 bug）**
 
