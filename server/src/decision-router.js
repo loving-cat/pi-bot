@@ -232,6 +232,62 @@ export function shouldUseJev(point, settings = {}) {
   return { use: true, why: '走 Jev' };
 }
 
+// ─────────────────────────────────────────────────────────────
+// Jev 熔断与运行态统计
+//
+// 为什么需要：Jev 是“加速器”，它坏了不该让每一轮都先去撞一次超时。
+// 配置填错时（key 失效 / baseUrl 不通），日常聊天每一轮都会先付一次网络开销 ——
+// 用户感受到的是“整个机器人变卡”，而报错信息还只说“降级”。
+// 所以连续失败要进冷却：冷却期内直接走 fallback，连请求都不发。
+//
+// 两类失败分开计：鉴权/配置错了，人不去改就一直错（5 分钟）；
+// 网络抖动会自己好（60 秒）。成功的调用会清零。
+// ─────────────────────────────────────────────────────────────
+const JEV_AUTH_COOLDOWN_MS = 5 * 60_000;
+const JEV_TRANSIENT_COOLDOWN_MS = 60_000;
+
+const jevRuntime = {
+  calls: 0,
+  hits: 0,
+  fallbacks: 0,
+  consecutiveFailures: 0,
+  openUntil: 0,
+  lastFailure: '',
+  configKey: '',
+};
+
+/**
+ * 配置变了（换 baseUrl / 换 key）就把熔断清零。
+ *
+ * 否则用户会看到“我明明改好了 key，它还说冷却中”—— 而那是上一把坏 key 留下的账。
+ * 这里只留 key 的尾 6 位，不把密钥本身放进运行态。
+ */
+function syncJevConfigKey(settings) {
+  const key = `${settings?.mode ?? ''}|${settings?.baseUrl ?? ''}|${String(settings?.apiKey ?? '').slice(-6)}`;
+  if (key !== jevRuntime.configKey) {
+    jevRuntime.configKey = key;
+    jevRuntime.consecutiveFailures = 0;
+    jevRuntime.openUntil = 0;
+    jevRuntime.lastFailure = '';
+  }
+}
+
+/** 查询 Jev 决策路由的运行统计（含冷却截止时间），界面/诊断用。 */
+export function jevStats() {
+  return { ...jevRuntime };
+}
+
+/** 重置运行态与熔断（测试或用户手动恢复时用）。 */
+export function resetJevState() {
+  jevRuntime.calls = 0;
+  jevRuntime.hits = 0;
+  jevRuntime.fallbacks = 0;
+  jevRuntime.consecutiveFailures = 0;
+  jevRuntime.openUntil = 0;
+  jevRuntime.lastFailure = '';
+  jevRuntime.configKey = '';
+}
+
 /**
  * 执行一次决策。
  *
@@ -242,10 +298,25 @@ export function shouldUseJev(point, settings = {}) {
  *                    source:'jev'|'fallback', failure?:string, error?:string, why:string}>}
  */
 export async function decide(point, payload, settings = {}, { fetchImpl, timeoutMs } = {}) {
+  syncJevConfigKey(settings);
   const gate = shouldUseJev(point, settings);
   if (!gate.use) {
+    jevRuntime.fallbacks++;
     return { ok: false, source: 'fallback', why: gate.why };
   }
+  // ★ 冷却期内不发起请求：这才是熔断的意义（省掉的是等待，不是错误）
+  const at = Date.now();
+  if (jevRuntime.openUntil > at) {
+    jevRuntime.fallbacks++;
+    const leftSec = Math.max(1, Math.ceil((jevRuntime.openUntil - at) / 1000));
+    return {
+      ok: false,
+      source: 'fallback',
+      failure: jevRuntime.lastFailure || JEV_FAILURE.transport,
+      why: `Jev 冷却中（剩余 ${leftSec}s）`,
+    };
+  }
+  jevRuntime.calls++;
   const def = POINTS[point];
   const state = def.build?.(payload ?? {});
   const result = await jevDecide({
@@ -259,6 +330,17 @@ export async function decide(point, payload, settings = {}, { fetchImpl, timeout
     noulThreshold: settings.noulThreshold ?? 0.5,
   });
   if (!result.ok) {
+    jevRuntime.fallbacks++;
+    jevRuntime.lastFailure = result.failure || JEV_FAILURE.transport;
+    jevRuntime.consecutiveFailures++;
+    if (result.failure === JEV_FAILURE.auth && jevRuntime.consecutiveFailures >= 2) {
+      jevRuntime.openUntil = Date.now() + JEV_AUTH_COOLDOWN_MS;
+    } else if (
+      (result.failure === JEV_FAILURE.transport || result.failure === JEV_FAILURE.badResponse)
+      && jevRuntime.consecutiveFailures >= 3
+    ) {
+      jevRuntime.openUntil = Date.now() + JEV_TRANSIENT_COOLDOWN_MS;
+    }
     return {
       ok: false,
       source: 'fallback',
@@ -275,6 +357,10 @@ export async function decide(point, payload, settings = {}, { fetchImpl, timeout
     valid = false;
   }
   if (!valid) {
+    // 答得不对 ≠ 连不上：不累加失败计数，只记一次 fallback
+    jevRuntime.fallbacks++;
+    jevRuntime.consecutiveFailures = 0;
+    jevRuntime.openUntil = 0;
     return {
       ok: false,
       source: 'fallback',
@@ -290,6 +376,9 @@ export async function decide(point, payload, settings = {}, { fetchImpl, timeout
       .filter(([, c]) => Number(c) < minConfidence)
       .map(([name]) => name);
     if (lows.length) {
+      jevRuntime.fallbacks++;
+      jevRuntime.consecutiveFailures = 0;
+      jevRuntime.openUntil = 0;
       return {
         ok: false,
         source: 'fallback',
@@ -298,6 +387,10 @@ export async function decide(point, payload, settings = {}, { fetchImpl, timeout
       };
     }
   }
+  jevRuntime.hits++;
+  jevRuntime.consecutiveFailures = 0;
+  jevRuntime.openUntil = 0;
+  jevRuntime.lastFailure = '';
   return {
     ok: true,
     source: 'jev',

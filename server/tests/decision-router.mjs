@@ -9,6 +9,8 @@ import {
   decide,
   shouldAskShouldReply,
   interpretShouldReply,
+  jevStats,
+  resetJevState,
 } from '../src/decision-router.js';
 import {
   classifyFailure,
@@ -380,4 +382,68 @@ test('validate 也挡住非布尔：双层防护', () => {
   assert.equal(POINTS['should-reply'].validate({ shouldReply: false }), true);
   assert.equal(POINTS['should-reply'].validate({ shouldReply: 'yes' }), false);
   assert.equal(POINTS['should-reply'].validate({}), false);
+});
+
+test('★ Jev 连续 401 触发熔断冷却（不阻塞聊天），换 key 立刻恢复', async () => {
+  resetJevState();
+  let calls = 0;
+  const badAuthFetch = async () => {
+    calls++;
+    return stubFetch(401, { message: 'bad key' })();
+  };
+  await decide('assign-model', { task: 'x' }, ON, { fetchImpl: badAuthFetch });
+  await decide('assign-model', { task: 'x' }, ON, { fetchImpl: badAuthFetch });
+  assert.equal(calls, 2);
+
+  // 第 3 次：仍在冷却期内，**不发网络请求**直接 fallback —— 这才叫熔断
+  const third = await decide('assign-model', { task: 'x' }, ON, { fetchImpl: badAuthFetch });
+  assert.equal(calls, 2, '熔断期间不得继续发网络请求');
+  assert.equal(third.ok, false);
+  assert.equal(third.source, 'fallback');
+  assert.match(third.why, /冷却中/);
+
+  // 换了 apiKey → 配置键变更，立即清掉熔断并重测通过
+  const okFetch = stubFetch(200, {
+    answers: { kind: { type: 'choice', choice: 'coding', confidence: 0.9 } },
+  });
+  const recovered = await decide('assign-model', { task: 'x' }, { ...ON, apiKey: 'k-new' }, { fetchImpl: okFetch });
+  assert.equal(recovered.ok, true);
+  assert.equal(jevStats().hits, 1);
+  resetJevState();
+});
+
+test('★ 连续 3 次网络/坏响应才进 60 秒冷却（抖动不该一次就熔断）', async () => {
+  resetJevState();
+  let calls = 0;
+  const flaky = async () => {
+    calls++;
+    return stubFetch(503, { message: 'upstream down' })();
+  };
+  const first = await decide('assign-model', { task: 'x' }, ON, { fetchImpl: flaky });
+  assert.equal(first.source, 'fallback');
+  assert.equal(jevStats().openUntil, 0, '第一次抖动不该进冷却');
+  await decide('assign-model', { task: 'x' }, ON, { fetchImpl: flaky });
+  await decide('assign-model', { task: 'x' }, ON, { fetchImpl: flaky });
+  assert.equal(calls, 3);
+  assert.ok(jevStats().openUntil > Date.now(), '连续三次之后要进冷却');
+
+  const blocked = await decide('assign-model', { task: 'x' }, ON, { fetchImpl: flaky });
+  assert.equal(calls, 3, '冷却期间不能再发请求');
+  assert.match(blocked.why, /冷却中/);
+  resetJevState();
+});
+
+test('★ 一次成功就把连续失败清零（偶发抖动不会攒成熔断）', async () => {
+  resetJevState();
+  const flaky = async () => stubFetch(503, { message: 'x' })();
+  const okFetch = stubFetch(200, {
+    answers: { kind: { type: 'choice', choice: 'coding', confidence: 0.9 } },
+  });
+  await decide('assign-model', { task: 'x' }, ON, { fetchImpl: flaky });
+  await decide('assign-model', { task: 'x' }, ON, { fetchImpl: flaky });
+  const good = await decide('assign-model', { task: 'x' }, ON, { fetchImpl: okFetch });
+  assert.equal(good.ok, true);
+  assert.equal(jevStats().consecutiveFailures, 0);
+  assert.equal(jevStats().openUntil, 0);
+  resetJevState();
 });
