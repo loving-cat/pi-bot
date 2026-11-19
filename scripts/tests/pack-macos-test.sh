@@ -245,8 +245,8 @@ run_ok --no-build
 preserved
 ok '重复执行且保留 dist 中其他文件与版本'
 
-mkdir -p "$BUILD/Orbis.app"
-cp -R "$BUILD/Orbis.app/." "$BUILD/Orbis.app/"
+mkdir -p "$BUILD/pi_bot.app"
+cp -R "$BUILD/Orbis.app/." "$BUILD/pi_bot.app/"
 printf 'preferred product\n' > "$BUILD/Orbis.app/Contents/product.txt"
 run_ok --no-build
 [[ "$(cat "$FIXTURE/dist/Orbis.app/Contents/product.txt")" == 'preferred product' ]] || die '未优先采用 Orbis.app'
