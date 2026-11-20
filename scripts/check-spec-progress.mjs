@@ -23,6 +23,7 @@ const LEDGER_FILES = [
   'docs/taskrun-gaps.md',
   'docs/acceptance-matrix.md',
   'docs/ROADMAP-2.0.md',
+  'docs/SPEC-CHIEF-SUMMARY.md',
 ];
 
 const PLANNED_MARKERS = ['待新增', '（新）', '未开始', '不存在', '❌'];
