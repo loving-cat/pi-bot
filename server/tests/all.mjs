@@ -18,6 +18,7 @@ const TESTS = [
   'skills',
   'lessons',
   'chief-summary',
+  'chief-summary-flow',
   'lessons-sim-lite',
   'lesson-injection',
   'lesson-reflect',

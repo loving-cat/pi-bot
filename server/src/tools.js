@@ -11,6 +11,7 @@
  *   buildChiefTools  —— 只有总经理有（造人、建部门、指定老大、下达任务）
  */
 import { defineTool } from '@earendil-works/pi-coding-agent';
+import { isToolBlockedInSummaryTurn, SUMMARY_TURN_BLOCK_MESSAGE } from './chief-summary.js';
 import { Type } from 'typebox';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -1975,6 +1976,10 @@ export function buildChiefTools({
       }),
       execute: async (_toolCallId, params) => {
         // 本轮是首次接单请求（含只讨论）：组织写必须走 accept_task 提案，
+        // ★ 汇总交卷轮硬拦（规格 §3.3）
+        if (isToolBlockedInSummaryTurn('create_department', { summaryTurn: runner.isSummaryTurn?.(roomId, botId) })) {
+          return fail(SUMMARY_TURN_BLOCK_MESSAGE);
+        }
         // 不允许 legacy 入口在讨论轮产生副作用。
         if (typeof runner.currentRequestScope === 'function' && runner.currentRequestScope(roomId, botId)) {
           return fail('本轮是接单请求，建部门必须通过 accept_task 提案；只讨论不产生副作用。');
@@ -2089,6 +2094,10 @@ export function buildChiefTools({
         task: Type.String({ description: '要这个部门做什么。写清楚目标和交付物' }),
       }),
       execute: async (_toolCallId, { groupId, task }) => {
+        // ★ 汇总交卷轮硬拦（规格 §3.3）：汇总完再自己派活 = 无限套娃
+        if (isToolBlockedInSummaryTurn('dispatch_to_department', { summaryTurn: runner.isSummaryTurn?.(roomId, botId) })) {
+          return fail(SUMMARY_TURN_BLOCK_MESSAGE);
+        }
         const room = store.getRoom(groupId);
         if (!room || room.kind !== 'group') return fail(`找不到部门 ${groupId}`);
         const lead = store.getBot(room.leadBotId);

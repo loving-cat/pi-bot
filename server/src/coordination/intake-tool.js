@@ -15,6 +15,7 @@
  * SDK 轻量模式由 `createOrbisRuntime` 显式传 `taskIntake: false` 隔离。
  */
 import path from 'node:path';
+import { isToolBlockedInSummaryTurn, SUMMARY_TURN_BLOCK_MESSAGE } from '../chief-summary.js';
 import { Type } from 'typebox';
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import { readBrandEnv } from '../brand.js';
@@ -117,6 +118,10 @@ export function buildIntakeTools({
         ),
       }),
       execute: async (_id, params) => {
+        // ★ 汇总交卷轮硬拦（规格 §3.3）：只许如实汇报，不许再派活/接新任务
+        if (isToolBlockedInSummaryTurn('accept_task', { summaryTurn: runner.isSummaryTurn?.(roomId, botId) })) {
+          return { content: [{ type: 'text', text: SUMMARY_TURN_BLOCK_MESSAGE }], isError: true };
+        }
         const submission = readManagedSubmission({ runner, taskRuns: store.taskRuns, roomId, botId });
 
         // 受管上下文残缺：明确拒绝，不降级

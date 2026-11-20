@@ -60,9 +60,13 @@ async function runWithLease(
     human = false,
     managedContext = null,
     reportCollector = null,
+    summaryTurn = false,
   } = {},
 ) {
   const started = Date.now();
+  // 汇总交卷轮标记：工具层（dispatch_to_department / create_department / accept_task）
+  // 靠它硬拦"汇总完又自己派活"的无限套娃。entry 在这里还没装配，后面再写上去。
+  const isSummaryTurn = summaryTurn === true;
   // 只有「真的跑完并落出回复」才值得评估注入的经验。
   // 429 / 超时 / 用户终止进的是 catch → finally，那时评估等于拿没跑通的对话给经验打分。
   let turnSucceeded = false;
@@ -252,6 +256,7 @@ async function runWithLease(
   };
 
   entry.lastUsed = Date.now();
+  entry.summaryTurn = isSummaryTurn;
   const bot = entry.bot;
   entry.startedAt = Date.now();
   entry.progressAt = entry.startedAt;
@@ -887,7 +892,13 @@ async function runWithLease(
         runner.managedInflight.delete(managedCancelTask);
       }
     }
+    // 汇总轮标记只活在这一轮里：异常退出也不能污染下一轮
+    entry.summaryTurn = false;
     setTimeout(() => { void runner.drainRequestQueue(roomId, botId); }, 0);
+    // 这一轮结束后，把排队等发送的主控汇总消费掉（汇总轮自己不再触发，防递归）
+    if (bot.role === 'main' && !isSummaryTurn) {
+      setTimeout(() => { void runner.drainChiefSummaries?.().catch?.(() => {}); }, 0);
+    }
     entry.turnController = null;
     entry.liveMsgId = null;
     entry.startedAt = null;

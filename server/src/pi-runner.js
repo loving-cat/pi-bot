@@ -38,6 +38,7 @@ import { modelLabel, resolveModel, syncModelGroups } from './model-registry.js';
 import { modelChangeAffectsSession } from './model-dispatch.js';
 import { availableThinkingLevels } from './model-thinking.js';
 import { createLessonReflector } from './lesson-reflect.js';
+import { createChiefSummaryRunner } from './runner/chief-summary-runner.js';
 import {
   createBreaker, isCircuitFailure, recordFailure as breakerFail,
   recordSuccess as breakerOk, settleAfterCooldown, BREAKER_STATE,
@@ -162,6 +163,8 @@ export class PiRunner {
         ? await this.modelRuntimeFactory({ config: this.config, modelGroups: this.modelGroups })
         : await ModelRuntime.create());
     this.reflect = createLessonReflector({ runner: this, config: this.config, store: this.store });
+    // 主控总汇总的执行薄层（状态机在 pure 模块 chief-summary.js）
+    this.chiefSummaries = createChiefSummaryRunner({ runner: this, store: this.store, logFn: log });
     this.startWatchdog();
     if (!this.#onBusEvent) {
       this.#onBusEvent = (ev) => {
@@ -640,11 +643,26 @@ export class PiRunner {
   send(roomId, text, opts = {}) { return sendUserMessage(this, roomId, text, opts); }
   run(roomId, botId, prompt, options = {}) { return executeTurn(this, roomId, botId, prompt, options); }
 
-  async runBotOnce({ roomId, botId, prompt, timeoutMs, meta }) {
+  async runBotOnce({ roomId, botId, prompt, timeoutMs, meta, summaryTurn = false }) {
     if (this.isBusy(roomId, botId)) {
       return { ok: false, text: '', ms: 0, error: `${this.store.getBot(botId)?.name ?? botId} 正在忙` };
     }
-    return this.run(roomId, botId, prompt, { timeoutMs, meta });
+    return this.run(roomId, botId, prompt, { timeoutMs, meta, summaryTurn });
+  }
+
+  /**
+   * 当前这一轮是不是「汇总交卷轮」。
+   *
+   * 工具层用它做硬防循环：汇总轮里不许再派活 / 建部门 / 接新任务。
+   * 为什么不用 opts 层层透传：工具只能拿到 roomId/botId，entry 是唯一共同可及的地方。
+   */
+  /** 排空排队中的主控汇总（turn-executor 的 finally 调它；失败不抛） */
+  drainChiefSummaries() {
+    return this.chiefSummaries?.drain?.() ?? Promise.resolve({ sent: 0 });
+  }
+
+  isSummaryTurn(roomId, botId) {
+    return this.sessions.get(sessionKey(roomId, botId))?.summaryTurn === true;
   }
 
   async resumeAfterApproval(approval) {
