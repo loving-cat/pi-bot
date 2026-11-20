@@ -438,7 +438,7 @@ class _TrackPainter extends CustomPainter {
     const h = 6.0;
     const knob = 9.0;
     final cy = size.height / 2;
-    // 左右各留 3px：滑块半径 9，贴边时圆和冲击环会碰到容器边缘被裁掉
+    // 左右各留 6px：滑块半径 9、冲击环最大 16.5，贴边时会被容器裁掉
     final left = knob + 6;
     final right = size.width - knob - 6;
     final usable = math.max(1.0, right - left);

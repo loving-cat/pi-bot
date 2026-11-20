@@ -154,7 +154,7 @@
 ### 4.1 位置与文件落点
 
 - **叠放落点**：`app/lib/screens/chat_screen.dart` 消息展示区 `Stack` 内 `Positioned(top: 12, right: 28)`——与底部 `ActivityMonitor`、右侧 `MessageAnchorRail`、右下角回到底部按钮同层，避开右侧 18px 锚点轨，出现/消失不引起消息列表高度跳动。
-- **新增组件**：`app/lib/widgets/chief_summary_card.dart`（待新增）。
+- **新增组件**：`app/lib/widgets/chief_summary_card.dart`。
 - **状态与文案**：`app/lib/app_state.dart` 订阅 `summaries.updated` 并在首拉/重连时同步 `/api/summaries`；词条收口到 `app/lib/l10n/strings/chat.dart`。
 
 ### 4.2 三种视觉态
@@ -186,7 +186,7 @@
 | ✅ **Stage 1 · 纯逻辑与持久化**（已落地 `ed17da2` / `6706873`） | `server/src/chief-summary.js` 进 `PURE_MODULES`（现 22 个纯模块）+ `store.state.chiefSummaries`（含 7 天/50 条保留策略与 `lastError`）+ `server/tests/chief-summary.mjs`（27 条） | 单部门直接就绪；多部门等齐才就绪；单部门失败不傻等（含 `[A: failed, B: running]`）；`dispatchOpen=true` 时部门秒回先挂起、封口后立刻就绪；撞忙落 `ready_blocked`；`send`/`defer`/`ignore` 幂等全分支；失败退回 `ready_blocked`；`pendingChiefSummaries` 不推 `collecting`；重启重载不丢 |
 | ✅ **Stage 2a · 防循环护栏与汇总执行轮**（已落地 `7865e84`） | `server/src/runner/chief-summary-runner.js` + `server/src/runner/turn-executor.js` + `server/src/tools.js` / `server/src/coordination/intake-tool.js` 三工具硬拦 + `server/tests/chief-summary-flow.mjs`（13 条） | 三工具汇总轮被硬拦；普通轮不拦；`429`/异常退回 `ready_blocked` 并保留 `lastError`；未点「是」零模型调用；`drain` 串行发两条、第一条失败立即停 |
 | ✅ **Stage 2b · 双入口接线 + 路由 + 提示词精简 + 在跑成员保护**（已落地 `4313f16`/`a823ab5`/`fccdef2`） | `server/src/tools.js` 登记、`server/src/pi-runner.js` / `server/src/runner/group-orchestrator.js` 收尾回传、`server/src/tasks/task-runtime.js` 收敛抑制 400 字 system 重复卡、`server/src/http.js` `GET /api/summaries` & `POST /api/summaries/:id/resolve` + `buildChiefSummaryPrompt` 回调打标与 ≤3 句限长 + `server/src/services/bot-service.js` 在跑成员禁删/禁移出（扩 `server/tests/chief-summary-flow.mjs`） | 私聊直派空闲直发总结（`meta.refs` 直达部门）；撞忙阻塞时 **0 次模型调用**；选 `send` 排队至当前轮结束发送；选 `ignore` 全程 0 调模型；受管任务接主控汇总后不再写 400 字 `system` 重复消息；部门群内直接发任务不触发主控汇总；在跑成员禁止删除/移出；提示词显式打标回调且约束 ≤3 句不复述长明细 |
-| ✅ **Stage 3 · Flutter 右上角浮窗**（已落地） | `app/lib/widgets/chief_summary_card.dart`（待新增）+ `app/lib/screens/chat_screen.dart` + `app/lib/app_state.dart` + `app/lib/l10n/strings/chat.dart` + `app/test/chief_summary_card_test.dart`（10 条） | 展开态三按钮各自触发正确 action；`defer` 缩成右上角小角标且点击可再展开；`ignore` 清空提示；多条碰撞仅显示 1 张 + 剩余计数；6 秒空闲回归 **0 Ticker** |
+| ✅ **Stage 3 · Flutter 右上角浮窗**（已落地） | `app/lib/widgets/chief_summary_card.dart`+ `app/lib/screens/chat_screen.dart` + `app/lib/app_state.dart` + `app/lib/l10n/strings/chat.dart` + `app/test/chief_summary_card_test.dart`（10 条） | 展开态三按钮各自触发正确 action；`defer` 缩成右上角小角标且点击可再展开；`ignore` 清空提示；多条碰撞仅显示 1 张 + 剩余计数；6 秒空闲回归 **0 Ticker** |
 | ⬜ **Stage 4+ · 分期演进增强**（按需开启，见 §7） | 主控统筹模式轻护栏 / 逻辑级轻量看门狗 / 云端轻入口+本地执行节点桥接 | 独立开关与专项验收，不阻塞 Stage 2b 与 Stage 3 主线交付 |
 
 ---

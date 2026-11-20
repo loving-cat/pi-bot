@@ -37,7 +37,7 @@ void main() {
     ],
   );
 
-  Widget host(AppState state) => AppScope(
+  Widget host(AppState state, {String roomId = ''}) => AppScope(
     state: state,
     child: MaterialApp(
       theme: PB.theme(),
@@ -50,7 +50,7 @@ void main() {
               right: 28,
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 300),
-                child: const ChiefSummaryCard(),
+                child: ChiefSummaryCard(roomId: roomId),
               ),
             ),
           ],
@@ -171,6 +171,30 @@ void main() {
     expect(find.text('汇总不存在'), findsOneWidget, reason: '错误不许被吞掉');
   });
 
+  testWidgets('★ 本房间发送不弹「去查看」；跨房间才弹且能跳回去', (tester) async {
+    // 本房间：originRoomId == 当前房间 → 用户就在这儿，不该再提示
+    final same = _FakeState()..summaries = [summary(id: 'sum_same')];
+    await tester.pumpWidget(host(same, roomId: 'dm_main'));
+    await tester.pump();
+    await tester.tap(find.text('是 · 发送'));
+    await tester.pump();
+    await tester.pump();
+    expect(find.textContaining('汇总已发到'), findsNothing, reason: '本房间发送不该弹提示');
+
+    // 跨房间：在部门群里点发送 → 提示 + 「去查看」
+    final cross = _FakeState()..summaries = [summary(id: 'sum_cross')];
+    await tester.pumpWidget(host(cross, roomId: 'room_dev'));
+    await tester.pump();
+    await tester.tap(find.text('是 · 发送'));
+    await tester.pump();
+    await tester.pump();
+    expect(find.textContaining('汇总已发到'), findsOneWidget);
+    await tester.pumpAndSettle(); // 等 SnackBar 入场动画结束，否则命中测试落空
+    await tester.tap(find.text('去查看'));
+    await tester.pump();
+    expect(cross.openedRooms, contains('dm_main'), reason: '跳转走 state 方法，不依赖回调时的 context');
+  });
+
   testWidgets('空列表：什么都不画（不占位、不留空白卡）', (tester) async {
     final state = AppState();
     await tester.pumpWidget(host(state));
@@ -216,4 +240,11 @@ class _FakeState extends AppState {
 
   @override
   Future<void> loadSummaries() async {}
+
+  final List<String> openedRooms = [];
+
+  @override
+  void requestRoom(String roomId) {
+    openedRooms.add(roomId);
+  }
 }

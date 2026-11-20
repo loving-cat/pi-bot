@@ -19,7 +19,13 @@ import '../theme.dart';
 /// 静止态**不许有常驻 Ticker**：这里没有任何 `AnimationController`
 /// （`docs/SPEC-MOTION-V1.md` 要求空闲 6 秒归零）。点按反馈交给 Material 自带的 InkWell。
 class ChiefSummaryCard extends StatefulWidget {
-  const ChiefSummaryCard({super.key});
+  const ChiefSummaryCard({super.key, this.roomId = ''});
+
+  /// 当前正在看的房间（用来判断"跨房间发送"）。
+  ///
+  /// 只有**不在**汇总所属房间时，发送成功后才有必要提示「去查看」——
+  /// 本房间发送完用户已经看见了，再弹一次是噪音。
+  final String roomId;
 
   @override
   State<ChiefSummaryCard> createState() => _ChiefSummaryCardState();
@@ -49,15 +55,20 @@ class _ChiefSummaryCardState extends State<ChiefSummaryCard> {
         messenger?.showSnackBar(SnackBar(content: Text(err)));
         return;
       }
-      // 跨房间：在部门群里点了「是」，汇总落到主控私聊 —— 得给一条可点的路径，
+      // 跨房间：在部门群里点了「是」，汇总落到助手私聊 —— 得给一条可点的路径，
       // 否则用户会觉得"点了没反应"（规格 §4.3）。
-      if (notifyOnSend && summary.originRoomId.isNotEmpty) {
+      // 本房间发送不提示：用户就在这个房间里，已经看到了。
+      final summaryRoom = summary.originRoomId;
+      final crossRoom = summaryRoom.isNotEmpty && summaryRoom != widget.roomId;
+      if (notifyOnSend && crossRoom) {
         messenger?.showSnackBar(
           SnackBar(
             content: Text(L10n.s(context).t('chat.summarySentHint')),
             action: SnackBarAction(
               label: L10n.s(context).t('chat.summaryGoCheck'),
-              onPressed: () => requestRoom(context, summary.originRoomId),
+              // ★ 直接调 state 上的方法，不用回调里的 context：
+              //   SnackBar 可能在离开页面后才被点，那时 context 已经 unmount 了。
+              onPressed: () => state.requestRoom(summaryRoom),
             ),
           ),
         );

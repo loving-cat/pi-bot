@@ -1754,7 +1754,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                               right: 28,
                               child: ConstrainedBox(
                                 constraints: const BoxConstraints(maxWidth: 300),
-                                child: const ChiefSummaryCard(),
+                                child: ChiefSummaryCard(roomId: room.id),
                               ),
                             ),
                             // 右侧导航轨：滑块 + 用户消息锚点二合一。
