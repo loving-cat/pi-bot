@@ -276,6 +276,63 @@ void main() {
     await tester.pump();
     expect(find.text('思考等级：最高'), findsOneWidget);
   });
+
+  test('粒子物理曲线：越接近 max 速度、拖尾与粒子数量非线性和递增', () {
+    expect(thinkingParticleSpeed(0), 0.0);
+    expect(thinkingParticleSpeed(0.2), lessThan(thinkingParticleSpeed(0.5)));
+    expect(thinkingParticleSpeed(0.5), lessThan(thinkingParticleSpeed(0.8)));
+    expect(thinkingParticleSpeed(0.8), lessThan(thinkingParticleSpeed(1.0)));
+    expect(
+      thinkingParticleSpeed(1.0),
+      greaterThan(thinkingParticleSpeed(0.66) * 2),
+    );
+
+    expect(thinkingParticleStreak(1.0), greaterThan(thinkingParticleStreak(0.5)));
+
+    expect(thinkingActiveParticleCount(0), 0);
+    expect(
+      thinkingActiveParticleCount(1.0),
+      greaterThan(thinkingActiveParticleCount(0.35)),
+    );
+  });
+
+  testWidgets('max 档进入超频粒子加速：持续重绘且无异常', (tester) async {
+    await _pump(tester, value: 'max');
+    final before = _painter(tester);
+    await tester.pump(const Duration(milliseconds: 120));
+    expect(tester.takeException(), isNull);
+    expect(_painter(tester).shouldRepaint(before), isTrue);
+  });
+
+  testWidgets('系统开启减弱动态效果时 max 档也必须 0 Ticker', (tester) async {
+    tester.view.physicalSize = const Size(600, 300);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      const MediaQuery(
+        data: MediaQueryData(disableAnimations: true),
+        child: MaterialApp(
+          home: Scaffold(
+            body: Padding(
+              padding: EdgeInsets.all(20),
+              child: ThinkingSlider(
+                levels: _levels,
+                value: 'max',
+                onChanged: _noop,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(tester.binding.transientCallbackCount, 0);
+  });
+
+  testWidgets('非 max 档位静止时 0 Ticker 休眠', (tester) async {
+    await _pump(tester, value: 'medium');
+    expect(tester.binding.transientCallbackCount, 0);
+  });
 }
 
 void _noop(String _) {}
