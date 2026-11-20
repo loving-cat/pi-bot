@@ -34,7 +34,13 @@ class Api {
 
   /// 客户端标记头：服务端要求所有改状态的请求（POST/PUT/PATCH/DELETE，含上传）都带它。
   /// 浏览器跨站发自定义头必须先过 CORS 预检，服务端从不放行，所以恶意网页伪造不了。
-  static const clientHeader = 'x-pi-bot-client';
+  ///
+  /// 1.7.1 起改发**正式名** `x-orbis-*`：1.7.0 服务端本来就同时认新旧两套，
+  /// 所以这个切换向前兼容；旧名 `x-pi-bot-*` 在 2.0 删。
+  /// 若哪天又收到 `x-orbis-deprecated` 响应头，说明还有调用点漏切。
+  static const clientHeader = 'x-orbis-client';
+  static const nonceHeader = 'x-orbis-nonce';
+  static const channelHeader = 'x-orbis-channel';
   static const clientHeaderValue = 'app';
 
   Map<String, String> get _headers => {
@@ -144,7 +150,7 @@ class Api {
   Future<Map<String, String>> _adminHeaders(String method, String path) async {
     final purpose = _noncePurposeFor(method, path);
     if (purpose == null) return _headers;
-    return {..._headers, 'x-pi-bot-nonce': await issueNonce(purpose)};
+    return {..._headers, nonceHeader: await issueNonce(purpose)};
   }
 
   Future<Map<String, dynamic>> delete(String path) async {
@@ -165,7 +171,7 @@ class Api {
     // 服务端只用来**降权**（声称 device 但身份是本机 -> 仍按本机算），
     // 所以这里照实写，不写也不会更宽。
     if (channel != null && channel.isNotEmpty) {
-      headers = {...headers, 'x-pi-bot-channel': channel};
+      headers = {...headers, channelHeader: channel};
     }
     final res = await http
         .post(_uri(path), headers: headers, body: jsonEncode(body ?? const {}))
@@ -214,7 +220,7 @@ class Api {
 
   /// 改安全配置的请求头：带上一枚刚申请的 nonce。
   Future<Map<String, String>> _headersWithNonce(String purpose) async =>
-      {..._headers, 'x-pi-bot-nonce': await issueNonce(purpose)};
+      {..._headers, nonceHeader: await issueNonce(purpose)};
 
   /// 改策略（危险动作档位等）。除了 token 还要一次性 nonce。
   Future<Map<String, dynamic>> patchPolicy(Map<String, dynamic> body) async {

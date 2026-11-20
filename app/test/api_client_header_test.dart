@@ -5,11 +5,14 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:pi_bot/api.dart';
 
-/// 服务端要求所有改状态的请求都带 x-pi-bot-client（防本机 CSRF），
-/// 这里锁住 App 的每条写路径都带上它。全部是假地址、假 token。
+/// 服务端要求所有改状态的请求都带客户端标记头（防本机 CSRF），
+/// 这里锁住 App 的每条写路径都带上它。1.7.1 起发正式名 `x-orbis-*`，
+/// 旧名 `x-pi-bot-*` 留到 2.0 删。全部是假地址、假 token。
 void main() {
-  test('头名与服务端一致', () {
-    expect(Api.clientHeader, 'x-pi-bot-client');
+  test('头名与服务端一致（正式名 x-orbis-*，不再发旧名）', () {
+    expect(Api.clientHeader, 'x-orbis-client');
+    expect(Api.nonceHeader, 'x-orbis-nonce');
+    expect(Api.channelHeader, 'x-orbis-channel');
     expect(Api.clientHeaderValue, isNotEmpty);
   });
 
@@ -76,7 +79,7 @@ void main() {
 
     final put = seen['PUT /api/connections/c_fake/bots'];
     expect(put, isNotNull, reason: 'PUT 请求本身要发出去');
-    expect(put!['x-pi-bot-nonce'], 'fake-nonce',
+    expect(put![Api.nonceHeader], 'fake-nonce',
         reason: '服务端对这条路由要求 nonce，不带就是 403 nonce_required');
   });
 }

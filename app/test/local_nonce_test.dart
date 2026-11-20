@@ -30,7 +30,7 @@ void main() {
         return;
       }
       if (path == '/api/policy' && req.method == 'PATCH') {
-        seenNonces.add(req.headers.value('x-pi-bot-nonce') ?? '');
+        seenNonces.add(req.headers.value('x-orbis-nonce') ?? '');
         req.response.headers.contentType = ContentType.json;
         req.response.write(jsonEncode({'policy': {}}));
         await req.response.close();
