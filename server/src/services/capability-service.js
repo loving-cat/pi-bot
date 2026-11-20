@@ -75,6 +75,29 @@ export function createCapabilityService({ store, runner = null }) {
       return { ok: true };
     },
 
+    // ---- Lessons：关系边（SIM-Lite）----
+    listLessonEdges() {
+      return store.lessonEdges();
+    },
+
+    addLessonEdge(raw = {}) {
+      const r = store.addLessonEdge(raw);
+      if (r.error) return { ok: false, status: 400, code: 'LESSON_EDGE_INVALID', error: r.error };
+      return { ok: true, edge: r.edge };
+    },
+
+    removeLessonEdge(raw = {}) {
+      const r = store.removeLessonEdge(raw);
+      if (r.error) return { ok: false, status: 404, code: 'LESSON_EDGE_NOT_FOUND', error: r.error };
+      return { ok: true };
+    },
+
+    rejectLesson(id) {
+      const r = store.rejectLesson(id);
+      if (r.error) return { ok: false, status: 404, code: 'LESSON_NOT_FOUND', error: r.error };
+      return { ok: true, lesson: r.lesson };
+    },
+
     // ---- MCP Library ----
     listMcp() {
       return store.mcpLibrary();

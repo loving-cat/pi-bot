@@ -44,6 +44,10 @@ import {
   normalizeLessonList,
   normalizeLesson,
   lessonRejectReason,
+  normalizeLessonEdge,
+  normalizeLessonEdgeList,
+  lessonEdgeRejectReason,
+  LESSON_EDGE_SENTINELS,
 } from './lessons.js';
 import { mcpNameError } from './mcp.js';
 import * as mcpLibraryDomain from './mcp-library.js';
@@ -1249,7 +1253,7 @@ export class Store {
     list.push(lesson);
     this.state.lessons = normalizeLessonList(list);
     this.scheduleSave();
-    this.bus.emit('event', { t: 'lessons.updated', lessons: this.lessonLibrary() });
+    this.emitLessons();
     return { lesson };
   }
 
@@ -1276,19 +1280,98 @@ export class Store {
     list[idx] = lesson;
     this.state.lessons = list;
     this.scheduleSave();
-    this.bus.emit('event', { t: 'lessons.updated', lessons: list });
+    this.emitLessons();
     return { lesson };
   }
 
-  /** 删一条经验 */
+  /** 删一条经验（**级联删掉它挂的边**，不留下悬空关系） */
   removeLesson(id) {
     const list = this.lessonLibrary();
     const next = list.filter((l) => l.id !== id);
     if (next.length === list.length) return { error: '经验不存在' };
     this.state.lessons = next;
+    this.state.lessonEdges = this.lessonEdges({ lessons: next }).filter(
+      (e) => e.from !== id && e.to !== id,
+    );
     this.scheduleSave();
-    this.bus.emit('event', { t: 'lessons.updated', lessons: next });
+    this.emitLessons();
     return { ok: true };
+  }
+
+  /**
+   * 经验关系边（存在 `state.lessonEdges`）—— 和 lessons **同一份 state**，不新建文件。
+   *
+   * 方向语义与校验都在 `lessons.js` 里写死（单一事实源），这里只做落库与级联。
+   * `knownIds` 会顺手清掉指向已删经验的悬空边；`from` 允许 `user` / `system` 哨兵。
+   */
+  lessonEdges({ lessons = null } = {}) {
+    const list = lessons ?? this.lessonLibrary();
+    return normalizeLessonEdgeList(this.state.lessonEdges ?? [], {
+      knownIds: new Set(list.map((l) => l.id)),
+    });
+  }
+
+  /** 加一条关系边（重复的、指向不存在经验的都拒绝） */
+  addLessonEdge(raw = {}) {
+    const lessons = this.lessonLibrary();
+    const ids = new Set(lessons.map((l) => l.id));
+    const from = String(raw?.from ?? '');
+    const to = String(raw?.to ?? '');
+    if (!ids.has(to)) return { error: '目标经验不存在' };
+    if (!ids.has(from) && !LESSON_EDGE_SENTINELS.includes(from)) return { error: '来源经验不存在' };
+    const reason = lessonEdgeRejectReason({ ...raw, from, to });
+    if (reason) return { error: reason };
+    const edges = this.lessonEdges({ lessons });
+    if (edges.some((e) => e.from === from && e.to === to && e.type === raw.type)) {
+      return { error: '这条关系已经存在' };
+    }
+    const edge = normalizeLessonEdge({ ...raw, from, to }, Date.now());
+    if (!edge) return { error: '关系不合法' };
+    this.state.lessonEdges = normalizeLessonEdgeList([...edges, edge], { knownIds: ids });
+    this.scheduleSave();
+    this.emitLessons();
+    return { edge };
+  }
+
+  /** 删一条关系边 */
+  removeLessonEdge({ from, to, type } = {}) {
+    const edges = this.lessonEdges();
+    const next = edges.filter((e) => !(e.from === from && e.to === to && e.type === type));
+    if (next.length === edges.length) return { error: '关系不存在' };
+    this.state.lessonEdges = next;
+    this.scheduleSave();
+    this.emitLessons();
+    return { ok: true };
+  }
+
+  /**
+   * 用户否决一条经验（界面上的「记错了」）。
+   *
+   * 写一条 `from: 'user'` 的 `contradicts` 边 + 把该条归档：
+   *   · 边让它在打分里被**双向排除**，即使之后被误启用也注入不进去；
+   *   · 归档让它不再出现在「待启用」候选里。
+   * 这是唯一一条不经过二次确认就能改经验状态的操作 —— 否决权必须最轻。
+   */
+  rejectLesson(id) {
+    const list = this.lessonLibrary();
+    const target = list.find((l) => l.id === id);
+    if (!target) return { error: '经验不存在' };
+    const ids = new Set(list.map((l) => l.id));
+    const edges = this.lessonEdges({ lessons: list }).filter(
+      (e) => !(e.from === 'user' && e.to === id && e.type === 'contradicts'),
+    );
+    const edge = normalizeLessonEdge({ from: 'user', to: id, type: 'contradicts', by: 'user' }, Date.now());
+    this.state.lessonEdges = normalizeLessonEdgeList([...edges, edge], { knownIds: ids });
+    this.state.lessons = list.map((l) => (l.id === id ? normalizeLesson({ ...l, status: 'archived' }) : l));
+    this.scheduleSave();
+    this.emitLessons();
+    return { ok: true, lesson: this.lessonLibrary().find((l) => l.id === id) ?? null };
+  }
+
+  /** 经验库变更统一出口（列表 + 边一起发，界面不用再拉一次） */
+  emitLessons() {
+    const lessons = this.lessonLibrary();
+    this.bus.emit('event', { t: 'lessons.updated', lessons, edges: this.lessonEdges({ lessons }) });
   }
 
   /**

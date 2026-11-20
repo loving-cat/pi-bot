@@ -1385,7 +1385,11 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
       if (pathname === '/api/lessons/preview' && req.method === 'GET') {
         const task = String(url.searchParams.get('task') || '');
         const roomId = String(url.searchParams.get('roomId') || '');
-        const picked = selectLessonsFor(services.capabilities.listLessons(), task, { roomId });
+        const picked = selectLessonsFor(services.capabilities.listLessons(), task, {
+          roomId,
+          edges: services.capabilities.listLessonEdges(),
+          modelFamily: String(url.searchParams.get('modelFamily') || ''),
+        });
         const lines = lessonsPromptLines(picked);
         return send(res, 200, {
           lines,
@@ -1398,8 +1402,39 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
       if (pathname === '/api/lessons' && req.method === 'GET') {
         return send(res, 200, {
           lessons: services.capabilities.listLessons(),
+          edges: services.capabilities.listLessonEdges(),
           limits: LESSON_LIMITS,
         });
+      }
+
+      // ---------- 经验关系边（SIM-Lite：supersedes / requires / contradicts / generalizes）----------
+      if (pathname === '/api/lessons/edges' && req.method === 'POST') {
+        const body = await readBody(req);
+        const r = services.capabilities.addLessonEdge({
+          from: body.from,
+          to: body.to,
+          type: body.type,
+          by: body.by,
+        });
+        if (!r.ok) return send(res, r.status, { error: r.error });
+        return send(res, 200, { edge: r.edge });
+      }
+      if (pathname === '/api/lessons/edges' && req.method === 'DELETE') {
+        const r = services.capabilities.removeLessonEdge({
+          from: String(url.searchParams.get('from') || ''),
+          to: String(url.searchParams.get('to') || ''),
+          type: String(url.searchParams.get('type') || ''),
+        });
+        if (!r.ok) return send(res, r.status, { error: r.error });
+        return send(res, 200, { ok: true });
+      }
+
+      // 用户否决（「记错了」）：写 user 哨兵的 contradicts 边并归档 —— 否决权最轻的一条路
+      const lessonReject = pathname.match(/^\/api\/lessons\/([^/]+)\/reject$/);
+      if (lessonReject && req.method === 'POST') {
+        const r = services.capabilities.rejectLesson(decodeURIComponent(lessonReject[1]));
+        if (!r.ok) return send(res, r.status, { error: r.error });
+        return send(res, 200, { lesson: r.lesson });
       }
 
       if (pathname === '/api/lessons' && req.method === 'POST') {

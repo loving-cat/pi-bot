@@ -35,6 +35,7 @@ import { config as defaultConfig } from './config.js';
 import { readBrandEnv } from './brand.js';
 import { store as defaultStore } from './store.js';
 import { log } from './util.js';
+import { resolveModelFamilyForModel } from './lessons.js';
 import {
   REFLECT_SYSTEM,
   REFLECT_MAX_CHARS,
@@ -88,6 +89,9 @@ export function createLessonReflector({ runner, logFn = log, config: scopedConfi
     const lead = room.leadBotId ? store.getBot(room.leadBotId) : null;
     const model = runner.resolveModel(lead?.model || '') ?? runner.model;
     if (!model) return { skipped: 'no-model' };
+    // 这条经验是**在哪个模型族上跑出来的**：SIM-Lite 跨模型去偏的归因起点。
+    // 记的是"实际干活的模型"，不是复盘会话自己的模型。
+    const modelFamily = resolveModelFamilyForModel(model);
     lease?.restrictTo(providerLeaseScope(model));
 
     // 先占坑：即使后面失败，也别在 10 分钟内反复重试烧钱
@@ -174,6 +178,7 @@ export function createLessonReflector({ runner, logFn = log, config: scopedConfi
         roomId,
         dept: room.name,
         status: 'candidate',
+        modelFamily,
       });
       if (!r.error) added++;
     }

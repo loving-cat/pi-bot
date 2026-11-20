@@ -201,6 +201,84 @@ test('store：删掉之后不再被挑中', () => {
   assert.equal(selectLessonsFor(store.lessonLibrary(), 'store-case 这个情境', {}).length, 0);
 });
 
+// ---------------------------------------------------------------------------
+// store：关系边（SIM-Lite Phase 1 第一刀）
+// ---------------------------------------------------------------------------
+const { selectLessonsFor: pick } = await import('../src/lessons.js');
+
+test('store：蒸馏器带进来的 modelFamily 会落库（老库缺字段仍是 unknown）', () => {
+  const withFamily = store.addLesson({ cue: '归因案', lesson: '做法', modelFamily: 'glm' }).lesson;
+  assert.equal(withFamily.modelFamily, 'glm');
+  const legacy = store.addLesson({ cue: '归因案旧', lesson: '做法' }).lesson;
+  assert.equal(legacy.modelFamily, 'unknown', '没有归因的老路径仍然安全');
+});
+
+test('store 边：两条真实经验之间可以建边，重复建要拒', () => {
+  const a = store.addLesson({ cue: '边案 A', lesson: '做法 A', modelFamily: 'glm' }).lesson;
+  const b = store.addLesson({ cue: '边案 B', lesson: '做法 B', modelFamily: 'deepseek' }).lesson;
+  const before = store.lessonEdges().length;
+  const r = store.addLessonEdge({ from: a.id, to: b.id, type: 'generalizes' });
+  assert.ok(r.edge, r.error);
+  assert.equal(store.lessonEdges().length, before + 1);
+
+  const dup = store.addLessonEdge({ from: a.id, to: b.id, type: 'generalizes' });
+  assert.match(dup.error, /已经存在/);
+});
+
+test('store 边：指向不存在的经验 / 未知类型 都拒，且给原因', () => {
+  const a = store.addLesson({ cue: '边案 C', lesson: '做法 C' }).lesson;
+  const b = store.addLesson({ cue: '边案 C2', lesson: '做法 C2' }).lesson;
+  assert.match(store.addLessonEdge({ from: a.id, to: 'les_nope', type: 'requires' }).error, /目标经验不存在/);
+  assert.match(store.addLessonEdge({ from: 'les_nope', to: a.id, type: 'requires' }).error, /来源经验不存在/);
+  assert.match(store.addLessonEdge({ from: a.id, to: a.id, type: 'requires' }).error, /自己连自己/);
+  assert.match(store.addLessonEdge({ from: a.id, to: b.id, type: 'likes' }).error, /边类型只能是/);
+});
+
+test('store 边：from 可以用 user 哨兵（用户否决写边）', () => {
+  const x = store.addLesson({ cue: '边案否决', lesson: '错的做法' }).lesson;
+  const r = store.addLessonEdge({ from: 'user', to: x.id, type: 'contradicts', by: 'user' });
+  assert.ok(r.edge, r.error);
+  assert.ok(store.lessonEdges().some((e) => e.from === 'user' && e.to === x.id));
+});
+
+test('store 边：用户在界面点「记错了」→ 写 user 否决边 + 归档，之后注入不进去', () => {
+  const bad = store.addLesson({ cue: '边案否决二', lesson: '把测试改成永远通过', evidence: EVIDENCE }).lesson;
+  store.updateLesson(bad.id, { status: 'active' });
+  assert.equal(pick(store.lessonLibrary(), '边案否决二 怎么做', {}).length >= 1, true, '启用后本来能被挑中');
+
+  const r = store.rejectLesson(bad.id);
+  assert.ok(r.ok, r.error);
+  assert.equal(r.lesson.status, 'archived', '否决后归到归档，不再出现在待启用里');
+  const after = pick(store.lessonLibrary(), '边案否决二 怎么做', { edges: store.lessonEdges() });
+  assert.equal(after.length, 0, '带有 user 否决边的经验不许被注入');
+});
+
+test('store 边：删经验会级联删掉它挂的边（不留悬空）', () => {
+  const a = store.addLesson({ cue: '边案 D', lesson: '做法 D' }).lesson;
+  const b = store.addLesson({ cue: '边案 E', lesson: '做法 E' }).lesson;
+  store.addLessonEdge({ from: a.id, to: b.id, type: 'requires' });
+  assert.ok(store.lessonEdges().some((e) => e.to === b.id));
+  store.removeLesson(b.id);
+  assert.ok(!store.lessonEdges().some((e) => e.to === b.id || e.from === b.id), '目标没了，边必须跟着走');
+});
+
+test('store 边：lessons.updated 事件同时带 lessons 与 edges（界面不用再拉一次）', () => {
+  const seen = [];
+  const listener = (ev) => {
+    if (ev?.t === 'lessons.updated') seen.push(ev);
+  };
+  store.bus.on('event', listener);
+  const a = store.addLesson({ cue: '边案 F', lesson: '做法 F' }).lesson;
+  const b = store.addLesson({ cue: '边案 G', lesson: '做法 G' }).lesson;
+  store.addLessonEdge({ from: a.id, to: b.id, type: 'supersedes' });
+  store.bus.off('event', listener);
+  assert.ok(seen.length >= 3, `至少要发三次（两条经验 + 一条边），实际 ${seen.length}`);
+  const last = seen[seen.length - 1];
+  assert.ok(Array.isArray(last.lessons));
+  assert.ok(Array.isArray(last.edges), '事件必须带 edges');
+  assert.ok(last.edges.some((e) => e.type === 'supersedes'));
+});
+
 try {
   fs.rmSync(root, { recursive: true, force: true });
 } catch {

@@ -30,6 +30,7 @@ import {
   UNKNOWN_MODEL_FAMILY,
   resolveModelFamily,
   normalizeModelFamily,
+  resolveModelFamilyForModel,
   normalizeFamilyStats,
   normalizeLesson,
   normalizeLessonList,
@@ -97,6 +98,13 @@ test('★ OpenAI 推理系列 o1 / o3 / o4-mini 归 gpt', () => {
   assert.equal(resolveModelFamily('o3-mini'), 'gpt');
   assert.equal(resolveModelFamily('o4-mini-high'), 'gpt');
   assert.equal(resolveModelFamily('chatgpt-4o-latest'), 'gpt');
+});
+
+test('从模型对象推族（复盘器带归因的入口）：provider/model 都看，认不出给 other', () => {
+  assert.equal(resolveModelFamilyForModel({ provider: 'sensenova', id: 'glm-5.2' }), 'glm');
+  assert.equal(resolveModelFamilyForModel({ provider: 'openai-compat', id: 'deepseek-chat' }), 'deepseek');
+  assert.equal(resolveModelFamilyForModel({ provider: 'nvidia', id: 'llama-3.1' }), 'other');
+  assert.equal(resolveModelFamilyForModel(null), UNKNOWN_MODEL_FAMILY);
 });
 
 test('没给提示 → unknown；都没命中 → other；族名归一按封闭词表', () => {

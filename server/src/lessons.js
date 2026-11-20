@@ -443,6 +443,17 @@ export function resolveModelFamily(...hints) {
   return 'other';
 }
 
+/**
+ * 从「模型对象」推族（复盘器、注入点直接用这个，别各处自己拼字段名）。
+ *
+ * pi 的模型对象字段是 `{ provider, id, name }`；我们多试几个名字，
+ * 是因为不同来源（模型组菜单 / SDK 注入 / 测试桩）字段不完全一样。
+ */
+export function resolveModelFamilyForModel(model) {
+  if (!model) return UNKNOWN_MODEL_FAMILY;
+  return resolveModelFamily(model.provider, model.id, model.name, model.slug, model.model);
+}
+
 /** 族名必须落在封闭词表里（含 unknown），否则归 `other` —— 防拼写漂移 */
 export function normalizeModelFamily(raw) {
   const name = str(raw, LESSON_LIMITS.family).toLowerCase();

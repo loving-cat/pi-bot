@@ -158,10 +158,10 @@ Phase 3 ──► 依赖 Phase 1/2 全部合并（否则删完兼容层还要再
 
 | 缝 | 现状 | v2 增量 | 不能破坏什么 |
 |---|---|---|---|
-| `server/src/lessons.js` | 校验 / 打分 / 渲染（纯模块） | 字段 `modelFamily` / `byFamily` / `edges` 的**纯函数**读法；打分加族与边权重；`LESSON_LIMITS` 只调 `total`（200 → 500，仍要淘汰） | 仍是 `PURE_MODULES`；`selectLessonsFor` / `lessonsPromptLines` **签名兼容** |
-| `server/src/lesson-reflect.js` | 收尾复盘 → candidate（evidence 校验） | 输出多带 `modelFamily`（当前轮实际服务的模型族）与边候选（`supersedes` / `contradicts`） | 仍然**只产 candidate**；evidence 校验不放宽 |
+| `server/src/lessons.js` ✅ **契约已定稿** | 校验 / 打分 / 渲染（纯模块） | 字段 `modelFamily` / `byFamily` / `edges` 的**纯函数**读法；打分加族与边权重；`LESSON_LIMITS` 只调 `total`（200 → 500，仍要淘汰） | 仍是 `PURE_MODULES`；`selectLessonsFor` / `lessonsPromptLines` **签名兼容** |
+| `server/src/lesson-reflect.js` 🟡 **归因已接线**（边候选待做） | 收尾复盘 → candidate（evidence 校验） | 输出多带 `modelFamily`（`resolveModelFamilyForModel(实际干活的模型)`，不是复盘会话自己的模型）与边候选（`supersedes` / `contradicts`） | 仍然**只产 candidate**；evidence 校验不放宽 |
 | `server/src/runner/turn-executor.js` | `withLessons` 注入 | 只多传 `modelFamily`，让打分能算族加成 | 注入点仍唯一；成员层仍不注入 |
-| `server/src/store.js` | `state.lessons` + `/api/lessons` + `lessons.updated` | `state.lessonEdges`；`/api/lessons/preview` 里显示族/边标记 | 老库无新字段也能读（`normalizeLesson` 给默认值） |
+| `server/src/store.js` ✅ **边已落库** | `state.lessons` + `/api/lessons` + `lessons.updated` | `state.lessonEdges`（级联删、`lessons.updated` 同时带 `edges`、`POST /api/lessons/edges`、`POST /api/lessons/:id/reject`）；`/api/lessons/preview` 已传边 | 老库无新字段也能读（`normalizeLesson` 给默认值） |
 | `app/lib/widgets/lessons_section.dart` | 启用 / 归档 / 删除 | 族标记、「未在同模型验证」提示、「推荐启用」排序 | **不能退化成只读**；三档操作全保留 |
 
 ### 5.2 数据契约（增量字段，老库直接兼容）
