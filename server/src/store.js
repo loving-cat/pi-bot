@@ -53,6 +53,14 @@ import {
   LESSON_EDGE_SENTINELS,
   UNKNOWN_MODEL_FAMILY,
 } from './lessons.js';
+import {
+  normalizeSummaryBatch,
+  normalizeSummaryBatchList,
+  resolveSummary as resolveSummaryState,
+  markSummarySent,
+  isTerminalState as isTerminalSummary,
+  selectSummaryRetention,
+} from './chief-summary.js';
 import { mcpNameError } from './mcp.js';
 import * as mcpLibraryDomain from './mcp-library.js';
 import { assertMcpCredentialsSealed } from './mcp-credentials.js';
@@ -1411,6 +1419,69 @@ export class Store {
     this.scheduleSave();
     this.emitLessons();
     return { applied, ignored };
+  }
+
+  // ---------------------------------------------------------------- 主控总汇总
+
+  /**
+   * 主控总汇总账本（`state.chiefSummaries`，规格 `docs/SPEC-CHIEF-SUMMARY.md` §2.1）。
+   *
+   * 这里只做**持久化 + 保留策略 + 广播**；状态机与就绪判定全在纯模块
+   * `server/src/chief-summary.js` 里（别在这儿拼状态字面量）。
+   */
+  chiefSummaries() {
+    return normalizeSummaryBatchList(this.state.chiefSummaries ?? [], Date.now());
+  }
+
+  /** 未终结的批次（界面要展示的：ready_blocked / deferred / queued_send / sending） */
+  pendingChiefSummaries() {
+    return this.chiefSummaries().filter((b) => !isTerminalSummary(b.state));
+  }
+
+  chiefSummary(id) {
+    return this.chiefSummaries().find((b) => b.id === String(id ?? '')) ?? null;
+  }
+
+  /** 整条批次写入（同 id 覆盖）；保留策略在这里生效，避免账本无限增长 */
+  putChiefSummary(raw = {}) {
+    const batch = normalizeSummaryBatch(raw, Date.now());
+    if (!batch) return { error: '汇总批次不合法（缺 id 或没有目标）' };
+    const list = this.chiefSummaries().filter((b) => b.id !== batch.id);
+    list.push(batch);
+    this.state.chiefSummaries = selectSummaryRetention(list, { now: Date.now() });
+    this.scheduleSave();
+    this.emitChiefSummaries();
+    return { batch };
+  }
+
+  /** 用户三选一（幂等：已终态再点不会变） */
+  resolveChiefSummary(id, action, { mainBusy = false } = {}) {
+    const current = this.chiefSummary(id);
+    if (!current) return { error: '汇总不存在' };
+    const next = resolveSummaryState(current, action, { mainBusy, now: Date.now() });
+    if (next === current) return { batch: current, unchanged: true };
+    const list = this.chiefSummaries().map((b) => (b.id === next.id ? next : b));
+    this.state.chiefSummaries = selectSummaryRetention(list, { now: Date.now() });
+    this.scheduleSave();
+    this.emitChiefSummaries();
+    return { batch: next };
+  }
+
+  /** 汇总消息真的落地了：回填消息 id 并进终态 */
+  markChiefSummarySent(id, { messageId = null } = {}) {
+    const current = this.chiefSummary(id);
+    if (!current) return { error: '汇总不存在' };
+    const next = markSummarySent(current, { messageId, now: Date.now() });
+    const list = this.chiefSummaries().map((b) => (b.id === next.id ? next : b));
+    this.state.chiefSummaries = selectSummaryRetention(list, { now: Date.now() });
+    this.scheduleSave();
+    this.emitChiefSummaries();
+    return { batch: next };
+  }
+
+  /** 汇总账本变更统一出口（只推未终结的，和 lessons.updated 一个风格） */
+  emitChiefSummaries() {
+    this.bus.emit('event', { t: 'summaries.updated', items: this.pendingChiefSummaries() });
   }
 
   /** 经验库变更统一出口（列表 + 边一起发，界面不用再拉一次） */

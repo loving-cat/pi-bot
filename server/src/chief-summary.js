@@ -1,0 +1,305 @@
+/**
+ * 主控总汇总（chief summary）—— 纯逻辑：批次状态机、汇聚就绪判定、三选一动作。
+ *
+ * 规格：`docs/SPEC-CHIEF-SUMMARY.md`（v1.0）§2。
+ *
+ * ## 一句话
+ *
+ * 用户在 **主控私聊** 派活 → 各部门各自收口 → 批次就绪后由 `mainBot` 回到私聊做**统一汇总**；
+ * 撞上主控正忙就先阻塞、**懒生成**（绝不提前调模型），界面右上角三选一：
+ * **是（发送）/ 否（留角标稍后）/ 忽略（放弃汇总，结果留在各部门群）**。
+ *
+ * ## 为什么这些要写成纯函数
+ *
+ * 状态字面量一旦散在 HTTP 路由、前端和 runner 里各拼一份，就会出现"界面显示已发送、
+ * 后台其实还在 queued"这类幽灵状态。所以：
+ *   · 所有状态流转只在 `resolveSummary()` / `advanceSummary()` 里发生；
+ *   · 别处只允许**读**状态，不许写字符串。
+ *
+ * 本文件零 IO：不 import store / config / fs，时钟与忙碌态都从参数进来。
+ */
+
+/** 批次状态（顺序即生命周期，终态是最后两个） */
+export const SUMMARY_STATES = Object.freeze([
+  'collecting',
+  'ready_blocked',
+  'deferred',
+  'queued_send',
+  'sending',
+  'sent',
+  'ignored',
+]);
+
+/** 用户能做的三个动作 */
+export const SUMMARY_ACTIONS = Object.freeze(['send', 'defer', 'ignore']);
+
+/** 单个派活目标的状态 */
+export const TARGET_STATUSES = Object.freeze(['running', 'done', 'failed']);
+
+/** 上限（改这里就等于改预算，别在别处写魔法数字） */
+export const CHIEF_SUMMARY_LIMITS = Object.freeze({
+  /** 账本最多留几条（超了先清终态） */
+  total: 50,
+  /** 终态（sent / ignored）保留多久，过期自动清 */
+  terminalTtlMs: 7 * 24 * 60 * 60 * 1000,
+  /** 部门负责人结论截断 */
+  leadSummary: 2000,
+  /** 浮窗标题截断 */
+  title: 28,
+  /** 单个目标最多留几个产物 */
+  artifacts: 20,
+  /** URL / id 类字段 */
+  id: 64,
+});
+
+const str = (v, max) => String(v ?? '').trim().slice(0, max);
+
+/** 终态：不再需要用户操作，也不会再调模型 */
+export function isTerminalState(state) {
+  return state === 'sent' || state === 'ignored';
+}
+
+/** 需要用户在界面上决定的状态（浮窗 / 角标要展示的） */
+export function isPendingState(state) {
+  return state === 'ready_blocked' || state === 'deferred';
+}
+
+/** 正排队等主控空闲 */
+export function isQueuedState(state) {
+  return state === 'queued_send' || state === 'sending';
+}
+
+function normalizeArtifacts(list) {
+  const out = [];
+  for (const item of Array.isArray(list) ? list : []) {
+    if (item === null || item === undefined) continue;
+    const value = typeof item === 'string' ? item : item?.path ?? item?.name ?? '';
+    const text = str(value, 400);
+    if (!text) continue;
+    out.push(text);
+    if (out.length >= CHIEF_SUMMARY_LIMITS.artifacts) break;
+  }
+  return out;
+}
+
+/** 规范化一个派活目标 */
+export function normalizeSummaryTarget(raw = {}) {
+  const departmentId = str(raw.departmentId, CHIEF_SUMMARY_LIMITS.id);
+  const refId = str(raw.refId, CHIEF_SUMMARY_LIMITS.id);
+  const kind = raw.kind === 'taskRun' ? 'taskRun' : 'group';
+  if (!departmentId && !refId) return null;
+  const status = TARGET_STATUSES.includes(raw.status) ? raw.status : 'running';
+  return {
+    key: str(raw.key, 160) || `${kind}:${departmentId}:${refId}`,
+    departmentId,
+    departmentName: str(raw.departmentName, 60),
+    kind,
+    refId,
+    status,
+    leadSummary: str(raw.leadSummary, CHIEF_SUMMARY_LIMITS.leadSummary),
+    artifacts: normalizeArtifacts(raw.artifacts),
+    sourceMsgId: raw.sourceMsgId ? str(raw.sourceMsgId, CHIEF_SUMMARY_LIMITS.id) : null,
+    error: str(raw.error, 400),
+    finishedAt: Number.isFinite(raw.finishedAt) ? raw.finishedAt : 0,
+  };
+}
+
+/** 规范化一个批次（形状固定；没有 id 或没有目标就丢掉） */
+export function normalizeSummaryBatch(raw = {}, now = 0) {
+  const id = str(raw.id, CHIEF_SUMMARY_LIMITS.id);
+  if (!id) return null;
+  const targets = [];
+  for (const item of Array.isArray(raw.targets) ? raw.targets : []) {
+    const target = normalizeSummaryTarget(item);
+    if (target) targets.push(target);
+  }
+  if (!targets.length) return null;
+  const state = SUMMARY_STATES.includes(raw.state) ? raw.state : 'collecting';
+  return {
+    id,
+    originTurnKey: str(raw.originTurnKey, 160),
+    originRoomId: str(raw.originRoomId, CHIEF_SUMMARY_LIMITS.id),
+    originMessageId: raw.originMessageId ? str(raw.originMessageId, CHIEF_SUMMARY_LIMITS.id) : null,
+    taskTitle: str(raw.taskTitle, CHIEF_SUMMARY_LIMITS.title),
+    dispatchOpen: raw.dispatchOpen !== false, // 缺省视为"还在派活"，宁可晚一点就绪
+    targets,
+    state,
+    createdAt: Number.isFinite(raw.createdAt) ? raw.createdAt : now,
+    readyAt: Number.isFinite(raw.readyAt) ? raw.readyAt : 0,
+    resolvedAt: Number.isFinite(raw.resolvedAt) ? raw.resolvedAt : 0,
+    summaryMessageId: raw.summaryMessageId ? str(raw.summaryMessageId, CHIEF_SUMMARY_LIMITS.id) : null,
+  };
+}
+
+/** 规范化整个账本：去无效、按 id 去重、按保留策略清理 */
+export function normalizeSummaryBatchList(list = [], now = 0) {
+  const out = [];
+  const seen = new Set();
+  for (const item of Array.isArray(list) ? list : []) {
+    const batch = normalizeSummaryBatch(item, now);
+    if (!batch || seen.has(batch.id)) continue;
+    seen.add(batch.id);
+    out.push(batch);
+  }
+  out.sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0)); // 新 → 旧
+  return selectSummaryRetention(out, { now });
+}
+
+/** 同轮聚合键：主控这一轮的 liveMsgId 或根 taskRunId */
+export function turnKeyFor({ liveMsgId = '', taskRunId = '' } = {}) {
+  if (liveMsgId) return `msg:${liveMsgId}`;
+  if (taskRunId) return `task:${taskRunId}`;
+  return '';
+}
+
+/**
+ * 批次是否就绪。
+ *
+ * 三条规则（规格 §2.2）：
+ *   1. 发起轮必须封口（`dispatchOpen === false`）—— 否则部门 A 回得比派活快，
+ *      会在还有部门没派出去时就"就绪"，汇总漏掉后面那个部门；
+ *   2. 至少有一个目标；
+ *   3. 所有目标都到终态（done / failed）。**失败也算终态** —— 一个部门失败不该让
+ *      其余部门的成果无限期等下去。
+ */
+export function isBatchReady(batch) {
+  if (!batch || batch.dispatchOpen !== false) return false;
+  if (!Array.isArray(batch.targets) || !batch.targets.length) return false;
+  return batch.targets.every((t) => t.status === 'done' || t.status === 'failed');
+}
+
+/**
+ * 根据「当前进度 + 主控忙不忙」推进状态（只在非终态、且用户还没做选择时生效）。
+ *
+ * - 没就绪 → `collecting`
+ * - 就绪 + 用户已 defer / 已排队 → 保持（用户的意思不该被自动改掉）
+ * - 就绪 + 主控忙 → `ready_blocked`（懒汇总：不调模型）
+ * - 就绪 + 主控闲 → `sending`（调用方负责真的发）
+ */
+export function advanceSummary(batch, { mainBusy = false, now = 0 } = {}) {
+  if (!batch) return batch;
+  if (isTerminalState(batch.state)) return batch;
+  if (!isBatchReady(batch)) {
+    return batch.state === 'collecting' ? batch : { ...batch, state: 'collecting', readyAt: 0 };
+  }
+  if (batch.state === 'deferred' || batch.state === 'queued_send' || batch.state === 'sending') {
+    return batch;
+  }
+  const readyAt = batch.readyAt || now;
+  return { ...batch, readyAt, state: mainBusy ? 'ready_blocked' : 'sending' };
+}
+
+/**
+ * 用户三选一（规格 §2.3）。**幂等**：已在终态的批次再点也不会变。
+ *
+ * @param {object} batch
+ * @param {'send'|'defer'|'ignore'} action
+ * @param {{ mainBusy?: boolean, now?: number }} [opts]
+ */
+export function resolveSummary(batch, action, { mainBusy = false, now = 0 } = {}) {
+  if (!batch) return batch;
+  if (isTerminalState(batch.state)) return batch;
+  if (!SUMMARY_ACTIONS.includes(action)) return batch;
+
+  if (action === 'ignore') {
+    return { ...batch, state: 'ignored', resolvedAt: now };
+  }
+  if (action === 'defer') {
+    // 没到就绪就别让它进"待看"：否则用户点开只看到一堆还没跑完的部门
+    if (!isBatchReady(batch)) return batch;
+    return { ...batch, state: 'deferred' };
+  }
+  // send：主控空闲就立即发，忙就排队等这一轮结束（绝不打断当前对话）
+  if (!isBatchReady(batch)) return batch;
+  return { ...batch, readyAt: batch.readyAt || now, state: mainBusy ? 'queued_send' : 'sending' };
+}
+
+/** 汇总真的发出去了（调用方拿到消息 id 后回填） */
+export function markSummarySent(batch, { messageId = null, now = 0 } = {}) {
+  if (!batch) return batch;
+  return {
+    ...batch,
+    state: 'sent',
+    resolvedAt: now,
+    summaryMessageId: messageId ? str(messageId, CHIEF_SUMMARY_LIMITS.id) : batch.summaryMessageId,
+  };
+}
+
+/** 往批次里加/更新一个目标（同 `key` 覆盖，避免重复部门刷屏） */
+export function upsertSummaryTarget(batch, rawTarget, { now = 0 } = {}) {
+  if (!batch) return batch;
+  const target = normalizeSummaryTarget(rawTarget);
+  if (!target) return batch;
+  if (isTerminalState(batch.state) && batch.state === 'sent') {
+    // 已交卷：晚到的部门回报只落库，不再影响状态（规格 §2.2 晚到刷新）
+    const exists = batch.targets.some((t) => t.key === target.key);
+    const targets = exists
+      ? batch.targets.map((t) => (t.key === target.key ? target : t))
+      : [...batch.targets, target];
+    return { ...batch, targets };
+  }
+  const exists = batch.targets.some((t) => t.key === target.key);
+  const targets = exists
+    ? batch.targets.map((t) => (t.key === target.key ? { ...target, finishedAt: target.finishedAt || now } : t))
+    : [...batch.targets, target];
+  return { ...batch, targets };
+}
+
+/** 发起轮封口：此后才会参与就绪判定 */
+export function sealDispatch(batch, { mainBusy = false, now = 0 } = {}) {
+  if (!batch) return batch;
+  return advanceSummary({ ...batch, dispatchOpen: false }, { mainBusy, now });
+}
+
+/** 给浮窗用的进度文案数据（纯计算，不做文案拼接以外的判断） */
+export function summarizeProgress(batch) {
+  const targets = Array.isArray(batch?.targets) ? batch.targets : [];
+  const done = targets.filter((t) => t.status === 'done');
+  const failed = targets.filter((t) => t.status === 'failed');
+  const running = targets.filter((t) => t.status === 'running');
+  return {
+    total: targets.length,
+    done: done.length,
+    failed: failed.length,
+    running: running.length,
+    ready: isBatchReady(batch),
+    failedNames: failed.map((t) => t.departmentName || t.departmentId),
+    runningNames: running.map((t) => t.departmentName || t.departmentId),
+  };
+}
+
+/**
+ * 保留策略（规格 §2.1）：终态过期清掉；超过上限先清终态、再清最老的。
+ *
+ * 返回**保留**的列表（已排序：新 → 旧）。调用方负责落盘。
+ */
+export function selectSummaryRetention(list = [], { now = 0, max = CHIEF_SUMMARY_LIMITS.total, ttlMs = CHIEF_SUMMARY_LIMITS.terminalTtlMs } = {}) {
+  const batches = (Array.isArray(list) ? list : []).filter(Boolean);
+  const alive = batches.filter((b) => {
+    if (!isTerminalState(b.state)) return true;
+    const at = Number(b.resolvedAt || b.readyAt || b.createdAt) || 0;
+    return now - at <= ttlMs;
+  });
+  if (alive.length <= max) return alive;
+
+  // 先丢终态（从最老的开始），还不够再丢未终结里最老的 —— 宁可丢记录也不能让账本无限长
+  const terminal = alive
+    .filter((b) => isTerminalState(b.state))
+    .sort((a, b) => (Number(a.resolvedAt || a.createdAt) || 0) - (Number(b.resolvedAt || b.createdAt) || 0));
+  const keep = new Set(alive);
+  let overflow = alive.length - max;
+  for (const batch of terminal) {
+    if (overflow <= 0) break;
+    keep.delete(batch);
+    overflow -= 1;
+  }
+  if (overflow > 0) {
+    const rest = [...keep].sort((a, b) => (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0));
+    for (const batch of rest) {
+      if (overflow <= 0) break;
+      keep.delete(batch);
+      overflow -= 1;
+    }
+  }
+  return alive.filter((b) => keep.has(b));
+}

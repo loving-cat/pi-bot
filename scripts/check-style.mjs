@@ -24,6 +24,7 @@ const PURE_MODULES = [
   'policy-version.js',
   'role-tools.js',
   'action-catalog.js',
+  'chief-summary.js',
   'duplex-router.js',
   'group-round.js',
   'overrides.js',

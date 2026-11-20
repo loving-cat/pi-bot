@@ -36,7 +36,7 @@
 
 ---
 
-## 2. 纯逻辑数据契约与状态机 —— `server/src/chief-summary.js`（待新增）
+## 2. 纯逻辑数据契约与状态机 —— `server/src/chief-summary.js` ✅ 已落地（Stage 1）
 
 ### 2.1 `DispatchBatch` 结构
 
@@ -176,7 +176,7 @@
 
 | 阶段 | 范围与新增测试 | 核心断言（可测得红） |
 |---|---|---|
-| **Stage 1 · 纯逻辑与持久化** | `server/src/chief-summary.js`（待新增）进 `PURE_MODULES` + `store.state.chiefSummaries` + `server/tests/chief-summary.mjs`（待新增） | 单部门直接就绪；多部门等齐才就绪；单部门失败不傻等；`dispatchOpen=true` 时部门秒回先挂起、封口后立刻就绪；撞忙落 `ready_blocked`；`send`/`defer`/`ignore` 状态机全分支；重启重载不丢 |
+| ✅ **Stage 1 · 纯逻辑与持久化**（已落地） | `server/src/chief-summary.js` 进 `PURE_MODULES`（现 22 个纯模块）+ `store.state.chiefSummaries`（含 7 天/50 条保留策略）+ `server/tests/chief-summary.mjs`（21 条） | 单部门直接就绪；多部门等齐才就绪；单部门失败不傻等；`dispatchOpen=true` 时部门秒回先挂起、封口后立刻就绪；撞忙落 `ready_blocked`；`send`/`defer`/`ignore` 状态机全分支；重启重载不丢 |
 | **Stage 2 · 双入口接线与防循环护栏** | `tools.js` + `intake-tool.js` + `pi-runner.js` + `group-orchestrator.js` + `task-runtime.js` + `turn-executor.js` + `chief-summary-runner.js`（待新增） + `http.js` + `server/tests/chief-summary-flow.mjs`（待新增） | 私聊直派空闲直发总结（成员层 `summary` 含 `refs`）；撞忙阻塞时 **0 次模型调用**；选 `send` 排队至当前轮结束发送；选 `ignore` 全程 0 调模型；汇总轮调 `dispatch_to_department`/`accept_task` 被硬拦；受管任务接主控汇总后不再写 400 字 `system` 重复消息；部门群内直接发任务不触发主控汇总 |
 | **Stage 3 · Flutter 右上角浮窗** | `app/lib/widgets/chief_summary_card.dart`（待新增）+ `chat_screen.dart` + `app_state.dart` + `chat.dart` + `app/test/chief_summary_card_test.dart`（待新增） | 展开态三按钮各自触发正确 action；`defer` 缩成右上角小角标且点击可再展开；`ignore` 清空提示；多条碰撞仅显示 1 张 + 剩余计数；6 秒空闲回归 **0 Ticker** |
 

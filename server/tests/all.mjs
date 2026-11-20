@@ -17,6 +17,7 @@ const TESTS = [
   'transcript-budget',
   'skills',
   'lessons',
+  'chief-summary',
   'lessons-sim-lite',
   'lesson-injection',
   'lesson-reflect',
