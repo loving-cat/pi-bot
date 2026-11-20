@@ -40,19 +40,53 @@ export function buildChiefSummaryPrompt(batch = {}) {
 
   return [
     '【主控汇总轮】',
-    `你之前把「${batch.taskTitle || '这个任务'}」拆给了下面这些部门，他们已经各自收口了。`,
-    '现在请你**直接面向用户**做一次统一汇总：说清每个部门交付了什么、关键产物在哪、',
-    '哪些部分没做到或受阻（如实说，不要美化），最后问用户是否需要返工。',
+    '★ 这是**已有任务的内部交付回调唤醒，不是用户的新提问**。',
+    '不要把它当成新需求重新立项，也不要向用户复述他刚才说过的话。',
     '',
-    '这是交卷轮：**不要再建组、再派活或接新任务**，也不要重复用户原话。',
+    `你之前把「${batch.taskTitle || '这个任务'}」拆给了下面这些部门，他们已经各自收口了。`,
+    '现在请你**直接面向用户**做一次统一汇总，并且严格遵守：',
+    '1. 先用 **不超过 3 句**给出核心结论；',
+    '2. 再列**关键产物清单**（路径/附件，一行一个）；',
+    '3. 最后用一句话说明缺项/受阻情况，并询问用户是否需要返工。',
+    '',
+    '**绝不复述各部门已经写在群里的长明细** —— 过程细节交给用户点 refs 直达部门群查看。',
+    '这是交卷轮：**不要再建组、再派活或接新任务**。',
     '',
     '---- 各部门交卷 ----',
     ...lines,
   ].join('\n');
 }
 
+/**
+ * 主控私聊此刻"忙不忙"。
+ *
+ * 只看 `runner.isBusy` 不够：还有一条「用户刚发、正在合并进这一轮」的消息
+ * （`mergeQueue.hasPending`）没落地 —— 那种情况下插一条汇总会打断用户的意思。
+ */
+export function isMainChatBusy(runner, roomId, mainBotId) {
+  try {
+    if (runner?.isBusy?.(roomId, mainBotId) === true) return true;
+    if (runner?.mergeQueue?.hasPending?.(roomId) === true) return true;
+  } catch {
+    return true; // 判忙失败就当忙：宁可晚一轮发，也别打断用户
+  }
+  return false;
+}
+
+/**
+ * 主控这一轮的聚合键：同一轮里派多个部门要落在同一个批次里。
+ * 优先用这一轮的 liveMsgId（用户看到的那条回复），没有就退回根 taskRunId。
+ */
+export function chiefTurnKey(runner, roomId, botId) {
+  const entry = runner?.sessions?.get?.(`${roomId}:${botId}`);
+  if (entry?.liveMsgId) return `msg:${entry.liveMsgId}`;
+  if (entry?.rootTaskId) return `task:${entry.rootTaskId}`;
+  return '';
+}
+
 export function createChiefSummaryRunner({ runner, store, logFn = null } = {}) {
   const inflight = new Set();
+  let draining = null;
   const log = (msg) => {
     try {
       logFn?.(msg);
@@ -102,6 +136,11 @@ export function createChiefSummaryRunner({ runner, store, logFn = null } = {}) {
       if (out?.ok) {
         store.markChiefSummarySent(batch.id, { messageId: out.messageId ?? null });
         log(`【汇总】已发送：${batch.taskTitle || batch.id}`);
+        // 直接 summarize() 调用后不会经过 turn-executor 的 finally，
+        // 期间新排队进来的批次就没人管了 —— 这里顺手排空（有重入锁，安全）。
+        setTimeout(() => {
+          void drain().catch(() => {});
+        }, 0);
         return { ok: true, messageId: out.messageId ?? null };
       }
       const reason = out?.error || '未知原因';
@@ -123,25 +162,37 @@ export function createChiefSummaryRunner({ runner, store, logFn = null } = {}) {
    *
    * 串行发送、一次失败就停：连着失败多半是模型/额度问题，连环调用只会继续烧钱。
    */
+  /**
+   * 排空排队中的汇总。
+   *
+   * ★ 重入锁：`summarize()` 成功后也会调一次 drain，而它自己可能就在 drain 里 ——
+   *   没有锁的话同一批会被两个环同时扫到。重入者直接等当前这轮的结果。
+   */
   async function drain() {
-    const main = store.mainBot();
-    if (!main) return { sent: 0, stopped: 'no-main' };
-    let sent = 0;
-    for (let guard = 0; guard < 10; guard++) {
-      // 排队中的优先；其次是"已经该发但还没发"的 sending（例如上一轮 finally 里没赶上）
-      const candidate =
-        store.queuedChiefSummaries()[0] ??
-        store.chiefSummaries().find((b) => b.state === 'sending') ??
-        null;
-      if (!candidate) break;
-      // 主控还没空闲就等下一轮 finally 再来，绝不打断用户正在进行的对话
-      if (runner.isBusy?.(candidate.originRoomId, main.id) === true) break;
-      const out = await summarize(candidate.id);
-      if (out?.skipped) break;
-      if (!out?.ok) return { sent, stopped: out?.error ?? 'failed' };
-      sent += 1;
-    }
-    return { sent };
+    if (draining) return draining;
+    draining = (async () => {
+      const main = store.mainBot();
+      if (!main) return { sent: 0, stopped: 'no-main' };
+      let sent = 0;
+      for (let guard = 0; guard < 10; guard++) {
+        // 排队中的优先；其次是"已经该发但还没发"的 sending（例如上一轮 finally 里没赶上）
+        const candidate =
+          store.queuedChiefSummaries()[0] ??
+          store.chiefSummaries().find((b) => b.state === 'sending') ??
+          null;
+        if (!candidate) break;
+        // 主控还没空闲就等下一轮 finally 再来，绝不打断用户正在进行的对话
+        if (isMainChatBusy(runner, candidate.originRoomId, main.id)) break;
+        const out = await summarize(candidate.id);
+        if (out?.skipped) break;
+        if (!out?.ok) return { sent, stopped: out?.error ?? 'failed' };
+        sent += 1;
+      }
+      return { sent };
+    })().finally(() => {
+      draining = null;
+    });
+    return draining;
   }
 
   return { summarize, drain };

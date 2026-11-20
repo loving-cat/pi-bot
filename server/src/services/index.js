@@ -15,6 +15,7 @@ import { createModelService, publicDecision } from './model-service.js';
 import { createAutomationService } from './automation-service.js';
 import { createCapabilityService } from './capability-service.js';
 import { createPolicyService } from './policy-service.js';
+import { createSummaryService } from './summary-service.js';
 
 export function createServices({
   config = defaultConfig,
@@ -29,6 +30,7 @@ export function createServices({
   const automations = createAutomationService({ store, runner });
   const capabilities = createCapabilityService({ store, runner });
   const policy = createPolicyService({ store, runner });
+  const summaries = createSummaryService({ store, runner });
 
   return {
     config,
@@ -40,6 +42,7 @@ export function createServices({
     automations,
     capabilities,
     policy,
+    summaries,
   };
 }
 

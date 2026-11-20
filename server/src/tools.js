@@ -2133,7 +2133,33 @@ export function buildChiefTools({
           );
         }
 
-        const res = await runner.dispatchToGroup({ roomId: groupId, text: task });
+        // ★ 主控总汇总登记：主控在自己私聊里派活才建批次
+        //   （用户在部门群直接派活不建 —— 规格 §0 硬规矩 5）。
+        let summary = null;
+        try {
+          const chief = store.mainBot();
+          const dmId = chief ? store.ensureDm(chief.id).id : '';
+          if (chief && dmId && roomId === dmId && botId === chief.id) {
+            const turnKey = runner.currentTurnKey?.(roomId, botId) || `room:${roomId}:${groupId}`;
+            const reg = store.ensureChiefSummaryBatch({
+              turnKey,
+              originRoomId: roomId,
+              taskTitle: task,
+              target: {
+                key: `group:${groupId}`,
+                departmentId: groupId,
+                departmentName: room.name,
+                kind: 'group',
+                status: 'running',
+              },
+            });
+            if (reg?.batch) summary = { batchId: reg.batch.id, targetKey: `group:${groupId}` };
+          }
+        } catch (err) {
+          log('登记主控汇总失败（不影响派活）：', err?.message || err);
+        }
+
+        const res = await runner.dispatchToGroup({ roomId: groupId, text: task, summary });
         if (!res.ok) return fail(res.error ?? '下达失败');
         return ok(
           `已向「${room.name}」下达任务，部门老大 ${lead?.emoji ?? ''}${lead?.name ?? '?'} 正在接单拆活。` +

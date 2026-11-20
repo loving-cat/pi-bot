@@ -23,6 +23,55 @@ export function createBotService({
   modelGroups = defaultModelGroups,
   shells = defaultShells,
 }) {
+  /**
+   * 这个成员是不是"正在干活"（规格 §3.5 在跑成员保护）。
+   *
+   * 三种情况任一成立就拒绝删除/移出：
+   *   1. 在任意房间 busy（正在跑这一轮）；
+   *   2. 承担着未终结的 TaskRun；
+   *   3. 是某个未终结主控汇总批次里**还在跑**的目标部门的成员。
+   * 不拦的话会留下孤儿任务，或者让主控汇总永远等不到那个部门。
+   */
+  function runningReason(botId) {
+    try {
+      for (const room of store.listRooms()) {
+        if (runner?.isBusy?.(room.id, botId) === true) {
+          return `该成员正在「${room.name ?? room.id}」里执行任务，请先终止或等完成后再操作`;
+        }
+      }
+    } catch {
+      // 判忙失败就当不忙（别把删除永远锁死）
+    }
+    try {
+      const runs = typeof store.taskRuns?.listAll === 'function' ? store.taskRuns.listAll() : [];
+      const active = new Set(['queued', 'running', 'waiting_approval', 'paused_budget', 'blocked']);
+      const mine = runs.find(
+        (r) =>
+          r &&
+          active.has(r.state) &&
+          (r.owner?.botId === botId || r.owner?.leadBotId === botId || r.assignee?.botId === botId),
+      );
+      if (mine) return '该成员还有未完成的受管任务，请先终止或等完成后再操作';
+    } catch {
+      // 读不到任务库就不拦
+    }
+    try {
+      const batches = store.pendingChiefSummaries?.() ?? [];
+      for (const batch of batches) {
+        for (const t of batch.targets ?? []) {
+          if (t.status !== 'running') continue;
+          const room = store.getRoom(t.departmentId);
+          if (room?.leadBotId === botId) {
+            return '该成员负责的部门还在为主控汇总执行任务，请等交付完成后再操作';
+          }
+        }
+      }
+    } catch {
+      // 汇总账本读不到就不拦
+    }
+    return '';
+  }
+
   const bots = {
     list() {
       return store.listBots();
@@ -194,6 +243,8 @@ export function createBotService({
     },
 
     remove(id) {
+      const busy = runningReason(id);
+      if (busy) return { ok: false, status: 409, code: 'BOT_BUSY', error: busy };
       const r = store.deleteBot(id);
       if (!r) return { ok: false, status: 400, code: 'CANNOT_DELETE_MAIN_BOT', error: '删不了（不存在或它是主控）' };
       return { ok: true, ...r };

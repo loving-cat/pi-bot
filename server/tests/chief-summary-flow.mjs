@@ -29,7 +29,12 @@ import {
   markSummarySent,
   normalizeSummaryBatch,
 } from '../src/chief-summary.js';
-import { buildChiefSummaryPrompt, createChiefSummaryRunner } from '../src/runner/chief-summary-runner.js';
+import {
+  buildChiefSummaryPrompt,
+  createChiefSummaryRunner,
+  isMainChatBusy,
+} from '../src/runner/chief-summary-runner.js';
+import { createBotService } from '../src/services/bot-service.js';
 
 const { createStore } = await import('../src/store.js');
 const { createBus } = await import('../src/bus.js');
@@ -154,6 +159,10 @@ await test('提示词带部门结论 / 状态 / 产物，并明确"别再派活"
   assert.match(prompt, /server\/src\/fetch-queue\.js/);
   assert.match(prompt, /测试组 —— 受阻\/失败（额度用尽）/, '失败要如实标出来');
   assert.match(prompt, /不要再建组、再派活或接新任务/);
+  // Stage 2b：回调打标 + ≤3 句限长 + 不复述长明细
+  assert.match(prompt, /内部交付回调唤醒，不是用户的新提问/, '必须先说清这是回调，不是新问题');
+  assert.match(prompt, /不超过 3 句/, '核心结论限长');
+  assert.match(prompt, /绝不复述各部门已经写在群里的长明细/, '过程细节交给 refs');
 });
 
 // ---------------------------------------------------------------------------
@@ -335,6 +344,130 @@ await test('store：sealChiefSummariesForTurn 只封这一轮的批次', () => {
   assert.equal(sealed.length, 1);
   assert.equal(store.chiefSummary('sum_mine').state, 'sending', '就绪且主控空闲 → 准备发');
   assert.equal(store.chiefSummary('sum_other').state, 'collecting', '别的轮次不受影响');
+});
+
+// ---------------------------------------------------------------------------
+// 6. Stage 2b：登记 / 回传 / 封口
+// ---------------------------------------------------------------------------
+await test('★ 同一轮的多次派活落在同一个批次里（同轮聚合键）', () => {
+  const store = makeStore('register');
+  const roomId = mainDm(store);
+  const a = store.ensureChiefSummaryBatch({
+    turnKey: 'msg:m1',
+    originRoomId: roomId,
+    taskTitle: '重构行情抓取并发调度',
+    target: { key: 'group:room_a', departmentId: 'room_a', departmentName: '研发组', status: 'running' },
+  });
+  assert.ok(a.batch, a.error);
+  assert.equal(a.created, true);
+
+  const b = store.ensureChiefSummaryBatch({
+    turnKey: 'msg:m1',
+    originRoomId: roomId,
+    taskTitle: '重构行情抓取并发调度',
+    target: { key: 'group:room_b', departmentId: 'room_b', departmentName: '测试组', status: 'running' },
+  });
+  assert.equal(b.created, false, '同一轮必须复用批次');
+  assert.equal(b.batch.id, a.batch.id);
+  assert.equal(b.batch.targets.length, 2, '两个部门都在这一批里');
+
+  // 另一轮 → 新批次
+  const c = store.ensureChiefSummaryBatch({
+    turnKey: 'msg:m2',
+    originRoomId: roomId,
+    target: { key: 'group:room_c', departmentId: 'room_c', status: 'running' },
+  });
+  assert.notEqual(c.batch.id, a.batch.id);
+});
+
+await test('★ 回传 + 封口：两个部门都回填后批次就绪；撞忙则 ready_blocked', () => {
+  const store = makeStore('report');
+  const roomId = mainDm(store);
+  const reg = store.ensureChiefSummaryBatch({
+    turnKey: 'msg:turn1',
+    originRoomId: roomId,
+    taskTitle: '任务',
+    target: { key: 'group:a', departmentId: 'room_a', departmentName: '研发组', status: 'running' },
+  });
+  const batchId = reg.batch.id;
+  store.ensureChiefSummaryBatch({
+    turnKey: 'msg:turn1',
+    originRoomId: roomId,
+    target: { key: 'group:b', departmentId: 'room_b', departmentName: '测试组', status: 'running' },
+  });
+
+  // 部门 A 交卷（此时派活轮还没封口 → 不该就绪）
+  store.noteChiefSummaryTarget(batchId, {
+    key: 'group:a',
+    departmentId: 'room_a',
+    departmentName: '研发组',
+    status: 'done',
+    leadSummary: '并发改成队列',
+    sourceMsgId: 'msg_a_done',
+  });
+  assert.equal(store.chiefSummary(batchId).state, 'collecting', '还没封口');
+
+  // 部门 B 失败 → 封口后立刻就该绪（不等别的部门）
+  store.noteChiefSummaryTarget(batchId, {
+    key: 'group:b',
+    departmentId: 'room_b',
+    departmentName: '测试组',
+    status: 'failed',
+    error: '额度用尽',
+  });
+  store.sealChiefSummariesForTurn('msg:turn1', { mainBusy: true });
+  const after = store.chiefSummary(batchId);
+  assert.equal(after.dispatchOpen, false);
+  assert.equal(after.state, 'ready_blocked', '主控忙 → 浮窗等用户三选一');
+  assert.equal(after.targets.find((t) => t.key === 'group:a').leadSummary, '并发改成队列');
+});
+
+await test('★ 直接 summarize 成功后会把期间新排队的批次也排空', async () => {
+  const store = makeStore('post-drain');
+  const a = blockedBatch(store, { id: 'sum_first' });
+  const b = blockedBatch(store, { id: 'sum_second' });
+  // a 直接进入 sending（用户点了「是」），b 排队
+  store.resolveChiefSummary(a.id, 'send', { mainBusy: false });
+  store.resolveChiefSummary(b.id, 'send', { mainBusy: true });
+  assert.equal(store.chiefSummary(b.id).state, 'queued_send');
+
+  const sent = [];
+  const runner = makeFakeRunner((opts) => {
+    sent.push(opts.meta.batchId);
+    return { ok: true, messageId: `m_${opts.meta.batchId}` };
+  });
+  const ctl = createChiefSummaryRunner({ runner, store });
+  await ctl.summarize(a.id);
+  // summarize 内部用 setTimeout 触发排空，等一拍
+  await new Promise((r) => setTimeout(r, 30));
+  assert.deepEqual(sent, ['sum_first', 'sum_second'], '直接发送后也要把排队的那条带走');
+  assert.equal(store.chiefSummary(b.id).state, 'sent');
+});
+
+await test('忙态：mergeQueue 有待合并消息也算忙（不许插汇总打断用户）', () => {
+  const busyOnlyMerge = { isBusy: () => false, mergeQueue: { hasPending: () => true } };
+  const busyOnlyRunner = { isBusy: () => true, mergeQueue: { hasPending: () => false } };
+  const idle = { isBusy: () => false, mergeQueue: { hasPending: () => false } };
+  assert.equal(isMainChatBusy(busyOnlyMerge, 'r', 'b'), true);
+  assert.equal(isMainChatBusy(busyOnlyRunner, 'r', 'b'), true);
+  assert.equal(isMainChatBusy(idle, 'r', 'b'), false);
+  assert.equal(isMainChatBusy({ isBusy: () => { throw new Error('boom'); } }, 'r', 'b'), true, '判忙失败就当忙');
+});
+
+await test('★ 在跑成员禁止删除（避免孤儿任务 / 汇总永远等不到）', () => {
+  const store = makeStore('bot-guard');
+  const busy = store.createBot({ name: '在跑成员' });
+  const idle = store.createBot({ name: '闲着的成员' });
+  const fakeRunner = { isBusy: (roomId, botId) => botId === busy.id };
+  const service = createBotService({ store, runner: fakeRunner });
+
+  const blocked = service.bots.remove(busy.id);
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.status, 409);
+  assert.match(blocked.error, /正在|执行任务/);
+
+  const ok = service.bots.remove(idle.id);
+  assert.equal(ok.ok, true, ok.error);
 });
 
 try {

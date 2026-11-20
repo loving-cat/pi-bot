@@ -894,6 +894,17 @@ async function runWithLease(
     }
     // 汇总轮标记只活在这一轮里：异常退出也不能污染下一轮
     entry.summaryTurn = false;
+    // ★ 发起轮封口：这一轮登记出来的批次必须 `dispatchOpen=false` 才能就绪。
+    //   部门回得比派活快是常态，不封口就会出现"汇总里漏掉后面那个部门"。
+    if (bot?.role === 'main' && !isSummaryTurn) {
+      try {
+        runner.store.sealChiefSummariesForTurn(`msg:${entry.liveMsgId ?? ''}`, {
+          mainBusy: false,
+        });
+      } catch (err) {
+        log('封口主控汇总失败：', err?.message || err);
+      }
+    }
     setTimeout(() => { void runner.drainRequestQueue(roomId, botId); }, 0);
     // 这一轮结束后，把排队等发送的主控汇总消费掉（汇总轮自己不再触发，防递归）
     if (bot.role === 'main' && !isSummaryTurn) {

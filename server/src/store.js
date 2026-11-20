@@ -58,6 +58,8 @@ import {
   normalizeSummaryBatchList,
   resolveSummary as resolveSummaryState,
   sealDispatch as sealSummaryDispatch,
+  upsertSummaryTarget as upsertSummaryTargetInBatch,
+  advanceSummary as advanceSummaryState,
   markSummarySendFailed,
   markSummarySent,
   isTerminalState as isTerminalSummary,
@@ -1558,6 +1560,58 @@ export class Store {
     this.scheduleSave();
     this.emitChiefSummaries();
     return { batch: next };
+  }
+
+  /**
+   * 登记/更新一个派活目标（双入口共用的落账口）。
+   *
+   * 主控私聊派活时先 `ensureChiefSummaryBatch` 建批次，部门回传时调这里更新目标状态，
+   * 每次更新后都会重算就绪/撞忙状态 —— 状态机本身在纯模块里，这里只负责落盘 + 广播。
+   */
+  noteChiefSummaryTarget(batchId, target, { mainBusy = false } = {}) {
+    const current = this.chiefSummary(batchId);
+    if (!current) return { error: '汇总批次不存在' };
+    const withTarget = upsertSummaryTargetInBatch(current, target, { now: Date.now() });
+    const next = advanceSummaryState(withTarget, { mainBusy, now: Date.now() });
+    const list = this.chiefSummaries().map((b) => (b.id === next.id ? next : b));
+    this.state.chiefSummaries = selectSummaryRetention(list, { now: Date.now() });
+    this.scheduleSave();
+    this.emitChiefSummaries();
+    return { batch: next };
+  }
+
+  /**
+   * 按「同轮聚合键」拿批次：有就复用（还能继续追加目标），没有就新建。
+   *
+   * 主控一轮里连着派三个部门，必须落在**同一个批次**里 —— 否则会生成三条汇总。
+   */
+  ensureChiefSummaryBatch({ turnKey = '', originRoomId = '', originMessageId = null, taskTitle = '', target = null } = {}) {
+    const key = String(turnKey ?? '');
+    const roomId = String(originRoomId ?? '');
+    if (!roomId) return { error: '缺少 originRoomId' };
+    const existing = key
+      ? this.chiefSummaries().find((b) => b.originTurnKey === key && b.state === 'collecting')
+      : null;
+    let batch = existing ?? null;
+    if (!batch) {
+      const created = this.putChiefSummary({
+        id: newId('sum_'),
+        originTurnKey: key,
+        originRoomId: roomId,
+        originMessageId,
+        taskTitle,
+        dispatchOpen: true,
+        state: 'collecting',
+        targets: [target ?? { departmentId: 'pending', departmentName: '待派发', status: 'running' }],
+      });
+      if (created.error) return created;
+      return { batch: created.batch, created: true };
+    }
+    if (target) {
+      const r = this.noteChiefSummaryTarget(batch.id, target, { mainBusy: false });
+      if (!r.error) batch = r.batch;
+    }
+    return { batch, created: false };
   }
 
   /** 汇总账本变更统一出口（只推未终结的，和 lessons.updated 一个风格） */

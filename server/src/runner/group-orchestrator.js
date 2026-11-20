@@ -10,6 +10,7 @@
  * 保持对外部测试桩与原型拦截的 100% 兼容。
  */
 import { log, newId, isSuperiorCall } from '../util.js';
+import { isMainChatBusy } from './chief-summary-runner.js';
 import { shouldMirrorProgress, mirrorProgress, MIRROR_SKIPPED_NO_DM } from '../dm.js';
 import { settleRetryMessage } from '../retry-messages.js';
 import { decideRetry, failureNote, retryHint, transientBackoffMs } from '../retry-policy.js';
@@ -298,6 +299,7 @@ export async function executeGroupRound(
     attachments = [],
     attachmentContext = null,
     managedContext = null,
+    summary = null,
   } = {},
 ) {
   const room = runner.store.getRoom(roomId);
@@ -819,6 +821,7 @@ export async function executeGroupRound(
         })
       : { needed: false, why: '找不到老大' };
 
+    let closingResult = null;
     if (lead && closing.needed) {
       const leadKey = sessionKey(roomId, lead.id);
       runner.dispatching.add(leadKey);
@@ -832,6 +835,7 @@ export async function executeGroupRound(
           closing: true,
         });
         const res = await runner.run(roomId, lead.id, prompt, { groupTurn: true });
+        closingResult = res;
         if (res.ok && res.text.trim()) {
           log(`【${room.name}】✅ 收尾完成（${res.text.trim().length} 字）`);
           const { found } = parseMentions(res.text, members, { selfId: lead.id });
@@ -851,6 +855,34 @@ export async function executeGroupRound(
       } finally {
         runner.dispatching.delete(leadKey);
       }
+    }
+  }
+
+  // ★ 主控总汇总：部门这一轮收口了，把负责人的结论回填到批次里。
+  //   没有 summary 参数（用户在部门群直接派活）就什么都不做 —— 规格 §0 硬规矩 5。
+  if (summary?.batchId) {
+    try {
+      const lead = leadId ? runner.store.getBot(leadId) : null;
+      const target = {
+        key: summary.targetKey || `group:${roomId}:${openerMessageId || ''}`,
+        departmentId: roomId,
+        departmentName: room.name,
+        kind: 'group',
+        refId: openerMessageId || '',
+        status: closingResult?.ok ? 'done' : 'failed',
+        leadSummary: String(closingResult?.text ?? ''),
+        artifacts: [],
+        sourceMsgId: closingResult?.messageId ?? null,
+        error: closingResult?.ok ? '' : String(closingResult?.error || '收尾没跑成'),
+      };
+      const batch = runner.store.chiefSummary(summary.batchId);
+      const main = runner.store.mainBot();
+      const mainBusy = batch && main ? isMainChatBusy(runner, batch.originRoomId, main.id) : false;
+      runner.store.noteChiefSummaryTarget(summary.batchId, target, { mainBusy });
+      void runner.drainChiefSummaries?.().catch?.(() => {});
+      log(`【${room.name}】📮 已回填主控汇总（${target.status}）`);
+    } catch (err) {
+      log(`【${room.name}】回填主控汇总失败：`, err?.message || err);
     }
   }
 

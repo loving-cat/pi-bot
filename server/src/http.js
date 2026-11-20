@@ -1381,6 +1381,18 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
         return send(res, 200, { imported: r.imported, skipped: r.skipped });
       }
 
+      // ---------- 主控总汇总（撞忙浮窗三选一） ----------
+      if (pathname === '/api/summaries' && req.method === 'GET') {
+        return send(res, 200, { items: services.summaries.list() });
+      }
+      const summaryMatch = pathname.match(/^\/api\/summaries\/([^/]+)\/resolve$/);
+      if (summaryMatch && req.method === 'POST') {
+        const body = await readBody(req);
+        const r = services.summaries.resolve(decodeURIComponent(summaryMatch[1]), String(body?.action ?? ''));
+        if (!r.ok) return send(res, r.status ?? 400, { error: r.error });
+        return send(res, 200, { batch: r.batch });
+      }
+
       // ---------- 经验库（主控派活前按任务挑 1~3 条注入） ----------
       if (pathname === '/api/lessons/preview' && req.method === 'GET') {
         const task = String(url.searchParams.get('task') || '');

@@ -38,7 +38,7 @@ import { modelLabel, resolveModel, syncModelGroups } from './model-registry.js';
 import { modelChangeAffectsSession } from './model-dispatch.js';
 import { availableThinkingLevels } from './model-thinking.js';
 import { createLessonReflector } from './lesson-reflect.js';
-import { createChiefSummaryRunner } from './runner/chief-summary-runner.js';
+import { chiefTurnKey, createChiefSummaryRunner } from './runner/chief-summary-runner.js';
 import {
   createBreaker, isCircuitFailure, recordFailure as breakerFail,
   recordSuccess as breakerOk, settleAfterCooldown, BREAKER_STATE,
@@ -656,7 +656,11 @@ export class PiRunner {
    * 工具层用它做硬防循环：汇总轮里不许再派活 / 建部门 / 接新任务。
    * 为什么不用 opts 层层透传：工具只能拿到 roomId/botId，entry 是唯一共同可及的地方。
    */
-  /** 排空排队中的主控汇总（turn-executor 的 finally 调它；失败不抛） */
+  /** 主控本轮聚合键 / 排空排队汇总（实现在 runner/chief-summary-runner.js） */
+  currentTurnKey(roomId, botId) {
+    return chiefTurnKey(this, roomId, botId);
+  }
+
   drainChiefSummaries() {
     return this.chiefSummaries?.drain?.() ?? Promise.resolve({ sent: 0 });
   }
@@ -710,7 +714,7 @@ export class PiRunner {
     });
   }
 
-  async dispatchToGroup({ roomId, text, fromBotId = null }) {
+  async dispatchToGroup({ roomId, text, fromBotId = null, summary = null }) {
     const room = this.store.getRoom(roomId);
     if (!room) return { ok: false, error: '部门不存在' };
     const chief = fromBotId ? this.store.getBot(fromBotId) : this.store.mainBot();
@@ -729,6 +733,8 @@ export class PiRunner {
       openerBotId: chief?.id ?? null,
       openerMessageId: msg.id,
       openerName: chief?.name ?? '主控',
+      // 主控总汇总：把批次与目标键传进群轮，收尾时回填交付包
+      summary,
     }).catch((err) => log('dispatchToGroup 异常：', err?.stack || err));
     return { ok: true, messageId: msg.id };
   }
