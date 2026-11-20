@@ -29,8 +29,8 @@
 
 `grep -rn "@remove-2.0" server/src app/lib` → **6 处**（`server/src/http.js` ×3、`server/src/config.js`、`server/src/brand.js`、`app/lib/app_state.dart`）。
 但按旧品牌串实际统计：**`server/src` 38 个文件、`app/lib` 27 个文件**仍含 `pi-bot` / `PI_BOT_` / `pibot`。
-全量扫描（含测试与打包脚本，已排除构建产物）：**327 个文件 / 1505 处**，其中 1106 处在测试里（那是兼容性回归用例，属合法用途）。
-这 1505 处已经用 `scripts/check-legacy.mjs` + `scripts/legacy-allowlist.json` 钉成**只许变小**的基线，新债一产生 CI 就红。
+全量扫描（含测试与打包脚本，已排除构建产物）：**待清债 223 个文件 / 1141 处**，其中绝大部分在测试里（那些是兼容性回归用例，Phase 3 跟代码一起删）；另有 **386 处是永久保留的身份常量**（mDNS / TLS / 应用 ID / Dart 包名），不计入债务。
+这 1141 处已经用 `scripts/check-legacy.mjs` + `scripts/legacy-allowlist.json` 钉成**只许变小**的基线，新债一产生 CI 就红。
 
 | # | 类别 | 代码位置（现状） | 2.0 若直接删会怎样 | 处置 |
 |---|---|---|---|---|
@@ -111,11 +111,11 @@ Phase 3 ──► 依赖 Phase 1/2 全部合并（否则删完兼容层还要再
 
 | 项 | 内容 | 验收（可测得红） |
 |---|---|---|
-| **T1.0** | ✅ **已落地**：`scripts/check-legacy.mjs` + 基线 `scripts/legacy-allowlist.json`（327 文件 / 1505 处）；自测 `scripts/tests/check-legacy-test.mjs`（8/8：新债 / 旧债变大 / 变小收基线 / `--strict` 收门 / 二进制与构建目录不误扫）；已接入 CI | 故意加一行 `PI_BOT_FOO` 读取 → 必红（自测已覆盖） |
-| **T1.1** | C1：`readBrandEnv` 改为「2.0 只认 `ORBIS_*`」；1.7.1 起命中旧名时 `console.warn('弃用：PI_BOT_X → ORBIS_X，2.0 移除')` | `server/tests/brand.mjs` 扩：旧名可读且打告警；2.0 分支旧名忽略 |
-| **T1.2** | C2：删 `LEGACY_HOME_DIR_NAME`；新增 `orbis migrate`（dry-run 默认，复制不删除，产出 `migration-report.json`） | 造一个只有 `pi-bot/data` 的目录 → 迁移后 `orbis/data` 完整且旧目录仍在 |
-| **T1.3a** | C3 前半（**1.7.1，先做**）：`app/lib/api.dart` 的 `clientHeader` / `-nonce` / `-channel` 全切 `x-orbis-*`（1.7.0 服务端 `server/src/http.js` **已经双读 `x-orbis-*`**，向前兼容） | 1.7.1 App ↔ 1.7.0 服务端能正常配对（旧服务端双读已验证） |
-| **T1.3b** | C3 后半（2.0）：删旧头双读；1.7.x 阶段响应带 `x-orbis-deprecated: <旧头名>` | `server/tests/local-csrf.mjs` / `local-nonce.mjs` 扩：旧头在 1.x 可用且回告警，2.0 拒绝 |
+| **T1.0** | ✅ **已落地**：`scripts/check-legacy.mjs` + 基线 `scripts/legacy-allowlist.json`——分两区：`permanent`（**永久保留**：mDNS `pibot.discover`/`pibot.host`、TLS `pi-bot.local`、Android `com.pibot.pi_bot`、macOS `io.pibot.piBot`、Dart `package:pi_bot/`）与 `entries`（**待清债**，只许变小）。当前：待清债 223 文件 / 1141 处，永久保留 7 个模式 / 386 处不计入。自测 `scripts/tests/check-legacy-test.mjs`（11/11）；已接入 CI | 故意加一行 `PI_BOT_FOO` 读取 → 必红；`--strict` 只要求 `entries` 清零（permanent 不卡收门） |
+| **T1.1** | ✅ **代码已落地**（待 1.7.1 发版）：`server/src/brand.js` 新增弃用通道——进程内按 `kind:from` **去重**（热路径不刷屏）、`onBrandDeprecation` 可订阅、`resetBrandDeprecations` 可清零 | `server/tests/brand-deprecation.mjs` 10/10：50 次热路径调用只记 1 条；新名优先不记；不同 suffix 各一条 |
+| **T1.2** | 🟡 C2 告警已落地（`resolveHomeDir` 命中旧目录时提醒一次，含“跑 orbis migrate”指引）；2.0 删回退 + `orbis migrate` 命令待 Phase 3（`migration-report.json` 待新增） | `brand-deprecation.mjs` BD-8/BD-9/BD-10：旧目录沿用且提醒一次；新旧都在时用新目录不提醒；迁移后旧目录仍在 |
+| **T1.3a** | ✅ **代码已落地**（待 1.7.1 发版）：`app/lib/api.dart` 全切 `x-orbis-client` / `-nonce` / `-channel`（常量收口 `Api.nonceHeader` / `Api.channelHeader`）；1.7.0 服务端本就双读 | `app/test/api_client_header_test.dart` 锁死新头名与全部写路径；`local_nonce_test.dart` 改看新头 |
+| **T1.3b** | 🟡 **告警已落地**：`server/src/http.js` 新增 `DEPRECATED_HEADER` —— 只用旧头时回 `x-orbis-deprecated: <旧头名>`（两个都带则不打标）；2.0 删旧头待 Phase 3 | `local-csrf.mjs` 21/21：新头直用、旧头可用但贴弃用头、两个都带不打标；缺头 403 报错指向正式名 |
 | **T1.4** | C4：删 `createPiBotRuntime` / `PiBotClient` / `createPiBotClient` / `bin.pi-bot-server` | 契约快照测试必须显式删这几行才变绿；`npm exec orbis-server` 仍可用 |
 | **T1.5** | C5：`pi-bot.config.json` 读旧写新；`PI_BOT_SECRET_KEY` 改 `ORBIS_SECRET_KEY`（同值迁移） | 老配置文件存在时能读出同一份模型配置；新写入只产生新名 |
 | **T1.6** | C6：**永久双播**。mDNS 同时 announce `orbis.host` 与 `pibot.host`，probe 两个类型都听；TLS 证书加 `orbis.local` SAN，旧 CN 保留 | 1.7.1 App 能发现并连上 2.0 服务端（真机，挂 #31/#32 一起验） |
