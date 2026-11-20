@@ -22,6 +22,7 @@ const LEDGER_FILES = [
   'docs/PERMISSIONS-INVENTORY.md',
   'docs/taskrun-gaps.md',
   'docs/acceptance-matrix.md',
+  'docs/ROADMAP-2.0.md',
 ];
 
 const PLANNED_MARKERS = ['待新增', '（新）', '未开始', '不存在', '❌'];
