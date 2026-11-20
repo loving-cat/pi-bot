@@ -202,6 +202,46 @@ test('store：删掉之后不再被挑中', () => {
 });
 
 // ---------------------------------------------------------------------------
+// store：效果评估记账（SIM-Lite：win/fail 唯一合法来源）
+// ---------------------------------------------------------------------------
+test('store 记账：helped → win，hurt → fail，confounded / no_effect 不记', () => {
+  const l = store.addLesson({ cue: '记账案', lesson: '做法', evidence: EVIDENCE, status: 'active', modelFamily: 'glm' }).lesson;
+  const win = store.recordLessonOutcomes([{ id: l.id, verdict: 'helped', modelFamily: 'glm' }]);
+  assert.equal(win.applied, 1);
+  assert.deepEqual(store.lessonLibrary().find((x) => x.id === l.id).byFamily.glm, { hit: 0, win: 1, fail: 0 });
+
+  const hurt = store.recordLessonOutcomes([{ id: l.id, verdict: 'hurt', modelFamily: 'glm' }]);
+  assert.equal(hurt.applied, 1);
+  assert.deepEqual(store.lessonLibrary().find((x) => x.id === l.id).byFamily.glm, { hit: 0, win: 1, fail: 1 });
+
+  for (const verdict of ['confounded', 'no_effect']) {
+    const r = store.recordLessonOutcomes([{ id: l.id, verdict, modelFamily: 'glm' }]);
+    assert.equal(r.applied, 0, `${verdict} 不该记账`);
+    assert.deepEqual(r.ignored, [l.id]);
+  }
+  assert.deepEqual(store.lessonLibrary().find((x) => x.id === l.id).byFamily.glm, { hit: 0, win: 1, fail: 1 });
+});
+
+test('store 记账：不存在的 id 直接忽略，不报错也不建新条目', () => {
+  const before = store.lessonLibrary().length;
+  const r = store.recordLessonOutcomes([{ id: 'les_ghost', verdict: 'helped', modelFamily: 'glm' }]);
+  assert.equal(r.applied, 0);
+  assert.deepEqual(r.ignored, ['les_ghost']);
+  assert.equal(store.lessonLibrary().length, before);
+});
+
+test('store 记账：换族记账互不影响（跨模型去偏的数据源）', () => {
+  const l = store.addLesson({ cue: '记账案二', lesson: '做法', evidence: EVIDENCE, status: 'active', modelFamily: 'glm' }).lesson;
+  store.recordLessonOutcomes([
+    { id: l.id, verdict: 'helped', modelFamily: 'glm' },
+    { id: l.id, verdict: 'hurt', modelFamily: 'deepseek' },
+  ]);
+  const after = store.lessonLibrary().find((x) => x.id === l.id);
+  assert.deepEqual(after.byFamily.glm, { hit: 0, win: 1, fail: 0 });
+  assert.deepEqual(after.byFamily.deepseek, { hit: 0, win: 0, fail: 1 });
+});
+
+// ---------------------------------------------------------------------------
 // store：关系边（SIM-Lite Phase 1 第一刀）
 // ---------------------------------------------------------------------------
 const { selectLessonsFor: pick } = await import('../src/lessons.js');

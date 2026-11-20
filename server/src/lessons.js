@@ -684,3 +684,38 @@ export function selectEvictions(lessons = [], { max = LESSON_LIMITS.total, edges
   });
   return ranked.slice(0, overflow);
 }
+
+/**
+ * 结论 → 记什么账。
+ *
+ * 只有 `helped` / `hurt` 才有资格动 `win` / `fail`；
+ * `no_effect`（这次用不上）与 `confounded`（说不清）**一律不记** ——
+ * 把"没用上"记成失败，会把好经验冤杀。
+ */
+export function countedLessonVerdict(verdict) {
+  if (verdict === 'helped') return 'win';
+  if (verdict === 'hurt') return 'fail';
+  return null;
+}
+
+/**
+ * 应用一次效果评估（纯函数，返回新对象；不可计数时原样返回同一个引用）。
+ *
+ * 记到**当时执行的那个模型族**上（`byFamily[family]`）—— 这正是跨模型去偏的数据来源：
+ * 同一句经验在 glm 上 3 胜、在 deepseek 上 2 负，就该按族分开看，而不是混成一个总分。
+ */
+export function applyLessonOutcome(lesson = {}, { verdict = '', modelFamily = '' } = {}, now = Date.now()) {
+  const counted = countedLessonVerdict(verdict);
+  if (!lesson?.id || !counted) return lesson;
+  const family = normalizeModelFamily(modelFamily || lesson.modelFamily);
+  if (family === UNKNOWN_MODEL_FAMILY) return lesson; // 没有归因就没地方记
+  const stats = lesson.byFamily?.[family] ?? { hit: 0, win: 0, fail: 0 };
+  const next = { hit: stats.hit, win: stats.win, fail: stats.fail };
+  if (counted === 'win') next.win += 1;
+  else next.fail += 1;
+  return {
+    ...lesson,
+    byFamily: { ...(lesson.byFamily ?? {}), [family]: next },
+    updatedAt: now,
+  };
+}

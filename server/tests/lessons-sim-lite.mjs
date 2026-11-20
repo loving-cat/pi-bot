@@ -47,6 +47,8 @@ import {
   lessonScore,
   selectLessonsFor,
   selectEvictions,
+  countedLessonVerdict,
+  applyLessonOutcome,
 } from '../src/lessons.js';
 
 let pass = 0;
@@ -536,6 +538,44 @@ test('★【R3】byFamily 的键走封闭词表并合并：deepseek-v3 + deepsee
   // 合并后 coverage 仍是 1 个族 → 置信度不该被虚算成"跨两族"
   const l = active({ verdict: 'helped', byFamily: { 'deepseek-v3': { hit: 4, win: 3, fail: 1 }, 'deepseek-chat': { hit: 4, win: 3, fail: 1 } } });
   assert.ok(lessonConfidence(l) < 0.8, `同一个族不该被算成两个，实际 ${lessonConfidence(l)}`);
+});
+
+// ---------------------------------------------------------------------------
+// 8. 效果评估记账（win/fail 的唯一合法来源）
+// ---------------------------------------------------------------------------
+test('countedLessonVerdict：只有 helped/hurt 记账，no_effect 与 confounded 一律不记', () => {
+  assert.equal(countedLessonVerdict('helped'), 'win');
+  assert.equal(countedLessonVerdict('hurt'), 'fail');
+  assert.equal(countedLessonVerdict('no_effect'), null, '这次用不上 ≠ 失败');
+  assert.equal(countedLessonVerdict('confounded'), null, '说不清就不记');
+  assert.equal(countedLessonVerdict('胡说'), null);
+});
+
+test('applyLessonOutcome：按当时执行的模型族记 win / fail', () => {
+  const l = active({ id: 'les_o', modelFamily: 'glm' });
+  const win = applyLessonOutcome(l, { verdict: 'helped', modelFamily: 'glm' });
+  assert.deepEqual(win.byFamily.glm, { hit: 0, win: 1, fail: 0 });
+  const fail = applyLessonOutcome(win, { verdict: 'hurt', modelFamily: 'glm' });
+  assert.deepEqual(fail.byFamily.glm, { hit: 0, win: 1, fail: 1 });
+});
+
+test('applyLessonOutcome：不可计数时原样返回同一个引用（调用方据此判"没记账"）', () => {
+  const l = active({ id: 'les_o2', modelFamily: 'glm' });
+  assert.equal(applyLessonOutcome(l, { verdict: 'confounded', modelFamily: 'glm' }), l);
+  assert.equal(applyLessonOutcome(l, {}, {}), l);
+});
+
+test('applyLessonOutcome：没有归因（unknown）就没地方记，不改数据', () => {
+  const legacy = normalizeLesson({ id: 'les_legacy', cue: 'a', lesson: 'b', evidence: EVIDENCE, status: 'active' });
+  assert.equal(applyLessonOutcome(legacy, { verdict: 'helped' }), legacy, 'unknown 族不许偷偷建条目');
+});
+
+test('applyLessonOutcome：换族记账互不影响（这正是跨模型去偏要的数据）', () => {
+  const l = active({ id: 'les_o3', modelFamily: 'glm' });
+  const a = applyLessonOutcome(l, { verdict: 'helped', modelFamily: 'glm' });
+  const b = applyLessonOutcome(a, { verdict: 'hurt', modelFamily: 'deepseek' });
+  assert.deepEqual(b.byFamily.glm, { hit: 0, win: 1, fail: 0 });
+  assert.deepEqual(b.byFamily.deepseek, { hit: 0, win: 0, fail: 1 });
 });
 
 // ---------------------------------------------------------------------------

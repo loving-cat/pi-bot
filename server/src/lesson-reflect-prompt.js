@@ -189,3 +189,86 @@ export function parsePreferenceOutput(text = '', now = Date.now()) {
   }
   return preferencesFromReflect(parsed, now);
 }
+
+// ---------------------------------------------------------------------------
+// 经验效果评估（SIM-Lite：`byFamily` 的 win/fail **唯一合法来源**之一）
+//
+// ★ 这一节存在的理由：本轮「没报错」不是「这条经验有用」。
+//   只有一次**独立评估**（看完这一轮到底干了什么）才能给出 helped / hurt。
+//   拿 runWithLease 的 ok 记账会把 win 退化成 hits 的马甲。
+// ---------------------------------------------------------------------------
+
+export const OUTCOME_SYSTEM = `你是一个只输出 JSON 的经验评分工具，不是对话参与者。
+给你两样东西：① 这一轮对话记录 ② 本轮**注入过**的几条经验（id + 情境 + 做法）。
+你的任务是判断：每条经验在这次实际执行里起了什么作用。
+
+只能给四种结论：
+- helped     —— 对话里能看到它确实被采用并奏效（用户认可、报错消失、少走弯路）
+- hurt      —— 它导致了返工/报错/用户纠正
+- no_effect —— 它跟这次执行无关，用不上
+- confounded —— 说不清（默认就选这个）
+
+判定纪律（非常重要）：
+1. **"任务成功了"不等于"经验有用"**。没有证据说明这条经验被采用，就填 confounded。
+2. 只看对话记录，不要猜测、不要补充记录里没有的信息。
+3. 一条经验最多给一个结论；拿不准一律 confounded。
+4. 不要评价经验写得好不好，只评价它在**这次**执行里的作用。
+
+只输出 JSON，不要解释、不要 markdown：
+{"outcomes":[{"id":"les_xxx","verdict":"helped|hurt|no_effect|confounded","why":"一句依据（引用记录里的原话）"}]}
+没有可评估的就输出：{"outcomes":[]}`;
+
+/**
+ * 组装评估输入：这一轮的对话摘要 + 注入过的经验清单。
+ *
+ * 经验只给 id / 情境 / 做法（不给证据与历史统计）—— 评估模型不需要被命中率带跑。
+ */
+export function buildOutcomeInput(messages = [], { lessons = [], maxChars = REFLECT_MAX_CHARS } = {}) {
+  const list = Array.isArray(lessons) ? lessons.filter(Boolean).slice(0, 5) : [];
+  const lines = [];
+  for (const m of Array.isArray(messages) ? messages : []) {
+    const who =
+      m.authorType === 'user' ? '用户' : m.authorType === 'bot' ? m.authorName || 'Bot' : '系统';
+    lines.push(`[${m.id}] ${who}：${String(m.text ?? '').replace(/\s+/g, ' ').slice(0, 400)}`);
+  }
+  let body = lines.join('\n');
+  if (body.length > maxChars) body = body.slice(body.length - maxChars); // 保留最近的话
+  const injected = list
+    .map((l, i) => `${i + 1}. id=${l.id}\n   情境：${l.cue}\n   做法：${l.lesson}`)
+    .join('\n');
+  return {
+    text: `【本轮对话记录】\n${body}\n\n【本轮注入过的经验】\n${injected}\n\n请逐条给出结论。`,
+    ids: new Set(list.map((l) => l.id)),
+  };
+}
+
+/**
+ * 解析评估输出。宽容但守底线：
+ *   · id 必须在 `ids` 里（模型编出别的 id 一律丢）
+ *   · verdict 必须落在四档里
+ *   · 同一 id 出现多次，取**第一次**（后面的通常是重复或补充说明）
+ */
+export function parseOutcomeOutput(text = '', { ids = new Set() } = {}) {
+  const raw = String(text ?? '');
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (start < 0 || end <= start) return [];
+  let parsed = null;
+  try {
+    parsed = JSON.parse(raw.slice(start, end + 1));
+  } catch {
+    return [];
+  }
+  const list = Array.isArray(parsed?.outcomes) ? parsed.outcomes : [];
+  const verdicts = ['helped', 'hurt', 'no_effect', 'confounded'];
+  const seen = new Set();
+  const out = [];
+  for (const item of list) {
+    const id = String(item?.id ?? '').trim();
+    if (!id || seen.has(id) || !ids.has(id)) continue;
+    if (!verdicts.includes(item?.verdict)) continue;
+    seen.add(id);
+    out.push({ id, verdict: item.verdict, why: String(item?.why ?? '').slice(0, 200) });
+  }
+  return out;
+}

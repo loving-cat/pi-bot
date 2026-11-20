@@ -48,6 +48,8 @@ import {
   normalizeLessonEdgeList,
   lessonEdgeRejectReason,
   normalizeModelFamily,
+  applyLessonOutcome,
+  countedLessonVerdict,
   LESSON_EDGE_SENTINELS,
   UNKNOWN_MODEL_FAMILY,
 } from './lessons.js';
@@ -1372,6 +1374,43 @@ export class Store {
     this.scheduleSave();
     this.emitLessons();
     return { ok: true, lesson: this.lessonLibrary().find((l) => l.id === id) ?? null };
+  }
+
+  /**
+   * 记录一批「效果评估」（`byFamily` 的 win/fail 唯一合法来源之一）。
+   *
+   * 只接受 helped / hurt 记账；`no_effect` 与 `confounded` 一律忽略。
+   * 返回 `{ applied, ignored }` —— `ignored` 里是"说了不记"的 id，方便日志核对。
+   */
+  recordLessonOutcomes(items = []) {
+    const list = this.lessonLibrary();
+    const byId = new Map(list.map((l) => [l.id, l]));
+    const ignored = [];
+    let applied = 0;
+    for (const item of Array.isArray(items) ? items : []) {
+      const id = String(item?.id ?? '');
+      const target = byId.get(id);
+      if (!target) {
+        ignored.push(id);
+        continue;
+      }
+      if (!countedLessonVerdict(item?.verdict)) {
+        ignored.push(id);
+        continue;
+      }
+      const next = applyLessonOutcome(target, item);
+      if (next === target) {
+        ignored.push(id);
+        continue;
+      }
+      byId.set(id, next);
+      applied += 1;
+    }
+    if (!applied) return { applied: 0, ignored };
+    this.state.lessons = normalizeLessonList([...byId.values()]);
+    this.scheduleSave();
+    this.emitLessons();
+    return { applied, ignored };
   }
 
   /** 经验库变更统一出口（列表 + 边一起发，界面不用再拉一次） */

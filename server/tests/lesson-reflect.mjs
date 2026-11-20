@@ -6,7 +6,12 @@
  */
 import assert from 'node:assert/strict';
 
-import { buildReflectInput, parseReflectOutput } from '../src/lesson-reflect-prompt.js';
+import {
+  buildReflectInput,
+  parseReflectOutput,
+  buildOutcomeInput,
+  parseOutcomeOutput,
+} from '../src/lesson-reflect-prompt.js';
 
 let pass = 0;
 let fail = 0;
@@ -127,6 +132,47 @@ test('不是 JSON / 空对象：安全返回空数组', () => {
   assert.deepEqual(parseReflectOutput('我觉得可以更好'), []);
   assert.deepEqual(parseReflectOutput('{"lessons":"oops"}'), []);
   assert.deepEqual(parseReflectOutput('{}'), []);
+});
+
+
+// ---------------------------------------------------------------------------
+// 效果评估（win/fail 的唯一合法来源）
+// ---------------------------------------------------------------------------
+test('评估输入：带本轮注入过的经验，只给 id / 情境 / 做法', () => {
+  const { text, ids } = buildOutcomeInput(
+    [{ id: 'm1', authorType: 'user', text: '按模块拆挺好' }],
+    { lessons: [{ id: 'les_a', cue: '配班子时', lesson: '按模块拆' }] },
+  );
+  assert.match(text, /\[m1\] 用户：按模块拆挺好/);
+  assert.match(text, /id=les_a/);
+  assert.match(text, /按模块拆/);
+  assert.deepEqual([...ids], ['les_a']);
+});
+test('评估解析：id 必须在注入清单里（模型编的 id 一律丢）', () => {
+  const out = parseOutcomeOutput(
+    JSON.stringify({ outcomes: [{ id: 'les_a', verdict: 'helped' }, { id: 'les_fake', verdict: 'hurt' }] }),
+    { ids: new Set(['les_a']) },
+  );
+  assert.deepEqual(out.map((o) => o.id), ['les_a']);
+});
+test('评估解析：verdict 只认四档，同一 id 取第一条', () => {
+  const out = parseOutcomeOutput(
+    JSON.stringify({
+      outcomes: [
+        { id: 'a', verdict: 'helped', why: '第一条' },
+        { id: 'a', verdict: 'hurt' },
+        { id: 'b', verdict: '很有效' },
+      ],
+    }),
+    { ids: new Set(['a', 'b']) },
+  );
+  assert.equal(out.length, 1);
+  assert.equal(out[0].verdict, 'helped');
+});
+test('评估解析：不是 JSON / 空输出 → 空数组（不许抛）', () => {
+  assert.deepEqual(parseOutcomeOutput('NO_ENTRY', { ids: new Set(['a']) }), []);
+  assert.deepEqual(parseOutcomeOutput('', { ids: new Set(['a']) }), []);
+  assert.deepEqual(parseOutcomeOutput('{bad json', { ids: new Set(['a']) }), []);
 });
 
 console.log(`\n${pass} 通过，${fail} 失败`);

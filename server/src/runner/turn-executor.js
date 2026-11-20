@@ -896,6 +896,14 @@ async function runWithLease(
     entry.slotTicket = null;
     runner.bus.emit('event', { t: 'typing', roomId, botId: bot.id, active: false, lane: 'work', msgId: botMsg?.id ?? null });
     emitContext(roomId, bot.id, entry.session, runner.bus);
+    // SIM-Lite：本轮注入过经验才做一次独立评估（win/fail 的唯一合法来源之一）。
+    // 先把快照摘走再交给后台：`drainRequestQueue` 会立刻起下一轮，
+    // 留在 entry 上会被下一批注入覆盖掉，导致少记/错记。
+    if (entry.lessonsInjected) {
+      const injected = entry.lessonsInjected;
+      entry.lessonsInjected = null;
+      void Promise.resolve(runner.reflect?.evaluateInjected?.({ roomId, botId: bot.id, injected })).catch(() => {});
+    }
     if (bot.role === 'main') {
       try { runner.store.redactRoomSecrets(roomId, [], { limit: 8 }); } catch {}
     }

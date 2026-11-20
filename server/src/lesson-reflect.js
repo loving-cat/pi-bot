@@ -42,6 +42,9 @@ import {
   buildReflectInput,
   parseReflectOutput,
   parsePreferenceOutput,
+  OUTCOME_SYSTEM,
+  buildOutcomeInput,
+  parseOutcomeOutput,
 } from './lesson-reflect-prompt.js';
 
 export {
@@ -101,64 +104,12 @@ export function createLessonReflector({ runner, logFn = log, config: scopedConfi
     if (!text.trim()) return { skipped: 'empty' };
 
     const byId = new Map(round.map((m) => [m.id, String(m.text ?? '')]));
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-bot-reflect-'));
-    let session;
     let reply = '';
     try {
-      const resourceLoader = new DefaultResourceLoader({
-        cwd: config.workspace,
-        agentDir: getAgentDir(),
-        // 复盘不需要任何外挂：没有工具、没有技能、没有 AGENTS.md
-        noExtensions: true,
-        noSkills: true,
-        noPromptTemplates: true,
-        noThemes: true,
-        noContextFiles: true,
-        systemPrompt: REFLECT_SYSTEM,
-      });
-
-      ({ session } = await createAgentSession({
-        cwd: config.workspace,
-        agentDir: getAgentDir(),
-        modelRuntime: runner.modelRuntime,
-        model,
-        thinkingLevel: 'off',
-        noTools: 'all',
-        resourceLoader,
-        sessionManager: SessionManager.create(config.workspace, tmp),
-      }));
-
-      const unsubscribe = session.subscribe((ev) => {
-        if (ev?.type === 'message_update' && ev.assistantMessageEvent?.type === 'text_delta') {
-          reply += ev.assistantMessageEvent.delta;
-        }
-      });
-
-      const timer = setTimeout(() => {
-        session?.abort?.().catch?.(() => {});
-      }, REFLECT_TIMEOUT_MS);
-      timer.unref?.();
-
-      try {
-        await session.prompt(text);
-      } finally {
-        clearTimeout(timer);
-        unsubscribe();
-      }
+      ({ reply } = await askIsolated({ systemPrompt: REFLECT_SYSTEM, text, model, tempTag: 'reflect' }));
     } catch (err) {
       logFn?.(`复盘失败：${err?.message || err}`);
       return { skipped: 'error' };
-    } finally {
-      try {
-        session?.dispose?.();
-      } catch {
-        // 已经关了
-      }
-      try {
-        fs.rmSync(tmp, { recursive: true, force: true });
-      } catch {
-        // Windows 上可能还有句柄，留给系统清理
-      }
     }
 
     if (readBrandEnv(process.env, 'REFLECT_DEBUG') === '1') {
@@ -199,7 +150,139 @@ export function createLessonReflector({ runner, logFn = log, config: scopedConfi
     return { added, preferences: prefs };
   }
 
-  return (options = {}) => {
+  /**
+   * 一次性隔离会话：没有工具、没有技能、没有上下文文件、不读 AGENTS.md。
+   *
+   * 复盘（产候选经验）和评估（给注入过的经验打分）都走它 ——
+   * 模型只能用我们给的文本回答，不会顺手改工作区、也不会污染主控的聊天记录。
+   */
+  async function askIsolated({ systemPrompt, text, model, tempTag = 'reflect' }) {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `orbis-${tempTag}-`));
+    let session = null;
+    let reply = '';
+    try {
+      const resourceLoader = new DefaultResourceLoader({
+        cwd: config.workspace,
+        agentDir: getAgentDir(),
+        noExtensions: true,
+        noSkills: true,
+        noPromptTemplates: true,
+        noThemes: true,
+        noContextFiles: true,
+        systemPrompt,
+      });
+
+      ({ session } = await createAgentSession({
+        cwd: config.workspace,
+        agentDir: getAgentDir(),
+        modelRuntime: runner.modelRuntime,
+        model,
+        thinkingLevel: 'off',
+        noTools: 'all',
+        resourceLoader,
+        sessionManager: SessionManager.create(config.workspace, tmp),
+      }));
+
+      const unsubscribe = session.subscribe((ev) => {
+        if (ev?.type === 'message_update' && ev.assistantMessageEvent?.type === 'text_delta') {
+          reply += ev.assistantMessageEvent.delta;
+        }
+      });
+
+      const timer = setTimeout(() => {
+        session?.abort?.().catch?.(() => {});
+      }, REFLECT_TIMEOUT_MS);
+      timer.unref?.();
+
+      try {
+        await session.prompt(text);
+      } finally {
+        clearTimeout(timer);
+        unsubscribe();
+      }
+      return { reply };
+    } finally {
+      try {
+        session?.dispose?.();
+      } catch {
+        // 已经关了
+      }
+      try {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      } catch {
+        // Windows 上可能还有句柄，留给系统清理
+      }
+    }
+  }
+
+  /**
+   * 评估「本轮注入过的经验」到底起了什么作用（SIM-Lite 的第二条数据流）。
+   *
+   * ★ 为什么不能拿这一轮的 ok/fail 记账：
+   *   `ok: true` 只说明模型没报错、吐了非空文本 —— 答非所问、把测试改水也是 ok；
+   *   `ok: false` 绝大多数是 429 / 超时 / 用户点终止。
+   *   拿它们记 win/fail，跑几轮普通聊天就能把所有经验刷成高置信度。
+   *   所以胜率只能来自这里（独立评估）、已验收 TaskRun、以及用户否决。
+   *
+   * 评完立刻清 `entry.lessonsInjected`：不清就会在下一轮被重复计分。
+   */
+  const lastEvalAt = new Map();
+  async function evaluateInjected({ roomId, botId, injected: injectedArg = null } = {}) {
+    if (readBrandEnv(process.env, 'LESSON_REFLECT') === '0' || config.lessonReflect === false) {
+      return { skipped: 'disabled' };
+    }
+    const entry = runner.sessions?.get?.(`${roomId}:${botId}`);
+    // 调用方（turn-executor 的 finally）会**同步**把快照递过来并清空 entry，
+    // 避免下一轮刚开始就把这批 id 覆盖掉。没有快照时才回落到 entry。
+    const injected = injectedArg ?? entry?.lessonsInjected;
+    if (!injected?.ids?.length) return { skipped: 'no-injection' };
+
+    const now = Date.now();
+    if (now - (lastEvalAt.get(roomId) ?? 0) < REFLECT_MIN_INTERVAL_MS) return { skipped: 'too-soon' };
+
+    const ids = new Set(injected.ids);
+    const lessons = store.lessonLibrary().filter((l) => ids.has(l.id));
+    // 先清痕迹再评估：评估失败也不该让下一轮拿同一批 id 再算一遍
+    entry.lessonsInjected = null;
+    if (!lessons.length) return { skipped: 'gone' };
+
+    const room = store.getRoom(roomId);
+    const bot = botId ? store.getBot(botId) : null;
+    const model = runner.resolveModel(bot?.model || '') ?? runner.model;
+    if (!model) return { skipped: 'no-model' };
+    lastEvalAt.set(roomId, now);
+
+    const round = store
+      .listMessages(roomId, { limit: 100000 })
+      .filter((m) => m.status === 'done' && String(m.text ?? '').trim())
+      .slice(-40);
+    const { text, ids: allowed } = buildOutcomeInput(round, { lessons });
+
+    let reply = '';
+    try {
+      ({ reply } = await askIsolated({ systemPrompt: OUTCOME_SYSTEM, text, model, tempTag: 'outcome' }));
+    } catch (err) {
+      logFn?.(`经验评估失败：${err?.message || err}`);
+      return { skipped: 'error' };
+    }
+
+    if (readBrandEnv(process.env, 'REFLECT_DEBUG') === '1') {
+      logFn?.(`评估原文（${reply.length} 字）：${JSON.stringify(reply).slice(0, 1200)}`);
+    }
+
+    const outcomes = parseOutcomeOutput(reply, { ids: allowed });
+    if (!outcomes.length) return { applied: 0, ignored: [] };
+    const r = store.recordLessonOutcomes(
+      outcomes.map((o) => ({ ...o, modelFamily: injected.modelFamily })),
+    );
+    logFn?.(
+      `【${room?.name ?? roomId}】经验评估：${r.applied} 条记账` +
+        (r.ignored.length ? `，${r.ignored.length} 条不记（confounded / 找不到）` : ''),
+    );
+    return { applied: r.applied, ignored: r.ignored };
+  }
+
+  const schedule = (options = {}) => {
     const execute = () => {
       runner.flushProviderUpdates?.();
       return runner.providerUpdates
@@ -208,4 +291,12 @@ export function createLessonReflector({ runner, logFn = log, config: scopedConfi
     return runner.withBackgroundSlot
       ? runner.withBackgroundSlot(`复盘 · ${options.roomId ?? ''}`, execute) : execute();
   };
+  // 评估走同一个后台槽位（它也是一次模型调用），但入口独立：
+  //   schedule(...)      = 复盘产候选（群聊收尾）
+  //   schedule.evaluateInjected({roomId,botId}) = 给"本轮注入过的经验"记 win/fail
+  schedule.evaluateInjected = (opts = {}) =>
+    runner.withBackgroundSlot
+      ? runner.withBackgroundSlot(`评估 · ${opts.roomId ?? ''}`, () => evaluateInjected(opts))
+      : evaluateInjected(opts);
+  return schedule;
 }
