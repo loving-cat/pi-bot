@@ -10,7 +10,7 @@
  * 保持对外部测试桩与原型拦截的 100% 兼容。
  */
 import { log, newId, isSuperiorCall } from '../util.js';
-import { pickDepartmentDelivery } from '../chief-summary.js';
+import { pickDepartmentDelivery, pickLeadResult } from '../chief-summary.js';
 import { isMainChatBusy } from './chief-summary-runner.js';
 import { shouldMirrorProgress, mirrorProgress, MIRROR_SKIPPED_NO_DM } from '../dm.js';
 import { settleRetryMessage } from '../retry-messages.js';
@@ -869,7 +869,10 @@ export async function executeGroupRound(
       // ★ 兜底：`closing.needed === false` 是**很常见的正常成功**
       //   （单人部门、负责人直接答完没人再被 @）—— 这时 closingResult 是 null，
       //   不能直接记成 failed。三档回落写在纯函数里，单测覆盖。
-      const leadResult = leadId ? roundSuccesses.find((r) => r.botId === leadId)?.res ?? null : null;
+      // 负责人可能说了两次（开头派活 + 最后结论）—— 要取**最后一条**，
+      // 否则回传里塞的是"@A @B 你俩分一下"这种派活话。
+      // 负责人可能说了两次（开头派活 + 最后结论）—— 取最后一条，别把派活话当交付
+      const leadResult = pickLeadResult(roundSuccesses, leadId);
       const lastResult = roundSuccesses.length ? roundSuccesses[roundSuccesses.length - 1].res : null;
       const delivery = pickDepartmentDelivery({ closingResult, leadResult, lastResult });
       const target = {

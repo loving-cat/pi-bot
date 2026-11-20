@@ -1585,7 +1585,7 @@ export class Store {
    *
    * 主控一轮里连着派三个部门，必须落在**同一个批次**里 —— 否则会生成三条汇总。
    */
-  ensureChiefSummaryBatch({ turnKey = '', originRoomId = '', originMessageId = null, taskTitle = '', target = null } = {}) {
+  ensureChiefSummaryBatch({ turnKey = '', originRoomId = '', originMessageId = null, taskTitle = '', target = null, mainBusy = false } = {}) {
     const key = String(turnKey ?? '');
     const roomId = String(originRoomId ?? '');
     if (!roomId) return { error: '缺少 originRoomId' };
@@ -1612,7 +1612,7 @@ export class Store {
       return { batch: created.batch, created: true };
     }
     if (target) {
-      const r = this.noteChiefSummaryTarget(batch.id, target, { mainBusy: false });
+      const r = this.noteChiefSummaryTarget(batch.id, target, { mainBusy });
       if (!r.error) batch = r.batch;
     }
     return { batch, created: false };

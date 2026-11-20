@@ -2229,7 +2229,10 @@ export function buildChiefTools({
       execute: async (_toolCallId, { groupId, botId: target }) => {
         const room = store.getRoom(groupId);
         if (!room || room.kind !== 'group') return fail(`找不到部门 ${groupId}`);
-        store.updateRoom(groupId, { botIds: room.botIds.filter((b) => b !== target) });
+        // ★ 走领域服务而不是直接改 store：在跑成员保护（§3.5）只有服务层有，
+        //   直接调 store.updateRoom 会绕过它，把正在干活的成员悄悄踢出部门。
+        const r = services.rooms.update(groupId, { botIds: room.botIds.filter((b) => b !== target) });
+        if (!r.ok) return fail(r.error ?? '调出失败');
         return ok(`已把 ${target} 调出「${room.name}」`);
       },
     }),

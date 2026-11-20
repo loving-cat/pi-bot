@@ -27,6 +27,8 @@ import {
   SUMMARY_TURN_BLOCK_MESSAGE,
   isToolBlockedInSummaryTurn,
   pickDepartmentDelivery,
+  shouldSealTaskRunBatch,
+  pickLeadResult,
   markSummarySent,
   normalizeSummaryBatch,
 } from '../src/chief-summary.js';
@@ -36,6 +38,7 @@ import {
   isMainChatBusy,
 } from '../src/runner/chief-summary-runner.js';
 import { createBotService } from '../src/services/bot-service.js';
+import { buildChiefTools } from '../src/tools.js';
 
 const { createStore } = await import('../src/store.js');
 const { createBus } = await import('../src/bus.js');
@@ -383,6 +386,82 @@ await test('store：sealChiefSummariesForTurn 只封这一轮的批次', () => {
   assert.equal(sealed.length, 1);
   assert.equal(store.chiefSummary('sum_mine').state, 'sending', '就绪且主控空闲 → 准备发');
   assert.equal(store.chiefSummary('sum_other').state, 'collecting', '别的轮次不受影响');
+});
+
+// ---------------------------------------------------------------------------
+// 7. T1–T2 反例（Stage 2b review）
+// ---------------------------------------------------------------------------
+await test('★【T1】同根双部门：一个 blocked + 一个 completed、根任务还在跑 → 必须能封口', () => {
+  const root = { id: 'root_1', rootTaskId: 'root_1', state: 'running', owner: {} };
+  const blockedSibling = { id: 'run_a', rootTaskId: 'root_1', state: 'blocked', owner: { departmentId: 'room_a' } };
+  const doneSibling = { id: 'run_b', rootTaskId: 'root_1', state: 'completed', owner: { departmentId: 'room_b' } };
+  const allRuns = [root, blockedSibling, doneSibling];
+
+  // blocked 已经上报过终态 → 不算"还在跑"；根任务没有 departmentId → 也不算
+  assert.equal(
+    shouldSealTaskRunBatch({ run: blockedSibling, allRuns, rootId: 'root_1' }),
+    true,
+    '受阻的这次本身就该立刻封口（快速失败）',
+  );
+  assert.equal(
+    shouldSealTaskRunBatch({ run: doneSibling, allRuns, rootId: 'root_1' }),
+    true,
+    '兄弟都已终态（blocked 也算终态）→ 不能卡在 dispatchOpen=true',
+  );
+
+  // 真的还有兄弟在跑 → 不封
+  const runningSibling = { id: 'run_c', rootTaskId: 'root_1', state: 'running', owner: { departmentId: 'room_c' } };
+  assert.equal(
+    shouldSealTaskRunBatch({ run: doneSibling, allRuns: [...allRuns, runningSibling], rootId: 'root_1' }),
+    false,
+  );
+});
+
+await test('★【T2】负责人一轮说两次（先派活、后结论）→ 回填最后一条', () => {
+  const successes = [
+    { botId: 'lead', res: { ok: true, text: '@A @B 你俩分一下', messageId: 'm1' } },
+    { botId: 'mem', res: { ok: true, text: '我做完了', messageId: 'm2' } },
+    { botId: 'lead', res: { ok: true, text: '最终结论：并发改队列，QPS 3 倍', messageId: 'm3' } },
+  ];
+  assert.equal(pickLeadResult(successes, 'lead').text.includes('最终结论'), true, '要取最后一条，不是开头派活那句');
+
+  const delivery = pickDepartmentDelivery({ closingResult: null, leadResult: pickLeadResult(successes, 'lead'), lastResult: null });
+  assert.equal(delivery.status, 'done');
+  assert.match(delivery.leadSummary, /QPS 3 倍/);
+  assert.equal(delivery.sourceMsgId, 'm3');
+  assert.equal(pickLeadResult(successes, ''), null, '没有负责人就返回 null');
+});
+
+await test('★【T3】remove_from_department 移出在跑成员 → 被拦（工具层也走服务守卫）', async () => {
+  const store = makeStore('tool-guard');
+  const main = store.mainBot();
+  const dmId = store.ensureDm(main.id).id;
+  const busy = store.createBot({ name: '在跑成员' });
+  const room = store.createGroup({ name: '研发组', botIds: [busy.id] });
+  const bus = createBus();
+  const fakeRunner = {
+    store,
+    config: store.config,
+    bus,
+    modelGroups: null,
+    health: null,
+    isBusy: (rid, bid) => bid === busy.id,
+  };
+  fakeRunner.services = { rooms: createBotService({ store, runner: fakeRunner }).rooms };
+
+  const tools = buildChiefTools({
+    runner: fakeRunner,
+    health: null,
+    roomId: dmId,
+    botId: main.id,
+    store,
+  });
+  const tool = tools.find((t) => t.name === 'remove_from_department');
+  assert.ok(tool, '工具必须存在');
+  const out = await tool.execute('call_1', { groupId: room.id, botId: busy.id });
+  assert.equal(out.isError, true, '直接调 store.updateRoom 会绕过服务层守卫，这里必须被拦');
+  assert.match(out.content[0].text, /执行任务/);
+  assert.ok(store.getRoom(room.id).botIds.includes(busy.id), '被拦下就不许真的移出');
 });
 
 // ---------------------------------------------------------------------------

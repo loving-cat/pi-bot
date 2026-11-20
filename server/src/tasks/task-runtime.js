@@ -179,7 +179,9 @@ export function createTaskRuntime({
         const rootId = run.rootTaskId ?? run.id;
         const turnKey = `task:${rootId}`;
         const deptRoom = store.getRoom(deptId);
+        const mainBusy = main ? isMainChatBusy(runner, roomId, main.id) : false;
         store.ensureChiefSummaryBatch({
+          mainBusy,
           turnKey,
           originRoomId: roomId,
           taskTitle: String(run.goal?.requirement ?? '任务'),
@@ -196,17 +198,18 @@ export function createTaskRuntime({
             error: String(run.flags?.blockedReason ?? (run.state === 'paused_budget' ? '额度用尽' : '')),
           },
         });
-        // 同一根任务还有在跑的子任务就先不封口 —— 否则先完成的那个会把批次催熟
+        // 同一根任务还有在跑的**兄弟部门子任务**就先不封口 —— 否则先完成的那个会把批次催熟。
+        //
+        // 三处细节（都是实机踩过的）：
+        //   ① 已上报终态的 `blocked` / `paused_budget` 不算"还在跑"，
+        //      留在集合里会让批次永远封不了口（永久死锁）；
+        //   ② 只数**带 departmentId 的兄弟子任务**：根任务 R 自己也在 listAll 里，
+        //      把它算进来就等于"永远还有一个在跑"；
+        //   ③ 失败/受阻的这次本身就该立即封口（C1 快速失败），不用等别人。
         const scan = typeof store.taskRuns?.listAll === 'function' ? store.taskRuns.listAll() : null;
         const allRuns = Array.isArray(scan) ? scan : (scan?.taskRuns ?? []);
-        const activeStates = new Set(['queued', 'running', 'waiting_approval', 'paused_budget', 'blocked']);
-        const stillRunning = allRuns.some(
-          (r) => r && r.id !== run.id && (r.rootTaskId ?? r.id) === rootId && activeStates.has(r.state),
-        );
-        if (!stillRunning) {
-          store.sealChiefSummariesForTurn(turnKey, {
-            mainBusy: main ? isMainChatBusy(runner, roomId, main.id) : false,
-          });
+        if (shouldSealTaskRunBatch({ run, allRuns, rootId })) {
+          store.sealChiefSummariesForTurn(turnKey, { mainBusy });
         }
         void runner.drainChiefSummaries?.().catch?.(() => {});
         return; // 已进汇总账本 → 抑制重复的 system 卡

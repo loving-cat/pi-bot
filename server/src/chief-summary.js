@@ -338,6 +338,61 @@ export function pickDepartmentDelivery({ closingResult = null, leadResult = null
   };
 }
 
+/**
+ * 受管任务里「还在跑」的状态集合。
+ *
+ * ⚠️ 不能包含 `blocked` / `paused_budget`：它们在 `reportTerminal` 里已经上报过终态，
+ * 留在集合里会让批次永远封不了口（永久死锁）。
+ */
+export const TASK_RUN_ACTIVE_STATES = Object.freeze(['queued', 'running', 'waiting_approval']);
+
+/**
+ * 同一根任务下是否还有**兄弟部门子任务**在跑。
+ *
+ * 两个必须的过滤：
+ *   ① 只数**带 `departmentId` 的**子任务 —— 根任务 R 自己也在 listAll 里，
+ *      把它算进来就等于"永远还有一个在跑"；
+ *   ② 排除自己（本次正在上报的那个）。
+ */
+export function hasRunningSiblingTask(allRuns = [], { runId = '', rootId = '' } = {}) {
+  const active = new Set(TASK_RUN_ACTIVE_STATES);
+  return (Array.isArray(allRuns) ? allRuns : []).some(
+    (r) =>
+      r &&
+      r.id !== runId &&
+      Boolean(r.owner?.departmentId) &&
+      (r.rootTaskId ?? r.id) === rootId &&
+      active.has(r.state),
+  );
+}
+
+/**
+ * 受管任务这次终态上报后，要不要封口这个汇总批次。
+ *
+ * - 还有兄弟在跑 → 不封（等它们）；
+ * - 本次不是 `completed`（受阻/额度暂停/失败）→ **立刻封**，快速失败（规格 §2.2「不傻等」）。
+ */
+export function shouldSealTaskRunBatch({ run = null, allRuns = [], rootId = '' } = {}) {
+  if (!run) return false;
+  const siblings = hasRunningSiblingTask(allRuns, { runId: run.id, rootId });
+  return !siblings || run.state !== 'completed';
+}
+
+/**
+ * 从本轮成功产出里挑负责人的**最后一条**发言。
+ *
+ * 负责人一轮里可能说两次（开头派活 `@A @B`、末尾结论），
+ * 取第一条会把派活话当成交付结论回传给主控。
+ */
+export function pickLeadResult(successes = [], leadId = '') {
+  if (!leadId) return null;
+  const list = Array.isArray(successes) ? successes : [];
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i]?.botId === leadId) return list[i].res ?? null;
+  }
+  return null;
+}
+
 /** 给浮窗用的进度文案数据（纯计算，不做文案拼接以外的判断） */
 export function summarizeProgress(batch) {
   const targets = Array.isArray(batch?.targets) ? batch.targets : [];
