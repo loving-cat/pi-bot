@@ -176,7 +176,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // 首拉一次主控汇总（重连时服务端会重推 summaries.updated，这里只兜首次进页面）
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      AppScope.of(context).loadSummaries();
+      AppScope.read(context).loadSummaries(); // read：post-frame 里不该再注册依赖
     });
     _scrollFollow = ChatScrollFollow(
       _scroll,

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'dart:async';
+
 import 'package:pi_bot/app_state.dart';
 import 'package:pi_bot/models.dart';
 import 'package:pi_bot/scope.dart';
@@ -123,6 +125,52 @@ void main() {
     expect(find.textContaining('429'), findsOneWidget);
   });
 
+  testWidgets('★ 三个动作真的把 (id, action) 传给 resolveSummary', (tester) async {
+    final fake = _FakeState()..summaries = [summary(id: 'sum_x')];
+    await tester.pumpWidget(host(fake));
+    await tester.pump();
+
+    await tester.tap(find.text('是 · 发送'));
+    await tester.pump();
+    expect(fake.calls, contains('send:sum_x'));
+
+    await tester.tap(find.text('否 · 暂不'));
+    await tester.pump();
+    expect(fake.calls, contains('defer:sum_x'));
+
+    await tester.tap(find.text('忽略'));
+    await tester.pump();
+    expect(fake.calls, contains('ignore:sum_x'));
+  });
+
+  testWidgets('★ 防连点：一次点击只打一次 resolveSummary', (tester) async {
+    final fake = _FakeState()..summaries = [summary(id: 'sum_y')]..hold = true;
+    await tester.pumpWidget(host(fake));
+    await tester.pump();
+
+    await tester.tap(find.text('是 · 发送'));
+    await tester.pump();
+    await tester.tap(find.text('是 · 发送'));
+    await tester.pump();
+    expect(fake.calls.length, 1, reason: '提交中不许重复请求');
+
+    fake.release();
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('★ 失败要出声：resolveSummary 返回错误 → SnackBar', (tester) async {
+    final fake = _FakeState()
+      ..summaries = [summary(id: 'sum_z')]
+      ..nextError = '汇总不存在';
+    await tester.pumpWidget(host(fake));
+    await tester.pump();
+
+    await tester.tap(find.text('忽略'));
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('汇总不存在'), findsOneWidget, reason: '错误不许被吞掉');
+  });
+
   testWidgets('空列表：什么都不画（不占位、不留空白卡）', (tester) async {
     final state = AppState();
     await tester.pumpWidget(host(state));
@@ -139,4 +187,33 @@ void main() {
     await tester.pumpAndSettle(const Duration(seconds: 1));
     expect(tester.binding.hasScheduledFrame, isFalse, reason: '静止态不许有持续重绘');
   });
+}
+
+/// 只覆写 `resolveSummary` 的假状态：用来断言浮窗到底把什么传给了服务端。
+class _FakeState extends AppState {
+  final List<String> calls = [];
+  String? nextError;
+
+  /// true = 挂住请求（测防连点）
+  bool hold = false;
+  final List<Completer<String?>> _pending = [];
+
+  void release() {
+    for (final c in _pending) {
+      if (!c.isCompleted) c.complete(nextError);
+    }
+    _pending.clear();
+  }
+
+  @override
+  Future<String?> resolveSummary(String id, String action) async {
+    calls.add('$action:$id');
+    if (!hold) return nextError;
+    final completer = Completer<String?>();
+    _pending.add(completer);
+    return completer.future;
+  }
+
+  @override
+  Future<void> loadSummaries() async {}
 }

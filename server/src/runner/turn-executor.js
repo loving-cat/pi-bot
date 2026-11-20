@@ -897,19 +897,19 @@ async function runWithLease(
         runner.managedInflight.delete(managedCancelTask);
       }
     }
-    // 汇总轮标记只活在这一轮里：异常退出也不能污染下一轮
+    // ★ 先**取出**本轮聚合键再清理（顺序反了就永远是空串 —— 封口变死代码，
+    //   所有直派批次都会永久卡在 dispatchOpen=true）。
+    const originTurnKey = entry.originTurnKey || '';
+    // 汇总轮标记与聚合键只活在这一轮里：异常退出也不能污染下一轮
     entry.summaryTurn = false;
-    entry.originTurnKey = null; // 同理：下一轮若在建气泡前失败，别串用上一轮的 key
-    // ★ 发起轮封口：这一轮登记出来的批次必须 `dispatchOpen=false` 才能就绪。
-    //   部门回得比派活快是常态，不封口就会出现"汇总里漏掉后面那个部门"。
-    if (bot?.role === 'main' && !isSummaryTurn) {
+    entry.originTurnKey = null;
+    // 发起轮封口：这一轮登记出来的批次必须 `dispatchOpen=false` 才能就绪。
+    // 部门回得比派活快是常态，不封口就会出现"汇总里漏掉后面那个部门"。
+    if (bot?.role === 'main' && !isSummaryTurn && originTurnKey) {
       try {
-        const turnKey = entry.originTurnKey || '';
-        if (turnKey) {
-          runner.store.sealChiefSummariesForTurn(turnKey, {
-            mainBusy: isMainChatBusy(runner, roomId, bot.id),
-          });
-        }
+        runner.store.sealChiefSummariesForTurn(originTurnKey, {
+          mainBusy: isMainChatBusy(runner, roomId, bot.id),
+        });
       } catch (err) {
         log('封口主控汇总失败：', err?.message || err);
       }

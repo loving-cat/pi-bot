@@ -113,6 +113,13 @@ class ThinkingSlider extends StatefulWidget {
 
   final bool enabled;
 
+  /// 供测试整机静音动画。
+  ///
+  /// `max` 档是**常驻**粒子加速（产品语义），页面级测试里 `pumpAndSettle()` 会永远等不到静止，
+  /// 所以留一个显式开关；系统的 `MediaQuery.disableAnimations` 仍然优先。
+  @visibleForTesting
+  static bool animationsEnabled = true;
+
   @override
   State<ThinkingSlider> createState() => _ThinkingSliderState();
 }
@@ -163,12 +170,8 @@ class _ThinkingSliderState extends State<ThinkingSlider>
 
   bool get _isEffectiveMax => widget.levels.length >= 2 && _t >= 0.999;
 
-  /// 供测试关掉动画（`max` 档是常驻加速，测试里 `pumpAndSettle()` 否则永远等不到静止）
-  @visibleForTesting
-  static bool animationsEnabled = true;
-
   bool get _shouldAnimate =>
-      animationsEnabled &&
+      ThinkingSlider.animationsEnabled &&
       !_reduceMotion &&
       widget.enabled &&
       widget.levels.length >= 2 &&
@@ -436,8 +439,8 @@ class _TrackPainter extends CustomPainter {
     const knob = 9.0;
     final cy = size.height / 2;
     // 左右各留 3px：滑块半径 9，贴边时圆和冲击环会碰到容器边缘被裁掉
-    final left = knob + 3;
-    final right = size.width - knob - 3;
+    final left = knob + 6;
+    final right = size.width - knob - 6;
     final usable = math.max(1.0, right - left);
     final x = left + usable * t;
 

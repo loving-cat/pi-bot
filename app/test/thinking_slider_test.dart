@@ -296,6 +296,13 @@ void main() {
     );
   });
 
+  testWidgets('★ 全局开关 animationsEnabled=false 时 max 档也 0 Ticker（页面级测试的逃生口）', (tester) async {
+    ThinkingSlider.animationsEnabled = false;
+    addTearDown(() => ThinkingSlider.animationsEnabled = true);
+    await _pump(tester, value: 'max');
+    expect(tester.binding.hasScheduledFrame, isFalse, reason: '开关关掉后 max 档不许再重绘');
+  });
+
   testWidgets('max 档进入超频粒子加速：持续重绘且无异常', (tester) async {
     await _pump(tester, value: 'max');
     final before = _painter(tester);

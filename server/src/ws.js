@@ -203,6 +203,8 @@ export function attachWs(server, { runner }) {
         taskRuns: snap.taskRuns,
         taskRunMeta: snap.taskRunMeta,
         recentTaskRuns: snap.recentTaskRuns,
+        // 主控汇总：断线重连/服务端重启后界面要立刻恢复浮窗，不能等下一次变更事件
+        summaries: store.pendingChiefSummaries(),
       }),
     );
     log(`📱 ${device.name} 已连接（在线 ${wss.clients.size}）`);

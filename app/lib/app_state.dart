@@ -1318,6 +1318,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> signOut() async {
+    summaries = const []; // 切服/登出不能残留上一台服务器的浮窗
     disconnect();
     await Native.stopService();
     final prefs = await SharedPreferences.getInstance();
@@ -2824,6 +2825,14 @@ class AppState extends ChangeNotifier {
         _streamTicks.clear();
         final open = _openRoomId;
         if (open != null) unawaited(loadMessages(open, force: true));
+        // 主控汇总：hello 里带了未终结批次 → 断线/服务端重启后浮窗立刻恢复。
+        // 老服务端没有这个字段时退化成主动拉一次（否则浮窗会永久滞后）。
+        final helloSums = ev['summaries'] as List?;
+        if (helloSums != null) {
+          applySummaries(helloSums);
+        } else {
+          unawaited(loadSummaries());
+        }
         break;
 
       case 'attachments.deleted':

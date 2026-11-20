@@ -1825,7 +1825,9 @@ export function buildChiefTools({
       parameters: Type.Object({ botId: Type.String() }),
       execute: async (_toolCallId, { botId: target }) => {
         const r = services.bots.remove(target);
-        return r.ok ? ok(`已删除 ${target}`) : fail(`删不了：${target} 不存在，或者它是总经理`);
+        // 服务的错误要原样带出去：被「在跑成员保护」拦下时硬返"不存在或是总经理"
+        // 会误导主控（它会以为人没了，其实只是在干活）。
+        return r.ok ? ok(`已删除 ${target}`) : fail(r.error ?? `删不了：${target} 不存在，或者它是总经理`);
       },
     }),
 

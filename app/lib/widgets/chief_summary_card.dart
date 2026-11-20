@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../app_state.dart';
 import '../l10n/l10n.dart';
 import '../models.dart';
 import '../scope.dart';
@@ -29,6 +30,43 @@ class _ChiefSummaryCardState extends State<ChiefSummaryCard> {
   bool _expanded = false;
   String? _expandedFor;
 
+  /// 防连点：三选一是写操作，重复点会重复打 `/resolve`
+  bool _submitting = false;
+
+  Future<void> _resolve(
+    AppState state,
+    ChiefSummary summary,
+    String action, {
+    bool notifyOnSend = false,
+  }) async {
+    if (_submitting) return;
+    setState(() => _submitting = true);
+    try {
+      final err = await state.resolveSummary(summary.id, action);
+      if (!mounted) return;
+      final messenger = ScaffoldMessenger.maybeOf(context);
+      if (err != null) {
+        messenger?.showSnackBar(SnackBar(content: Text(err)));
+        return;
+      }
+      // 跨房间：在部门群里点了「是」，汇总落到主控私聊 —— 得给一条可点的路径，
+      // 否则用户会觉得"点了没反应"（规格 §4.3）。
+      if (notifyOnSend && summary.originRoomId.isNotEmpty) {
+        messenger?.showSnackBar(
+          SnackBar(
+            content: Text(L10n.s(context).t('chat.summarySentHint')),
+            action: SnackBarAction(
+              label: L10n.s(context).t('chat.summaryGoCheck'),
+              onPressed: () => requestRoom(context, summary.originRoomId),
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
@@ -48,9 +86,10 @@ class _ChiefSummaryCardState extends State<ChiefSummaryCard> {
         strings: strings,
         summary: head,
         others: ready.length - 1 + deferred.length,
-        onSend: () => state.resolveSummary(head.id, 'send'),
-        onDefer: () => state.resolveSummary(head.id, 'defer'),
-        onIgnore: () => state.resolveSummary(head.id, 'ignore'),
+        busy: _submitting,
+        onSend: () => _resolve(state, head, 'send', notifyOnSend: true),
+        onDefer: () => _resolve(state, head, 'defer'),
+        onIgnore: () => _resolve(state, head, 'ignore'),
       );
     }
 
@@ -74,9 +113,10 @@ class _ChiefSummaryCardState extends State<ChiefSummaryCard> {
         strings: strings,
         summary: head,
         others: deferred.length - 1,
-        onSend: () => state.resolveSummary(head.id, 'send'),
+        busy: _submitting,
+        onSend: () => _resolve(state, head, 'send', notifyOnSend: true),
         onDefer: () => setState(() => _expanded = false),
-        onIgnore: () => state.resolveSummary(head.id, 'ignore'),
+        onIgnore: () => _resolve(state, head, 'ignore'),
         deferLabel: strings.t('chat.summaryCollapse'),
       );
     }
@@ -123,6 +163,7 @@ class _ChiefSummaryCardState extends State<ChiefSummaryCard> {
     BuildContext context, {
     required AppStrings strings,
     required ChiefSummary summary,
+    required bool busy,
     required int others,
     required VoidCallback onSend,
     required VoidCallback onDefer,
@@ -150,7 +191,9 @@ class _ChiefSummaryCardState extends State<ChiefSummaryCard> {
         children: [
           Text(
             strings.tf('chat.summaryReadyTitle', {
-              'title': summary.taskTitle.isEmpty ? '这个任务' : summary.taskTitle,
+              'title': summary.taskTitle.isEmpty
+                  ? strings.t('chat.summaryUntitled')
+                  : summary.taskTitle,
             }),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
@@ -177,22 +220,29 @@ class _ChiefSummaryCardState extends State<ChiefSummaryCard> {
             ),
           ],
           const SizedBox(height: 8),
-          Row(
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
             children: [
               _action(
                 context,
                 label: strings.t('chat.summarySend'),
                 primary: true,
+                enabled: !busy,
                 onTap: onSend,
               ),
-              const SizedBox(width: 6),
               _action(
                 context,
                 label: deferLabel ?? strings.t('chat.summaryDefer'),
+                enabled: !busy,
                 onTap: onDefer,
               ),
-              const SizedBox(width: 6),
-              _action(context, label: strings.t('chat.summaryIgnore'), onTap: onIgnore),
+              _action(
+                context,
+                label: strings.t('chat.summaryIgnore'),
+                enabled: !busy,
+                onTap: onIgnore,
+              ),
             ],
           ),
           if (others > 0) ...[
@@ -222,26 +272,32 @@ class _ChiefSummaryCardState extends State<ChiefSummaryCard> {
     required String label,
     required VoidCallback onTap,
     bool primary = false,
+    bool enabled = true,
   }) {
     final accent = PB.colors(context).accentBright;
-    return InkWell(
-      onTap: onTap,
+    final color = primary ? accent : PB.textSecondary;
+    // Material + InkWell：之前 InkWell 包不透明 Container，水波纹被盖住、点了没反馈
+    return Material(
+      color: primary ? accent.withValues(alpha: 0.16) : PB.bgActive,
       borderRadius: BorderRadius.circular(PB.rFull),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-        decoration: BoxDecoration(
-          color: primary ? accent.withValues(alpha: 0.16) : PB.bgActive,
-          borderRadius: BorderRadius.circular(PB.rFull),
-          border: Border.all(
-            color: primary ? accent.withValues(alpha: 0.55) : PB.borderTertiary,
+      child: InkWell(
+        onTap: enabled ? onTap : null,
+        borderRadius: BorderRadius.circular(PB.rFull),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(PB.rFull),
+            border: Border.all(
+              color: primary ? accent.withValues(alpha: 0.55) : PB.borderTertiary,
+            ),
           ),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: PB.fsXxs,
-            color: primary ? accent : PB.textSecondary,
-            fontWeight: primary ? FontWeight.w600 : FontWeight.w400,
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: PB.fsXxs,
+              color: enabled ? color : PB.textQuaternary,
+              fontWeight: primary ? FontWeight.w600 : FontWeight.w400,
+            ),
           ),
         ),
       ),

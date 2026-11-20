@@ -44,6 +44,7 @@ const { createStore } = await import('../src/store.js');
 const { createBus } = await import('../src/bus.js');
 const { createConfig } = await import('../src/config.js');
 const { PiRunner } = await import('../src/pi-runner.js');
+const { executeTurn } = await import('../src/runner/turn-executor.js');
 
 let pass = 0;
 let fail = 0;
@@ -656,6 +657,69 @@ await test('★ 在跑成员禁止删除（避免孤儿任务 / 汇总永远等�
 
   const ok = service.bots.remove(idle.id);
   assert.equal(ok.ok, true, ok.error);
+});
+
+// ---------------------------------------------------------------------------
+// 8. R1 回归：必须走 turn-executor 的 finally 封口
+// ---------------------------------------------------------------------------
+await test('★【R1】直派批次在轮次结束时真的被封口（走 finally，不是直接调 store）', async () => {
+  const store = makeStore('seal-via-turn');
+  const main = store.mainBot();
+  const dmId = store.ensureDm(main.id).id;
+
+  const model = { provider: 'fixture', id: 'fixture', contextWindow: 16000, maxTokens: 1000 };
+  const listeners = [];
+  let batchId = '';
+  let turnKeySeen = '';
+  const session = {
+    model,
+    subscribe(fn) {
+      listeners.push(fn);
+      return () => {};
+    },
+    async abort() {},
+    async prompt() {
+      // 模拟「派活工具在这一轮里登记批次」：此时 entry.originTurnKey 已钉死
+      turnKeySeen = runner.currentTurnKey(dmId, main.id);
+      const reg = store.ensureChiefSummaryBatch({
+        turnKey: turnKeySeen,
+        originRoomId: dmId,
+        taskTitle: '直派任务',
+        target: { key: 'group:dev', departmentId: 'room_dev', departmentName: '研发组', status: 'running' },
+      });
+      batchId = reg.batch.id;
+      const emit = (ev) => {
+        for (const fn of listeners) fn(ev);
+      };
+      emit({ type: 'message_start', message: { role: 'assistant' } });
+      emit({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: '好' } });
+      emit({
+        type: 'message_end',
+        message: { role: 'assistant', usage: {}, content: [{ type: 'text', text: '好' }] },
+      });
+    },
+  };
+  const entry = { bot: main, busy: false, session, liveMsgId: null, turnAmends: [], pendingReseat: null };
+  // ★ PiRunner 默认用**模块级单例 store**：必须显式注入这个测试自己的 store，
+  //   否则批次建在 A 库、封口发生在 B 库（这条测试当初就是因为这个假绿/假红）。
+  const runner = new PiRunner({ store });
+  runner.model = model;
+  runner.modelRuntime = {
+    completeSimple: () => assert.fail('不许调模型'),
+    getModel: (provider, id) => (provider === model.provider && id === model.id ? model : null),
+    getModels: () => [model],
+  };
+  runner.memoryAutoDisabled = true;
+  runner.ensureSession = async () => entry;
+  runner.sessions.set(`${dmId}:${main.id}`, entry);
+
+  const out = await executeTurn(runner, dmId, main.id, '给研发组分一下活', { skipUserMessage: true });
+  assert.equal(out.ok, true, out.error ?? '');
+  assert.match(turnKeySeen, /^msg:/, '聚合键必须是 msg:<本轮气泡>');
+
+  const batch = store.chiefSummary(batchId);
+  assert.equal(batch.dispatchOpen, false, '★ 封口必须在 finally 里真的发生（清 key 早于读 key 就会永远 true）');
+  assert.equal(entry.originTurnKey, null, '轮次结束必须清掉，别污染下一轮');
 });
 
 try {
