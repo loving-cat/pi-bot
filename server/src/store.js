@@ -47,7 +47,9 @@ import {
   normalizeLessonEdge,
   normalizeLessonEdgeList,
   lessonEdgeRejectReason,
+  normalizeModelFamily,
   LESSON_EDGE_SENTINELS,
+  UNKNOWN_MODEL_FAMILY,
 } from './lessons.js';
 import { mcpNameError } from './mcp.js';
 import * as mcpLibraryDomain from './mcp-library.js';
@@ -1384,16 +1386,24 @@ export class Store {
    * 不 await、不阻塞这一轮：它只影响“以后还值不值得注入”，
    * 写失败也不能影响 bot 干活。
    */
-  touchLessons(ids = []) {
+  touchLessons(ids = [], { modelFamily = '' } = {}) {
     const wanted = new Set((Array.isArray(ids) ? ids : []).map(String));
     if (!wanted.size) return;
     const list = this.lessonLibrary();
     let changed = false;
     const now = Date.now();
+    const family = modelFamily ? normalizeModelFamily(modelFamily) : '';
+    const countFamily = Boolean(family) && family !== UNKNOWN_MODEL_FAMILY;
     for (const item of list) {
       if (!wanted.has(item.id)) continue;
       item.hits += 1;
       item.lastUsedAt = now;
+      if (countFamily) {
+        // 只记「被读过一次」。win/fail 是另一条数据流（复盘/验收/用户反馈），
+        // 混进来就会让胜率退化成命中率 —— 正是 S3 要避免的假信号。
+        const cur = item.byFamily?.[family] ?? { hit: 0, win: 0, fail: 0 };
+        item.byFamily = { ...(item.byFamily ?? {}), [family]: { ...cur, hit: cur.hit + 1 } };
+      }
       changed = true;
     }
     if (!changed) return;

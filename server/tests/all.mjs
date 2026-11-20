@@ -18,6 +18,7 @@ const TESTS = [
   'skills',
   'lessons',
   'lessons-sim-lite',
+  'lesson-injection',
   'lesson-reflect',
   'site-draft',
   'merge-messages',

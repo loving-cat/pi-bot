@@ -18,7 +18,7 @@ import { collectNewImages, snapshotImages } from '../image-watch.js';
 import { snapshotWorkspace, diffSnapshots, summarizeChanges } from '../change-watch.js';
 import { collectArtifacts } from '../artifact-watch.js';
 import { selectSkillsFor, skillFingerprint, skillsPromptLines, skillsToInject } from '../skills.js';
-import { selectLessonsFor, lessonsPromptLines } from '../lessons.js';
+import { selectLessonsFor, lessonsPromptLines, resolveModelFamilyForModel } from '../lessons.js';
 import { resolveManagedContext, planAttemptEvent, adaptRunOutcome, MANAGED } from '../tasks/task-progress.js';
 import { createReportCollector } from '../tasks/task-report.js';
 import { STOP } from '../tasks/task-contract.js';
@@ -567,11 +567,19 @@ async function runWithLease(
         const library = runner.store.lessonLibrary();
         if (!library.length) return text;
         const task = text + '\n' + String(meta?.text ?? '');
-        const picked = selectLessonsFor(library, task, { roomId });
+        // SIM-Lite：把「当前模型的族」与「关系边」一起传进去 —— 不传的话，
+        // 同族加成与矛盾排除在真实注入里等于没做。
+        const modelFamily = resolveModelFamilyForModel(entry.session?.model ?? runner.model);
+        const edges = runner.store.lessonEdges?.() ?? [];
+        const picked = selectLessonsFor(library, task, { roomId, modelFamily, edges });
         const lines = lessonsPromptLines(picked);
         if (!lines.length) return text;
         try {
-          runner.store.touchLessons(picked.map((l) => l.id));
+          // ★ 只记 `hit`（被注入过一次）。**绝不在这里记 win/fail**：
+          //   本轮 ok 只说明模型没报错（答非所问也是 ok）；429/超时/用户终止也不是 fail。
+          //   真实胜率只来自复盘评估 / 已验收 TaskRun / 用户反馈。
+          runner.store.touchLessons(picked.map((l) => l.id), { modelFamily });
+          entry.lessonsInjected = { ids: picked.map((l) => l.id), modelFamily, at: Date.now() };
         } catch {}
         return lines.join('\n') + '\n\n' + text;
       } catch (err) {
