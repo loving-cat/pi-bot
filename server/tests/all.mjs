@@ -17,6 +17,7 @@ const TESTS = [
   'transcript-budget',
   'skills',
   'lessons',
+  'lessons-sim-lite',
   'lesson-reflect',
   'site-draft',
   'merge-messages',

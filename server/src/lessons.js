@@ -22,6 +22,7 @@
  * 没有相关性就不给 —— 宁可不给，也别塞一堆无关的经验把提示词撑爆。
  */
 
+import { createHash } from 'node:crypto';
 import { splitWords } from './skills.js';
 
 /** 字段与注入上限（改这里就等于改预算，别在别处写魔法数字） */
@@ -40,6 +41,15 @@ export const LESSON_LIMITS = {
   maxInject: 3,
   /** 一次注入的总字数（不含标题行） */
   maxChars: 600,
+  // ---- SIM-Lite（2.0）新增上限：只加字段，不改既有预算 ----
+  /** 一条经验最多记几个模型族的战果 */
+  byFamilyKeys: 8,
+  /** 关系边总数上限（超了按时间淘汰最旧） */
+  edges: 2000,
+  /** 单条经验挂的边上限 */
+  edgesPerLesson: 50,
+  /** 模型族名字最大长度 */
+  family: 24,
 };
 
 /** 结论四档：和 Harness² 的用词一致，`confounded` 是"说不清"的诚实档 */
@@ -118,7 +128,7 @@ export function normalizeLesson(raw = {}, now = Date.now()) {
   // 没证据的只能停在候选，别让调用方绕过校验把它写成 active
   if (status === 'active' && evidence.length === 0) status = 'candidate';
 
-  return {
+  const out = {
     id: str(raw.id, 64) || `les_${Math.random().toString(36).slice(2, 10)}`,
     roomId: str(raw.roomId, 64),
     dept: str(raw.dept, 60),
@@ -131,19 +141,27 @@ export function normalizeLesson(raw = {}, now = Date.now()) {
     createdAt: Number.isFinite(raw.createdAt) ? raw.createdAt : now,
     updatedAt: Number.isFinite(raw.updatedAt) ? raw.updatedAt : now,
     lastUsedAt: Number.isFinite(raw.lastUsedAt) ? raw.lastUsedAt : 0,
+    // ---- SIM-Lite（2.0）新增字段：缺省给安全值，老库不需要迁移脚本 ----
+    modelFamily: str(raw.modelFamily, LESSON_LIMITS.family).toLowerCase() || UNKNOWN_MODEL_FAMILY,
+    byFamily: normalizeFamilyStats(raw.byFamily),
   };
+  out.contentHash = str(raw.contentHash, 80) || lessonContentHash(out);
+  return out;
 }
 
-/** 规范化整个库：去无效、去重复、限量 */
+/** 规范化整个库：去无效、去重复（同房间同 cue / 同内容哈希）、限量 */
 export function normalizeLessonList(list = [], now = Date.now()) {
   const out = [];
   const seen = new Set();
+  const seenHashes = new Set();
   for (const item of Array.isArray(list) ? list : []) {
     const lesson = normalizeLesson(item, now);
     if (!lesson) continue;
     const key = `${lesson.roomId}\u0000${lesson.cue.toLowerCase()}`;
     if (seen.has(key)) continue;
+    if (lesson.contentHash && seenHashes.has(lesson.contentHash)) continue;
     seen.add(key);
+    if (lesson.contentHash) seenHashes.add(lesson.contentHash);
     out.push(lesson);
     if (out.length >= LESSON_LIMITS.total) break;
   }
@@ -151,12 +169,73 @@ export function normalizeLessonList(list = [], now = Date.now()) {
 }
 
 /**
+ * 打分权重（改这里 = 改筛选口径，别在别处写魔法数字）。
+ *
+ * 前四项是 1.x 就有的；后三项是 SIM-Lite（2.0）的**跨模型去偏**与**关系边**：
+ *   · `sameFamily`：当前模型族在这条经验上确实赢过 → 加分；
+ *   · `untestedFamily`：经验有归因，但当前族没战果 → 减分（不排除，界面会标「未在同模型验证」）；
+ *   · `generalizesHop`：一跳 `generalizes` 边 → 让泛化条也能被召回。
+ * `contradicts` 不是减分，是**直接排除** —— 宁可不给，也不给矛盾经验。
+ */
+export const LESSON_SCORING = Object.freeze({
+  cueHit: 3,
+  lessonHit: 1,
+  sameRoom: 1,
+  sameFamily: 2,
+  untestedFamily: -1,
+  generalizesHop: 1,
+  minScore: 3,
+});
+
+/**
+ * 按当前任务给一条经验打分（纯函数；不参与候选时返回 null）。
+ *
+ * 【SIM-Lite】`modelFamily` / `edgeIndex` 都是可选的：都不传时行为与 1.x **完全一致**
+ * —— 这是 Phase 0 的硬要求，新字段不许悄悄改变旧行为。
+ *
+ * @param {object} item 经验
+ * @param {string} task 当前任务文本
+ * @param {{ roomId?: string, modelFamily?: string, edgeIndex?: Map|null }} [opts]
+ * @returns {number|null} 分数；null = 不参与候选（非 active / 被 contradicts 排除）
+ */
+export function lessonScore(item, task, { roomId = '', modelFamily = '', edgeIndex = null } = {}) {
+  if (!item || item.status !== 'active') return null;
+  const text = String(task ?? '').toLowerCase();
+  if (!text.trim()) return null;
+  let score = 0;
+  for (const word of splitWords(item.cue)) {
+    if (text.includes(word)) score += LESSON_SCORING.cueHit;
+  }
+  for (const word of splitWords(item.lesson)) {
+    if (text.includes(word)) score += LESSON_SCORING.lessonHit;
+  }
+  if (roomId && item.roomId && item.roomId === roomId) score += LESSON_SCORING.sameRoom;
+
+  if (edgeIndex) {
+    for (const edge of edgeIndex.get(item.id) ?? []) {
+      if (edge.type === 'contradicts') return null; // 排除，不是减分
+      if (edge.type === 'generalizes') score += LESSON_SCORING.generalizesHop;
+    }
+  }
+
+  // `unknown` = 1.x 沉淀的老经验，没有归因信息：既不享受同族加成，也不背"未验证"扣分
+  const declaredFamily = item.modelFamily && item.modelFamily !== UNKNOWN_MODEL_FAMILY ? item.modelFamily : '';
+  if (modelFamily) {
+    const stats = item.byFamily?.[modelFamily] ?? null;
+    const verified = Boolean(stats) && (stats.win || 0) + (stats.fail || 0) > 0;
+    if (verified) score += LESSON_SCORING.sameFamily;
+    else if (declaredFamily === modelFamily) score += LESSON_SCORING.sameFamily;
+    else if (declaredFamily || stats) score += LESSON_SCORING.untestedFamily;
+  }
+  return score;
+}
+
+/**
  * 按当前任务挑经验。
  *
  * 打分（和技能库同一套思路，但门槛更高 —— 经验只有 3 个名额）：
- *   · cue 命中 → +3
- *   · lesson 命中 → +1
- *   · 同房间 → +1
+ *   · cue 命中 → +3 / lesson 命中 → +1 / 同房间 → +1
+ *   · 【SIM-Lite】同族验证过 → +2，有归因但本族未验证 → -1，一跳 generalizes → +1
  * 只有 active 参与；总分 < 3 的不要（房间分单独不够，必须真的相关）。
  *
  * @param {Array} lessons 经验库
@@ -165,27 +244,29 @@ export function normalizeLessonList(list = [], now = Date.now()) {
  * @param {string} [opts.roomId] 当前房间（同部门经验加分）
  * @param {number} [opts.max] 最多几条
  * @param {number} [opts.minScore] 多少分算相关
+ * @param {string} [opts.modelFamily] 当前模型族（SIM-Lite；不传 = 1.x 行为）
+ * @param {Array} [opts.edges] 关系边（SIM-Lite；不传 = 1.x 行为）
  */
 export function selectLessonsFor(
   lessons = [],
   task = '',
-  { roomId = '', max = LESSON_LIMITS.maxInject, minScore = 3 } = {},
+  {
+    roomId = '',
+    max = LESSON_LIMITS.maxInject,
+    minScore = LESSON_SCORING.minScore,
+    modelFamily = '',
+    edges = null,
+  } = {},
 ) {
   const text = String(task ?? '').toLowerCase();
   if (!text.trim()) return [];
 
+  const edgeIndex = edges?.length ? lessonEdgeIndex(edges) : null;
   const scored = [];
   for (const item of Array.isArray(lessons) ? lessons : []) {
-    if (!item || item.status !== 'active') continue;
-    let score = 0;
-    for (const word of splitWords(item.cue)) {
-      if (text.includes(word)) score += 3;
-    }
-    for (const word of splitWords(item.lesson)) {
-      if (text.includes(word)) score += 1;
-    }
-    if (roomId && item.roomId && item.roomId === roomId) score += 1;
-    if (score >= minScore) scored.push({ lesson: item, score });
+    const score = lessonScore(item, task, { roomId, modelFamily, edgeIndex });
+    if (score === null || score < minScore) continue;
+    scored.push({ lesson: item, score });
   }
 
   scored.sort((a, b) => b.score - a.score);
@@ -235,4 +316,207 @@ export function lessonsPromptLines(picked = [], { maxChars = LESSON_LIMITS.maxCh
     '【这个团队踩过的坑（是经验，不是硬规则；跟当前任务无关就忽略）】',
     ...lines,
   ];
+}
+
+// ===========================================================================
+// SIM-Lite（2.0）：模型族、关系边、置信度、去重与淘汰
+//
+// 这一节只**定契约与纯函数**，不碰磁盘、不碰 store（Phase 0 定稿，Phase 1 接线）。
+// 三条硬约束：
+//   1. 老库直接可读：缺字段给默认值，不需要迁移脚本；
+//   2. 不传新参数时行为与 1.x 完全一致（`selectLessonsFor` 已守住）；
+//   3. 关系边和代码一样是"可审"的：类型只有 4 种，越界一律拒绝。
+// ===========================================================================
+
+/** 模型族的封闭词表：跨模型去偏只在这里面归因，避免拼写漂移成十几个"族" */
+export const MODEL_FAMILIES = Object.freeze([
+  'glm', 'deepseek', 'kimi', 'qwen', 'gpt', 'claude', 'gemini', 'other',
+]);
+
+/** 没有任何归因信息时的族名（1.x 沉淀的老经验都是这个） */
+export const UNKNOWN_MODEL_FAMILY = 'unknown';
+
+/** provider / model 名 → 族的猜测规则（顺序敏感：先具体后宽泛） */
+const FAMILY_HINTS = [
+  [/glm|zhipu|chatglm|sensenova|nvidia/i, 'glm'],
+  [/deepseek/i, 'deepseek'],
+  [/kimi|moonshot/i, 'kimi'],
+  [/qwen|tongyi|dashscope/i, 'qwen'],
+  [/gpt|openai|azure/i, 'gpt'],
+  [/claude|anthropic/i, 'claude'],
+  [/gemini|google|vertex/i, 'gemini'],
+];
+
+/**
+ * 从 provider / model 名推模型族（纯字符串函数）。
+ *
+ * 传多个提示时取**第一个命中的规则**；一个都没命中 → `other`；
+ * 一个提示都没给 → `unknown`（= 这条经验没有归因信息）。
+ */
+export function resolveModelFamily(...hints) {
+  const list = hints.flat().filter((h) => typeof h === 'string' && h.trim());
+  if (!list.length) return UNKNOWN_MODEL_FAMILY;
+  for (const hint of list) {
+    for (const [re, family] of FAMILY_HINTS) {
+      if (re.test(hint)) return family;
+    }
+  }
+  return 'other';
+}
+
+const toCount = (v) => {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.min(1_000_000, Math.floor(n));
+};
+
+/** 规范化 `byFamily`：只留计数、最多 `byFamilyKeys` 个族、族名截断小写 */
+export function normalizeFamilyStats(raw = {}) {
+  const out = {};
+  let keys = 0;
+  for (const [name, stats] of Object.entries(raw ?? {})) {
+    if (keys >= LESSON_LIMITS.byFamilyKeys) break;
+    const family = str(name, LESSON_LIMITS.family).toLowerCase();
+    if (!family) continue;
+    out[family] = { hit: toCount(stats?.hit), win: toCount(stats?.win), fail: toCount(stats?.fail) };
+    keys++;
+  }
+  return out;
+}
+
+/**
+ * 置信度（0~0.95，纯派生、可重算、不必落库）。
+ *
+ * 公式故意简单，能向用户解释清楚：
+ *   base     —— verdict 给的先验（helped 0.5 / confounded 0.25 / hurt 0.15 / no_effect 0.1）
+ *   ratio    —— 跨所有族的 win/(win+fail)（没打过就按 0.5）
+ *   volume   —— 样本量（5 次封顶）
+ *   coverage —— 有几个族真的打过（2 个封顶）→ 这就是"跨模型"的权重
+ */
+export function lessonConfidence(item = {}) {
+  const stats = Object.values(normalizeFamilyStats(item.byFamily));
+  const win = stats.reduce((n, s) => n + s.win, 0);
+  const fail = stats.reduce((n, s) => n + s.fail, 0);
+  const trials = win + fail;
+  const validatedFamilies = stats.filter((s) => s.win + s.fail > 0).length;
+  const base =
+    item.verdict === 'helped'
+      ? 0.5
+      : item.verdict === 'hurt'
+        ? 0.15
+        : item.verdict === 'no_effect'
+          ? 0.1
+          : 0.25;
+  const ratio = trials ? win / trials : 0.5;
+  const volume = Math.min(1, trials / 5);
+  const coverage = Math.min(1, validatedFamilies / 2);
+  const mixed = base * 0.4 + ratio * 0.3 + volume * 0.15 + coverage * 0.15;
+  return Math.round(Math.min(0.95, Math.max(0, mixed)) * 1000) / 1000;
+}
+
+/**
+ * 去重键：`cue + lesson` 归一化后的 sha256 前 32 位。
+ *
+ * 只用来判断"是不是同一条经验"，不参与任何安全判定（不是签名也不是 MAC）。
+ * 归一化只做小写与空白折叠 —— 换模型改写措辞会产生新哈希，这是有意的：
+ * 措辞不同就当成新经验，靠 `supersedes` 边收旧条，而不是猜"这俩是一回事"。
+ */
+export function lessonContentHash(item = {}) {
+  const cue = str(item.cue, LESSON_LIMITS.cue).toLowerCase().replace(/\s+/g, '');
+  const body = str(item.lesson, LESSON_LIMITS.lesson).toLowerCase().replace(/\s+/g, '');
+  const digest = createHash('sha256').update(`${cue}\u0000${body}`, 'utf8').digest('hex');
+  return `sha256:${digest.slice(0, 32)}`;
+}
+
+/** 关系边的 4 种类型（多一种都要先改这里 + 规格） */
+export const LESSON_EDGE_TYPES = Object.freeze([
+  'supersedes', 'requires', 'contradicts', 'generalizes',
+]);
+
+/** 校验一条边能不能入库，返回人话原因（能入库返回 null） */
+export function lessonEdgeRejectReason(raw = {}) {
+  const from = str(raw.from, 64);
+  const to = str(raw.to, 64);
+  if (!from || !to) return '边要写清 from / to（哪条指向哪条）';
+  if (from === to) return '不能自己连自己';
+  if (!LESSON_EDGE_TYPES.includes(raw.type)) {
+    return `边类型只能是 ${LESSON_EDGE_TYPES.join(' / ')}`;
+  }
+  return null;
+}
+
+/** 规范化一条边（形状固定；不合格返回 null） */
+export function normalizeLessonEdge(raw = {}, now = Date.now()) {
+  if (lessonEdgeRejectReason(raw)) return null;
+  return {
+    from: str(raw.from, 64),
+    to: str(raw.to, 64),
+    type: raw.type,
+    at: Number.isFinite(raw.at) ? raw.at : now,
+    by: str(raw.by, 32) || 'distiller',
+  };
+}
+
+/**
+ * 规范化整个边集合：丢无效、去重（同 from+to+type）、丢悬空（给了 knownIds 时）、限量。
+ * 超上限时保留**最后写入**的边（新证据优先），避免旧边把新结论挤掉。
+ */
+export function normalizeLessonEdgeList(list = [], { knownIds = null, now = Date.now() } = {}) {
+  const known = knownIds instanceof Set ? knownIds : Array.isArray(knownIds) ? new Set(knownIds) : null;
+  const seen = new Set();
+  const out = [];
+  for (const item of Array.isArray(list) ? list : []) {
+    const edge = normalizeLessonEdge(item, now);
+    if (!edge) continue;
+    if (known && (!known.has(edge.from) || !known.has(edge.to))) continue;
+    const key = `${edge.from}\u0000${edge.to}\u0000${edge.type}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(edge);
+  }
+  return out.length > LESSON_LIMITS.edges ? out.slice(out.length - LESSON_LIMITS.edges) : out;
+}
+
+/** 边索引：`from` → 该条经验挂出去的边（一跳足够，2 跳留 2.1） */
+export function lessonEdgeIndex(edges = []) {
+  const index = new Map();
+  for (const edge of Array.isArray(edges) ? edges : []) {
+    if (!edge || !LESSON_EDGE_TYPES.includes(edge.type)) continue;
+    if (!index.has(edge.from)) index.set(edge.from, []);
+    index.get(edge.from).push(edge);
+  }
+  return index;
+}
+
+/**
+ * 淘汰谁（纯函数）：库里超上限时挑出要丢的。
+ *
+ * 优先级（先丢前面）：
+ *   1. 没有 `contradicts` 边的先丢 —— 有冲突标记的留给人工裁决；
+ *   2. 最久没被命中的（`lastUsedAt`）先丢；
+ *   3. 置信度低的先丢；
+ *   4. 最老的先丢。
+ * 返回要丢弃的条目（调用方负责落库）。
+ */
+export function selectEvictions(lessons = [], { max = LESSON_LIMITS.total, edges = [] } = {}) {
+  const list = (Array.isArray(lessons) ? lessons : []).filter(Boolean);
+  const overflow = list.length - Math.max(0, max);
+  if (overflow <= 0) return [];
+  const contradicted = new Set();
+  for (const edge of Array.isArray(edges) ? edges : []) {
+    if (edge?.type === 'contradicts') contradicted.add(edge.to);
+  }
+  const ranked = list.slice().sort((a, b) => {
+    const ca = contradicted.has(a.id) ? 1 : 0;
+    const cb = contradicted.has(b.id) ? 1 : 0;
+    if (ca !== cb) return ca - cb;
+    const ua = Number(a.lastUsedAt) || 0;
+    const ub = Number(b.lastUsedAt) || 0;
+    if (ua !== ub) return ua - ub;
+    const fa = lessonConfidence(a);
+    const fb = lessonConfidence(b);
+    if (fa !== fb) return fa - fb;
+    return (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0);
+  });
+  return ranked.slice(0, overflow);
 }
