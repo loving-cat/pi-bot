@@ -29,6 +29,7 @@ import {
 } from './attachments.js';
 import { lanAddresses } from './pairing.js';
 import { timingSafeEqual, log } from './util.js';
+import { noticeBrandDeprecation } from './brand.js';
 import { readLocalToken } from './local-token.js';
 import { NONCE_PURPOSE, consumeNonce, issueNonce } from './local-nonce.js';
 import { planAdminRoute } from './http-admin.js';
@@ -226,6 +227,41 @@ export const LOCAL_DEVICE = {
 // @remove-2.0 2.0 起用 ORBIS_CLIENT_HEADER，旧头一并删（客户端同版本切换）
 export const CLIENT_HEADER = 'x-pi-bot-client';
 export const ORBIS_CLIENT_HEADER = 'x-orbis-client';
+/** 过渡期响应头：告诉调用方“你还在用旧头，2.0 会删”（桌面端/App 日志里能看到） */
+export const DEPRECATED_HEADER = 'x-orbis-deprecated';
+
+/**
+ * 新旧头配对表（1.7.1 过渡期）：现代头优先，两个都带就不算弃用。
+ * 2.0 删旧头时，把这张表的第二列一并删掉。
+ */
+const LEGACY_HEADER_PAIRS = [
+  [ORBIS_CLIENT_HEADER, CLIENT_HEADER],
+  ['x-orbis-nonce', 'x-pi-bot-nonce'],
+  ['x-orbis-channel', 'x-pi-bot-channel'],
+];
+
+/**
+ * 只靠旧头认出客户端时：贴 `x-orbis-deprecated` 并进程内提醒一次。
+ *
+ * 为什么只在“没带现代头”时才算：新客户端两个都带（见 sdk/client.js），
+ * 那不是弃用，是向后兼容。
+ *
+ * @returns {string[]} 本次用到的旧头名（空数组 = 没用旧头）
+ */
+export function markDeprecatedHeaders(req, res) {
+  const used = [];
+  for (const [modern, legacy] of LEGACY_HEADER_PAIRS) {
+    if (!String(req.headers?.[legacy] ?? '').trim()) continue;
+    if (String(req.headers?.[modern] ?? '').trim()) continue;
+    used.push(legacy);
+    noticeBrandDeprecation({ kind: 'header', from: legacy, to: modern });
+  }
+  if (!used.length) return used;
+  try {
+    res.setHeader(DEPRECATED_HEADER, used.join(','));
+  } catch { /* 头已发出（极少见）就算了，不影响响应本身 */ }
+  return used;
+}
 const STATE_CHANGING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 /** content-type 的媒体类型（; 前面那段）必须严格是 application/json，参数（charset 等）不管。 */
@@ -404,6 +440,9 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
     const pathname = url.pathname.replace(/\/+$/, '') || '/';
     const clientIp = (r) => String(r.socket?.remoteAddress ?? '').replace(/^::ffff:/, '');
 
+    // 旧客户端头过渡：只用了旧头才贴 x-orbis-deprecated（2.0 删旧头时一起去掉）
+    markDeprecatedHeaders(req, res);
+
     // ★ Host 必须是本机名/本机 IP：防 DNS rebinding ——
     //   恶意域名解析到 127.0.0.1 时，Host 会是那个域名，这里直接拒。
     if (!hostAllowed(req.headers.host, config)) {
@@ -526,7 +565,7 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
         STATE_CHANGING_METHODS.has(req.method) &&
         !String(req.headers[ORBIS_CLIENT_HEADER] ?? req.headers[CLIENT_HEADER] ?? '').trim()
       ) {
-        return send(res, 403, { error: `缺少 ${CLIENT_HEADER} 请求头` });
+        return send(res, 403, { error: `缺少 ${ORBIS_CLIENT_HEADER} 请求头（旧名 ${CLIENT_HEADER} 仍可用，2.0 移除）` });
       }
 
       // ★ 状态变更请求必须声明 JSON：浏览器跨域发 text/plain 不会触发预检，

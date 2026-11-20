@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { BRAND_NAME, readBrandEnv } from './brand.js';
+import { BRAND_NAME, noticeBrandDeprecation, readBrandEnv } from './brand.js';
 import { migrateLegacyData, migratedWorkspace, repairSessionRefs, SERVER_BOOT } from './data-migration.js';
 
 const pkgRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -35,12 +35,23 @@ const LEGACY_HOME_DIR_NAME = 'pi-bot';
  * ★ 为什么不自动迁移：迁移一旦半途失败（磁盘满、权限、进程被结束），
  *   用户看到的是“我的聊天记录全没了”。沿用旧目录零风险，想换的用户
  *   可以手动搬（见 docs/WINDOWS.md 的升级说明）。
+ *
+ * 命中旧目录时发一次弃用提醒（1.7.1）：不提醒的话，用户到 2.0 才会
+ * 发现程序突然不看旧目录了。
  */
-function resolveHomeDir(base) {
+export function resolveHomeDir(base) {
   const next = path.join(base, HOME_DIR_NAME);
   const legacy = path.join(base, LEGACY_HOME_DIR_NAME);
   try {
-    if (!fs.existsSync(next) && fs.existsSync(legacy)) return legacy;
+    if (!fs.existsSync(next) && fs.existsSync(legacy)) {
+      noticeBrandDeprecation({
+        kind: 'data-dir',
+        from: legacy,
+        to: next,
+        hint: '2.0 不再读旧目录；想继续用请把目录改名或跑 orbis migrate（复制不删除）',
+      });
+      return legacy;
+    }
   } catch { /* 读不到就按新目录走 */ }
   return next;
 }

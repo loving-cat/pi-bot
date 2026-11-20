@@ -155,6 +155,7 @@ const TESTS = [
   'sdk-runtime',
   'sdk-contract',
   'brand',
+  'brand-deprecation',
   'task-title',
   'tasks/legacy-task-migration',
   'opening-reply',

@@ -18,7 +18,7 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-bot-local-csrf-'));
 process.env.PI_BOT_HOME = root;
 process.env.PI_BOT_WORKSPACE = path.join(root, 'workspace');
 
-const { createHttpServer, CLIENT_HEADER, isJsonContentType } = await import('../src/http.js');
+const { createHttpServer, CLIENT_HEADER, ORBIS_CLIENT_HEADER, DEPRECATED_HEADER, isJsonContentType } = await import('../src/http.js');
 import { installLocalToken } from './_local-token.mjs';
 const { Pairing } = await import('../src/pairing.js');
 
@@ -49,7 +49,11 @@ function call(pathname, { method = 'GET', body = null, headers = {}, asAnonymous
     const req = http.request({ host: '127.0.0.1', port, path: pathname, method, headers: withAuth }, (res) => {
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
-      res.on('end', () => resolve({ status: res.statusCode, text: Buffer.concat(chunks).toString('utf8') }));
+      res.on('end', () => resolve({
+        status: res.statusCode,
+        text: Buffer.concat(chunks).toString('utf8'),
+        headers: res.headers,
+      }));
     });
     req.on('error', reject);
     if (body != null) req.write(body);
@@ -60,8 +64,10 @@ function call(pathname, { method = 'GET', body = null, headers = {}, asAnonymous
 const JSON_BODY = JSON.stringify({ title: 'fake' });
 const client = { [CLIENT_HEADER]: 'test' };
 
-await test('头名固定为 x-pi-bot-client（App 和中转都按这个名字带）', () => {
+await test('头名：正式名 x-orbis-client，旧名 x-pi-bot-client 仅作 2.0 前的回退', () => {
+  assert.equal(ORBIS_CLIENT_HEADER, 'x-orbis-client');
   assert.equal(CLIENT_HEADER, 'x-pi-bot-client');
+  assert.equal(DEPRECATED_HEADER, 'x-orbis-deprecated');
 });
 
 await test('isJsonContentType：只看 ; 前的媒体类型', () => {
@@ -119,7 +125,46 @@ await test('Sec-Fetch-Site: same-origin / none 不受影响', async () => {
 await test('★ POST 不带 x-pi-bot-client → 403', async () => {
   const r = await call('/api/tasks', { method: 'POST', body: JSON_BODY, headers: { 'content-type': 'application/json' } });
   assert.equal(r.status, 403);
-  assert.match(r.text, /x-pi-bot-client/);
+  assert.match(r.text, /x-orbis-client/, '报错要指向正式名，不是旧名');
+});
+
+// ---------- 旧头过渡：可用，但响应里贴 x-orbis-deprecated ----------
+await test('新头 x-orbis-client 直接可用（1.7.1 起客户端发的就是它）', async () => {
+  const r = await call('/api/uploads?name=fake.txt', {
+    method: 'POST',
+    body: 'fake',
+    headers: { 'content-type': 'text/plain', 'x-orbis-client': 'app' },
+  });
+  assert.equal(r.status, 200, r.text);
+  assert.equal(r.headers[DEPRECATED_HEADER], undefined, '用新头不该有弃用头');
+});
+
+await test('只带旧头仍然能用，但响应贴 x-orbis-deprecated', async () => {
+  const r = await call('/api/uploads?name=fake.txt', {
+    method: 'POST',
+    body: 'fake',
+    headers: { 'content-type': 'text/plain', 'x-pi-bot-client': 'app' },
+  });
+  assert.equal(r.status, 200, r.text);
+  assert.equal(r.headers[DEPRECATED_HEADER], 'x-pi-bot-client');
+});
+
+await test('两个头都带 = 已是新版客户端，不打弃用标记', async () => {
+  const r = await call('/api/uploads?name=fake.txt', {
+    method: 'POST',
+    body: 'fake',
+    headers: { 'content-type': 'text/plain', 'x-orbis-client': 'app', 'x-pi-bot-client': 'app' },
+  });
+  assert.equal(r.status, 200, r.text);
+  assert.equal(r.headers[DEPRECATED_HEADER], undefined);
+});
+
+await test('旧 nonce / channel 头也会被记入弃用头（不阻塞请求）', async () => {
+  const r = await call('/api/devices', {
+    headers: { 'x-pi-bot-channel': 'local' },
+  });
+  assert.equal(r.status, 200, r.text);
+  assert.equal(r.headers[DEPRECATED_HEADER], 'x-pi-bot-channel');
 });
 await test('★ PATCH / PUT / DELETE 不带 x-pi-bot-client → 403', async () => {
   for (const [method, p] of [['PATCH', '/api/user'], ['PUT', '/api/user'], ['DELETE', '/api/devices/d_fake']]) {
