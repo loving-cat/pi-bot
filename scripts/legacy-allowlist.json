@@ -672,10 +672,6 @@
       "count": 5
     },
     {
-      "path": "server/tests/lesson-injection.mjs",
-      "count": 5
-    },
-    {
       "path": "server/tests/lessons.mjs",
       "count": 4
     },

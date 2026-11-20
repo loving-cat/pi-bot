@@ -21,11 +21,11 @@ import path from 'node:path';
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'orbis-lesson-inject-'));
 process.env.HOME = path.join(root, 'home');
 process.env.PI_CODING_AGENT_DIR = path.join(root, 'agent');
-process.env.PI_BOT_HOME = root;
-process.env.PI_BOT_DATA_DIR = root;
-process.env.PI_BOT_WORKSPACE = path.join(root, 'workspace');
-process.env.PI_BOT_PROBE = '0';
-process.env.PI_BOT_LESSON_REFLECT = '0';
+// 用正式名 ORBIS_*：新文件不该再种旧品牌债（`scripts/check-legacy.mjs` 只许变小）
+process.env.ORBIS_HOME = root;
+process.env.ORBIS_WORKSPACE = path.join(root, 'workspace');
+process.env.ORBIS_PROBE = '0';
+process.env.ORBIS_LESSON_REFLECT = '0';
 fs.mkdirSync(process.env.HOME, { recursive: true });
 fs.mkdirSync(process.env.PI_CODING_AGENT_DIR, { recursive: true });
 globalThis.fetch = () => {
@@ -167,7 +167,7 @@ await test('LI-3 冲突边在真实路径上也排除（两条经验互斥时都
   const dm = store.ensureDm(main.id);
   const a = store.addLesson({ cue: '发版前检查', lesson: '先跑全量测试', evidence: EVIDENCE, status: 'active', roomId: dm.id }).lesson;
   const b = store.addLesson({ cue: '发版前检查了', lesson: '只要手动点一下', evidence: EVIDENCE, status: 'active', roomId: dm.id }).lesson;
-  const c = store.addLesson({ cue: '发布前检查', lesson: '先跑全量测试', evidence: EVIDENCE, status: 'active', roomId: dm.id }).lesson;
+  const c = store.addLesson({ cue: '发布前检查', lesson: '先跑一遍 smoke 就够', evidence: EVIDENCE, status: 'active', roomId: dm.id }).lesson;
   assert.ok(a && b && c, '三条经验都要建成功');
   assert.ok(store.addLessonEdge({ from: c.id, to: b.id, type: 'contradicts' }).edge);
 
@@ -175,13 +175,16 @@ await test('LI-3 冲突边在真实路径上也排除（两条经验互斥时都
   const { out } = await runTurn({
     roomId: dm.id,
     botId: main.id,
-    prompt: '发布前检查 要做什么',
+    prompt: '发版前检查 要做什么',
     onPrompt: (text) => {
       seen = text;
     },
   });
   assert.equal(out.ok, true, out.error ?? '');
-  assert.doesNotMatch(seen, /只要手动点一下/, '被 contradicts 的那条不许注入');
+  // 双向排除：写在 from 的 c 与写在 to 的 b，**两条都不许出现**
+  assert.doesNotMatch(seen, /只要手动点一下/, 'contradicts 的 to 侧不许注入');
+  assert.doesNotMatch(seen, /先跑一遍 smoke 就够/, 'contradicts 的 from 侧同样不许注入');
+  assert.match(seen, /先跑全量测试/, '没被冲突牵连的第三条要正常注入（正向对照）');
   assert.ok(a.id && store.lessonLibrary().some((l) => l.id === a.id));
 });
 
