@@ -306,6 +306,38 @@ export function sealDispatch(batch, { mainBusy = false, now = 0 } = {}) {
   return advanceSummary({ ...batch, dispatchOpen: false }, { mainBusy, now });
 }
 
+/**
+ * 从一个部门这一轮的产出里挑出"交付包"（规格 §3.1 群收尾回传）。
+ *
+ * ★ 关键：`closing.needed === false` 是**很常见的正常成功**
+ *   （单人部门、负责人直接答完没人再被 @）。这时没有独立收尾轮，
+ *   不能因此把整个部门记成 `failed` —— 要回落到负责人本轮发言、再回落到最后一条成员发言。
+ *
+ * @param {{ closingResult?: object, leadResult?: object, lastResult?: object }} input
+ * @returns {{ status: 'done'|'failed', leadSummary: string, artifacts: string[],
+ *            sourceMsgId: string|null, error: string }}
+ */
+export function pickDepartmentDelivery({ closingResult = null, leadResult = null, lastResult = null } = {}) {
+  const okResult = (r) => (r && r.ok === true && String(r.text ?? '').trim() ? r : null);
+  const pick = okResult(closingResult) ?? okResult(leadResult) ?? okResult(lastResult) ?? null;
+  if (!pick) {
+    return {
+      status: 'failed',
+      leadSummary: '',
+      artifacts: [],
+      sourceMsgId: null,
+      error: String(closingResult?.error || '本轮没有任何成功产出'),
+    };
+  }
+  return {
+    status: 'done',
+    leadSummary: String(pick.text ?? ''),
+    artifacts: Array.isArray(pick.artifacts) ? pick.artifacts : [],
+    sourceMsgId: pick.messageId ?? null,
+    error: '',
+  };
+}
+
 /** 给浮窗用的进度文案数据（纯计算，不做文案拼接以外的判断） */
 export function summarizeProgress(batch) {
   const targets = Array.isArray(batch?.targets) ? batch.targets : [];

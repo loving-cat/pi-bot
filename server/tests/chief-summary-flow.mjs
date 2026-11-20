@@ -26,6 +26,7 @@ import {
   SUMMARY_TURN_BLOCKED_TOOLS,
   SUMMARY_TURN_BLOCK_MESSAGE,
   isToolBlockedInSummaryTurn,
+  pickDepartmentDelivery,
   markSummarySent,
   normalizeSummaryBatch,
 } from '../src/chief-summary.js';
@@ -316,6 +317,44 @@ await test('drain：第一条失败就停（不连环烧钱）', async () => {
   assert.equal(store.chiefSummary('sum_y').state, 'queued_send', '没被牵连');
 });
 
+await test('★ TaskRun 入口：同一根任务的多个子任务落进同一批，全终结后封口', () => {
+  const store = makeStore('taskrun');
+  const roomId = mainDm(store);
+  const dept = store.createGroup({ name: '研发组' });
+  const turnKey = 'task:root_1';
+
+  const mk = (id, state) =>
+    store.ensureChiefSummaryBatch({
+      turnKey,
+      originRoomId: roomId,
+      taskTitle: '重构抓取调度',
+      target: {
+        key: `taskRun:${id}`,
+        departmentId: dept.id,
+        departmentName: '研发组',
+        kind: 'taskRun',
+        refId: id,
+        status: state === 'completed' ? 'done' : 'failed',
+        leadSummary: `${id} 的交付`,
+      },
+    });
+
+  const first = mk('run_a', 'running');
+  assert.ok(first.batch, first.error);
+  assert.equal(first.batch.state, 'collecting', '还有子任务在跑');
+
+  // 第二个子任务：即使第一批已经封口过，也必须复用同一批
+  const second = mk('run_b', 'completed');
+  assert.equal(second.created, false);
+  assert.equal(second.batch.id, first.batch.id);
+  assert.equal(second.batch.targets.length, 2);
+
+  store.sealChiefSummariesForTurn(turnKey, { mainBusy: false });
+  const after = store.chiefSummary(first.batch.id);
+  assert.equal(after.dispatchOpen, false);
+  assert.equal(after.state, 'sending', '全部终结且主控空闲 → 直接发');
+});
+
 // ---------------------------------------------------------------------------
 // 5. 封口：发起轮结束后才就绪
 // ---------------------------------------------------------------------------
@@ -452,6 +491,76 @@ await test('忙态：mergeQueue 有待合并消息也算忙（不许插汇总打
   assert.equal(isMainChatBusy(busyOnlyRunner, 'r', 'b'), true);
   assert.equal(isMainChatBusy(idle, 'r', 'b'), false);
   assert.equal(isMainChatBusy({ isBusy: () => { throw new Error('boom'); } }, 'r', 'b'), true, '判忙失败就当忙');
+});
+
+await test('★【B1】负责人直接答复（没有独立收尾轮）必须记 done 且带正文', () => {
+  // 单人部门 / 负责人答完没人再被 @：closing.needed === false，closingResult 为 null
+  const direct = pickDepartmentDelivery({
+    closingResult: null,
+    leadResult: { ok: true, text: '并发改成队列了，QPS 提升 3 倍', messageId: 'msg_lead', artifacts: ['a.js'] },
+    lastResult: null,
+  });
+  assert.equal(direct.status, 'done', '正常的直接答复不能记成 failed');
+  assert.match(direct.leadSummary, /QPS 提升/);
+  assert.deepEqual(direct.artifacts, ['a.js']);
+  assert.equal(direct.sourceMsgId, 'msg_lead');
+
+  // 收尾轮成功 → 优先用收尾轮
+  const closing = pickDepartmentDelivery({
+    closingResult: { ok: true, text: '收尾结论', messageId: 'msg_close' },
+    leadResult: { ok: true, text: '中间话', messageId: 'msg_mid' },
+  });
+  assert.equal(closing.leadSummary, '收尾结论');
+
+  // 全员失败 → failed，并带上原因
+  const none = pickDepartmentDelivery({ closingResult: { ok: false, error: '收尾没跑成' } });
+  assert.equal(none.status, 'failed');
+  assert.match(none.error, /收尾没跑成/);
+});
+
+await test('★【B2】在跑成员保护要认真实 listAll 形状与 collecting 批次', () => {
+  const store = makeStore('bot-guard-real');
+  const busyByTask = store.createBot({ name: '有受管任务的成员' });
+  const busyBySummary = store.createBot({ name: '在汇总里的成员' });
+  const free = store.createBot({ name: '闲着的成员' });
+
+  // ① listAll 真实返回 { complete, taskRuns, problems } —— 不是数组
+  const fakeTaskRuns = {
+    listAll: () => ({
+      complete: true,
+      problems: [],
+      taskRuns: [{ id: 'run_1', state: 'running', owner: { botId: busyByTask.id } }],
+    }),
+  };
+  const service = createBotService({
+    store: Object.assign(Object.create(Object.getPrototypeOf(store)), store, { taskRuns: fakeTaskRuns }),
+    runner: { isBusy: () => false },
+  });
+  const blockedTask = service.bots.remove(busyByTask.id);
+  assert.equal(blockedTask.ok, false, '真实形状下也必须拦得住');
+  assert.match(blockedTask.error, /受管任务/);
+
+  // ② 在跑的部门目标躺在 collecting 批次里（pendingChiefSummaries 已经不含 collecting）
+  const deptRoom = store.createGroup({ name: '研发组', botIds: [busyBySummary.id] });
+  store.ensureChiefSummaryBatch({
+    turnKey: 'msg:t1',
+    originRoomId: mainDm(store),
+    taskTitle: '跑着的活',
+    target: { key: 'group:dev', departmentId: deptRoom.id, departmentName: '研发组', status: 'running' },
+  });
+  const service2 = createBotService({ store, runner: { isBusy: () => false } });
+  const blockedSummary = service2.bots.remove(busyBySummary.id);
+  assert.equal(blockedSummary.ok, false, 'collecting 里的在跑目标也要拦住');
+  assert.match(blockedSummary.error, /汇总|执行任务/);
+
+  // ③ 移出部门走同一道守卫
+  const moved = service2.rooms.update(deptRoom.id, { botIds: [] });
+  assert.equal(moved.ok, false);
+  assert.equal(moved.status, 409);
+  assert.match(moved.error, /执行任务|汇总/);
+
+  // ④ 真正闲着的还是能删
+  assert.equal(service2.bots.remove(free.id).ok, true);
 });
 
 await test('★ 在跑成员禁止删除（避免孤儿任务 / 汇总永远等不到）', () => {

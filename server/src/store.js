@@ -1589,8 +1589,12 @@ export class Store {
     const key = String(turnKey ?? '');
     const roomId = String(originRoomId ?? '');
     if (!roomId) return { error: '缺少 originRoomId' };
+    // 只按"未终结"匹配：派活轮封口后批次会变成 ready_blocked / queued_send，
+    // 同根任务后续还有子任务回传时，必须继续落到同一批里，不能另起一个。
     const existing = key
-      ? this.chiefSummaries().find((b) => b.originTurnKey === key && b.state === 'collecting')
+      ? this.chiefSummaries().find(
+          (b) => b.originTurnKey === key && b.state !== 'sent' && b.state !== 'ignored',
+        )
       : null;
     let batch = existing ?? null;
     if (!batch) {

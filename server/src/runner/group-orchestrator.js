@@ -10,6 +10,7 @@
  * 保持对外部测试桩与原型拦截的 100% 兼容。
  */
 import { log, newId, isSuperiorCall } from '../util.js';
+import { pickDepartmentDelivery } from '../chief-summary.js';
 import { isMainChatBusy } from './chief-summary-runner.js';
 import { shouldMirrorProgress, mirrorProgress, MIRROR_SKIPPED_NO_DM } from '../dm.js';
 import { settleRetryMessage } from '../retry-messages.js';
@@ -380,6 +381,8 @@ export async function executeGroupRound(
 
   let runs = 0;
   const pending = [];
+  // 本轮成功产出（主控汇总回传的兜底：没有独立收尾轮时用它）
+  const roundSuccesses = [];
   for (;;) {
     const stop = shouldStopRound({
       queueLen: queue.length,
@@ -771,6 +774,7 @@ export async function executeGroupRound(
             log(`${bot.name} PASS`);
             return;
           }
+          roundSuccesses.push({ botId: bot.id, res });
 
           const { all, found } = parseMentions(text, members, {
             selfId: bot.id,
@@ -862,18 +866,19 @@ export async function executeGroupRound(
   //   没有 summary 参数（用户在部门群直接派活）就什么都不做 —— 规格 §0 硬规矩 5。
   if (summary?.batchId) {
     try {
-      const lead = leadId ? runner.store.getBot(leadId) : null;
+      // ★ 兜底：`closing.needed === false` 是**很常见的正常成功**
+      //   （单人部门、负责人直接答完没人再被 @）—— 这时 closingResult 是 null，
+      //   不能直接记成 failed。三档回落写在纯函数里，单测覆盖。
+      const leadResult = leadId ? roundSuccesses.find((r) => r.botId === leadId)?.res ?? null : null;
+      const lastResult = roundSuccesses.length ? roundSuccesses[roundSuccesses.length - 1].res : null;
+      const delivery = pickDepartmentDelivery({ closingResult, leadResult, lastResult });
       const target = {
         key: summary.targetKey || `group:${roomId}:${openerMessageId || ''}`,
         departmentId: roomId,
         departmentName: room.name,
         kind: 'group',
         refId: openerMessageId || '',
-        status: closingResult?.ok ? 'done' : 'failed',
-        leadSummary: String(closingResult?.text ?? ''),
-        artifacts: [],
-        sourceMsgId: closingResult?.messageId ?? null,
-        error: closingResult?.ok ? '' : String(closingResult?.error || '收尾没跑成'),
+        ...delivery,
       };
       const batch = runner.store.chiefSummary(summary.batchId);
       const main = runner.store.mainBot();

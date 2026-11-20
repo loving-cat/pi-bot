@@ -8,6 +8,7 @@
  *   4. 流式事件订阅（delta / steps / compaction_end）、空回复三层恢复、产物收集与统计落盘。
  */
 import { log, newId } from '../util.js';
+import { isMainChatBusy } from './chief-summary-runner.js';
 import { readBrandEnv } from '../brand.js';
 import { readForModel, saveFromPath } from '../attachments.js';
 import { RunUsage } from '../run-stats.js';
@@ -293,6 +294,10 @@ async function runWithLease(
     }, {});
   }
   entry.liveMsgId = botMsg.id;
+  // ★ 本轮聚合键**在轮次开始时钉死**，换条（P0-2 插话）也不改：
+  //   派活时用的是 msg:<首条气泡>，若封口时用 entry.liveMsgId（可能已被换成第二条），
+  //   两边 key 对不上 → 批次永远卡在 dispatchOpen=true。
+  entry.originTurnKey = `msg:${botMsg.id}`;
   entry.goalText = String(prompt ?? '').slice(0, 600);
   beat();
   runner.bus.emit('event', { t: 'typing', roomId, botId: bot.id, active: true, lane: 'work', msgId: botMsg.id });
@@ -898,9 +903,12 @@ async function runWithLease(
     //   部门回得比派活快是常态，不封口就会出现"汇总里漏掉后面那个部门"。
     if (bot?.role === 'main' && !isSummaryTurn) {
       try {
-        runner.store.sealChiefSummariesForTurn(`msg:${entry.liveMsgId ?? ''}`, {
-          mainBusy: false,
-        });
+        const turnKey = entry.originTurnKey || '';
+        if (turnKey) {
+          runner.store.sealChiefSummariesForTurn(turnKey, {
+            mainBusy: isMainChatBusy(runner, roomId, bot.id),
+          });
+        }
       } catch (err) {
         log('封口主控汇总失败：', err?.message || err);
       }

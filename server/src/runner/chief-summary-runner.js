@@ -79,6 +79,7 @@ export function isMainChatBusy(runner, roomId, mainBotId) {
  */
 export function chiefTurnKey(runner, roomId, botId) {
   const entry = runner?.sessions?.get?.(`${roomId}:${botId}`);
+  if (entry?.originTurnKey) return entry.originTurnKey; // 轮次开始时钉死，换条也不变
   if (entry?.liveMsgId) return `msg:${entry.liveMsgId}`;
   if (entry?.rootTaskId) return `task:${entry.rootTaskId}`;
   return '';

@@ -170,6 +170,48 @@ export function createTaskRuntime({
         blocked: '受阻',
         paused_budget: '额度用尽已暂停',
       }[run.state] ?? run.state;
+      // ★ 主控总汇总收口：部门任务 + 来源是主控私聊 → 进汇总账本，
+      //   不再额外刷一条 400 字 `authorType: 'system'` 终态卡（规格 §3.1 第 4 行）。
+      const deptId = run.owner?.departmentId;
+      const main = store.mainBot();
+      const mainDmId = main ? store.ensureDm(main.id).id : '';
+      if (deptId && mainDmId && roomId === mainDmId) {
+        const rootId = run.rootTaskId ?? run.id;
+        const turnKey = `task:${rootId}`;
+        const deptRoom = store.getRoom(deptId);
+        store.ensureChiefSummaryBatch({
+          turnKey,
+          originRoomId: roomId,
+          taskTitle: String(run.goal?.requirement ?? '任务'),
+          target: {
+            key: `taskRun:${run.id}`,
+            departmentId: deptId,
+            departmentName: deptRoom?.name ?? deptId,
+            kind: 'taskRun',
+            refId: run.id,
+            status: run.state === 'completed' ? 'done' : 'failed',
+            leadSummary: String(run.delivery?.summary ?? ''),
+            artifacts: Array.isArray(run.delivery?.artifacts) ? run.delivery.artifacts : [],
+            sourceMsgId: run.delivery?.messageId ?? null,
+            error: String(run.flags?.blockedReason ?? (run.state === 'paused_budget' ? '额度用尽' : '')),
+          },
+        });
+        // 同一根任务还有在跑的子任务就先不封口 —— 否则先完成的那个会把批次催熟
+        const scan = typeof store.taskRuns?.listAll === 'function' ? store.taskRuns.listAll() : null;
+        const allRuns = Array.isArray(scan) ? scan : (scan?.taskRuns ?? []);
+        const activeStates = new Set(['queued', 'running', 'waiting_approval', 'paused_budget', 'blocked']);
+        const stillRunning = allRuns.some(
+          (r) => r && r.id !== run.id && (r.rootTaskId ?? r.id) === rootId && activeStates.has(r.state),
+        );
+        if (!stillRunning) {
+          store.sealChiefSummariesForTurn(turnKey, {
+            mainBusy: main ? isMainChatBusy(runner, roomId, main.id) : false,
+          });
+        }
+        void runner.drainChiefSummaries?.().catch?.(() => {});
+        return; // 已进汇总账本 → 抑制重复的 system 卡
+      }
+
       const requirement = String(run.goal?.requirement ?? run.id).slice(0, 60);
       const lines = ['任务「' + requirement + '」' + label + '。'];
       const delivery = String(run.delivery?.summary ?? '').trim();

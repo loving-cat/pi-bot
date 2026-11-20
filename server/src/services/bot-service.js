@@ -43,7 +43,10 @@ export function createBotService({
       // 判忙失败就当不忙（别把删除永远锁死）
     }
     try {
-      const runs = typeof store.taskRuns?.listAll === 'function' ? store.taskRuns.listAll() : [];
+      // ⚠️ `listAll()` 返回的是 `{ complete, taskRuns, problems }`，不是数组 ——
+      //    直接 `.find()` 会次次抛 TypeError 被 catch 吞掉，等于这条保护根本没生效。
+      const scan = typeof store.taskRuns?.listAll === 'function' ? store.taskRuns.listAll() : null;
+      const runs = Array.isArray(scan) ? scan : (scan?.taskRuns ?? []);
       const active = new Set(['queued', 'running', 'waiting_approval', 'paused_budget', 'blocked']);
       const mine = runs.find(
         (r) =>
@@ -56,13 +59,17 @@ export function createBotService({
       // 读不到任务库就不拦
     }
     try {
-      const batches = store.pendingChiefSummaries?.() ?? [];
+      // ⚠️ 必须读**全部非终态**批次：正常在跑的部门目标躺在 `collecting` 里，
+      //    而 `pendingChiefSummaries()` 已经把 collecting 排除了（那是给界面用的）。
+      const batches = (store.chiefSummaries?.() ?? []).filter(
+        (b) => b.state !== 'sent' && b.state !== 'ignored',
+      );
       for (const batch of batches) {
         for (const t of batch.targets ?? []) {
           if (t.status !== 'running') continue;
           const room = store.getRoom(t.departmentId);
-          if (room?.leadBotId === botId) {
-            return '该成员负责的部门还在为主控汇总执行任务，请等交付完成后再操作';
+          if (room?.leadBotId === botId || (Array.isArray(room?.botIds) && room.botIds.includes(botId))) {
+            return '该成员所在部门还在为主控汇总执行任务，请等交付完成后再操作';
           }
         }
       }
@@ -280,6 +287,15 @@ export function createBotService({
     },
 
     update(id, patch = {}) {
+      // 把一个还在干活的成员移出部门 → 会留下孤儿任务 / 让汇总永远等不到这个部门
+      const before = store.getRoom(id);
+      if (before && Array.isArray(patch?.botIds) && Array.isArray(before.botIds)) {
+        const removed = before.botIds.filter((b) => !patch.botIds.includes(b));
+        for (const botId of removed) {
+          const busy = runningReason(botId);
+          if (busy) return { ok: false, status: 409, code: 'BOT_BUSY', error: busy };
+        }
+      }
       const room = store.updateRoom(id, patch);
       if (!room) return { ok: false, status: 404, code: 'ROOM_NOT_FOUND', error: '会话不存在' };
       return { ok: true, room: store.roomSummary(room), rawRoom: room };

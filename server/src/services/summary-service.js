@@ -6,6 +6,7 @@
  * 「校验动作 → 改状态 → 需要时触发一次发送」的粘合。
  */
 import { SUMMARY_ACTIONS } from '../chief-summary.js';
+import { isMainChatBusy } from '../runner/chief-summary-runner.js';
 
 export function createSummaryService({ store, runner = null } = {}) {
   return {
@@ -35,7 +36,7 @@ export function createSummaryService({ store, runner = null } = {}) {
       const busy =
         mainBusy !== null && mainBusy !== undefined
           ? mainBusy === true
-          : Boolean(main && runner?.isBusy?.(batch.originRoomId, main.id) === true);
+          : Boolean(main && isMainChatBusy(runner, batch.originRoomId, main.id));
 
       const r = store.resolveChiefSummary(id, action, { mainBusy: busy });
       if (r.error) return { ok: false, status: 404, code: 'SUMMARY_NOT_FOUND', error: r.error };

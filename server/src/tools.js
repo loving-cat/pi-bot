@@ -2136,31 +2136,49 @@ export function buildChiefTools({
         // ★ 主控总汇总登记：主控在自己私聊里派活才建批次
         //   （用户在部门群直接派活不建 —— 规格 §0 硬规矩 5）。
         let summary = null;
+        let summaryTarget = null;
         try {
           const chief = store.mainBot();
           const dmId = chief ? store.ensureDm(chief.id).id : '';
           if (chief && dmId && roomId === dmId && botId === chief.id) {
             const turnKey = runner.currentTurnKey?.(roomId, botId) || `room:${roomId}:${groupId}`;
+            // 目标键必须**每次派发唯一**：同轮给同一个部门下两单时，用 `group:<id>` 会互相覆盖
+            const targetKey = `group:${groupId}:${newId('dsp_')}`;
+            summaryTarget = {
+              key: targetKey,
+              departmentId: groupId,
+              departmentName: room.name,
+              kind: 'group',
+              status: 'running',
+            };
             const reg = store.ensureChiefSummaryBatch({
               turnKey,
               originRoomId: roomId,
               taskTitle: task,
-              target: {
-                key: `group:${groupId}`,
-                departmentId: groupId,
-                departmentName: room.name,
-                kind: 'group',
-                status: 'running',
-              },
+              target: summaryTarget,
             });
-            if (reg?.batch) summary = { batchId: reg.batch.id, targetKey: `group:${groupId}` };
+            if (reg?.batch) summary = { batchId: reg.batch.id, targetKey };
           }
         } catch (err) {
           log('登记主控汇总失败（不影响派活）：', err?.message || err);
         }
 
         const res = await runner.dispatchToGroup({ roomId: groupId, text: task, summary });
-        if (!res.ok) return fail(res.error ?? '下达失败');
+        if (!res.ok) {
+          // 派发都失败了：账本里那条 running 目标必须立刻收掉，否则批次永远等不到它
+          if (summary?.batchId && summaryTarget) {
+            try {
+              store.noteChiefSummaryTarget(
+                summary.batchId,
+                { ...summaryTarget, status: 'failed', error: String(res.error ?? '下达失败') },
+                { mainBusy: false },
+              );
+            } catch (err) {
+              log('回收失败的汇总结算项失败：', err?.message || err);
+            }
+          }
+          return fail(res.error ?? '下达失败');
+        }
         return ok(
           `已向「${room.name}」下达任务，部门老大 ${lead?.emoji ?? ''}${lead?.name ?? '?'} 正在接单拆活。` +
             '（它和成员的产出会直接出现在这个部门里，用户看得到）',
