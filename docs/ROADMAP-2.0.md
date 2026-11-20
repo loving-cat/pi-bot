@@ -112,9 +112,9 @@ Phase 3 ──► 依赖 Phase 1/2 全部合并（否则删完兼容层还要再
 | 项 | 内容 | 验收（可测得红） |
 |---|---|---|
 | **T1.0** | ✅ **已落地**：`scripts/check-legacy.mjs` + 基线 `scripts/legacy-allowlist.json`——分两区：`permanent`（**永久保留**：mDNS `pibot.discover`/`pibot.host`、TLS `pi-bot.local`、Android `com.pibot.pi_bot`、macOS `io.pibot.piBot`、Dart `package:pi_bot/`）与 `entries`（**待清债**，只许变小）。当前：待清债 223 文件 / 1141 处，永久保留 7 个模式 / 386 处不计入。自测 `scripts/tests/check-legacy-test.mjs`（11/11）；已接入 CI | 故意加一行 `PI_BOT_FOO` 读取 → 必红；`--strict` 只要求 `entries` 清零（permanent 不卡收门） |
-| **T1.1** | ✅ **代码已落地**（待 1.7.1 发版）：`server/src/brand.js` 新增弃用通道——进程内按 `kind:from` **去重**（热路径不刷屏）、`onBrandDeprecation` 可订阅、`resetBrandDeprecations` 可清零 | `server/tests/brand-deprecation.mjs` 10/10：50 次热路径调用只记 1 条；新名优先不记；不同 suffix 各一条 |
+| **T1.1** | ✅ **已发版**（`v1.7.1` 2026-11-20）：`server/src/brand.js` 新增弃用通道——进程内按 `kind:from` **去重**（热路径不刷屏）、`onBrandDeprecation` 可订阅、`resetBrandDeprecations` 可清零 | `server/tests/brand-deprecation.mjs` 10/10：50 次热路径调用只记 1 条；新名优先不记；不同 suffix 各一条 |
 | **T1.2** | 🟡 C2 告警已落地（`resolveHomeDir` 命中旧目录时提醒一次，含“跑 orbis migrate”指引）；2.0 删回退 + `orbis migrate` 命令待 Phase 3（`migration-report.json` 待新增） | `brand-deprecation.mjs` BD-8/BD-9/BD-10：旧目录沿用且提醒一次；新旧都在时用新目录不提醒；迁移后旧目录仍在 |
-| **T1.3a** | ✅ **代码已落地**（待 1.7.1 发版）：`app/lib/api.dart` 全切 `x-orbis-client` / `-nonce` / `-channel`（常量收口 `Api.nonceHeader` / `Api.channelHeader`）；1.7.0 服务端本就双读 | `app/test/api_client_header_test.dart` 锁死新头名与全部写路径；`local_nonce_test.dart` 改看新头 |
+| **T1.3a** | ✅ **已发版**（`v1.7.1` 2026-11-20）：`app/lib/api.dart` 全切 `x-orbis-client` / `-nonce` / `-channel`（常量收口 `Api.nonceHeader` / `Api.channelHeader`）；1.7.0 服务端本就双读 | `app/test/api_client_header_test.dart` 锁死新头名与全部写路径；`local_nonce_test.dart` 改看新头 |
 | **T1.3b** | 🟡 **告警已落地**：`server/src/http.js` 新增 `DEPRECATED_HEADER` —— 只用旧头时回 `x-orbis-deprecated: <旧头名>`（两个都带则不打标）；2.0 删旧头待 Phase 3 | `local-csrf.mjs` 21/21：新头直用、旧头可用但贴弃用头、两个都带不打标；缺头 403 报错指向正式名 |
 | **T1.4** | C4：删 `createPiBotRuntime` / `PiBotClient` / `createPiBotClient` / `bin.pi-bot-server` | 契约快照测试必须显式删这几行才变绿；`npm exec orbis-server` 仍可用 |
 | **T1.5** | C5：`pi-bot.config.json` 读旧写新；`PI_BOT_SECRET_KEY` 改 `ORBIS_SECRET_KEY`（同值迁移） | 老配置文件存在时能读出同一份模型配置；新写入只产生新名 |
@@ -271,7 +271,7 @@ v1 草案把它改成「蒸馏即自动注入 + 事后点『记错了』」，�
 
 | 版本 | 内容 | 门禁 |
 |---|---|---|
-| **1.7.1** | ① C1/C2 弃用告警 ② **`app/lib/api.dart` 切 `x-orbis-*`**（解开 C3 ↔ C6 矛盾） | 现有 5 守卫全绿；1.7.1 App ↔ 1.7.0 服务端配对通过 |
+| ✅ **1.7.1**（已发布 2026-11-20） | ① C1/C2 弃用告警 + 旧头回 `x-orbis-deprecated` ② **`app/lib/api.dart` 切 `x-orbis-*`**（解开 C3 ↔ C6 矛盾） | 现有 5 守卫全绿；1.7.1 App ↔ 1.7.0 服务端配对通过 |
 | **2.0.0-alpha.1** | Phase 0 完成 + lessons v2 字段与边骨架（**蒸馏仍产 candidate**） | 现有 lessons 测试全绿 + 契约快照上线 |
 | **2.0.0-alpha.2** | SIM-Lite 全链路（族归因 + 边 + 推荐排序 + `runtime.lessons`），**评审门禁仍是 candidate→active，默认关闭自动晋升** | 五条红线（I0–I5）+ 新增 e2e |
 | **2.0.0-beta.1** | Phase 2 基座化收口（types / 注入点 / 发布 / examples / 稳定性文档） | `npm pack` 干净安装可跑 |
