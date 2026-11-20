@@ -86,7 +86,7 @@
 
 | 阶段 | 时间盒 | 主线 | 出口条件（不满足不进入下一阶段） |
 |---|---|---|---|
-| **Phase 0 · 地基** | 1 周 | 三线前置（只加守卫，不加特性） | ① 契约快照测试上线 ② 弃用告警策略定稿 ③ 本文进 `LEDGER_FILES` 且守卫全绿 ④ SIM-Lite 字段增量与边格式定稿 |
+| ✅ **Phase 0 · 地基** | 1 周（已完成） | 三线前置（只加守卫，不加特性） | ① 契约快照测试上线 ✅ ② 弃用告警策略定稿并随 `v1.7.1` 发版 ✅ ③ 本文进 `LEDGER_FILES` 且守卫全绿 ✅ ④ SIM-Lite 字段增量与边格式定稿 ✅（`LESSON_SCORING` / `MODEL_FAMILIES` / `LESSON_EDGE_TYPES` + 24 条契约测试） |
 | **Phase 1 · SIM-Lite（lessons v2）** | 3–4 周 | **T3 自进化（核心增量）** | 现有 lessons 测试全绿的前提下新增：跨族归因、关系边、推荐启用；**人工审批门禁不回退**；`lessonReflect=false` 全链路 no-op |
 | **Phase 2 · 基座化** | 2–3 周（与 Phase 1 后半并行） | **T2 契约冻结** | `npm pack` 可安装且能 import 跑通 examples；`.d.ts` 覆盖 Phase 1 全部公开面；稳定性三档文档落地 |
 | **Phase 3 · 清债关门** | 1–2 周 | **T1 破坏性收尾** | C1–C5、C7、C8 全删且 `check-legacy` 白名单清零；C6 双播有测试；迁移命令跑通；release notes 含配对问答表 |
@@ -183,6 +183,11 @@ Phase 3 ──► 依赖 Phase 1/2 全部合并（否则删完兼容层还要再
 
 兼容性：`normalizeLesson` 对缺失字段给默认值 → **老 `state.lessons` 不需要迁移脚本**，读出来即 v2 形状。
 
+✅ **Phase 0 已定稿**（`server/src/lessons.js`）：`MODEL_FAMILIES`（封闭 7 族 + `other`）、`UNKNOWN_MODEL_FAMILY`、
+`resolveModelFamily()`（provider/model 名 → 族）、`normalizeFamilyStats()`（键数封顶 `LESSON_LIMITS.byFamilyKeys`）、
+`lessonConfidence()`（0~0.95 纯派生）、`lessonContentHash()`（sha256 前 32 位，空白归一化）。
+`confidence` 不落库 —— 它是可重算的派生量，存了就会和数据打架。
+
 ### 5.3 关系边（和 lessons 放在同一份 state，不新建文件）
 
 `store.state.lessonEdges = [{ from, to, type, at, by }]`，只允许 4 种：
@@ -198,6 +203,10 @@ Phase 3 ──► 依赖 Phase 1/2 全部合并（否则删完兼容层还要再
 - 只做**一阶**扩散；2 跳留到 2.1（Lite 就是 Lite）
 - 删经验时级联删边；删边走 `manage_knowledge` 同一条二次确认路径
 
+✅ **Phase 0 已定稿**（`server/src/lessons.js`）：`LESSON_EDGE_TYPES`、`lessonEdgeRejectReason()`、
+`normalizeLessonEdge()` / `normalizeLessonEdgeList()`（去重 / 丢悬空 / 上限 `LESSON_LIMITS.edges`）、
+`lessonEdgeIndex()`（一跳邻接表）。
+
 ### 5.4 跨模型去偏（只影响**排序与推荐**，不绕过审批）
 
 | 规则 | 实现（纯函数） |
@@ -212,13 +221,18 @@ Phase 3 ──► 依赖 Phase 1/2 全部合并（否则删完兼容层还要再
 
 ### 5.5 打分（在 `selectLessonsFor` 上做加法，门槛不变）
 
+```js
+// server/src/lessons.js 的 LESSON_SCORING（唯一口径，别处不许写魔法数字）
+score = Σ cue 命中(+3/词) + Σ lesson 命中(+1/词) + 同房间(+1)      // 1.x 原有
+      + 同族验证过(+2) − 异族未验证(−1)                            // v2 跨模型
+      + generalizes 一跳(+1)                                      // v2 关系边
+// contradicts 边 → lessonScore 直接返回 null（硬排除，不是减分）
+// 门槛 minScore 仍为 3；预算仍为 3 条 / 600 字
 ```
-score = Σ cue 命中(+3/词) + Σ lesson 命中(+1/词) + 同房间(+1)      ← 现有
-      + 同族(+2) − 异族未验证(−1)                                ← v2 跨模型
-      + generalizes 一跳(+1)                                     ← v2 关系边
-      若存在 contradicts 边 → 直接排除
-门槛 minScore 仍为 3；预算仍为 3 条 / 600 字（LESSON_LIMITS 不新增第二套数字）
-```
+
+✅ **Phase 0 已定稿**：`lessonScore()` 是唯一打分入口，`selectLessonsFor()` 改成调它；
+**不传 `modelFamily` / `edges` 时行为与 1.x 逐字一致**（原有 17 条测试全绿即为证）。
+老经验（`modelFamily: "unknown"`）不享受加成、也不背扣分 —— 否则升级当天老经验会被新规则一起埋掉。
 
 ### 5.6 审批门禁：**不回退**（这条是 v2 的关键修正）
 
@@ -262,7 +276,7 @@ v1 草案把它改成「蒸馏即自动注入 + 事后点『记错了』」，�
 |---|---|
 | `server/tests/lessons.mjs`（**扩**） | 族加成方向（同族 +2 / 异族未验证 −1）、`contradicts` 直接排除、`generalizes` 一跳、门槛仍是 3、预算仍是 3 条 / 600 字、老库缺字段能读 |
 | `server/tests/lesson-reflect.mjs`（**扩**） | 蒸馏产出带 `modelFamily`；evidence 对不上仍丢；**产出仍是 candidate**；边候选不自动生效 |
-| `server/tests/lessons-edges.mjs`（待新增） | 4 种边的作用、级联删除、`supersedes` 后旧条不召回、用户否决写 `contradicts` |
+| `server/tests/lessons-sim-lite.mjs` ✅（24 条已落地） | 族解析 / `byFamily` 规整 / 置信度单调性 / 内容哈希归一化 / 4 种边的校验与索引 / 同族加成与未验证扣分 / `contradicts` 硬排除 / 老经验不背扣分 / 淘汰顺序 |
 | `app/test/lessons_section_test.dart`（**扩**） | 族标记、未验证提示、推荐启用排序、**三档操作仍在**、空态、6 秒空闲 0 Ticker |
 
 ---
