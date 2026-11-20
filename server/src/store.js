@@ -57,8 +57,12 @@ import {
   normalizeSummaryBatch,
   normalizeSummaryBatchList,
   resolveSummary as resolveSummaryState,
+  sealDispatch as sealSummaryDispatch,
+  markSummarySendFailed,
   markSummarySent,
   isTerminalState as isTerminalSummary,
+  isPendingState as isPendingSummary,
+  isQueuedState as isQueuedSummary,
   selectSummaryRetention,
 } from './chief-summary.js';
 import { mcpNameError } from './mcp.js';
@@ -1433,9 +1437,16 @@ export class Store {
     return normalizeSummaryBatchList(this.state.chiefSummaries ?? [], Date.now());
   }
 
-  /** 未终结的批次（界面要展示的：ready_blocked / deferred / queued_send / sending） */
+  /**
+   * 界面要展示的批次：`ready_blocked` / `deferred`（要用户决定）+ `queued_send` / `sending`（只读进度）。
+   *
+   * ⚠️ **不能**用 `!isTerminal()` 过滤 —— 那会把还在干活、压根不该露面的
+   * `collecting` 一起推进 `GET /api/summaries` 与 `summaries.updated` 广播。
+   */
   pendingChiefSummaries() {
-    return this.chiefSummaries().filter((b) => !isTerminalSummary(b.state));
+    return this.chiefSummaries().filter(
+      (b) => isPendingSummary(b.state) || isQueuedSummary(b.state),
+    );
   }
 
   chiefSummary(id) {
@@ -1472,6 +1483,76 @@ export class Store {
     const current = this.chiefSummary(id);
     if (!current) return { error: '汇总不存在' };
     const next = markSummarySent(current, { messageId, now: Date.now() });
+    const list = this.chiefSummaries().map((b) => (b.id === next.id ? next : b));
+    this.state.chiefSummaries = selectSummaryRetention(list, { now: Date.now() });
+    this.scheduleSave();
+    this.emitChiefSummaries();
+    return { batch: next };
+  }
+
+  /**
+   * 发起轮封口：把这一轮派活登记出来的批次全部 `dispatchOpen = false` 并重算就绪。
+   *
+   * 必须在 `mainBot` 的 `finally` 里调 —— 部门回得比派活快是常态，
+   * 不封口就会出现"汇总里漏掉后面那个部门"。
+   */
+  sealChiefSummariesForTurn(turnKey, { mainBusy = false } = {}) {
+    const key = String(turnKey ?? '');
+    if (!key) return [];
+    const list = this.chiefSummaries();
+    let changed = false;
+    const next = list.map((b) => {
+      if (b.originTurnKey !== key || b.dispatchOpen === false) return b;
+      changed = true;
+      return sealSummaryDispatch(b, { mainBusy, now: Date.now() });
+    });
+    if (!changed) return [];
+    this.state.chiefSummaries = selectSummaryRetention(next, { now: Date.now() });
+    this.scheduleSave();
+    this.emitChiefSummaries();
+    return next.filter((b) => b.originTurnKey === key);
+  }
+
+  /** 排队等发送的批次（按就绪时间，先就绪先发） */
+  queuedChiefSummaries() {
+    return this.chiefSummaries()
+      .filter((b) => b.state === 'queued_send')
+      .sort((a, b) => (Number(a.readyAt) || 0) - (Number(b.readyAt) || 0));
+  }
+
+  /** 取下一个要发的批次：排队中的优先，其次是刚就绪且主控空闲的 */
+  nextChiefSummaryToSend({ mainBusy = false } = {}) {
+    const queued = this.queuedChiefSummaries();
+    if (queued.length) return queued[0];
+    if (mainBusy) return null;
+    return this.chiefSummaries().find((b) => b.state === 'sending') ?? null;
+  }
+
+  /** 汇总轮失败：从 sending 退回 ready_blocked，让用户还能重试或忽略（不卡死幽灵态） */
+  markChiefSummarySendFailed(id, { reason = '' } = {}) {
+    const current = this.chiefSummary(id);
+    if (!current) return { error: '汇总不存在' };
+    const next = markSummarySendFailed(current, { reason, now: Date.now() });
+    if (next === current) return { batch: current, unchanged: true };
+    const list = this.chiefSummaries().map((b) => (b.id === next.id ? next : b));
+    this.state.chiefSummaries = selectSummaryRetention(list, { now: Date.now() });
+    this.scheduleSave();
+    this.emitChiefSummaries();
+    return { batch: next };
+  }
+
+  /**
+   * 真正开始发送：`queued_send → sending`。
+   *
+   * 排队中的批次要发之前必须走这一步 —— 否则 `summarize()` 会（正确地）拒绝
+   * 发一个还没进 sending 的批次，排空循环就会原地卡住。
+   */
+  beginChiefSummarySend(id) {
+    const current = this.chiefSummary(id);
+    if (!current) return { error: '汇总不存在' };
+    if (current.state === 'sending') return { batch: current, unchanged: true };
+    if (current.state !== 'queued_send') return { error: `当前状态不能发送：${current.state}` };
+    const next = { ...current, state: 'sending' };
     const list = this.chiefSummaries().map((b) => (b.id === next.id ? next : b));
     this.state.chiefSummaries = selectSummaryRetention(list, { now: Date.now() });
     this.scheduleSave();

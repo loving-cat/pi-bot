@@ -24,6 +24,7 @@ import {
   isPendingState,
   isTerminalState,
   markSummarySent,
+  markSummarySendFailed,
   normalizeSummaryBatch,
   normalizeSummaryBatchList,
   resolveSummary,
@@ -160,11 +161,62 @@ await test('send：主控空闲 → sending；主控仍忙 → queued_send（不
 });
 
 await test('defer → deferred；ignore → ignored（零模型调用）', () => {
-  const ready = sealDispatch(upsertSummaryTarget(batch(), done('group:room_dev:disp_1')), { now: 2000 });
-  assert.equal(resolveSummary(ready, 'defer', { now: 3000 }).state, 'deferred');
-  const ignored = resolveSummary(ready, 'ignore', { now: 3000 });
+  // defer 只对「撞忙等用户决定」的批次有意义（sending 时再点 defer 会被忽略，见 C2）
+  const blocked = sealDispatch(upsertSummaryTarget(batch(), done('group:room_dev:disp_1')), {
+    mainBusy: true,
+    now: 2000,
+  });
+  assert.equal(blocked.state, 'ready_blocked');
+  assert.equal(resolveSummary(blocked, 'defer', { now: 3000 }).state, 'deferred');
+  const ignored = resolveSummary(blocked, 'ignore', { now: 3000 });
   assert.equal(ignored.state, 'ignored');
   assert.equal(ignored.resolvedAt, 3000);
+});
+
+await test('★【C2】已在发送 / 已排队时再点 send 必须原样返回（否则会发两条）', () => {
+  const ready = sealDispatch(upsertSummaryTarget(batch(), done('group:room_dev:disp_1')), {
+    mainBusy: false,
+    now: 2000,
+  });
+  assert.equal(ready.state, 'sending');
+  // 双端同点 / 用户双击：主控忙不忙都不许改状态，更不许返回新对象
+  assert.equal(resolveSummary(ready, 'send', { mainBusy: false, now: 3000 }), ready);
+  assert.equal(resolveSummary(ready, 'send', { mainBusy: true, now: 3000 }), ready, '不许从 sending 倒退回 queued_send');
+  // 正在发送也不许被拉回「待看」
+  assert.equal(resolveSummary(ready, 'defer', { now: 3000 }), ready);
+
+  const queued = { ...ready, state: 'queued_send' };
+  assert.equal(resolveSummary(queued, 'send', { mainBusy: true, now: 3000 }), queued, '不重复入队');
+  assert.equal(resolveSummary(queued, 'defer', { now: 3000 }).state, 'deferred', '已排队的还可以改主意');
+});
+
+await test('★【C1】一个部门失败、另一个还在跑 → 立刻就地绪（不傻等）', () => {
+  let b = batch({
+    targets: [
+      { departmentId: 'room_dev', departmentName: '研发组', refId: 'd1' },
+      { departmentId: 'room_qa', departmentName: '测试组', refId: 'd2' },
+    ],
+  });
+  b = sealDispatch(b, { now: 2000 });
+  b = upsertSummaryTarget(b, failed('group:room_qa:d2'));
+  assert.equal(b.targets[1].status, 'failed');
+  assert.equal(b.targets[0].status, 'running');
+  assert.equal(isBatchReady(b), true, 'A 失败不该被 B 的长跑拖住');
+  assert.equal(advanceSummary(b, { mainBusy: false, now: 3000 }).state, 'sending');
+});
+
+await test('★【C2b】汇总轮失败可从 sending 退回 ready_blocked（不卡死幽灵态）', () => {
+  const ready = sealDispatch(upsertSummaryTarget(batch(), done('group:room_dev:disp_1')), {
+    mainBusy: false,
+    now: 2000,
+  });
+  assert.equal(ready.state, 'sending');
+  const failedSend = markSummarySendFailed(ready, { reason: '429', now: 3000 });
+  assert.equal(failedSend.state, 'ready_blocked', '退回后用户还能再点「是」或「忽略」');
+  assert.equal(failedSend.lastError, '429');
+  // 已终态的不许被"复活"
+  const sent = markSummarySent(ready, { messageId: 'm1', now: 4000 });
+  assert.equal(markSummarySendFailed(sent, { reason: 'x', now: 5000 }), sent);
 });
 
 await test('★ 三选一幂等：已终态再点不变（用户点两次不会发两条）', () => {
@@ -317,16 +369,20 @@ await test('store：批次落盘，重启（新实例同目录）读回不丢', 
   assert.equal(found.taskTitle, '重构行情抓取并发调度');
 });
 
-await test('store：summaries.updated 只推未终结的批次', async () => {
+await test('★【C3】summaries.updated 只推"要用户处理 / 排队中"的，不推 collecting', async () => {
   const { store, bus } = makeStore('emit');
   const events = [];
   bus.on('event', (ev) => {
     if (ev?.t === 'summaries.updated') events.push(ev.items);
   });
-  store.putChiefSummary(batch({ id: 'sum_a' }));
-  store.resolveChiefSummary('sum_a', 'ignore');
-  assert.ok(events.length >= 2);
-  assert.equal(events[0].length, 1, '刚建时是未终结的');
+  store.putChiefSummary(batch({ id: 'sum_collecting' }));
+  assert.equal(events[0].length, 0, '还在派活的批次不该出现在界面上');
+
+  // 直接塞一条 ready_blocked，确认它会被推出去
+  store.putChiefSummary({ ...batch({ id: 'sum_blocked' }), state: 'ready_blocked', dispatchOpen: false });
+  assert.equal(events[events.length - 1].length, 1);
+
+  store.resolveChiefSummary('sum_blocked', 'ignore');
   assert.equal(events[events.length - 1].length, 0, '忽略之后不该再推它');
 });
 

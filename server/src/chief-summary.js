@@ -30,6 +30,29 @@ export const SUMMARY_STATES = Object.freeze([
   'ignored',
 ]);
 
+/**
+ * 汇总交卷轮里被硬拦的工具（规格 §3.3「硬防循环派活」）。
+ *
+ * 汇总轮的任务是**如实汇报**：缺什么说什么、问用户要不要返工。
+ * 如果允许它自己再 `dispatch_to_department` / 建部门 / 接新任务，就会无限套娃
+ * —— 汇总 → 再派活 → 再汇总 → 再派活。
+ */
+export const SUMMARY_TURN_BLOCKED_TOOLS = Object.freeze([
+  'dispatch_to_department',
+  'create_department',
+  'accept_task',
+]);
+
+/** 这句会在被拦时原样返回给模型 —— 要能指导它下一步该干什么，而不是只说"不行" */
+export const SUMMARY_TURN_BLOCK_MESSAGE =
+  '当前是**汇总交卷轮**：请直接面向用户汇报各部门的交付结果与缺口，' +
+  '缺项如实说明并询问用户是否需要返工。禁止在本轮自行建组、再派活或接新任务。';
+
+/** 这轮是不是汇总轮 + 这个工具要不要拦（纯函数，工具入口统一调它） */
+export function isToolBlockedInSummaryTurn(toolName, { summaryTurn = false } = {}) {
+  return summaryTurn === true && SUMMARY_TURN_BLOCKED_TOOLS.includes(String(toolName ?? ''));
+}
+
 /** 用户能做的三个动作 */
 export const SUMMARY_ACTIONS = Object.freeze(['send', 'defer', 'ignore']);
 
@@ -128,6 +151,9 @@ export function normalizeSummaryBatch(raw = {}, now = 0) {
     readyAt: Number.isFinite(raw.readyAt) ? raw.readyAt : 0,
     resolvedAt: Number.isFinite(raw.resolvedAt) ? raw.resolvedAt : 0,
     summaryMessageId: raw.summaryMessageId ? str(raw.summaryMessageId, CHIEF_SUMMARY_LIMITS.id) : null,
+    // 上一次发送失败的原因（只给人看，不参与状态机）；不保留的话退回 ready_blocked 后就查不到了
+    lastError: raw.lastError ? str(raw.lastError, 200) : '',
+    lastErrorAt: Number.isFinite(raw.lastErrorAt) ? raw.lastErrorAt : 0,
   };
 }
 
@@ -159,13 +185,17 @@ export function turnKeyFor({ liveMsgId = '', taskRunId = '' } = {}) {
  *   1. 发起轮必须封口（`dispatchOpen === false`）—— 否则部门 A 回得比派活快，
  *      会在还有部门没派出去时就"就绪"，汇总漏掉后面那个部门；
  *   2. 至少有一个目标；
- *   3. 所有目标都到终态（done / failed）。**失败也算终态** —— 一个部门失败不该让
- *      其余部门的成果无限期等下去。
+ *   3. **任意一个失败立刻就绪**，或者**全部完成**才就绪。
+ *
+ * ⚠️ 第 3 条不能写成"所有目标都到终态"：A 部门 10 秒就 `failed`、B 部门还要跑
+ * 10 分钟时，那条写法会让 A 的失败被 B 活生生拖满 10 分钟 —— 正是规格里
+ * 「失败 / 受阻不傻等」要禁止的。已经失败的部门没必要再等别人。
  */
 export function isBatchReady(batch) {
   if (!batch || batch.dispatchOpen !== false) return false;
   if (!Array.isArray(batch.targets) || !batch.targets.length) return false;
-  return batch.targets.every((t) => t.status === 'done' || t.status === 'failed');
+  if (batch.targets.some((t) => t.status === 'failed')) return true;
+  return batch.targets.every((t) => t.status === 'done');
 }
 
 /**
@@ -205,11 +235,18 @@ export function resolveSummary(batch, action, { mainBusy = false, now = 0 } = {}
     return { ...batch, state: 'ignored', resolvedAt: now };
   }
   if (action === 'defer') {
+    // 正在发不许拉回"待看"（那会让已经发出的汇总在界面上复活成待确认）；
+    // 但**已排队**的允许改主意 —— 用户反悔不该被锁死。
+    if (batch.state === 'sending') return batch;
     // 没到就绪就别让它进"待看"：否则用户点开只看到一堆还没跑完的部门
     if (!isBatchReady(batch)) return batch;
     return { ...batch, state: 'deferred' };
   }
   // send：主控空闲就立即发，忙就排队等这一轮结束（绝不打断当前对话）
+  // ★ 幂等：已在发送 / 已排队时**原样返回同一个对象**。
+  //   返回新对象会让 store 的 `next === current` 判假，Stage 2 接线后会**发第二条汇总**；
+  //   而 mainBusy=true 时再算一次还会把 sending 倒退回 queued_send。
+  if (batch.state === 'sending' || batch.state === 'queued_send') return batch;
   if (!isBatchReady(batch)) return batch;
   return { ...batch, readyAt: batch.readyAt || now, state: mainBusy ? 'queued_send' : 'sending' };
 }
@@ -222,6 +259,23 @@ export function markSummarySent(batch, { messageId = null, now = 0 } = {}) {
     state: 'sent',
     resolvedAt: now,
     summaryMessageId: messageId ? str(messageId, CHIEF_SUMMARY_LIMITS.id) : batch.summaryMessageId,
+  };
+}
+
+/**
+ * 汇总轮自己失败了（429 / 超时 / 异常）：从 `sending` 退回 `ready_blocked`。
+ *
+ * 不退的话批次会永久卡在 `sending` 这个"幽灵态" —— 用户既看不到浮窗（不是 ready_blocked），
+ * 也永远等不到发送结果。退回后用户还能再点「是」重试或「忽略」。
+ * 其它状态（尤其已 `sent` / `ignored`）一律不动。
+ */
+export function markSummarySendFailed(batch, { reason = '', now = 0 } = {}) {
+  if (!batch || batch.state !== 'sending') return batch;
+  return {
+    ...batch,
+    state: 'ready_blocked',
+    lastError: str(reason, 200),
+    lastErrorAt: now,
   };
 }
 
@@ -238,9 +292,10 @@ export function upsertSummaryTarget(batch, rawTarget, { now = 0 } = {}) {
       : [...batch.targets, target];
     return { ...batch, targets };
   }
+  const finishedAt = target.status === 'running' ? 0 : target.finishedAt || now;
   const exists = batch.targets.some((t) => t.key === target.key);
   const targets = exists
-    ? batch.targets.map((t) => (t.key === target.key ? { ...target, finishedAt: target.finishedAt || now } : t))
+    ? batch.targets.map((t) => (t.key === target.key ? { ...target, finishedAt } : t))
     : [...batch.targets, target];
   return { ...batch, targets };
 }
