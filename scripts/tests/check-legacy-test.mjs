@@ -93,7 +93,7 @@ await test('CL-5 新增文件（哪怕只有一处）未登记 → 红', async (
 await test('CL-6 --strict 有基线 → 红（2.0 收门未完成）', async () => {
   const r = run(['--strict']);
   assert.equal(r.status, 1, '白名单非空时 strict 必须红');
-  assert.match(r.stderr, /要求白名单为空/);
+  assert.match(r.stderr, /要求待清债项为空/);
 });
 
 await test('CL-7 --strict + 零残留 → 绿（2.0 收门通过）', async () => {
@@ -103,7 +103,7 @@ await test('CL-7 --strict + 零残留 → 绿（2.0 收门通过）', async () =
   run(['--write']);
   const r = run(['--strict']);
   assert.equal(r.status, 0, `清空后 strict 应绿：\n${r.stderr}`);
-  assert.match(r.stdout, /旧品牌残留已清零/);
+  assert.match(r.stdout, /待清债项已清零/);
 });
 
 await test('CL-8 二进制与构建目录不被误扫', async () => {
@@ -112,6 +112,47 @@ await test('CL-8 二进制与构建目录不被误扫', async () => {
   fs.writeFileSync(path.join(root, 'app/lib/logo.png'), 'pi-bot', 'utf8');
   const r = run(['--strict']);
   assert.equal(r.status, 0, `构建目录与二进制不该被扫：\n${r.stderr}`);
+});
+
+await test('CL-9 permanent 区（mDNS / 应用 ID / Dart 包名）不计入待清债', async () => {
+  mk('server/src/discovery_like.js', "export const PROBE_TYPE = 'pibot.discover';\nexport const ANNOUNCE_TYPE = 'pibot.host';\n");
+  mk('app/lib/imports_like.dart', "import 'package:pi_bot/models.dart';\n");
+  const r = run();
+  assert.equal(r.status, 0, `永久保留项不该让守卫变红：\n${r.stderr}`);
+  const allow = JSON.parse(fs.readFileSync(path.join(root, 'scripts', 'legacy-allowlist.json'), 'utf8'));
+  assert.equal(allow.entries.length, 0, 'permanent 命中不能进 entries');
+  assert.ok(allow.permanent.length >= 3, 'permanent 区要保留（至少 mDNS 两条 + Dart 包名）');
+});
+
+await test('CL-10 同一行里永久项 + 真债务：只算真债务', async () => {
+  mk(
+    'server/src/mixed.js',
+    "const host = 'pibot.host';\nconst old = process.env.PI_BOT_HOME;\n",
+  );
+  const r = run();
+  assert.equal(r.status, 1, '真债务必须红');
+  assert.match(r.stderr, /server\/src\/mixed\.js/);
+  const w = run(['--write']);
+  assert.equal(w.status, 0, w.stderr);
+  const allow = JSON.parse(fs.readFileSync(path.join(root, 'scripts', 'legacy-allowlist.json'), 'utf8'));
+  const entry = allow.entries.find((e) => e.path === 'server/src/mixed.js');
+  assert.deepEqual(entry, { path: 'server/src/mixed.js', count: 1 }, 'pibot.host 不该被算成第 2 处债务');
+});
+
+await test('CL-11 --write 保留手写的 permanent 区（不会被冲掉）', () => {
+  const file = path.join(root, 'scripts', 'legacy-allowlist.json');
+  const before = JSON.parse(fs.readFileSync(file, 'utf8'));
+  before.permanent.push({ pattern: 'custom-legacy-name', reason: '测试用自定永久项' });
+  fs.writeFileSync(file, `${JSON.stringify(before, null, 2)}\n`, 'utf8');
+  mk('server/src/custom.js', "export const x = 'custom-legacy-name';\n");
+  const r = run();
+  assert.equal(r.status, 0, `自定义永久项应生效：\n${r.stderr}`);
+  run(['--write']);
+  const after = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.ok(
+    after.permanent.some((p) => p.pattern === 'custom-legacy-name'),
+    '--write 不能把人工登记的永久项丢掉',
+  );
 });
 
 fs.rmSync(root, { recursive: true, force: true });

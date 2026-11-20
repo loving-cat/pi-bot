@@ -1,5 +1,35 @@
 {
-  "_comment": "旧品牌残留基线（scripts/check-legacy.mjs）。只许变小：新增文件或计数上涨都会让 CI 变红；2.0 收门时用 --strict 要求本文件 entries 为空。清理进度见 docs/ROADMAP-2.0.md §1.1 / §3。",
+  "_comment": "旧品牌残留基线（scripts/check-legacy.mjs）。entries = 待清债项，只许变小：新增文件或计数上涨都会让 CI 变红；permanent = 永远不删的身份常量（C6 / 应用 ID / Dart 包名），命中不计入债务。清理进度见 docs/ROADMAP-2.0.md §1.1 / §3。",
+  "permanent": [
+    {
+      "pattern": "pibot.discover",
+      "reason": "C6 mDNS 探测类型：1.x 客户端靠它发现 2.x 服务端，永久双播"
+    },
+    {
+      "pattern": "pibot.host",
+      "reason": "C6 mDNS 公告类型：同上，永久双播"
+    },
+    {
+      "pattern": "pi-bot.local",
+      "reason": "C6 TLS 自签证书名：1.x 客户端按它校验，2.x 保留"
+    },
+    {
+      "pattern": "com.pibot.pi_bot",
+      "reason": "Android applicationId：改了老用户装不上更新，只能卸载重装"
+    },
+    {
+      "pattern": "io.pibot.piBot",
+      "reason": "macOS bundle id：改了等于换新应用（权限/钥匙串/偏好全重来）"
+    },
+    {
+      "pattern": "package:pi_bot/",
+      "reason": "Dart 包名（pubspec name: pi_bot）：改名要动全仓 import，无用户可见收益"
+    },
+    {
+      "pattern": "name: pi_bot",
+      "reason": "Dart 包名声明（pubspec.yaml）"
+    }
+  ],
   "entries": [
     {
       "path": ".github/workflows/ci.yml",
@@ -7,7 +37,7 @@
     },
     {
       "path": "app/lib/api.dart",
-      "count": 4
+      "count": 1
     },
     {
       "path": "app/lib/app_log.dart",
@@ -31,7 +61,7 @@
     },
     {
       "path": "app/lib/discovery.dart",
-      "count": 11
+      "count": 7
     },
     {
       "path": "app/lib/frame_log.dart",
@@ -114,480 +144,64 @@
       "count": 1
     },
     {
-      "path": "app/test/activity_monitor_state_test.dart",
-      "count": 7
-    },
-    {
-      "path": "app/test/activity_monitor_test.dart",
-      "count": 6
-    },
-    {
       "path": "app/test/api_client_header_test.dart",
-      "count": 4
+      "count": 1
     },
     {
       "path": "app/test/app_state_test.dart",
-      "count": 10
-    },
-    {
-      "path": "app/test/approval_card_test.dart",
-      "count": 2
-    },
-    {
-      "path": "app/test/ask_card_test.dart",
-      "count": 4
-    },
-    {
-      "path": "app/test/attachment_routing_test.dart",
-      "count": 6
-    },
-    {
-      "path": "app/test/attachment_view_test.dart",
-      "count": 2
-    },
-    {
-      "path": "app/test/automation_sheet_test.dart",
-      "count": 2
-    },
-    {
-      "path": "app/test/avatar_character_test.dart",
-      "count": 3
-    },
-    {
-      "path": "app/test/avatar_life_test.dart",
-      "count": 2
-    },
-    {
-      "path": "app/test/avatar_lifecycle_test.dart",
-      "count": 4
-    },
-    {
-      "path": "app/test/avatar_palette_test.dart",
-      "count": 1
-    },
-    {
-      "path": "app/test/avatar_projection_test.dart",
-      "count": 3
-    },
-    {
-      "path": "app/test/avatar_solid_test.dart",
-      "count": 2
-    },
-    {
-      "path": "app/test/bot_delete_confirm_test.dart",
-      "count": 3
-    },
-    {
-      "path": "app/test/browser_pane_test.dart",
-      "count": 3
-    },
-    {
-      "path": "app/test/changed_files_test.dart",
-      "count": 2
-    },
-    {
-      "path": "app/test/chat_attachment_actions_test.dart",
-      "count": 5
-    },
-    {
-      "path": "app/test/chat_display_order_test.dart",
-      "count": 2
-    },
-    {
-      "path": "app/test/chat_input_action_test.dart",
-      "count": 6
-    },
-    {
-      "path": "app/test/chat_scroll_follow_test.dart",
-      "count": 5
-    },
-    {
-      "path": "app/test/clipboard_image_test.dart",
-      "count": 5
-    },
-    {
-      "path": "app/test/color_mode_test.dart",
-      "count": 1
-    },
-    {
-      "path": "app/test/compact_notice_hidden_test.dart",
-      "count": 6
-    },
-    {
-      "path": "app/test/composer_align_test.dart",
-      "count": 5
-    },
-    {
-      "path": "app/test/composer_layout_test.dart",
-      "count": 5
-    },
-    {
-      "path": "app/test/composer_overlay_test.dart",
-      "count": 6
-    },
-    {
-      "path": "app/test/context_test.dart",
-      "count": 2
-    },
-    {
-      "path": "app/test/decision_mode_test.dart",
-      "count": 1
-    },
-    {
-      "path": "app/test/discovery_test.dart",
-      "count": 3
-    },
-    {
-      "path": "app/test/draft_persistence_test.dart",
-      "count": 1
-    },
-    {
-      "path": "app/test/error_text_test.dart",
-      "count": 3
-    },
-    {
-      "path": "app/test/font_test.dart",
-      "count": 1
-    },
-    {
-      "path": "app/test/four_pane_layout_test.dart",
-      "count": 5
-    },
-    {
-      "path": "app/test/full_duplex_ui_test.dart",
       "count": 8
     },
     {
-      "path": "app/test/grant_view_test.dart",
-      "count": 1
-    },
-    {
-      "path": "app/test/highlight_test.dart",
-      "count": 1
-    },
-    {
-      "path": "app/test/jarvis_sync_test.dart",
-      "count": 2
-    },
-    {
-      "path": "app/test/language_card_test.dart",
+      "path": "app/test/clipboard_image_test.dart",
       "count": 3
-    },
-    {
-      "path": "app/test/layout_persistence_test.dart",
-      "count": 5
-    },
-    {
-      "path": "app/test/layout_real_dpi_test.dart",
-      "count": 5
-    },
-    {
-      "path": "app/test/lessons_section_test.dart",
-      "count": 5
-    },
-    {
-      "path": "app/test/library_delete_test.dart",
-      "count": 1
-    },
-    {
-      "path": "app/test/local_capabilities_test.dart",
-      "count": 5
     },
     {
       "path": "app/test/local_data_dir_test.dart",
-      "count": 3
-    },
-    {
-      "path": "app/test/local_nonce_test.dart",
       "count": 2
     },
     {
       "path": "app/test/local_server_token_test.dart",
-      "count": 11
-    },
-    {
-      "path": "app/test/locale_switch_test.dart",
-      "count": 1
-    },
-    {
-      "path": "app/test/mac_freeze_regression_test.dart",
-      "count": 7
-    },
-    {
-      "path": "app/test/md_text_selection_test.dart",
-      "count": 1
-    },
-    {
-      "path": "app/test/md_text_test.dart",
-      "count": 1
-    },
-    {
-      "path": "app/test/menu_placement_test.dart",
-      "count": 1
-    },
-    {
-      "path": "app/test/mobile_connect_section_test.dart",
-      "count": 6
-    },
-    {
-      "path": "app/test/model_group_capacity_test.dart",
-      "count": 2
-    },
-    {
-      "path": "app/test/model_group_editor_test.dart",
-      "count": 4
-    },
-    {
-      "path": "app/test/models_test.dart",
-      "count": 1
-    },
-    {
-      "path": "app/test/motion_and_model_display_test.dart",
-      "count": 12
-    },
-    {
-      "path": "app/test/navigation_test.dart",
       "count": 8
-    },
-    {
-      "path": "app/test/onboarding_model_test.dart",
-      "count": 1
-    },
-    {
-      "path": "app/test/overlay_focus_test.dart",
-      "count": 1
-    },
-    {
-      "path": "app/test/pair_nearby_test.dart",
-      "count": 4
-    },
-    {
-      "path": "app/test/pair_request_dialog_test.dart",
-      "count": 4
     },
     {
       "path": "app/test/pair_request_test.dart",
-      "count": 4
-    },
-    {
-      "path": "app/test/pane_mounts_test.dart",
-      "count": 6
-    },
-    {
-      "path": "app/test/pane_overflow_after_resize_test.dart",
-      "count": 5
-    },
-    {
-      "path": "app/test/pass_marker_test.dart",
       "count": 2
-    },
-    {
-      "path": "app/test/paste_paths_platform_test.dart",
-      "count": 1
-    },
-    {
-      "path": "app/test/paste_paths_test.dart",
-      "count": 1
-    },
-    {
-      "path": "app/test/pending_action_greeting_test.dart",
-      "count": 3
-    },
-    {
-      "path": "app/test/permission_setup_gate_test.dart",
-      "count": 2
-    },
-    {
-      "path": "app/test/phone_layout_test.dart",
-      "count": 7
-    },
-    {
-      "path": "app/test/pinned_http_test.dart",
-      "count": 1
     },
     {
       "path": "app/test/port_launch_test.dart",
-      "count": 10
+      "count": 8
     },
     {
       "path": "app/test/port_picker_test.dart",
-      "count": 10
-    },
-    {
-      "path": "app/test/progress_dm_copy_test.dart",
-      "count": 2
-    },
-    {
-      "path": "app/test/progress_group_source_test.dart",
-      "count": 3
-    },
-    {
-      "path": "app/test/progress_interaction_test.dart",
-      "count": 7
-    },
-    {
-      "path": "app/test/progress_messages_test.dart",
-      "count": 2
-    },
-    {
-      "path": "app/test/progress_notice_test.dart",
-      "count": 5
-    },
-    {
-      "path": "app/test/progress_thread_cycle_test.dart",
-      "count": 2
-    },
-    {
-      "path": "app/test/reconnect_sweep_test.dart",
-      "count": 2
-    },
-    {
-      "path": "app/test/relayed_author_test.dart",
-      "count": 2
-    },
-    {
-      "path": "app/test/room_menu_test.dart",
-      "count": 13
-    },
-    {
-      "path": "app/test/run_section_scope_test.dart",
-      "count": 1
-    },
-    {
-      "path": "app/test/scrollbar_stability_test.dart",
-      "count": 7
-    },
-    {
-      "path": "app/test/selection_visibility_test.dart",
-      "count": 1
-    },
-    {
-      "path": "app/test/separator_width_budget_test.dart",
-      "count": 4
+      "count": 9
     },
     {
       "path": "app/test/server_bootstrap_test.dart",
-      "count": 8
-    },
-    {
-      "path": "app/test/server_health_test.dart",
-      "count": 17
-    },
-    {
-      "path": "app/test/server_options_test.dart",
-      "count": 11
-    },
-    {
-      "path": "app/test/server_port_submit_test.dart",
-      "count": 1
-    },
-    {
-      "path": "app/test/server_settings_test.dart",
-      "count": 8
-    },
-    {
-      "path": "app/test/server_supervisor_test.dart",
-      "count": 12
-    },
-    {
-      "path": "app/test/settings_tabs_test.dart",
-      "count": 2
-    },
-    {
-      "path": "app/test/shell_available_width_test.dart",
-      "count": 4
-    },
-    {
-      "path": "app/test/state_dir_test.dart",
-      "count": 9
-    },
-    {
-      "path": "app/test/task_board_filter_test.dart",
-      "count": 1
-    },
-    {
-      "path": "app/test/task_board_toggle_test.dart",
-      "count": 8
-    },
-    {
-      "path": "app/test/task_kanban_model_test.dart",
-      "count": 2
-    },
-    {
-      "path": "app/test/task_kanban_page_test.dart",
-      "count": 5
-    },
-    {
-      "path": "app/test/task_plan_visibility_test.dart",
-      "count": 1
-    },
-    {
-      "path": "app/test/task_run_merge_test.dart",
-      "count": 2
-    },
-    {
-      "path": "app/test/task_run_null_guard_test.dart",
-      "count": 2
-    },
-    {
-      "path": "app/test/text_utils_test.dart",
-      "count": 1
-    },
-    {
-      "path": "app/test/theme_status_colors_test.dart",
-      "count": 1
-    },
-    {
-      "path": "app/test/thinking_levels_ui_test.dart",
-      "count": 2
-    },
-    {
-      "path": "app/test/thinking_slider_test.dart",
       "count": 6
     },
     {
-      "path": "app/test/toast_kind_test.dart",
-      "count": 1
+      "path": "app/test/server_health_test.dart",
+      "count": 15
     },
     {
-      "path": "app/test/toast_surface_test.dart",
-      "count": 1
+      "path": "app/test/server_options_test.dart",
+      "count": 10
     },
     {
-      "path": "app/test/token_count_test.dart",
-      "count": 3
-    },
-    {
-      "path": "app/test/tool_steps_test.dart",
+      "path": "app/test/server_settings_test.dart",
       "count": 2
     },
     {
-      "path": "app/test/ui_collaboration_loop_test.dart",
-      "count": 9
+      "path": "app/test/server_supervisor_test.dart",
+      "count": 8
+    },
+    {
+      "path": "app/test/state_dir_test.dart",
+      "count": 8
     },
     {
       "path": "app/test/update_info_test.dart",
-      "count": 13
-    },
-    {
-      "path": "app/test/url_copy_test.dart",
-      "count": 1
-    },
-    {
-      "path": "app/test/window_escape_test.dart",
-      "count": 1
-    },
-    {
-      "path": "app/test/window_grip_test.dart",
-      "count": 4
-    },
-    {
-      "path": "app/test/window_resize_test.dart",
-      "count": 1
-    },
-    {
-      "path": "app/test/window_state_test.dart",
-      "count": 1
+      "count": 11
     },
     {
       "path": "native/pibot-sandbox/Cargo.lock",
@@ -611,7 +225,7 @@
     },
     {
       "path": "scripts/check-secrets.mjs",
-      "count": 4
+      "count": 3
     },
     {
       "path": "scripts/installer/orbis.iss",
@@ -619,7 +233,7 @@
     },
     {
       "path": "scripts/pack-android.mjs",
-      "count": 3
+      "count": 1
     },
     {
       "path": "scripts/pack-macos.sh",
@@ -639,10 +253,6 @@
     },
     {
       "path": "scripts/tests/check-secrets-push-test.sh",
-      "count": 2
-    },
-    {
-      "path": "scripts/tests/pack-android-test.mjs",
       "count": 2
     },
     {
@@ -731,7 +341,7 @@
     },
     {
       "path": "server/src/discovery.js",
-      "count": 5
+      "count": 3
     },
     {
       "path": "server/src/git-ops.js",
@@ -739,7 +349,7 @@
     },
     {
       "path": "server/src/http.js",
-      "count": 7
+      "count": 9
     },
     {
       "path": "server/src/lesson-reflect.js",
@@ -835,7 +445,7 @@
     },
     {
       "path": "server/src/tls.js",
-      "count": 5
+      "count": 4
     },
     {
       "path": "server/src/update-checker.js",
@@ -900,6 +510,10 @@
     {
       "path": "server/tests/boot-failure.mjs",
       "count": 6
+    },
+    {
+      "path": "server/tests/brand-deprecation.mjs",
+      "count": 22
     },
     {
       "path": "server/tests/brand.mjs",
@@ -967,7 +581,7 @@
     },
     {
       "path": "server/tests/discovery.mjs",
-      "count": 4
+      "count": 3
     },
     {
       "path": "server/tests/disk.mjs",
@@ -1067,7 +681,7 @@
     },
     {
       "path": "server/tests/local-csrf.mjs",
-      "count": 15
+      "count": 19
     },
     {
       "path": "server/tests/local-nonce.mjs",
