@@ -63,6 +63,9 @@ async function runWithLease(
   } = {},
 ) {
   const started = Date.now();
+  // 只有「真的跑完并落出回复」才值得评估注入的经验。
+  // 429 / 超时 / 用户终止进的是 catch → finally，那时评估等于拿没跑通的对话给经验打分。
+  let turnSucceeded = false;
   const approvalsAtStart = new Set(
     (runner.store.state.approvals ?? []).filter((a) => a.status === 'pending').map((a) => a.id),
   );
@@ -768,6 +771,7 @@ async function runWithLease(
       roomId, botId, startedAt: started, ok: true, usage: meter.snapshot(),
       taskRunId, attemptIndex, sdkRetries: meter.retries,
     });
+    turnSucceeded = true;
     return withAttempt({
       ok: true,
       text: finalText,
@@ -806,6 +810,8 @@ async function runWithLease(
         roomId, botId, startedAt: started, ok: true, usage: meter.snapshot(),
         taskRunId, attemptIndex, sdkRetries: meter.retries, kind: 'step-cap',
       });
+      // 轮数到上限也算"跑完了"（真实落出了回复），只是被收住 —— 照样可以评估
+      turnSucceeded = true;
       return withAttempt({
         ok: true,
         text: partial,
@@ -902,7 +908,12 @@ async function runWithLease(
     if (entry.lessonsInjected) {
       const injected = entry.lessonsInjected;
       entry.lessonsInjected = null;
-      void Promise.resolve(runner.reflect?.evaluateInjected?.({ roomId, botId: bot.id, injected })).catch(() => {});
+      // 失败/终止轮只清痕迹、不评估：没有可信的因果，硬评只会制造噪音。
+      if (turnSucceeded) {
+        void Promise.resolve(
+          runner.reflect?.evaluateInjected?.({ roomId, botId: bot.id, injected }),
+        ).catch(() => {});
+      }
     }
     if (bot.role === 'main') {
       try { runner.store.redactRoomSecrets(roomId, [], { limit: 8 }); } catch {}

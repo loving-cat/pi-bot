@@ -242,8 +242,11 @@ export function createLessonReflector({ runner, logFn = log, config: scopedConfi
 
     const ids = new Set(injected.ids);
     const lessons = store.lessonLibrary().filter((l) => ids.has(l.id));
-    // 先清痕迹再评估：评估失败也不该让下一轮拿同一批 id 再算一遍
-    entry.lessonsInjected = null;
+    // ★ 只在"自己从 entry 读的"情况下才负责清：
+    //   调用方（turn-executor 的 finally）已经同步摘了快照并清零，
+    //   这里再无条件清一次会把**下一轮**刚写进去的快照抹掉（那一轮就永远漏评）；
+    //   而且后台排队期间会话可能已被 reset，entry 会是 undefined。
+    if (!injectedArg && entry) entry.lessonsInjected = null;
     if (!lessons.length) return { skipped: 'gone' };
 
     const room = store.getRoom(roomId);
@@ -252,10 +255,17 @@ export function createLessonReflector({ runner, logFn = log, config: scopedConfi
     if (!model) return { skipped: 'no-model' };
     lastEvalAt.set(roomId, now);
 
-    const round = store
+    // ★ 只评估「这批经验被注入之后」发生的事。
+    //   直接拉最近 40 条会把更早的无关轮次也喂进去，让评估模型张冠李戴。
+    const all = store
       .listMessages(roomId, { limit: 100000 })
-      .filter((m) => m.status === 'done' && String(m.text ?? '').trim())
-      .slice(-40);
+      .filter((m) => m.status === 'done' && String(m.text ?? '').trim());
+    const since = Number(injected.at || 0) - 5000; // 留 5 秒上文余量
+    const recent = since > 0 ? all.filter((m) => (Number(m.createdAt) || 0) >= since) : all.slice(-40);
+    // 窗口太短时补上之前的 2 条消息当上下文（否则评估只看得到一两句）
+    const before = recent.length < 4 ? all.slice(0, Math.max(0, all.length - recent.length)).slice(-2) : [];
+    const round = [...before, ...recent];
+    if (!round.length) return { skipped: 'too-short' };
     const { text, ids: allowed } = buildOutcomeInput(round, { lessons });
 
     let reply = '';
@@ -294,9 +304,16 @@ export function createLessonReflector({ runner, logFn = log, config: scopedConfi
   // 评估走同一个后台槽位（它也是一次模型调用），但入口独立：
   //   schedule(...)      = 复盘产候选（群聊收尾）
   //   schedule.evaluateInjected({roomId,botId}) = 给"本轮注入过的经验"记 win/fail
-  schedule.evaluateInjected = (opts = {}) =>
-    runner.withBackgroundSlot
-      ? runner.withBackgroundSlot(`评估 · ${opts.roomId ?? ''}`, () => evaluateInjected(opts))
-      : evaluateInjected(opts);
+  schedule.evaluateInjected = (opts = {}) => {
+    const execute = () => {
+      runner.flushProviderUpdates?.();
+      return runner.providerUpdates
+        ? runner.providerUpdates.withLease((lease) => evaluateInjected({ ...opts, lease }))
+        : evaluateInjected(opts);
+    };
+    return runner.withBackgroundSlot
+      ? runner.withBackgroundSlot(`评估 · ${opts.roomId ?? ''}`, execute)
+      : execute();
+  };
   return schedule;
 }

@@ -46,18 +46,15 @@ class _LessonsSectionState extends State<LessonsSection> {
     final all = state.lessons;
     final candidates = all.where((l) => l.isCandidate).length;
     final active = all.where((l) => l.isActive).length;
-    // ★ 先复制再排：`_Filter.all` 直接引用 state.lessons，原地 sort 会改到状态对象。
-    // 排序只把「推荐启用」的候选提到前面，**不替用户点启用**（仍由人决定）。
+    // 「稳定」徽章只挂在 active 上，所以这里不排序：候选列表的先后顺序保持服务端原序
+    // （曾经按「推荐启用」排序，但那个条件对候选永远是 false —— 见 models.dart 的注释）。
     final list = <LibraryLesson>[
       ...switch (_filter) {
         _Filter.candidate => all.where((l) => l.isCandidate),
         _Filter.active => all.where((l) => l.isActive),
         _Filter.all => all,
       },
-    ]..sort((a, b) {
-        if (a.isRecommended == b.isRecommended) return 0; // 稳定：其余保持服务端顺序
-        return a.isRecommended ? -1 : 1;
-      });
+    ];
 
     return Container(
       margin: const EdgeInsets.only(top: 20),
@@ -400,7 +397,7 @@ class _LessonCard extends StatelessWidget {
                     style: TextStyle(fontSize: 9, color: PB.warn),
                   ),
                 )
-              else if (lesson.isRecommended)
+              else if (lesson.isStable)
                 Container(
                   margin: const EdgeInsets.only(right: 8),
                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
@@ -409,7 +406,7 @@ class _LessonCard extends StatelessWidget {
                     borderRadius: BorderRadius.circular(PB.rFull),
                   ),
                   child: Text(
-                    L10n.s(context).t('lesson.recommended'),
+                    L10n.s(context).t('lesson.stable'),
                     style: TextStyle(fontSize: 9, color: PB.success),
                   ),
                 ),
@@ -417,16 +414,9 @@ class _LessonCard extends StatelessWidget {
                 Tooltip(
                   message: lesson.validatedFamilies == 0
                       ? L10n.s(context).t('lesson.familyUnverified')
-                      : L10n.s(context)
-                            .tf('lesson.familyStats', {
-                              'family': lesson.modelFamily,
-                              'win': lesson.totalWins,
-                              'fail': lesson.totalFails,
-                            }),
+                      : lesson.familyBreakdown,
                   child: Text(
-                    lesson.validatedFamilies == 0
-                        ? '${lesson.modelFamily} · ?'
-                        : '${lesson.modelFamily} · ${lesson.totalWins}W/${lesson.totalFails}L',
+                    lesson.familyLabel,
                     style: TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
                   ),
                 ),

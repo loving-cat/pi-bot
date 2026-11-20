@@ -104,7 +104,7 @@ await test('默认校验会拒绝自签 —— 这正是客户端必须固定指
 });
 
 await test('ensureTlsMaterial：首次生成、第二次复用（指纹不变）', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pibot-tls-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orbis-tls-'));
   try {
     const first = ensureTlsMaterial({ dir });
     const second = ensureTlsMaterial({ dir });
@@ -116,17 +116,45 @@ await test('ensureTlsMaterial：首次生成、第二次复用（指纹不变）
   }
 });
 
-await test('ensureTlsMaterial：证书里缺当前网卡地址就重签', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pibot-tls-'));
+await test('★ ensureTlsMaterial：换网卡/换 WiFi **不重签**（指纹不变，配对不被踢）', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orbis-tls-'));
   try {
-    // 先自己塞一张"只覆盖 127.0.0.1"的证书，模拟"换了网络/换了网卡"
-    const stale = createSelfSignedCertificate({ commonName: 'pi-bot', ips: [] });
+    // 客户端固定的是整张证书 DER 的 sha256（见 app/lib/pinned_http.dart），
+    // 所以任何一次重签都会让所有已配对设备连不上 —— 网卡变了也不许动它。
+    const first = ensureTlsMaterial({ dir, ips: ['10.0.0.5'] });
+    const second = ensureTlsMaterial({ dir, ips: ['10.0.0.5', '10.0.0.9', '192.168.1.7'] });
+    assert.equal(
+      first.fingerprint,
+      second.fingerprint,
+      '新增网卡地址不该触发重签：那会让用户换个 WiFi 就要重新配对',
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+await test('ensureTlsMaterial：显式 forceRotate 才换证（指纹变）', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orbis-tls-'));
+  try {
+    const first = ensureTlsMaterial({ dir, ips: ['10.0.0.5'] });
+    const rotated = ensureTlsMaterial({ dir, ips: ['10.0.0.5'], forceRotate: true });
+    assert.notEqual(rotated.fingerprint, first.fingerprint, '强制换证必须真的换');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+await test('ensureTlsMaterial：临期（剩余 < 30 天）才自动重签', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orbis-tls-'));
+  try {
+    // 造一张只剩 5 天的证书，模拟"用久了快过期"
+    const shortLived = createSelfSignedCertificate({ commonName: 'pi-bot', ips: ['10.0.0.5'], days: 5 });
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, 'cert.pem'), stale.certPem);
-    fs.writeFileSync(path.join(dir, 'key.pem'), stale.keyPem);
+    fs.writeFileSync(path.join(dir, 'cert.pem'), shortLived.certPem);
+    fs.writeFileSync(path.join(dir, 'key.pem'), shortLived.keyPem);
     const logs = [];
-    const fresh = ensureTlsMaterial({ dir, log: (line) => logs.push(line) });
-    assert.notEqual(fresh.fingerprint, stale.fingerprint, '缺地址就必须重签');
+    const fresh = ensureTlsMaterial({ dir, ips: ['10.0.0.5'], log: (line) => logs.push(line) });
+    assert.notEqual(fresh.fingerprint, shortLived.fingerprint, '快过期就该换');
     assert.ok(logs.some((line) => line.includes('重签')), '重签要留一行日志，别静默');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

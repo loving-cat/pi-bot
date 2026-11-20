@@ -226,32 +226,51 @@ export function fingerprintOf(certPem) {
  * 网卡 IP 变了就重签：手机连的是 `https://<当前IP>:<端口>`，证书里没有这个 IP
  * 的话客户端会报证书不匹配（Dart 的 HttpClient 不认 SAN 之外的名字）。
  */
-export function ensureTlsMaterial({ dir, commonName = 'pi-bot', log = () => {} } = {}) {
+/**
+ * 证书复用阈值：剩余有效期不足这个数才重签。
+ *
+ * 为什么不看"当前网卡地址是否都写进 SAN"：客户端固定的是**整张证书 DER 的
+ * sha256**（`app/lib/pinned_http.dart` 的 `badCertificateCallback` 只比指纹，
+ * 不校验 SAN）。所以**任何一次重签都会让所有已配对设备连不上** ——
+ * 为了补一个切网就变了的 IP 而重签，等于让用户换个 WiFi 就要重新配对。
+ *
+ * 结论：只在「首次生成 / 文件损坏 / 快过期 / 显式 forceRotate」时重签，
+ * 网卡怎么变都不动它。证书里的 SAN 只是给非 pinning 客户端（如浏览器）看的。
+ */
+const ROTATE_MARGIN_MS = 30 * 24 * 60 * 60 * 1000;
+
+export function ensureTlsMaterial({ dir, commonName = 'pi-bot', log = () => {}, ips = null, forceRotate = false } = {}) {
   const certPath = path.join(dir, 'cert.pem');
   const keyPath = path.join(dir, 'key.pem');
-  const wanted = lanAddresses().map((entry) => entry.address);
+  // `ips` 可注入（测试用）：否则 macOS runner 的网卡抖动会让 tls.mjs 偶发红。
+  const wanted = Array.isArray(ips) ? ips : lanAddresses().map((entry) => entry.address);
 
   let prevIps = [];
   let prevKeyPem = null;
   let certPem = null;
-  if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
+  if (!forceRotate && fs.existsSync(certPath) && fs.existsSync(keyPath)) {
     const existing = fs.readFileSync(certPath, 'utf8');
     prevKeyPem = fs.readFileSync(keyPath, 'utf8');
     try {
       prevIps = certificateIps(existing);
-      const covered = new Set(prevIps);
-      const missing = wanted.filter((ip) => !covered.has(ip));
-      const expired = new Date(new crypto.X509Certificate(existing).validTo).getTime() < Date.now() + 86_400_000;
-      if (missing.length === 0 && !expired) {
-        certPem = existing;
+      const validTo = new Date(new crypto.X509Certificate(existing).validTo).getTime();
+      const remaining = validTo - Date.now();
+      if (remaining > ROTATE_MARGIN_MS) {
+        certPem = existing; // ★ 复用：哪怕现在缺了新网卡的 IP 也不重签
       } else {
-        log(
-          `[tls] 证书需要重签：${expired ? '快过期了' : `缺这些地址 ${missing.join(', ')}`}`,
-        );
+        log(`[tls] 证书需要重签：剩余有效期不足 ${Math.round(ROTATE_MARGIN_MS / 86_400_000)} 天`);
       }
     } catch {
       prevIps = [];
       log('[tls] 证书无法解析，将重新签发');
+    }
+  } else if (forceRotate && fs.existsSync(certPath) && fs.existsSync(keyPath)) {
+    // 显式换证：沿用旧 key 与旧 IP，避免指纹之外的元数据也丢
+    try {
+      prevIps = certificateIps(fs.readFileSync(certPath, 'utf8'));
+      prevKeyPem = fs.readFileSync(keyPath, 'utf8');
+    } catch {
+      prevIps = [];
     }
   }
 

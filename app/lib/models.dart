@@ -1086,10 +1086,27 @@ class LibraryLesson {
   int get totalWins => byFamily.values.fold(0, (n, s) => n + s.win);
   int get totalFails => byFamily.values.fold(0, (n, s) => n + s.fail);
 
-  /// 路线图 §5.4 的「推荐启用」：跨 ≥2 个族、win:fail ≥ 3:1、至少赢过 3 次。
-  /// 注意：**只影响排序**，点不点「启用」仍然是人决定。
-  bool get isRecommended =>
-      isCandidate && validatedFamilies >= 2 && totalWins >= 3 && totalWins >= 3 * totalFails;
+  /// 路线图 §5.4 的「稳定经验」：跨 ≥2 个族、win:fail ≥ 3:1、至少赢过 3 次。
+  ///
+  /// ⚠️ 只对 `active` 有意义 —— 只有启用的经验会被注入，只有被注入过才会有
+  /// `byFamily` 胜负。所以一条 `candidate` 的 `validatedFamilies` 在真实流程里
+  /// 永远是 0：把它挂成「推荐启用」是个永远亮不起来的死条件。
+  bool get isStable =>
+      isActive && validatedFamilies >= 2 && totalWins >= 3 && totalWins >= 3 * totalFails;
+
+  /// 按族逐行展示（tooltip 用）：`glm 3W/1L`
+  String get familyBreakdown => byFamily.entries
+      .where((e) => e.value.trials > 0)
+      .map((e) => '${e.key} ${e.value.win}W/${e.value.fail}L')
+      .join('\n');
+
+  /// 面板上的族标记：出身族 + 合计胜负（跨族时补一个族数）
+  String get familyLabel {
+    if (!hasFamily) return '';
+    if (validatedFamilies == 0) return '$modelFamily · ?';
+    final suffix = validatedFamilies >= 2 ? ' ($validatedFamilies族)' : '';
+    return '$modelFamily · ${totalWins}W/${totalFails}L$suffix';
+  }
 
   static const verdictLabels = {
     'helped': '有效',

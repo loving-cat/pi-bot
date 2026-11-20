@@ -112,49 +112,54 @@ void main() {
   });
 
   // ---- SIM-Lite：族标记 / 推荐启用 / 否决与解除 ----
-  test('推荐启用的判定只影响排序：跨 2 族 + 3:1 才算，且必须还是候选', () {
-    final recommended = lesson(
-      id: 'r1',
+  test('「稳定」只对已启用的经验成立：跨 2 族 + 3:1，候选永远不算', () {
+    // 只有 active 会被注入 → 只有 active 才可能有 byFamily 胜负。
+    // 所以「跨族验证」必须是 active 的徽章，挂在候选上就是个永远亮不起来的死条件。
+    final activeStable = lesson(
+      id: 's1',
+      status: 'active',
       modelFamily: 'glm',
       byFamily: const {
         'glm': LessonFamilyStats(win: 3, fail: 0),
         'deepseek': LessonFamilyStats(win: 1, fail: 0),
       },
     );
-    expect(recommended.isRecommended, isTrue);
-    expect(recommended.validatedFamilies, 2);
-    expect(recommended.totalWins, 4);
+    expect(activeStable.isStable, isTrue);
+    expect(activeStable.validatedFamilies, 2);
+    expect(activeStable.familyLabel, 'glm · 4W/0L (2族)');
 
     // 单族再赢也不算（跨模型才有说服力）
     final single = lesson(
-      id: 'r2',
+      id: 's2',
+      status: 'active',
       modelFamily: 'glm',
       byFamily: const {'glm': LessonFamilyStats(win: 9, fail: 0)},
     );
-    expect(single.isRecommended, isFalse);
+    expect(single.isStable, isFalse);
+    expect(single.familyLabel, 'glm · 9W/0L');
 
     // 赢 3 输 2 = 1.5:1，够不着 3:1
     final losing = lesson(
-      id: 'r3',
+      id: 's3',
+      status: 'active',
       modelFamily: 'glm',
       byFamily: const {
         'glm': LessonFamilyStats(win: 3, fail: 2),
         'deepseek': LessonFamilyStats(win: 1, fail: 0),
       },
     );
-    expect(losing.isRecommended, isFalse);
+    expect(losing.isStable, isFalse);
 
-    // 已启用就不再提示「推荐启用」
-    final active = lesson(
-      id: 'r4',
-      status: 'active',
+    // 候选用同样的数据也不算：它还没被注入过，胜负是历史遗留
+    final candidate = lesson(
+      id: 's4',
       modelFamily: 'glm',
       byFamily: const {
         'glm': LessonFamilyStats(win: 3, fail: 0),
         'deepseek': LessonFamilyStats(win: 3, fail: 0),
       },
     );
-    expect(active.isRecommended, isFalse);
+    expect(candidate.isStable, isFalse);
   });
 
   test('applyLessonEdges：边表能落到状态里，并能判断某条是否被否决', () {
@@ -171,17 +176,26 @@ void main() {
     expect(state.lessonEdges, hasLength(2));
   });
 
-  testWidgets('族标记与推荐角标：推荐启用的候选排在最前', (tester) async {
+  testWidgets('族标记带族数；「稳定」角标只出现在已启用的经验上', (tester) async {
     final state = AppState()
       ..lessons = [
-        lesson(id: 'plain', cue: '普通候选'),
         lesson(
-          id: 'rec',
-          cue: '推荐候选',
+          id: 'cand',
+          cue: '候选的这条',
           modelFamily: 'glm',
           byFamily: const {
             'glm': LessonFamilyStats(win: 3, fail: 0),
             'deepseek': LessonFamilyStats(win: 2, fail: 0),
+          },
+        ),
+        lesson(
+          id: 'act',
+          cue: '已启用且稳定',
+          status: 'active',
+          modelFamily: 'glm',
+          byFamily: const {
+            'glm': LessonFamilyStats(win: 3, fail: 0),
+            'deepseek': LessonFamilyStats(win: 1, fail: 0),
           },
         ),
       ]
@@ -190,12 +204,13 @@ void main() {
     await tester.pumpWidget(host(state));
     await tester.pump();
 
-    expect(find.text('推荐启用'), findsOneWidget);
-    expect(find.text('glm · 5W/0L'), findsOneWidget, reason: '族标记要带胜负，不只是一个族名');
-    // 推荐的那条要排在前面（第一条卡片）
-    final firstCardY = tester.getTopLeft(find.text('推荐候选')).dy;
-    final secondCardY = tester.getTopLeft(find.text('普通候选')).dy;
-    expect(firstCardY, lessThan(secondCardY));
+    // 候选页：有族标记，但没有「稳定」角标
+    expect(find.text('glm · 5W/0L (2族)'), findsOneWidget);
+    expect(find.text('稳定'), findsNothing);
+
+    await tester.tap(find.text('已启用 1'));
+    await tester.pump();
+    expect(find.text('稳定'), findsOneWidget, reason: '跨族验证达标才给稳定徽章');
   });
 
   testWidgets('已否决：显示「已否决」并只给「解除否决」，不给「启用」', (tester) async {
