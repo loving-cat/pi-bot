@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const tests = [
+  'check-legacy-test.mjs',
   'stage-macos-build-test.mjs',
   'prepare-macos-bundle-test.mjs',
   'stage-app-build-test.mjs',

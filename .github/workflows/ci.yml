@@ -68,6 +68,9 @@ jobs:
         run: |
           node scripts/check-spec-progress.mjs
           node scripts/check-style.mjs
+          # 旧品牌串（env 前缀 / 请求头 / 包名 / 原生产物）只许变小：
+          # 新文件出现就红，已登记文件计数上涨也红。基线在 scripts/legacy-allowlist.json。
+          node scripts/check-legacy.mjs
       - name: Run server unit tests
         working-directory: server
         timeout-minutes: 15

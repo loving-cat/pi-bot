@@ -1,0 +1,184 @@
+{
+  "package": {
+    "name": "orbis-agent",
+    "type": "module",
+    "private": true,
+    "engines": {
+      "node": ">=22"
+    },
+    "exports": {
+      ".": "./src/sdk/index.js",
+      "./sdk": "./src/sdk/index.js",
+      "./client": "./src/sdk/client.js",
+      "./capabilities": "./src/capabilities.js",
+      "./server": "./src/index.js"
+    },
+    "bin": {
+      "orbis-server": "./src/index.js",
+      "pi-bot-server": "./src/index.js"
+    }
+  },
+  "entries": {
+    "orbis-agent": {
+      "ACTION": "object",
+      "ACTIONS": "object",
+      "BRAND_NAME": "string",
+      "BRAND_SLUG": "string",
+      "OrbisClient": "function",
+      "PiBotClient": "function",
+      "TOOL_SPECS": "object",
+      "auditCapabilities": "function",
+      "createBus": "function",
+      "createConfig": "function",
+      "createModelGroupStore": "function",
+      "createOrbisClient": "function",
+      "createOrbisRuntime": "function",
+      "createPiBotClient": "function",
+      "createPiBotRuntime": "function",
+      "createServices": "function",
+      "createStore": "function",
+      "defineTool": "function"
+    },
+    "orbis-agent/sdk": {
+      "ACTION": "object",
+      "ACTIONS": "object",
+      "BRAND_NAME": "string",
+      "BRAND_SLUG": "string",
+      "OrbisClient": "function",
+      "PiBotClient": "function",
+      "TOOL_SPECS": "object",
+      "auditCapabilities": "function",
+      "createBus": "function",
+      "createConfig": "function",
+      "createModelGroupStore": "function",
+      "createOrbisClient": "function",
+      "createOrbisRuntime": "function",
+      "createPiBotClient": "function",
+      "createPiBotRuntime": "function",
+      "createServices": "function",
+      "createStore": "function",
+      "defineTool": "function"
+    },
+    "orbis-agent/client": {
+      "OrbisClient": "function",
+      "PiBotClient": "function",
+      "createOrbisClient": "function",
+      "createPiBotClient": "function"
+    },
+    "orbis-agent/capabilities": {
+      "ACTIONS": "object",
+      "CHIEF_ONLY_ACTIONS": "array",
+      "CHIEF_ONLY_TOOLS": "array",
+      "COORDINATION_TOOLS": "array",
+      "GATED_ACTIONS": "array",
+      "LEAD_EXTRA_BUILTINS": "array",
+      "MIGRATION_WITHHELD": "array",
+      "MUTATING_TOOLS": "array",
+      "OPAQUE_SCRIPT_TOOLS": "array",
+      "READONLY_ALLOW": "array",
+      "SECOND_FACTOR_TOOLS": "array",
+      "SECURITY_CONFIG_TOOLS": "array",
+      "TOOLS": "object",
+      "TOOL_SPECS": "object",
+      "actionForTool": "function",
+      "actionInfo": "function",
+      "actionsForTools": "function",
+      "auditCapabilities": "function",
+      "deriveMigrationActions": "function",
+      "isIrreversible": "function",
+      "isJarvisApprovalCall": "function",
+      "migrationScopeOf": "function",
+      "needsSecondFactor": "function",
+      "needsTarget": "function",
+      "riskOf": "function",
+      "snapshotEvidence": "function",
+      "targetsForTool": "function"
+    }
+  },
+  "runtime": {
+    "abort": "function",
+    "askMain": "function",
+    "automations": "object",
+    "bots": "object",
+    "bus": "object",
+    "capabilities": "object",
+    "config": "object",
+    "dispose": "function",
+    "generation": "string",
+    "modelGroups": "object",
+    "models": "object",
+    "onEvent": "function",
+    "policy": "object",
+    "reset": "function",
+    "rooms": "object",
+    "runBotOnce": "function",
+    "runner": "object",
+    "send": "function",
+    "services": "object",
+    "store": "object"
+  },
+  "services": {
+    "bots": [
+      "create",
+      "get",
+      "list",
+      "main",
+      "remove",
+      "update"
+    ],
+    "rooms": [
+      "createDepartment",
+      "createGroup",
+      "ensureDm",
+      "get",
+      "groupLimits",
+      "list",
+      "remove",
+      "saveTemplateFromRoom",
+      "update",
+      "updateGroupLimits"
+    ],
+    "models": [
+      "getDecision",
+      "list",
+      "probeDecision",
+      "removeGroup",
+      "setDefaultModel",
+      "testGroup",
+      "updateDecision",
+      "upsertGroup"
+    ],
+    "automations": [
+      "create",
+      "get",
+      "list",
+      "remove",
+      "runNow",
+      "update"
+    ],
+    "capabilities": [
+      "addLesson",
+      "addMcp",
+      "addSkill",
+      "findMcp",
+      "importLocal",
+      "importSkillMarkdown",
+      "listLessons",
+      "listMcp",
+      "listSkills",
+      "removeLesson",
+      "removeMcp",
+      "removeSkill",
+      "scanLocal",
+      "updateLesson",
+      "updateMcp",
+      "updateSkill"
+    ],
+    "policy": [
+      "get",
+      "getDesktopSettings",
+      "updateDesktopSettings",
+      "updatePolicy"
+    ]
+  }
+}
