@@ -162,7 +162,7 @@ Phase 3 ──► 依赖 Phase 1/2 全部合并（否则删完兼容层还要再
 | `server/src/lesson-reflect.js` ✅ **归因 + 胜率评估已接线**（边候选待做） | 收尾复盘 → candidate（evidence 校验） | 输出带 `modelFamily`（实际干活的模型，不是复盘会话自己的模型）；新增 `evaluateInjected()`：对本轮注入过的经验做**独立评估**（helped/hurt/no_effect/confounded），只有 helped/hurt 记 `win`/`fail`，`confounded` 不记 | 仍然**只产 candidate**；evidence 校验不放宽；**不拿本轮 ok/fail 记账** |
 | `server/src/runner/turn-executor.js` ✅ **注入 + 评估触发已接线** | `withLessons` 注入 | 传 `modelFamily` + `edges`；命中只 `touchLessons(..., {modelFamily})` 记 `hit`；`finally` 里把 `lessonsInjected` **同步摘成快照**再交给后台评估（清得快，防下一轮覆盖导致重复计分） | 注入点仍唯一；成员层仍不注入；**win/fail 不在这里产生** |
 | `server/src/store.js` ✅ **边已落库** | `state.lessons` + `/api/lessons` + `lessons.updated` | `state.lessonEdges`（级联删、`lessons.updated` 同时带 `edges`、`POST /api/lessons/edges`、`POST /api/lessons/:id/reject`）；`/api/lessons/preview` 已传边 | 老库无新字段也能读（`normalizeLesson` 给默认值） |
-| `app/lib/widgets/lessons_section.dart` | 启用 / 归档 / 删除 | 族标记、「未在同模型验证」提示、「推荐启用」排序 | **不能退化成只读**；三档操作全保留 |
+| `app/lib/widgets/lessons_section.dart` ✅ **已接线** | 启用 / 归档 / 删除 | 族标记 + 胜负（`glm · 5W/0L`）、「推荐启用」角标与置顶排序、被否决时显示「已否决」并只给「解除否决」 | **不能退化成只读**；「记错了」= 写 user 边 + 归档；裸切 active 的假启用路径已封死 |
 
 ### 5.2 数据契约（增量字段，老库直接兼容）
 
@@ -259,6 +259,10 @@ v1 草案把它改成「蒸馏即自动注入 + 事后点『记错了』」，�
 | 人工操作 | 设置页三档全保留：**启用 / 归档 / 删除**；「记错了」= 删除或写 `contradicts` 边 |
 | 自动晋升 | 只做成**默认关闭**的可选策略 `ORBIS_LESSON_AUTO_PROMOTE=1`，且只允许「≥2 族验证 + `confidence ≥ 0.8` + 用户曾批准过同 cue」 |
 | 推荐排序 | SIM-Lite 把「值得启用」的候选排在前面（这是它的价值），**但不替人按按钮** |
+
+✅ **已按 ① 落地（2026-11-20）**：界面上被否决的条目显示「已否决」角标，只提供「解除否决」，
+不提供「启用」；`AppState.unrejectLesson()` 删的是那条 `user` 边本身。
+下面这段是当时的决策记录，留作口径依据。
 
 ⚠️ **否决与恢复的语义（第三刀做界面前必须先定）**：`rejectLesson` 会写一条
 `from: 'user'` 的 `contradicts` 边**并归档**该条。若用户事后只是想恢复，却直接

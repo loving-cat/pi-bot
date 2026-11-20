@@ -147,6 +147,7 @@ class AppState extends ChangeNotifier {
 
   /// 经验库（从执行里学到的“下次别这样”）。只有 active 的会进主控提示词。
   List<LibraryLesson> lessons = const [];
+  List<LessonEdge> lessonEdges = const [];
   bool lessonsLoaded = false;
 
   /// 有效授权（设置 → 系统）。空列表 + 未加载是两件事。
@@ -1586,11 +1587,55 @@ class AppState extends ChangeNotifier {
     _notify();
   }
 
+  /// 经验之间的关系边（SIM-Lite）。服务端每次都会把整份边表一起推过来 ——
+  /// 边很少（上限 2000），整份同步比增量对账简单得多。
+  void applyLessonEdges(List? raw) {
+    if (raw == null) return;
+    lessonEdges = raw
+        .whereType<Map>()
+        .map((e) => LessonEdge.fromJson(e.cast<String, dynamic>()))
+        .toList();
+    _notify();
+  }
+
+  /// 这条经验是否被用户否决过（`user` 哨兵的 contradicts 边）
+  bool isLessonVetoed(String id) =>
+      lessonEdges.any((e) => e.isUserVeto && e.to == id);
+
+  /// 「记错了」：写一条 user 哨兵的 contradicts 边 + 归档（服务端一次做完）
+  Future<String?> rejectLesson(String id) async {
+    if (api == null) return '未连接服务端';
+    try {
+      await api!.post('/api/lessons/${Uri.encodeComponent(id)}/reject');
+      await loadLessons();
+      return null;
+    } catch (err) {
+      await loadLessons();
+      return lessonError(err);
+    }
+  }
+
+  /// 「解除否决」：删掉那条 user 边（否则切回 active 也永远注入不进去）
+  Future<String?> unrejectLesson(String id) async {
+    if (api == null) return '未连接服务端';
+    try {
+      await api!.delete(
+        '/api/lessons/edges?from=user&to=${Uri.encodeComponent(id)}&type=contradicts',
+      );
+      await loadLessons();
+      return null;
+    } catch (err) {
+      await loadLessons();
+      return lessonError(err);
+    }
+  }
+
   Future<void> loadLessons() async {
     if (api == null) return;
     try {
       final json = await api!.get('/api/lessons');
       applyLessons((json['lessons'] as List?) ?? const []);
+      applyLessonEdges(json['edges'] as List?);
     } catch (err) {
       lastError = '经验库加载失败：$err';
       _notify();
@@ -2759,6 +2804,7 @@ class AppState extends ChangeNotifier {
         // 复盘是在服务端后台跑的：不接这个事件，界面就要等用户切标签页
         // 才能看到新候选（更糟的是操作一条已经被删的经验 →“经验不存在”）。
         applyLessons((ev['lessons'] as List?) ?? const []);
+        applyLessonEdges(ev['edges'] as List?);
         break;
 
       case 'skills.updated':

@@ -46,11 +46,18 @@ class _LessonsSectionState extends State<LessonsSection> {
     final all = state.lessons;
     final candidates = all.where((l) => l.isCandidate).length;
     final active = all.where((l) => l.isActive).length;
-    final list = switch (_filter) {
-      _Filter.candidate => all.where((l) => l.isCandidate).toList(),
-      _Filter.active => all.where((l) => l.isActive).toList(),
-      _Filter.all => all,
-    };
+    // ★ 先复制再排：`_Filter.all` 直接引用 state.lessons，原地 sort 会改到状态对象。
+    // 排序只把「推荐启用」的候选提到前面，**不替用户点启用**（仍由人决定）。
+    final list = <LibraryLesson>[
+      ...switch (_filter) {
+        _Filter.candidate => all.where((l) => l.isCandidate),
+        _Filter.active => all.where((l) => l.isActive),
+        _Filter.all => all,
+      },
+    ]..sort((a, b) {
+        if (a.isRecommended == b.isRecommended) return 0; // 稳定：其余保持服务端顺序
+        return a.isRecommended ? -1 : 1;
+      });
 
     return Container(
       margin: const EdgeInsets.only(top: 20),
@@ -108,8 +115,17 @@ class _LessonsSectionState extends State<LessonsSection> {
               (lesson) => _LessonCard(
                 key: ValueKey(lesson.id),
                 lesson: lesson,
+                vetoed: state.isLessonVetoed(lesson.id),
                 onToggle: (status) async {
                   final err = await state.setLessonStatus(lesson.id, status);
+                  if (err != null && context.mounted) _showError(err);
+                },
+                onVeto: () async {
+                  final err = await state.rejectLesson(lesson.id);
+                  if (err != null && context.mounted) _showError(err);
+                },
+                onUnveto: () async {
+                  final err = await state.unrejectLesson(lesson.id);
                   if (err != null && context.mounted) _showError(err);
                 },
                 onDelete: () => _confirmDelete(state, lesson),
@@ -245,12 +261,20 @@ class _LessonCard extends StatelessWidget {
   const _LessonCard({
     super.key,
     required this.lesson,
+    required this.vetoed,
     required this.onToggle,
+    required this.onVeto,
+    required this.onUnveto,
     required this.onDelete,
   });
 
   final LibraryLesson lesson;
+
+  /// 被用户否决过（`user` 哨兵的 contradicts 边还在）
+  final bool vetoed;
   final ValueChanged<String> onToggle;
+  final VoidCallback onVeto;
+  final VoidCallback onUnveto;
   final VoidCallback onDelete;
 
   @override
@@ -363,12 +387,58 @@ class _LessonCard extends StatelessWidget {
           const SizedBox(height: 6),
           Row(
             children: [
+              if (vetoed)
+                Container(
+                  margin: const EdgeInsets.only(right: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: PB.warn.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(PB.rFull),
+                  ),
+                  child: Text(
+                    L10n.s(context).t('lesson.rejected'),
+                    style: TextStyle(fontSize: 9, color: PB.warn),
+                  ),
+                )
+              else if (lesson.isRecommended)
+                Container(
+                  margin: const EdgeInsets.only(right: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: PB.success.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(PB.rFull),
+                  ),
+                  child: Text(
+                    L10n.s(context).t('lesson.recommended'),
+                    style: TextStyle(fontSize: 9, color: PB.success),
+                  ),
+                ),
+              if (lesson.hasFamily)
+                Tooltip(
+                  message: lesson.validatedFamilies == 0
+                      ? L10n.s(context).t('lesson.familyUnverified')
+                      : L10n.s(context)
+                            .tf('lesson.familyStats', {
+                              'family': lesson.modelFamily,
+                              'win': lesson.totalWins,
+                              'fail': lesson.totalFails,
+                            }),
+                  child: Text(
+                    lesson.validatedFamilies == 0
+                        ? '${lesson.modelFamily} · ?'
+                        : '${lesson.modelFamily} · ${lesson.totalWins}W/${lesson.totalFails}L',
+                    style: TextStyle(fontSize: PB.fsXxs, color: PB.textQuaternary),
+                  ),
+                ),
               if (lesson.dept.isNotEmpty)
-                Text(
-                  lesson.dept,
-                  style: TextStyle(
-                    fontSize: PB.fsXxs,
-                    color: PB.textQuaternary,
+                Padding(
+                  padding: const EdgeInsets.only(left: 8),
+                  child: Text(
+                    lesson.dept,
+                    style: TextStyle(
+                      fontSize: PB.fsXxs,
+                      color: PB.textQuaternary,
+                    ),
                   ),
                 ),
               if (lesson.hits > 0) ...[
@@ -382,22 +452,41 @@ class _LessonCard extends StatelessWidget {
                 ),
               ],
               const Spacer(),
-              if (!active)
+              if (vetoed)
+                // 被否决过就只能先解除否决：那条 user 边还在的话，
+                // 直接切回 active 会变成「看起来启用了、其实永远注入不进去」。
                 TextButton(
-                  onPressed: () => onToggle('active'),
+                  onPressed: onUnveto,
                   child: Text(
-                    L10n.s(context).t('misc.enable'),
+                    L10n.s(context).t('lesson.unveto'),
                     style: const TextStyle(fontSize: PB.fsXs),
                   ),
                 )
-              else
+              else ...[
+                if (!active)
+                  TextButton(
+                    onPressed: () => onToggle('active'),
+                    child: Text(
+                      L10n.s(context).t('misc.enable'),
+                      style: const TextStyle(fontSize: PB.fsXs),
+                    ),
+                  )
+                else
+                  TextButton(
+                    onPressed: () => onToggle('candidate'),
+                    child: Text(
+                      L10n.s(context).t('misc.disable'),
+                      style: const TextStyle(fontSize: PB.fsXs),
+                    ),
+                  ),
                 TextButton(
-                  onPressed: () => onToggle('candidate'),
+                  onPressed: onVeto,
                   child: Text(
-                    L10n.s(context).t('misc.disable'),
+                    L10n.s(context).t('lesson.veto'),
                     style: const TextStyle(fontSize: PB.fsXs),
                   ),
                 ),
+              ],
               IconButton(
                 onPressed: onDelete,
                 icon: const Icon(LucideIcons.trash2, size: 14),

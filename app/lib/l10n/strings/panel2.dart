@@ -228,6 +228,12 @@ const areaPanel2 = StringArea(
     'lesson.enabled': '已启用',
     'lesson.evidence': '证据',
     'lesson.hits': '已命中 {n} 次',
+    'lesson.recommended': '推荐启用',
+    'lesson.rejected': '已否决',
+    'lesson.veto': '记错了',
+    'lesson.unveto': '解除否决',
+    'lesson.familyUnverified': '还没有在某个模型族上验证过（只被读过，没记过胜负）',
+    'lesson.familyStats': '{family} · {win} 胜 {fail} 负',
 
     // ---- 教学对话框 ----
     'teach.title': '教 {bot} 做一项任务',
@@ -640,6 +646,13 @@ const areaPanel2 = StringArea(
         'That lesson is gone (probably deleted). The list has been refreshed.',
     'lesson.enabled': 'Enabled',
     'lesson.evidence': 'Evidence',
+    'lesson.recommended': 'Recommended',
+    'lesson.rejected': 'Vetoed',
+    'lesson.veto': 'Wrong lesson',
+    'lesson.unveto': 'Undo veto',
+    'lesson.familyUnverified':
+        'Never verified on any model family yet (only read, no win/loss recorded)',
+    'lesson.familyStats': '{family} · {win}W/{fail}L',
     'lesson.hits': 'Used {n} times',
 
     // ---- teach dialog ----

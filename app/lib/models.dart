@@ -985,6 +985,44 @@ class LibrarySkill {
 ///
 /// 和技能的区别：技能是人整理的做法（静态）；经验是做过之后的成败，带证据、
 /// 可以被推翻。只有 status == active 的会进主控提示词，而且一次最多 3 条。
+/// 一条经验在**某个模型族**上的战果（SIM-Lite：跨模型去偏的数据单元）
+class LessonFamilyStats {
+  const LessonFamilyStats({this.hit = 0, this.win = 0, this.fail = 0});
+
+  final int hit;
+  final int win;
+  final int fail;
+
+  /// 真正打过仗的次数（`hit` 只是"被读过一次"，不算验证）
+  int get trials => win + fail;
+
+  factory LessonFamilyStats.fromJson(Map<String, dynamic> json) => LessonFamilyStats(
+    hit: (json['hit'] as num?)?.toInt() ?? 0,
+    win: (json['win'] as num?)?.toInt() ?? 0,
+    fail: (json['fail'] as num?)?.toInt() ?? 0,
+  );
+}
+
+/// 经验之间的一条关系边（与 `server/src/lessons.js` 的 4 种类型一一对应）
+class LessonEdge {
+  const LessonEdge({required this.from, required this.to, required this.type, this.by = ''});
+
+  final String from;
+  final String to;
+  final String type;
+  final String by;
+
+  /// 用户在界面上的否决（`from` 用 `user` 哨兵 —— 单条经验不能自己指向自己）
+  bool get isUserVeto => from == 'user' && type == 'contradicts';
+
+  factory LessonEdge.fromJson(Map<String, dynamic> json) => LessonEdge(
+    from: json['from'] as String? ?? '',
+    to: json['to'] as String? ?? '',
+    type: json['type'] as String? ?? '',
+    by: json['by'] as String? ?? '',
+  );
+}
+
 class LibraryLesson {
   LibraryLesson({
     required this.id,
@@ -998,7 +1036,11 @@ class LibraryLesson {
     this.hits = 0,
     this.createdAt = 0,
     this.lastUsedAt = 0,
-  }) : evidence = evidence ?? [];
+    this.modelFamily = 'unknown',
+    Map<String, LessonFamilyStats>? byFamily,
+    this.contentHash = '',
+  }) : evidence = evidence ?? [],
+       byFamily = byFamily ?? const {};
 
   final String id;
   final String roomId;
@@ -1023,8 +1065,31 @@ class LibraryLesson {
   final int createdAt;
   final int lastUsedAt;
 
+  /// 这条经验是**在哪个模型族**上跑出来的（`unknown` = 1.x 老经验，没有归因）
+  final String modelFamily;
+
+  /// 每个族各自的战果 —— 跨模型去偏就看这张表，不要混成一个总分
+  final Map<String, LessonFamilyStats> byFamily;
+
+  /// 去重键（内容没变就不会重复入库）
+  final String contentHash;
+
   bool get isActive => status == 'active';
   bool get isCandidate => status == 'candidate';
+
+  /// 有归因（老经验是 unknown，不显示族标记）
+  bool get hasFamily => modelFamily.isNotEmpty && modelFamily != 'unknown';
+
+  /// 真正验证过的模型族个数（只数打过仗的）
+  int get validatedFamilies => byFamily.values.where((s) => s.trials > 0).length;
+
+  int get totalWins => byFamily.values.fold(0, (n, s) => n + s.win);
+  int get totalFails => byFamily.values.fold(0, (n, s) => n + s.fail);
+
+  /// 路线图 §5.4 的「推荐启用」：跨 ≥2 个族、win:fail ≥ 3:1、至少赢过 3 次。
+  /// 注意：**只影响排序**，点不点「启用」仍然是人决定。
+  bool get isRecommended =>
+      isCandidate && validatedFamilies >= 2 && totalWins >= 3 && totalWins >= 3 * totalFails;
 
   static const verdictLabels = {
     'helped': '有效',
@@ -1050,6 +1115,14 @@ class LibraryLesson {
     hits: (json['hits'] as num?)?.toInt() ?? 0,
     createdAt: (json['createdAt'] as num?)?.toInt() ?? 0,
     lastUsedAt: (json['lastUsedAt'] as num?)?.toInt() ?? 0,
+    modelFamily: json['modelFamily'] as String? ?? 'unknown',
+    byFamily: ((json['byFamily'] as Map?) ?? const {}).map(
+      (k, v) => MapEntry(
+        k.toString(),
+        LessonFamilyStats.fromJson((v as Map).cast<String, dynamic>()),
+      ),
+    ),
+    contentHash: json['contentHash'] as String? ?? '',
   );
 }
 
