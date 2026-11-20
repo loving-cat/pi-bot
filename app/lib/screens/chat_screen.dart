@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import '../widgets/chief_summary_card.dart';
 import 'dart:math' as math;
 
 import 'package:desktop_drop/desktop_drop.dart';
@@ -172,6 +173,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // 首拉一次主控汇总（重连时服务端会重推 summaries.updated，这里只兜首次进页面）
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      AppScope.of(context).loadSummaries();
+    });
     _scrollFollow = ChatScrollFollow(
       _scroll,
       onFollowingChanged: (following) {
@@ -1739,6 +1745,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                       m.isStreaming &&
                                       m.text.trim().isNotEmpty,
                                 ),
+                              ),
+                            ),
+                            // ★ 主控总汇总浮窗：右上角（right:28 避开 18px 导航轨）。
+                            //   静止态没有任何 AnimationController —— 动效红线要求空闲 0 Ticker。
+                            Positioned(
+                              top: 12,
+                              right: 28,
+                              child: ConstrainedBox(
+                                constraints: const BoxConstraints(maxWidth: 300),
+                                child: const ChiefSummaryCard(),
                               ),
                             ),
                             // 右侧导航轨：滑块 + 用户消息锚点二合一。

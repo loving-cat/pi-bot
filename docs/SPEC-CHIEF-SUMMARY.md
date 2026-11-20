@@ -1,6 +1,6 @@
 # 规格：主控总汇总回传与撞忙浮窗门控（SPEC-CHIEF-SUMMARY）
 
-> **状态**：定稿 v1.1 · 实施中（Stage 1 `ed17da2` / `6706873` 与 Stage 2a `7865e84` 已落地；Stage 2b 与 Stage 3 待实施；§7 为后续分期演进项，按需开启）
+> **状态**：定稿 v1.2 · **Stage 1–3 全部落地**（Stage 1 `ed17da2` / `6706873`；Stage 2a `7865e84`；Stage 2b `4313f16` / `a823ab5` / `fccdef2`；Stage 3 Flutter 浮窗本轮）。§7 为后续分期演进项，按需开启。
 > **对应主干**：`main` @ `7865e84`
 > **适用范围**：`server/src/` 派活与汇总编排、`app/lib/` 聊天展示区右上角浮窗交互
 > **关联规格**：`docs/ROADMAP-2.0.md`、`docs/SPEC-FULL-DUPLEX-V1.md`、`docs/TASK-RUN-PROTOCOL.md`、`docs/SPEC-MOTION-V1.md`
@@ -149,7 +149,7 @@
 
 ---
 
-## 4. 前端交互设计（聊天区右上角浮窗）
+## 4. 前端交互设计（聊天区右上角浮窗）✅ 已落地（Stage 3）
 
 ### 4.1 位置与文件落点
 
@@ -185,8 +185,8 @@
 |---|---|---|
 | ✅ **Stage 1 · 纯逻辑与持久化**（已落地 `ed17da2` / `6706873`） | `server/src/chief-summary.js` 进 `PURE_MODULES`（现 22 个纯模块）+ `store.state.chiefSummaries`（含 7 天/50 条保留策略与 `lastError`）+ `server/tests/chief-summary.mjs`（27 条） | 单部门直接就绪；多部门等齐才就绪；单部门失败不傻等（含 `[A: failed, B: running]`）；`dispatchOpen=true` 时部门秒回先挂起、封口后立刻就绪；撞忙落 `ready_blocked`；`send`/`defer`/`ignore` 幂等全分支；失败退回 `ready_blocked`；`pendingChiefSummaries` 不推 `collecting`；重启重载不丢 |
 | ✅ **Stage 2a · 防循环护栏与汇总执行轮**（已落地 `7865e84`） | `server/src/runner/chief-summary-runner.js` + `server/src/runner/turn-executor.js` + `server/src/tools.js` / `server/src/coordination/intake-tool.js` 三工具硬拦 + `server/tests/chief-summary-flow.mjs`（13 条） | 三工具汇总轮被硬拦；普通轮不拦；`429`/异常退回 `ready_blocked` 并保留 `lastError`；未点「是」零模型调用；`drain` 串行发两条、第一条失败立即停 |
-| 🟡 **Stage 2b · 双入口接线 + 路由 + 提示词精简 + 在跑成员保护**（下一步） | `server/src/tools.js` 登记、`server/src/pi-runner.js` / `server/src/runner/group-orchestrator.js` 收尾回传、`server/src/tasks/task-runtime.js` 收敛抑制 400 字 system 重复卡、`server/src/http.js` `GET /api/summaries` & `POST /api/summaries/:id/resolve` + `buildChiefSummaryPrompt` 回调打标与 ≤3 句限长 + `server/src/services/bot-service.js` 在跑成员禁删/禁移出（扩 `server/tests/chief-summary-flow.mjs`） | 私聊直派空闲直发总结（`meta.refs` 直达部门）；撞忙阻塞时 **0 次模型调用**；选 `send` 排队至当前轮结束发送；选 `ignore` 全程 0 调模型；受管任务接主控汇总后不再写 400 字 `system` 重复消息；部门群内直接发任务不触发主控汇总；在跑成员禁止删除/移出；提示词显式打标回调且约束 ≤3 句不复述长明细 |
-| ⬜ **Stage 3 · Flutter 右上角浮窗**（待实施） | `app/lib/widgets/chief_summary_card.dart`（待新增）+ `app/lib/screens/chat_screen.dart` + `app/lib/app_state.dart` + `app/lib/l10n/strings/chat.dart` + `app/test/chief_summary_card_test.dart`（待新增） | 展开态三按钮各自触发正确 action；`defer` 缩成右上角小角标且点击可再展开；`ignore` 清空提示；多条碰撞仅显示 1 张 + 剩余计数；6 秒空闲回归 **0 Ticker** |
+| ✅ **Stage 2b · 双入口接线 + 路由 + 提示词精简 + 在跑成员保护**（已落地 `4313f16`/`a823ab5`/`fccdef2`） | `server/src/tools.js` 登记、`server/src/pi-runner.js` / `server/src/runner/group-orchestrator.js` 收尾回传、`server/src/tasks/task-runtime.js` 收敛抑制 400 字 system 重复卡、`server/src/http.js` `GET /api/summaries` & `POST /api/summaries/:id/resolve` + `buildChiefSummaryPrompt` 回调打标与 ≤3 句限长 + `server/src/services/bot-service.js` 在跑成员禁删/禁移出（扩 `server/tests/chief-summary-flow.mjs`） | 私聊直派空闲直发总结（`meta.refs` 直达部门）；撞忙阻塞时 **0 次模型调用**；选 `send` 排队至当前轮结束发送；选 `ignore` 全程 0 调模型；受管任务接主控汇总后不再写 400 字 `system` 重复消息；部门群内直接发任务不触发主控汇总；在跑成员禁止删除/移出；提示词显式打标回调且约束 ≤3 句不复述长明细 |
+| ✅ **Stage 3 · Flutter 右上角浮窗**（已落地） | `app/lib/widgets/chief_summary_card.dart`（待新增）+ `app/lib/screens/chat_screen.dart` + `app/lib/app_state.dart` + `app/lib/l10n/strings/chat.dart` + `app/test/chief_summary_card_test.dart`（待新增） | 展开态三按钮各自触发正确 action；`defer` 缩成右上角小角标且点击可再展开；`ignore` 清空提示；多条碰撞仅显示 1 张 + 剩余计数；6 秒空闲回归 **0 Ticker** |
 | ⬜ **Stage 4+ · 分期演进增强**（按需开启，见 §7） | 主控统筹模式轻护栏 / 逻辑级轻量看门狗 / 云端轻入口+本地执行节点桥接 | 独立开关与专项验收，不阻塞 Stage 2b 与 Stage 3 主线交付 |
 
 ---

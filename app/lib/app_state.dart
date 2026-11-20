@@ -148,6 +148,7 @@ class AppState extends ChangeNotifier {
   /// 经验库（从执行里学到的“下次别这样”）。只有 active 的会进主控提示词。
   List<LibraryLesson> lessons = const [];
   List<LessonEdge> lessonEdges = const [];
+  List<ChiefSummary> summaries = const [];
   bool lessonsLoaded = false;
 
   /// 有效授权（设置 → 系统）。空列表 + 未加载是两件事。
@@ -1598,6 +1599,40 @@ class AppState extends ChangeNotifier {
     _notify();
   }
 
+  /// 主控总汇总（右上角浮窗的数据源）：服务端只推**未终结**的批次。
+  void applySummaries(List? raw) {
+    if (raw == null) return;
+    summaries = raw
+        .whereType<Map>()
+        .map((e) => ChiefSummary.fromJson(e.cast<String, dynamic>()))
+        .toList();
+    _notify();
+  }
+
+  Future<void> loadSummaries() async {
+    if (api == null) return;
+    try {
+      final json = await api!.get('/api/summaries');
+      applySummaries((json['items'] as List?) ?? const []);
+    } catch (err) {
+      lastError = '汇总加载失败：$err';
+      _notify();
+    }
+  }
+
+  /// 三选一：send / defer / ignore
+  Future<String?> resolveSummary(String id, String action) async {
+    if (api == null) return '未连接服务端';
+    try {
+      await api!.post('/api/summaries/${Uri.encodeComponent(id)}/resolve', {'action': action});
+      await loadSummaries();
+      return null;
+    } catch (err) {
+      await loadSummaries();
+      return lessonError(err);
+    }
+  }
+
   /// 这条经验是否被用户否决过（`user` 哨兵的 contradicts 边）
   bool isLessonVetoed(String id) =>
       lessonEdges.any((e) => e.isUserVeto && e.to == id);
@@ -2798,6 +2833,10 @@ class AppState extends ChangeNotifier {
           revision: ev['revision'],
         );
         _attachmentDeletions.filterCache(messages);
+        break;
+
+      case 'summaries.updated':
+        applySummaries(ev['items'] as List?);
         break;
 
       case 'lessons.updated':

@@ -1023,6 +1023,82 @@ class LessonEdge {
   );
 }
 
+/// 主控总汇总里的一个派活目标（一个部门 / 一个受管任务）
+class ChiefSummaryTarget {
+  const ChiefSummaryTarget({
+    this.key = '',
+    this.departmentName = '',
+    this.status = 'running',
+    this.leadSummary = '',
+    this.sourceMsgId,
+  });
+
+  final String key;
+  final String departmentName;
+  final String status; // running | done | failed
+  final String leadSummary;
+  final String? sourceMsgId;
+
+  bool get isDone => status == 'done';
+  bool get isFailed => status == 'failed';
+
+  factory ChiefSummaryTarget.fromJson(Map<String, dynamic> json) => ChiefSummaryTarget(
+    key: json['key'] as String? ?? '',
+    departmentName: json['departmentName'] as String? ?? '',
+    status: json['status'] as String? ?? 'running',
+    leadSummary: json['leadSummary'] as String? ?? '',
+    sourceMsgId: json['sourceMsgId'] as String?,
+  );
+}
+
+/// 主控总汇总的一个批次（撞忙时用户在右上角浮窗里三选一）
+class ChiefSummary {
+  const ChiefSummary({
+    required this.id,
+    this.taskTitle = '',
+    this.state = 'collecting',
+    this.originRoomId = '',
+    List<ChiefSummaryTarget>? targets,
+    this.createdAt = 0,
+    this.readyAt = 0,
+    this.lastError = '',
+  }) : targets = targets ?? const [];
+
+  final String id;
+  final String taskTitle;
+
+  /// collecting / ready_blocked / deferred / queued_send / sending / sent / ignored
+  final String state;
+  final String originRoomId;
+  final List<ChiefSummaryTarget> targets;
+  final int createdAt;
+  final int readyAt;
+
+  /// 上一次发送失败的原因（退回 ready_blocked 后还能告诉用户为什么没发出去）
+  final String lastError;
+
+  bool get isReady => state == 'ready_blocked';
+  bool get isDeferred => state == 'deferred';
+  bool get isBusySending => state == 'queued_send' || state == 'sending';
+
+  int get doneCount => targets.where((t) => t.isDone).length;
+  int get failedCount => targets.where((t) => t.isFailed).length;
+
+  factory ChiefSummary.fromJson(Map<String, dynamic> json) => ChiefSummary(
+    id: json['id'] as String? ?? '',
+    taskTitle: json['taskTitle'] as String? ?? '',
+    state: json['state'] as String? ?? 'collecting',
+    originRoomId: json['originRoomId'] as String? ?? '',
+    targets: ((json['targets'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => ChiefSummaryTarget.fromJson(e.cast<String, dynamic>()))
+        .toList(),
+    createdAt: (json['createdAt'] as num?)?.toInt() ?? 0,
+    readyAt: (json['readyAt'] as num?)?.toInt() ?? 0,
+    lastError: json['lastError'] as String? ?? '',
+  );
+}
+
 class LibraryLesson {
   LibraryLesson({
     required this.id,
