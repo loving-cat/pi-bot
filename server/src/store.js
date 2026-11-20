@@ -1244,11 +1244,17 @@ export class Store {
     if (reason) return { error: reason };
     const lesson = normalizeLesson({ ...raw, updatedAt: Date.now() });
     if (!lesson) return { error: '经验内容不合法' };
-    const clash = list.find(
-      (l) =>
-        (l.roomId || '') === (lesson.roomId || '') &&
-        l.cue.toLowerCase() === lesson.cue.toLowerCase(),
-    );
+    const clash =
+      list.find(
+        (l) =>
+          (l.roomId || '') === (lesson.roomId || '') &&
+          l.cue.toLowerCase() === lesson.cue.toLowerCase(),
+      ) ??
+      // 同房间同内容哈希也算重复：否则 normalizeLessonList 会静默丢掉新条，
+      // 而这里却返回 { lesson } —— 调用方以为写进去了，其实没有。
+      list.find(
+        (l) => (l.roomId || '') === (lesson.roomId || '') && l.contentHash === lesson.contentHash,
+      );
     if (clash) return { error: `已经有一条同样情境的经验：「${clash.cue}」` };
     list.push(lesson);
     this.state.lessons = normalizeLessonList(list);
@@ -1269,12 +1275,10 @@ export class Store {
     const lesson = normalizeLesson(merged);
     if (!lesson) return { error: '经验内容不合法' };
 
-    const clash = list.find(
-      (l, i) =>
-        i !== idx &&
-        (l.roomId || '') === (lesson.roomId || '') &&
-        l.cue.toLowerCase() === lesson.cue.toLowerCase(),
-    );
+    const sameRoom = (l) => (l.roomId || '') === (lesson.roomId || '');
+    const clash =
+      list.find((l, i) => i !== idx && sameRoom(l) && l.cue.toLowerCase() === lesson.cue.toLowerCase()) ??
+      list.find((l, i) => i !== idx && sameRoom(l) && l.contentHash === lesson.contentHash);
     if (clash) return { error: `已经有一条同样情境的经验：「${clash.cue}」` };
 
     list[idx] = lesson;

@@ -145,7 +145,8 @@ export function normalizeLesson(raw = {}, now = Date.now()) {
     modelFamily: normalizeModelFamily(raw.modelFamily),
     byFamily: normalizeFamilyStats(raw.byFamily),
   };
-  out.contentHash = str(raw.contentHash, 80) || lessonContentHash(out);
+  // contentHash 是**纯派生值**：每次规范化都现算。信任传入值会让改完文案的哈希永远停在旧值。
+  out.contentHash = lessonContentHash(out);
   return out;
 }
 
@@ -213,6 +214,19 @@ export function lessonLexicalScore(item, task) {
 }
 
 /**
+ * 这条经验是否被关系边排除（`contradicts` 双向 / 被 `supersedes` 取代）。
+ *
+ * 抽出来是因为两处都要用：打分时排除它自己，以及算 `relatedIds` 时**不许**
+ * 让一条被否决/未启用的特化条给泛化条送分。
+ */
+export function lessonExcludedByEdges(item, edgeIndex) {
+  const links = edgeIndex?.get(item?.id) ?? null;
+  if (!links) return false;
+  if ([...links.incoming, ...links.outgoing].some((edge) => edge.type === 'contradicts')) return true;
+  return links.incoming.some((edge) => edge.type === 'supersedes');
+}
+
+/**
  * 按当前任务给一条经验打分（纯函数；不参与候选时返回 null）。
  *
  * 【SIM-Lite】`modelFamily` / `edgeIndex` / `relatedIds` 全是可选的：都不传时
@@ -245,17 +259,12 @@ export function lessonScore(
   let score = lexical;
   if (roomId && item.roomId && item.roomId === roomId) score += LESSON_SCORING.sameRoom;
 
+  if (lessonExcludedByEdges(item, edgeIndex)) return null;
   const links = edgeIndex?.get(item.id) ?? null;
   let hopBonus = 0;
-  if (links) {
-    const touching = [...links.incoming, ...links.outgoing];
-    if (touching.some((edge) => edge.type === 'contradicts')) return null; // 双向排除
-    if (links.incoming.some((edge) => edge.type === 'supersedes')) return null; // 被取代的旧条
+  if (links && relatedIds) {
     // 泛化条只有在「特化条真的命中当前任务」时才 +1，且单条上限 +1（挂十条边也不叠加）
-    if (
-      relatedIds &&
-      links.incoming.some((edge) => edge.type === 'generalizes' && relatedIds.has(edge.from))
-    ) {
+    if (links.incoming.some((edge) => edge.type === 'generalizes' && relatedIds.has(edge.from))) {
       hopBonus = LESSON_SCORING.generalizesHop;
     }
   }
@@ -311,9 +320,21 @@ export function selectLessonsFor(
 
   const list = Array.isArray(lessons) ? lessons : [];
   const edgeIndex = edges?.length ? lessonEdgeIndex(edges) : null;
-  // `generalizes` 传导要问"特化条是否真的命中任务"，所以先算一遍词面相关性
+  // `generalizes` 传导要问"特化条是否真的命中任务"，所以先算一遍词面相关性。
+  // ★ 只认「已启用 + 未被排除 + 词面分达到有效门槛」的特化条：
+  //   否则一条未批准/被否决的候选只要碰中 1 个字，就能给泛化条送 +1 绕过相关性闸门。
   const relatedIds = edgeIndex
-    ? new Set(list.filter((item) => item && lessonLexicalScore(item, text) > 0).map((item) => item.id))
+    ? new Set(
+        list
+          .filter(
+            (item) =>
+              item &&
+              item.status === 'active' &&
+              lessonLexicalScore(item, text) >= LESSON_SCORING.cueHit &&
+              !lessonExcludedByEdges(item, edgeIndex),
+          )
+          .map((item) => item.id),
+      )
     : null;
   const scored = [];
   for (const item of list) {
@@ -454,12 +475,17 @@ export function resolveModelFamilyForModel(model) {
   return resolveModelFamily(model.provider, model.id, model.name, model.slug, model.model);
 }
 
-/** 族名必须落在封闭词表里（含 unknown），否则归 `other` —— 防拼写漂移 */
+/**
+ * 族名归一：先认词表里的正式名，再拿猜测规则兜一次（`deepseek-v3` → `deepseek`），
+ * 都不认就落 `other` —— 防拼写漂移把同一个族拆成十几个。
+ */
 export function normalizeModelFamily(raw) {
   const name = str(raw, LESSON_LIMITS.family).toLowerCase();
   if (!name) return UNKNOWN_MODEL_FAMILY;
   if (name === UNKNOWN_MODEL_FAMILY) return UNKNOWN_MODEL_FAMILY;
-  return MODEL_FAMILIES.includes(name) ? name : 'other';
+  if (MODEL_FAMILIES.includes(name)) return name;
+  const guessed = resolveModelFamily(name);
+  return guessed === UNKNOWN_MODEL_FAMILY ? 'other' : guessed;
 }
 
 const toCount = (v) => {
@@ -471,13 +497,21 @@ const toCount = (v) => {
 /** 规范化 `byFamily`：只留计数、最多 `byFamilyKeys` 个族、族名按封闭词表归一 */
 export function normalizeFamilyStats(raw = {}) {
   const out = {};
-  let keys = 0;
   for (const [name, stats] of Object.entries(raw ?? {})) {
-    if (keys >= LESSON_LIMITS.byFamilyKeys) break;
-    const family = str(name, LESSON_LIMITS.family).toLowerCase();
-    if (!family) continue;
-    out[family] = { hit: toCount(stats?.hit), win: toCount(stats?.win), fail: toCount(stats?.fail) };
-    keys++;
+    // key 必须走封闭词表：否则 `deepseek-v3` 与 `deepseek-chat` 会成为两个"族"，
+    // 打分查 `byFamily['deepseek']` 查不到，置信度的 coverage 还会被虚算成 2 个族。
+    const family = normalizeModelFamily(name);
+    if (family === UNKNOWN_MODEL_FAMILY) continue; // 没有归因的键不占位
+    const add = { hit: toCount(stats?.hit), win: toCount(stats?.win), fail: toCount(stats?.fail) };
+    const cur = out[family];
+    if (cur) {
+      cur.hit += add.hit;
+      cur.win += add.win;
+      cur.fail += add.fail;
+      continue;
+    }
+    if (Object.keys(out).length >= LESSON_LIMITS.byFamilyKeys) continue;
+    out[family] = add;
   }
   return out;
 }

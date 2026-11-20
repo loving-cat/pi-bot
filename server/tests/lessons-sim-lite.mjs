@@ -20,6 +20,9 @@
  * 文件末尾专门有一组「契约反例」，每个都对应一次真实的 review 结论（S1–S6）。
  */
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import {
   LESSON_LIMITS,
@@ -112,7 +115,8 @@ test('没给提示 → unknown；都没命中 → other；族名归一按封闭�
   assert.equal(resolveModelFamily('', '   '), 'unknown');
   assert.equal(resolveModelFamily('my-local-llm'), 'other');
   assert.equal(normalizeModelFamily('GLM'), 'glm');
-  assert.equal(normalizeModelFamily('anthropic!'), 'other');
+  assert.equal(normalizeModelFamily('deepseek-v3'), 'deepseek', '模型名也要能归一（否则 byFamily 查不到）');
+  assert.equal(normalizeModelFamily('my-custom-scheduler'), 'other');
   assert.equal(normalizeModelFamily(''), UNKNOWN_MODEL_FAMILY);
 });
 
@@ -128,12 +132,15 @@ test('byFamily：只留计数、负数与垃圾清零、族名小写、键数封
   assert.deepEqual(stats, {
     glm: { hit: 3, win: 2, fail: 0 },
     deepseek: { hit: 0, win: 1, fail: 0 },
-    extra: { hit: 0, win: 0, fail: 0 },
+    other: { hit: 0, win: 0, fail: 0 },
   });
 
+  // 20 个认不出的键全部并到 other 一个桶里（不会再出现十几个"族"）
   const many = {};
   for (let i = 0; i < 20; i++) many[`f${i}`] = { hit: 1, win: 1, fail: 0 };
-  assert.equal(Object.keys(normalizeFamilyStats(many)).length, LESSON_LIMITS.byFamilyKeys);
+  const merged = normalizeFamilyStats(many);
+  assert.deepEqual(Object.keys(merged), ['other']);
+  assert.equal(merged.other.hit, 20);
 });
 
 test('规范化老库：没有 modelFamily / byFamily 也能读，给 unknown 与空表', () => {
@@ -460,6 +467,75 @@ test('淘汰：非冲突经验先于冲突经验被丢', () => {
   const edges = [{ from: 'user', to: 'disputed', type: 'contradicts' }];
   const dropped = selectEvictions(list, { max: 1, edges });
   assert.equal(dropped[0].id, 'stale', '没有冲突标记的先丢，哪怕它更近被用过');
+});
+
+// ---------------------------------------------------------------------------
+// R1–R3：review 查出的三个尾巴
+// ---------------------------------------------------------------------------
+const { createStore } = await import('../src/store.js');
+const { createBus } = await import('../src/bus.js');
+const { createConfig } = await import('../src/config.js');
+
+function freshStore(tag) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `orbis-lesson-${tag}-`));
+  const config = createConfig({ dataDir: dir, workspace: path.join(dir, 'w'), ensureDirs: true, serverBoot: false, autoProbe: false });
+  const store = createStore({ config, bus: createBus(), dataDir: dir, secretsKey: null });
+  return { store, dir };
+}
+
+test('★【R1】改文案后 contentHash 必须跟着变（派生值不许信任传入值）', () => {
+  const { store, dir } = freshStore('r1');
+  const { lesson } = store.addLesson({ cue: '配班子', lesson: '按模块拆', roomId: 'r1' });
+  const before = lesson.contentHash;
+  const r = store.updateLesson(lesson.id, { lesson: '按部门拆' });
+  assert.ok(r.lesson, r.error);
+  assert.notEqual(r.lesson.contentHash, before, '改了正文哈希还停在旧值，去重会一直撞旧记录');
+  assert.equal(r.lesson.contentHash, lessonContentHash({ cue: r.lesson.cue, lesson: r.lesson.lesson }));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('★【R1】同房间同内容（空白不同）必须报错，不能静默丢新条', () => {
+  const { store, dir } = freshStore('r1b');
+  store.addLesson({ cue: '配班子', lesson: '按模块拆', roomId: 'r1' });
+  const dup = store.addLesson({ cue: '配班子 ', lesson: '按模块   拆', roomId: 'r1' });
+  assert.match(dup.error ?? '', /同样情境/, '要么明确报错，要么真的写进去 —— 不许假成功');
+  assert.equal(store.lessonLibrary().length, 1);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('★【R2】未启用的特化条不许给泛化条送分（否则绕过相关性闸门）', () => {
+  const spec = normalizeLesson({ id: 'les_spec', cue: 'pytest 权限报错', lesson: '用仓内 basetemp', status: 'candidate' });
+  const gen = normalizeLesson({ id: 'les_gen', cue: '跑测试', lesson: '先看临时目录', roomId: 'r1', modelFamily: 'glm', byFamily: { glm: { hit: 2, win: 2, fail: 0 } }, evidence: EVIDENCE, status: 'active' });
+  const edges = [{ from: 'les_spec', to: 'les_gen', type: 'generalizes' }];
+  // 任务与泛化条只有 1 分词面（"跑测试" 里的 "跑" 不算，这里构造零相关 + 房间/族加成）
+  const picked = selectLessonsFor([spec, gen], 'pytest 权限报错', { roomId: 'r1', modelFamily: 'glm', edges });
+  assert.deepEqual(picked.map((l) => l.id), [], '候选（未启用）不配当"特化邻居"');
+});
+
+test('★【R2】被否决的特化条也不许送分', () => {
+  const spec = normalizeLesson({ id: 'les_spec2', cue: 'pytest 权限报错', lesson: '用仓内 basetemp', status: 'active', evidence: EVIDENCE });
+  const gen = normalizeLesson({ id: 'les_gen2', cue: '跑测试', lesson: '先看临时目录', roomId: 'r1', status: 'active', evidence: EVIDENCE, modelFamily: 'glm', byFamily: { glm: { hit: 2, win: 2, fail: 0 } } });
+  const edges = [
+    { from: 'les_spec2', to: 'les_gen2', type: 'generalizes' },
+    { from: 'user', to: 'les_spec2', type: 'contradicts' },
+  ];
+  assert.deepEqual(
+    selectLessonsFor([spec, gen], 'pytest 权限报错', { roomId: 'r1', modelFamily: 'glm', edges }),
+    [],
+  );
+});
+
+test('★【R3】byFamily 的键走封闭词表并合并：deepseek-v3 + deepseek-chat ≠ 两个族', () => {
+  const merged = normalizeFamilyStats({
+    'deepseek-v3': { hit: 1, win: 1, fail: 0 },
+    'deepseek-chat': { hit: 2, win: 1, fail: 1 },
+  });
+  assert.deepEqual(Object.keys(merged), ['deepseek']);
+  assert.deepEqual(merged.deepseek, { hit: 3, win: 2, fail: 1 });
+
+  // 合并后 coverage 仍是 1 个族 → 置信度不该被虚算成"跨两族"
+  const l = active({ verdict: 'helped', byFamily: { 'deepseek-v3': { hit: 4, win: 3, fail: 1 }, 'deepseek-chat': { hit: 4, win: 3, fail: 1 } } });
+  assert.ok(lessonConfidence(l) < 0.8, `同一个族不该被算成两个，实际 ${lessonConfidence(l)}`);
 });
 
 // ---------------------------------------------------------------------------
