@@ -317,8 +317,12 @@ await test('drain：第一条失败就停（不连环烧钱）', async () => {
   const out = await ctl.drain();
   assert.equal(out.sent, 0);
   assert.equal(n, 1, '失败一次就该停，剩下的留给用户处理');
-  assert.equal(store.chiefSummary('sum_x').state, 'ready_blocked');
-  assert.equal(store.chiefSummary('sum_y').state, 'queued_send', '没被牵连');
+  // 两条批次是**同一毫秒**建的，`chiefSummaries()` 按 createdAt 倒序排 —— 谁先被抽到
+  // 取决于插入顺序的实现细节（本机同毫秒稳定、CI 上会差 1ms）。所以不认具体 id，
+  // 只认语义：恰好一条被尝试过（退回 ready_blocked），另一条原封不动排队。
+  const states = ['sum_x', 'sum_y'].map((id) => store.chiefSummary(id).state);
+  assert.equal(states.filter((x) => x === 'ready_blocked').length, 1, '被尝试的那条要退回待确认');
+  assert.equal(states.filter((x) => x === 'queued_send').length, 1, '另一条不该被牵连');
 });
 
 await test('★ TaskRun 入口：同一根任务的多个子任务落进同一批，全终结后封口', () => {
