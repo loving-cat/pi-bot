@@ -185,8 +185,13 @@ Phase 3 ──► 依赖 Phase 1/2 全部合并（否则删完兼容层还要再
 
 ✅ **Phase 0 已定稿**（`server/src/lessons.js`）：`MODEL_FAMILIES`（封闭 7 族 + `other`）、`UNKNOWN_MODEL_FAMILY`、
 `resolveModelFamily()`（provider/model 名 → 族）、`normalizeFamilyStats()`（键数封顶 `LESSON_LIMITS.byFamilyKeys`）、
-`lessonConfidence()`（0~0.95 纯派生）、`lessonContentHash()`（sha256 前 32 位，空白归一化）。
+`lessonConfidence()`（0~0.95 纯派生）、`lessonContentHash()`（sha256 前 32 位，空白**全去**）。
 `confidence` 不落库 —— 它是可重算的派生量，存了就会和数据打架。
+
+⚠️ **置信度标尺是按晋升门槛反推的**（0.25×base + 0.45×ratio + 0.15×volume + 0.15×coverage，
+`helped`/`hurt` 的 base = 0.7）：两族 3:1 = 0.813 达标、单族 3:1 = 0.737 不达标。
+最初那版（base 0.5、权重 0.4/0.3/0.15/0.15）数学上界正好 0.800，只要出现过一次 fail
+就再也到不了 0.80 —— 门槛永远不可达，单测里专门钉了一条防回退。
 
 ### 5.3 关系边（和 lessons 放在同一份 state，不新建文件）
 
@@ -194,10 +199,13 @@ Phase 3 ──► 依赖 Phase 1/2 全部合并（否则删完兼容层还要再
 
 | 边 | 语义 | 检索时的作用 |
 |---|---|---|
-| `supersedes` | 新经验取代旧经验 | 旧条不进候选（仍留在库里供审计） |
-| `requires` | 前置条件 | 渲染时作为附带一句（不占主名额） |
-| `contradicts` | 冲突（含**用户否决**） | **直接排除**，不是减分（宁可不给，也不给矛盾经验） |
-| `generalizes` | 特化 → 泛化 | 一跳命中 +1（让泛化条也能被召回） |
+| `supersedes` | `from`=新, `to`=旧 | **入边 `to`** 不进候选（仍留在库里供审计） |
+| `requires` | `from` 依赖 `to` | 渲染时作为附带一句（不影响排序） |
+| `contradicts` | 冲突（含**用户否决**） | **双向排除**（写在 from 还是 to 上都拦），不是减分 |
+| `generalizes` | `from`=特化, `to`=泛化 | 特化条命中任务时泛化条 **+1，单条上限 +1**（不随边数叠加） |
+
+`from` 允许两个哨兵：`user`（用户在界面上的否决）与 `system`（系统自动降级）。
+没有哨兵的话，单条「记错了」根本写不出合法边 —— 它不能自己指向自己。
 
 - 边由两处产生：**蒸馏器**（`supersedes` / `contradicts` 候选，需人工确认）与**用户显式操作**（否决 → `contradicts`，立即生效）
 - 只做**一阶**扩散；2 跳留到 2.1（Lite 就是 Lite）
@@ -205,7 +213,8 @@ Phase 3 ──► 依赖 Phase 1/2 全部合并（否则删完兼容层还要再
 
 ✅ **Phase 0 已定稿**（`server/src/lessons.js`）：`LESSON_EDGE_TYPES`、`lessonEdgeRejectReason()`、
 `normalizeLessonEdge()` / `normalizeLessonEdgeList()`（去重 / 丢悬空 / 上限 `LESSON_LIMITS.edges`）、
-`lessonEdgeIndex()`（一跳邻接表）。
+`lessonEdgeIndex()`（**双向**邻接表 `{ incoming, outgoing }` —— 只建 `from → edges` 会让
+`contradicts` 排除新条、放过旧条，正好反了）、`LESSON_EDGE_SENTINELS`（`user` / `system`）。
 
 ### 5.4 跨模型去偏（只影响**排序与推荐**，不绕过审批）
 
@@ -213,7 +222,7 @@ Phase 3 ──► 依赖 Phase 1/2 全部合并（否则删完兼容层还要再
 |---|---|
 | 同族加成 | 当前族 == `lesson.modelFamily` → **+2**（相对 cue 命中 +3 的量级，够用但不喧宾夺主） |
 | 异族未验证 | 该族在 `byFamily` 里无记录 → **−1** 且界面标「未在同模型验证」 |
-| 稳定经验 | **≥2 个模型族**都 `win:fail ≥ 3:1` 且 `confidence ≥ 0.8` → 「推荐启用」排在最前 |
+| 稳定经验 | **≥2 个模型族**都 `win:fail ≥ 3:1` 且 `confidence ≥ 0.8` → 「推荐启用」排在最前（标尺按这个门槛反推：两族 3:1 = **0.813** ✅ / 单族 3:1 = **0.737** ❌ / 全胜两族 = 0.925 / 上限 0.95） |
 | 族内衰减 | 同族连续 2 次 `fail` → 自动 `archived` 并写 `contradicts` 边（可人工恢复） |
 | 人工否决 | 一律最高优先级，不可被后续蒸馏覆盖 |
 
@@ -231,6 +240,8 @@ score = Σ cue 命中(+3/词) + Σ lesson 命中(+1/词) + 同房间(+1)      //
 ```
 
 ✅ **Phase 0 已定稿**：`lessonScore()` 是唯一打分入口，`selectLessonsFor()` 改成调它；
+**相关性闸门** `lessonLexicalScore()` > 0 才允许进候选（否则「同房间 +1 + 同族 +2 = 3」
+会让同房间所有无关历史经验过门槛）；
 **不传 `modelFamily` / `edges` 时行为与 1.x 逐字一致**（原有 17 条测试全绿即为证）。
 老经验（`modelFamily: "unknown"`）不享受加成、也不背扣分 —— 否则升级当天老经验会被新规则一起埋掉。
 
