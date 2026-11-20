@@ -52,3 +52,35 @@ Future<String?> readLocalTokenFromCandidates(List<String?> candidates) async {
   }
   return null;
 }
+
+/// [readLocalTokenFile] 的同步版本 —— **重连路径**专用。
+///
+/// 服务端**每次启动**都会换一个 token（见 server/src/local-token.js），
+/// 桌面端如果只在进程启动时读一次文件，服务端一重启（改配置、崩溃自愈、
+/// 用户手动重启）手里的 token 就作废了：接下来每一次重连都是 401，
+/// 界面表现是「离线 · 自动重连中」无限转圈，而服务端日志里连一条
+/// 「已连接」都没有 —— 看起来就像服务端没开。
+///
+/// 放在 `connect()` 里同步读（不到 100 字节的本地文件），
+/// 每次发起连接前都跟上最新的 token。
+String? readLocalTokenFileSync(String? dataDir) {
+  final dir = (dataDir ?? '').trim();
+  if (dir.isEmpty) return null;
+  try {
+    final file = File('$dir/$localTokenFilename');
+    if (!file.existsSync()) return null;
+    final text = file.readAsStringSync().trim();
+    return text.isEmpty ? null : text;
+  } catch (_) {
+    return null;
+  }
+}
+
+/// [readLocalTokenFromCandidates] 的同步版本（重连路径用，见上）。
+String? readLocalTokenFromCandidatesSync(List<String?> candidates) {
+  for (final dir in candidates) {
+    final token = readLocalTokenFileSync(dir);
+    if (token != null) return token;
+  }
+  return null;
+}

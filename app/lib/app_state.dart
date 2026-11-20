@@ -941,15 +941,18 @@ class AppState extends ChangeNotifier {
     //
     //   本机信任模式下才读 local-token 文件。
     localNeedsToken = await localServerRequiresToken(serverUrl!);
-    if (!localNeedsToken && localToken.isEmpty) {
-      final fromFile = await readLocalTokenFromCandidates([
-        serverLauncher.options.data,
-        serverDataDir,
-        // 用户没显式配数据目录时，服务端走自己的默认位置 —— 试一次相对路径
-        // 下的常见位置。找不到就由下面的 401 兜底把提示给用户。
-        _defaultLocalDataDir(),
-      ]);
-      if (fromFile != null) localToken = fromFile;
+    if (!localNeedsToken) {
+      // ★ 每次都重读（不是只在空的时候读）：服务端重启会换 token，
+      //   留着旧的会让后面所有重连都 401（见 refreshLocalTokenFromDisk）。
+      //   用户没显式配数据目录时服务端走自己的默认位置，所以还要试默认位置。
+      final fromFile = await readLocalTokenFromCandidates(_localTokenDirs);
+      // 只认两种情况：手里还没有 token，或者原来的就是文件给的那份。
+      // 显式设过（服务器模式填的 / 调用方注入的）就不动它。
+      if (fromFile != null &&
+          (localToken.isEmpty || localToken == _fileLocalToken)) {
+        _fileLocalToken = fromFile;
+        localToken = fromFile;
+      }
     }
     token = localToken;
     api = Api(serverUrl!, token!);
@@ -2664,7 +2667,59 @@ class AppState extends ChangeNotifier {
 
   // ---------------------------------------------------------------- WS
 
+  /// 测试用：把 local-token 的候选目录钉死，避免读到真实用户目录里那份。
+  @visibleForTesting
+  List<String?>? localTokenDirsOverride;
+
+  /// 上一次从 local-token **文件**读到的值。
+  ///
+  /// 用来区分"手里的 token 是文件给的"和"调用方/用户显式设的"：
+  /// 只有前者可以在服务端换 token 后被覆盖 —— 显式设的（服务器模式填的、
+  /// 测试注入的）不能被磁盘上的文件抢走。
+  String? _fileLocalToken;
+
+  /// 读 local-token 时按顺序试的数据目录（显式配置 → 服务端默认位置）。
+  List<String?> get _localTokenDirs =>
+      localTokenDirsOverride ??
+      [
+        serverLauncher.options.data,
+        serverDataDir,
+        _defaultLocalDataDir(),
+      ];
+
+  /// 重连前把 local-token 重新读一遍。
+  ///
+  /// ★ 服务端**每次启动**都会换新 token（server/src/local-token.js），
+  ///   桌面端只在 connectLocal 里读过一次文件，之后一直用内存里那串 ——
+  ///   服务端一重启，后面每次重连都是 401：界面「离线 · 自动重连中」转圈到天荒，
+  ///   服务端连一条「已连接」都不会记（握手就拒了），看起来像"服务端没开"。
+  ///
+  /// 只在「本机信任模式」下重读：服务器模式（设了 PI_BOT_TOKEN）用的是
+  /// 用户填的凭据，不能拿 local-token 覆盖掉。
+  ///
+  /// @returns 是否换了新 token（换了就连 Api 一起重建）
+  bool refreshLocalTokenFromDisk() {
+    if (!localMode || localNeedsToken) return false;
+    final fromFile = readLocalTokenFromCandidatesSync(_localTokenDirs);
+    if (fromFile == null || fromFile == localToken) return false;
+    // 手里的 token 不是文件给的（用户显式填的 / 调用方注入的）→ 不覆盖
+    if (localToken.isNotEmpty && localToken != _fileLocalToken) return false;
+    _fileLocalToken = fromFile;
+    localToken = fromFile;
+    token = fromFile;
+    // 服务端重启过 → 退避从头算，别让用户等 20 秒
+    _attempt = 0;
+    final base = (serverUrl ?? '').trim();
+    if (base.isNotEmpty) {
+      api = Api(base, fromFile);
+      taskRuns.bindApi(api);
+    }
+    return true;
+  }
+
   void connect() {
+    // 先跟服务端的最新 token 对齐，再拨号（见 refreshLocalTokenFromDisk）
+    refreshLocalTokenFromDisk();
     final client = api;
     if (client == null || _disposed) return;
     disconnect(keepConfig: true);
