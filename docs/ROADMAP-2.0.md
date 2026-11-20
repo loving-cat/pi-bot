@@ -5,6 +5,7 @@
 > **对应主干**：`main` @ `f6273bb`（tag `v1.7.0` 之后 6 个提交，CI 7 job 全绿）
 > **一句话**：2.0 = 一次**破坏性收尾**（清债）+ 一次**契约冻结**（基座化）+ 一个**核心新特性**（SIM-Lite，**建在已有 lessons 体系上的 v2**）。
 > **关联**：`docs/RELEASE.md`（版本线）、`docs/spec-convergence-v1.md`（1.x 收束账本）、`docs/SPEC-FULL-DUPLEX-V1.md`（已落地的双轨架构）、`docs/SDK.md`（当前 SDK 说明）
+> **维护规则**：本文已列入 `scripts/check-spec-progress.mjs` 的 `LEDGER_FILES` —— 行内反引号里的 commit SHA 与文件路径必须真实存在，**且必须是 git 已跟踪的文件**（本地构建产物不算；2026-11-20 踩过：`server/resources` 下的 exe 本机有、CI 没有）；尚未落地的路径必须在同一行标 `（待新增）` / `（新）` / `❌` / `未开始`。
 
 ---
 
@@ -39,14 +40,14 @@
 | **C4** | 包与符号别名 | `server/src/sdk/index.js`（`createPiBotRuntime`）、`server/src/sdk/client.js`（`PiBotClient` / `createPiBotClient`）、`server/package.json` 的 `bin.pi-bot-server` | 嵌入了 SDK 的宿主脚本 import 报错 | 2.0 删除，CHANGELOG 给一行 sed 替换 |
 | **C5** | 磁盘文件名 | `server/src/providers.js` 的 `pi-bot.config.json`、`server/src/secrets.js` 的 `PI_BOT_SECRET_KEY`、`server/src/data-migration.js` 的启动标记 | 老配置读不到 → 模型配置“全没了” | 迁移期读旧写新，2.0 后只写新 |
 | **C6** | **局域网发现与 TLS 身份** | `server/src/discovery.js` mDNS 类型 `pibot.discover` / `pibot.host`；`server/src/tls.js` 自签证书 CN `pi-bot` / `pi-bot.local` | **跨版本配对立断**：1.7 App 发现不到 2.0 服务端 | ⚠️ **永久双播不删**（已拍板 D2）：同时 announce `orbis.*`，TLS 加 SAN。见 `docs/PLATFORMS.md` |
-| **C7** | 原生产物名 | `native/pibot-sandbox/`、`server/resources/pibot-sandbox.exe`、`PIBOT_SANDBOX_EXE` | 沙箱启动失败（Windows 上等于所有工具不能跑） | 产物改 `orbis-sandbox.exe`，env 兼容读一个周期 |
+| **C7** | 原生产物名 | `native/pibot-sandbox/`（Rust 源）、`scripts/build-sandbox-win.ps1` 里的产物名、`PIBOT_SANDBOX_EXE` 环境变量 | 沙箱启动失败（Windows 上等于所有工具不能跑） | 产物改 `orbis-sandbox.exe`，env 兼容读一个周期 |
 | **C8** | 文案残留 | 启动 banner、`server/src/sandbox.js` 提示、`server/src/desktop-input-mac.js` 授权引导 | 只是难看 | 随手清，无风险 |
 
 > **和 `docs/RELEASE.md` 的关系**：那份文档已有「永远不删」表（Android `APP_ID`、macOS bundle id、Inno `AppId` GUID）。本路线图把 **C6 也加进「永久双播」**，理由同款：身份常量一改就是换新应用。
 
 ### 1.2 基座化：SDK 现在**能嵌**，但还不能叫「基座」
 
-对照 `@earendil-works/pi-coding-agent` 的公开契约（`docs/sdk.md` 147 行 + `examples/sdk/` 14 个例子），逐面核对：
+对照 `@earendil-works/pi-coding-agent` 的公开契约（它自己的 docs/sdk.md 147 行 + 14 个 examples/sdk 例子），逐面核对：
 
 | 契约面 | pi-coding-agent | Orbis 现状 | 判定 |
 |---|---|---|---|
