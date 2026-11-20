@@ -111,15 +111,22 @@ const { resolveHomeDir } = await import(src('config.js'));
 
 await test('BD-8 只有旧目录 pi-bot 时沿用旧目录，并提醒一次（C2）', () => {
   resetBrandDeprecations();
+  const seen = [];
+  const off = onBrandDeprecation((ev) => seen.push(ev));
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'orbis-home-'));
   fs.mkdirSync(path.join(base, 'pi-bot'), { recursive: true });
   const picked = resolveHomeDir(base);
+  off();
   assert.equal(path.basename(picked), 'pi-bot', '2.0 之前必须继续读旧目录，否则老用户数据“消失”');
   assert.equal(brandDeprecations().length, 1);
   assert.match(brandDeprecations()[0], /^data-dir:/);
   // 同一个 base 再算一次不重复提醒
   resolveHomeDir(base);
   assert.equal(brandDeprecations().length, 1);
+  // ★ 提示里不能承诺一个还不存在的命令：1.7.1 用户跟着敲会 command not found
+  const hint = seen[0]?.hint ?? '';
+  assert.doesNotMatch(hint, /orbis migrate/, 'orbis migrate 要到 2.0 才有，1.7.1 的提示不能让人去敲它');
+  assert.match(hint, /手动|2\.0/, '要给出 1.7.1 当下可做的事（手动改名）或说清 2.0 才有工具');
   fs.rmSync(base, { recursive: true, force: true });
 });
 

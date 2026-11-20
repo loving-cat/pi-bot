@@ -48,7 +48,8 @@ export function resolveHomeDir(base) {
         kind: 'data-dir',
         from: legacy,
         to: next,
-        hint: '2.0 不再读旧目录；想继续用请把目录改名或跑 orbis migrate（复制不删除）',
+        hint:
+          '2.0 不再读旧目录；可以停服务后手动把目录改名，或等 2.0 发布后用迁移工具做复制迁移',
       });
       return legacy;
     }
