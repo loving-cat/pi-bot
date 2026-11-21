@@ -139,12 +139,17 @@ case "$tool" in
       printf 'locked\n' > .dart_tool/lock-ready
       exit 0
     fi
-    [[ "$*" == 'build macos --release --no-pub --split-debug-info='* ]]
+    [[ "$*" == 'build macos --release --no-pub --build-name='*' --build-number='*' --split-debug-info='* ]]
     [[ -f .dart_tool/lock-ready ]]
     [[ "${PACK_FAIL:-}" != build ]] || exit 39
     product="$PWD/build/macos/Build/Products/Release/Orbis.app"
     mkdir -p "$product/Contents/MacOS"
-    printf '<plist><dict><key>CFBundleShortVersionString</key><string>0.1.0</string></dict></plist>\n' > "$product/Contents/Info.plist"
+    # 真实 Flutter 会把 --build-name 写进 CFBundleShortVersionString；
+    # 桩也照样做，这样“传了预发布号”会直接被 prepare-macos-bundle 拦住。
+    build_name=''
+    for arg in "$@"; do if [[ "$arg" == --build-name=* ]]; then build_name="${arg#--build-name=}"; fi; done
+    [[ -n "$build_name" ]]
+    printf '<plist><dict><key>CFBundleShortVersionString</key><string>%s</string></dict></plist>\n' "$build_name" > "$product/Contents/Info.plist"
     printf 'fixture built executable\n' > "$product/Contents/MacOS/Orbis"
     printf 'neutral build product\n' > "$product/Contents/product.txt"
     debug=''
