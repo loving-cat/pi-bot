@@ -839,25 +839,31 @@ export class Store {
     //   （沙箱 cwd、临时下载、截图）。macOS / Linux 上从来没有这段逻辑，
     //   删一个 bot 就留一个 `instances/<botId>` 永远不走。
     //
-    //   安全边界：目录必须 realpath 严格落在 `<dataDir>/instances/` 下，
-    //   而且不能是符号链接（否则 rmSync 会跟着链删到外面去）。
+    //   安全边界（顺序很重要）：**先** `lstat` 看目标本身是不是符号链接，
+    //   再用 `realpath` 判断归属 —— `realpath` 的结果永远不是链接，
+    //   在它上面判 `isSymbolicLink()` 等于什么都没检查（链接指向哪儿都会被当成普通目录删掉）。
     //   失败只记日志 —— 删 bot 已经成功，不该因为收拾残渣而回滚。
     try {
       const instancesRoot = path.join(this.dataDir, 'instances');
       const target = defaultInstanceDir(this.dataDir, id);
-      let rootReal = null;
-      let targetReal = null;
-      try {
-        rootReal = fs.realpathSync(instancesRoot);
-        targetReal = fs.realpathSync(target);
-      } catch {
-        // 目录本来就不存在 → 没什么可删的
-      }
-      if (rootReal && targetReal) {
+      const stat = (() => {
+        try {
+          return fs.lstatSync(target);
+        } catch {
+          return null; // 目录本来就不存在 → 没什么可删的
+        }
+      })();
+      if (stat?.isSymbolicLink()) {
+        log('sandbox', `实例目录是符号链接，拒绝删除 bot=${id}`);
+      } else if (stat?.isDirectory()) {
+        const rootReal = fs.realpathSync(instancesRoot);
+        const targetReal = fs.realpathSync(target);
         const rel = path.relative(rootReal, targetReal);
         const inside = Boolean(rel) && !rel.startsWith('..') && !path.isAbsolute(rel);
-        if (inside && !fs.lstatSync(targetReal).isSymbolicLink()) {
+        if (inside) {
           fs.rmSync(targetReal, { recursive: true, force: true });
+        } else {
+          log('sandbox', `实例目录不在 instances 下，拒绝删除 bot=${id}`);
         }
       }
     } catch (err) {

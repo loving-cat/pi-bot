@@ -111,6 +111,21 @@ export class ShellRegistry {
   }
 
   /**
+   * 正在运行的后台命令所属的实例键（`${roomId}-${botId}`）。
+   *
+   * 给存储清理用：`instances/<roomId>-<botId>` 是这些进程的 HOME/TMPDIR，
+   * 只要进程还活着，那个目录就不能删 —— 删了进程会立刻写失败。
+   */
+  runningKeys() {
+    const out = new Set();
+    for (const entry of this.shells.values()) {
+      if (!entry?.running) continue;
+      if (entry.roomId && entry.botId) out.add(`${entry.roomId}-${entry.botId}`);
+    }
+    return out;
+  }
+
+  /**
    * 启动一个后台命令。
    * @returns {{id:string, pid:number|null, error?:string}}
    */

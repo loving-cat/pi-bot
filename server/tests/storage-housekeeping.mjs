@@ -38,6 +38,7 @@ const { runStorageHousekeeping, STORAGE_SCOPES, STORAGE_AUTO_SCOPES } = await im
 );
 const { buildChiefTools } = await import('../src/tools.js');
 const { PiRunner } = await import('../src/pi-runner.js');
+const shellsMod = await import('../src/shells.js');
 
 const DATA = store.dataDir;
 const DAY = 24 * 60 * 60 * 1000;
@@ -88,8 +89,11 @@ mkdirp(path.join(DATA, 'instances', idleBot.id));
 mkdirp(path.join(DATA, 'instances', busyBot.id));
 writeFile(path.join(DATA, 'instances', idleBot.id, 'a.txt'), 'idle-instance');
 writeFile(path.join(DATA, 'instances', busyBot.id, 'a.txt'), 'busy-instance');
-fs.utimesSync(path.join(DATA, 'instances', idleBot.id), old, old);
-fs.utimesSync(path.join(DATA, 'instances', busyBot.id), old, old);
+// ★ 连里面的文件一起改老：executor 现在看的是**整棵树最新的 mtime**
+for (const dir of [path.join(DATA, 'instances', idleBot.id), path.join(DATA, 'instances', busyBot.id)]) {
+  fs.utimesSync(path.join(dir, 'a.txt'), old, old);
+  fs.utimesSync(dir, old, old);
+}
 
 const runner = {
   isBusy: (roomId, botId) => botId === busyBot.id,
@@ -224,6 +228,61 @@ await test('截图：真实清理删掉超期 png', () => {
 });
 
 // ---------------------------------------------------------------------------
+// 2b. 实例目录：内部还在写 / 忙房间 / 后台 shell 的都要保护
+// ---------------------------------------------------------------------------
+await test('实例目录：顶层 mtime 很老但内部刚写过 → 不删（latestMtime）', () => {
+  const live = mkdirp(path.join(DATA, 'instances', 'live_inner'));
+  writeFile(path.join(live, 'tmp', 'recent.txt'), 'recent');
+  // 只把**顶层**目录时间戳改老：内部文件还是刚写的
+  fs.utimesSync(live, old, old);
+  const summary = runStorageHousekeeping({
+    // bot_busy 一直忙，避免它混进这条用例的计数
+    store, runner: { isBusy: (roomId, botId) => botId === busyBot.id, store },
+    dataDir: DATA, scopes: ['instanceTmp'], dryRun: false, now: NOW,
+  });
+  assert.ok(fs.existsSync(live), '内部刚写过文件的实例目录不许删');
+  assert.equal(summary.removed.instanceTmp, 0, JSON.stringify(summary));
+});
+
+await test('实例目录：忙房间的 <roomId>-<botId> 目录与运行中的后台 shell 不删', () => {
+  const { shells } = shellsMod;
+  const shelly = store.createBot({ name: '忙房间成员' });
+  const shellBot = store.createBot({ name: '后台命令成员' });
+  const busyKeyDir = mkdirp(path.join(DATA, 'instances', `${dm.id}-${shelly.id}`));
+  const shellKeyDir = mkdirp(path.join(DATA, 'instances', `${dm.id}-${shellBot.id}`));
+  writeFile(path.join(busyKeyDir, 'home', 'x'), 'x');
+  writeFile(path.join(shellKeyDir, 'home', 'y'), 'y');
+  const ageAll = (target) => {
+    fs.utimesSync(target, old, old);
+    for (const entry of fs.readdirSync(target, { withFileTypes: true })) {
+      const full = path.join(target, entry.name);
+      if (entry.isDirectory()) ageAll(full);
+      else fs.utimesSync(full, old, old);
+    }
+  };
+  for (const dir of [busyKeyDir, shellKeyDir]) ageAll(dir);
+  // 只在这个房间里判忙（别的房间不忙）：不能因为 break 就漏掉
+  const roomRunner = {
+    isBusy: (roomId, botId) =>
+      botId === busyBot.id || (roomId === dm.id && botId === shelly.id),
+    store,
+  };
+  shells.shells.set('sh_test_lifecycle', {
+    id: 'sh_test_lifecycle', running: true, roomId: dm.id, botId: shellBot.id,
+  });
+  try {
+    const summary = runStorageHousekeeping({
+      store, runner: roomRunner, dataDir: DATA, scopes: ['instanceTmp'], dryRun: false, now: NOW,
+    });
+    assert.ok(fs.existsSync(busyKeyDir), '忙房间的 <roomId>-<botId> 目录不许删');
+    assert.ok(fs.existsSync(shellKeyDir), '后台 shell 的实例目录不许删');
+    assert.equal(summary.removed.instanceTmp, 0, JSON.stringify(summary));
+  } finally {
+    shells.shells.delete('sh_test_lifecycle');
+  }
+});
+
+// ---------------------------------------------------------------------------
 // 3. 孤儿附件（必须走 deleteAttachments）
 // ---------------------------------------------------------------------------
 await test('孤儿附件：默认 scope 不含；显式请求才清，且留墓碑 + 版本号变化', () => {
@@ -244,6 +303,90 @@ await test('孤儿附件：默认 scope 不含；显式请求才清，且留墓�
   assert.notEqual(attachments.attachmentDeletionRevision(), revisionBefore, '删除版本号要变（客户端靠它刷新）');
   assert.equal(attachments.isAttachmentDeleted(referenced.id), false, '被消息引用的附件不许删');
   assert.ok(fs.existsSync(attachments.pathFor(referenced.id)));
+});
+
+await test('孤儿附件：TaskRun 产物 / collecting 汇总 / 路径形式引用都免疫', () => {
+  const viaAttempt = attachments.saveBuffer(Buffer.from('a'), { name: 'attempt.png', mime: 'image/png' });
+  const viaSummary = attachments.saveBuffer(Buffer.from('b'), { name: 'summary.txt', mime: 'text/plain' });
+  const originalList = store.taskRuns.listAll;
+  const originalSummaries = store.chiefSummaries;
+  // 1) 产物在 attempts[].result.artifacts 里，而且是**路径形式**
+  store.taskRuns.listAll = () => ({
+    complete: true, skipped: 0, problems: [],
+    taskRuns: [{
+      id: 'run_attempt', state: 'completed',
+      attempts: [{ result: { artifacts: [path.join('uploads', `${viaAttempt.id}.png`)] } }],
+    }],
+  });
+  // 2) 汇总还在 collecting（pendingChiefSummaries 看不到它）
+  store.chiefSummaries = () => [{ id: 'sum_collecting', state: 'collecting', artifacts: [viaSummary.id] }];
+  try {
+    const summary = runStorageHousekeeping({
+      store, runner, dataDir: DATA, scopes: ['orphanUploads'], dryRun: false,
+      now: FUTURE, limits: { orphanUploadTtlMs: 0 },
+    });
+    assert.equal(summary.removed.orphanUploads, 0, JSON.stringify(summary));
+    for (const item of [viaAttempt, viaSummary]) {
+      assert.equal(attachments.isAttachmentDeleted(item.id), false, `${item.id} 仍被引用，不许删`);
+      assert.ok(fs.existsSync(attachments.pathFor(item.id)));
+    }
+  } finally {
+    store.taskRuns.listAll = originalList;
+    store.chiefSummaries = originalSummaries;
+  }
+});
+
+await test('孤儿附件：taskruns 读不全时整项跳过（引用可能算漏）', () => {
+  const kept = attachments.saveBuffer(Buffer.from('k'), { name: 'k.txt', mime: 'text/plain' });
+  const originalList = store.taskRuns.listAll;
+  store.taskRuns.listAll = () => ({ complete: false, skipped: 1, problems: [{ id: 'x' }], taskRuns: [] });
+  try {
+    const summary = runStorageHousekeeping({
+      store, runner, dataDir: DATA, scopes: ['orphanUploads'], dryRun: false,
+      now: FUTURE, limits: { orphanUploadTtlMs: 0 },
+    });
+    assert.equal(summary.removed.orphanUploads, 0);
+    assert.ok(summary.problems.some((p) => p.includes('引用')), JSON.stringify(summary.problems));
+    assert.ok(fs.existsSync(attachments.pathFor(kept.id)), '算不全引用时不许删任何附件');
+  } finally {
+    store.taskRuns.listAll = originalList;
+  }
+});
+
+await test('孤儿附件：真实删除时广播 attachments.deleted（带 revision）', () => {
+  const victim = attachments.saveBuffer(Buffer.from('v'), { name: 'v.txt', mime: 'text/plain' });
+  const events = [];
+  const onEvent = (ev) => {
+    if (ev?.t === 'attachments.deleted') events.push(ev);
+  };
+  store.bus.on('event', onEvent);
+  try {
+    runStorageHousekeeping({
+      store, runner, dataDir: DATA, scopes: ['orphanUploads'], dryRun: false,
+      now: FUTURE, limits: { orphanUploadTtlMs: 0 },
+    });
+  } finally {
+    store.bus.off('event', onEvent);
+  }
+  const ev = events.find((e) => (e.ids ?? []).includes(victim.id));
+  assert.ok(ev, `没收到 attachments.deleted：${JSON.stringify(events)}`);
+  assert.equal(typeof ev.revision, 'string');
+  assert.ok(ev.revision.includes(':'), 'revision 形状应与 attachmentDeletionRevision 一致');
+});
+
+await test('store.deleteBot：实例目录是符号链接时不跟着删目标', () => {
+  const victim = store.createBot({ name: '链接目标' });
+  const linker = store.createBot({ name: '符号链接 bot' });
+  const targetDir = mkdirp(path.join(DATA, 'instances', victim.id));
+  writeFile(path.join(targetDir, 'keep.bin'), 'keep');
+  const linkPath = path.join(DATA, 'instances', linker.id);
+  if (process.platform === 'win32') fs.symlinkSync(targetDir, linkPath, 'junction');
+  else fs.symlinkSync(targetDir, linkPath, 'dir');
+  assert.ok(fs.lstatSync(linkPath).isSymbolicLink(), '夹具应该是一个链接');
+  store.deleteBot(linker.id);
+  assert.ok(fs.existsSync(targetDir), '目标目录不许被删');
+  assert.ok(fs.existsSync(path.join(targetDir, 'keep.bin')), '目标里的文件不许被删');
+  // 链接本身应该还在（拒删）或已被单独移除，但目标必须完好
 });
 
 await test('孤儿附件：dataDir 与附件索引不是同一个目录时跳过（不删别的实例）', () => {
@@ -291,6 +434,7 @@ await test('store.deleteBot：删 bot 时把 instances/<botId> 一起清掉', ()
 await test('cleanup_storage：默认 dryRun（只汇报），显式 false 才动手', async () => {
   const main = store.mainBot();
   writeFile(path.join(DATA, 'instances', 'tool_probe', 'x.bin'), 'x');
+  fs.utimesSync(path.join(DATA, 'instances', 'tool_probe', 'x.bin'), old, old);
   fs.utimesSync(path.join(DATA, 'instances', 'tool_probe'), old, old);
 
   const tools = buildChiefTools({ runner: new PiRunner(), health: null, roomId: dm.id, botId: main.id, store });

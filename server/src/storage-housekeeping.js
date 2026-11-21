@@ -19,7 +19,9 @@ import path from 'node:path';
 import { log } from './util.js';
 import {
   deleteAttachments, listAttachmentMeta, attachmentSize, attachmentsRoot,
+  attachmentDeletionRevision,
 } from './attachments.js';
+import { shells as defaultShells } from './shells.js';
 import { pruneScreenshots } from './desktop-observe.js';
 import { defaultInstanceDir } from './child-env-typed.js';
 import {
@@ -79,6 +81,32 @@ function sizeOf(file) {
   }
 }
 
+/**
+ * 目录树里**最新的** mtime（跳过符号链接）。
+ *
+ * ★ 不能只看 `instances/<key>` 顶层目录自身的 mtime：`home/`、`tmp/` 里写文件
+ *   不会更新父目录的 mtime —— 一个正在干活的实例，顶层目录可能"老"了 20 天。
+ *   判断"这个实例还有人用"必须看树里最新的活动。
+ */
+function latestMtimeMs(dir) {
+  let latest = 0;
+  const walk = (target) => {
+    const stat = statSafe(target);
+    if (!stat) return;
+    if (stat.mtimeMs > latest) latest = stat.mtimeMs;
+    if (!stat.isDirectory() || stat.isSymbolicLink()) return;
+    let entries = [];
+    try {
+      entries = fs.readdirSync(target, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) walk(path.join(target, entry.name));
+  };
+  walk(dir);
+  return latest;
+}
+
 function dirSize(dir) {
   let total = 0;
   let entries = [];
@@ -98,63 +126,84 @@ function dirSize(dir) {
 
 /**
  * 删一个文件，但必须先证明它就在 `rootReal` 里、而且不是符号链接。
- * @returns {number} 回收的字节数（跳过/失败返回 0）
+ *
+ * @returns {{ ok: boolean, bytes: number, reason?: string }}
+ *   `ok` 只在**真的删掉**时为 true —— 调用方据此决定要不要递增计数
+ *   （以前返回 0 分不清"文件本来就没有"和"删失败了"）。
  */
 function removeFileInside(rootReal, file) {
-  if (!rootReal) return 0;
+  if (!rootReal) return { ok: false, bytes: 0, reason: '目录不可用' };
   const stat = statSafe(file);
-  if (!stat || !stat.isFile()) return 0;
+  if (!stat || !stat.isFile()) return { ok: false, bytes: 0, reason: '不是普通文件' };
   let parentReal;
   try {
     parentReal = fs.realpathSync(path.dirname(file));
   } catch {
-    return 0;
+    return { ok: false, bytes: 0, reason: '父目录解析失败' };
   }
-  if (parentReal !== rootReal) return 0;
+  if (parentReal !== rootReal) return { ok: false, bytes: 0, reason: '不在目标目录内' };
   const bytes = stat.size || 0;
   try {
     fs.unlinkSync(file);
-    return bytes;
+    return { ok: true, bytes };
   } catch (err) {
     log('清理运行数据失败：' + (err?.message || err));
-    return 0;
+    return { ok: false, bytes: 0, reason: String(err?.message || err) };
   }
 }
 
 /** 删一个子目录（实例目录）：realpath 必须在 root 下，且本身不是符号链接 */
 function removeDirInside(rootReal, dir) {
-  if (!rootReal) return 0;
+  if (!rootReal) return { ok: false, bytes: 0, reason: '目录不可用' };
   const stat = statSafe(dir);
-  if (!stat || !stat.isDirectory() || stat.isSymbolicLink()) return 0;
+  if (!stat || !stat.isDirectory() || stat.isSymbolicLink()) {
+    return { ok: false, bytes: 0, reason: '不是普通目录' };
+  }
   let real;
   try {
     real = fs.realpathSync(dir);
   } catch {
-    return 0;
+    return { ok: false, bytes: 0, reason: 'realpath 失败' };
   }
-  if (!isInside(rootReal, real)) return 0;
+  if (!isInside(rootReal, real)) return { ok: false, bytes: 0, reason: '不在目标目录内' };
   const bytes = dirSize(real);
   try {
     fs.rmSync(real, { recursive: true, force: true });
-    return bytes;
+    return { ok: true, bytes };
   } catch (err) {
     log('清理实例目录失败：' + (err?.message || err));
-    return 0;
+    return { ok: false, bytes: 0, reason: String(err?.message || err) };
   }
 }
 
-/** 把任意结构里的字符串都收进集合（任务产物 / 汇总产物可能是 id，也可能是路径） */
-function collectStrings(value, into) {
+/**
+ * 把任意结构里的字符串收进集合，并顺手把**路径形式**的引用拆成附件 id。
+ *
+ * 为什么需要拆：任务产物 / 汇总产物里常见的是 `uploads/<id>.png` 或
+ * `.../<id>.pdf`，而 `selectOrphanUploads` 比的是纯 `id`。不拆的话，
+ * 一个被任务产物引用着的附件会被当成孤儿删掉。
+ *
+ * 拆法（任一命中都算引用）：原串、basename、去扩展名的 basename、
+ * 以及串里出现的 18 位十六进制片段（附件 id 是 `randomBytes(9).toString('hex')`）。
+ */
+function collectRefStrings(value, into) {
   if (typeof value === 'string') {
-    if (value) into.add(value);
+    const text = value.trim();
+    if (!text) return into;
+    into.add(text);
+    const base = path.basename(text);
+    if (base && base !== text) into.add(base);
+    const noExt = base.replace(/.[A-Za-z0-9]{1,8}$/, '');
+    if (noExt && noExt !== base) into.add(noExt);
+    for (const match of text.matchAll(/[0-9a-f]{18}/gi)) into.add(match[0].toLowerCase());
     return into;
   }
   if (Array.isArray(value)) {
-    for (const item of value) collectStrings(item, into);
+    for (const item of value) collectRefStrings(item, into);
     return into;
   }
   if (value && typeof value === 'object') {
-    for (const item of Object.values(value)) collectStrings(item, into);
+    for (const item of Object.values(value)) collectRefStrings(item, into);
   }
   return into;
 }
@@ -176,13 +225,25 @@ function collectReferencedIds({ store }, logFn) {
       }
     }
     const scan = typeof store.taskRuns?.listAll === 'function' ? store.taskRuns.listAll() : null;
-    for (const run of scan?.taskRuns ?? []) {
-      collectStrings(run?.attachments ?? [], ids);
-      collectStrings(run?.artifacts ?? [], ids);
+    // 读不全就可能漏掉"正被引用"的附件 —— 宁可整项不删
+    if (scan && scan.complete === false) {
+      logFn?.('taskruns 读取不完整，无法完整计算附件引用，跳过孤儿附件清理');
+      return null;
     }
-    for (const batch of store.pendingChiefSummaries?.() ?? []) {
-      collectStrings(batch?.artifacts ?? [], ids);
-      collectStrings(batch?.targets ?? [], ids);
+    for (const run of scan?.taskRuns ?? []) {
+      collectRefStrings(run?.attachments ?? [], ids);
+      collectRefStrings(run?.artifacts ?? [], ids);
+      // 真实产物位置：每次尝试的结果、交付产物、进度证据
+      for (const attempt of run?.attempts ?? []) {
+        collectRefStrings(attempt?.result?.artifacts ?? [], ids);
+      }
+      collectRefStrings(run?.delivery?.artifacts ?? [], ids);
+      collectRefStrings(run?.progress?.evidence ?? [], ids);
+    }
+    // ★ 扫**全量**汇总（含 collecting / sent）：只扫 pending 会漏掉正在收集与已发出的产物
+    for (const batch of store.chiefSummaries?.() ?? []) {
+      collectRefStrings(batch?.artifacts ?? [], ids);
+      collectRefStrings(batch?.targets ?? [], ids);
     }
     return ids;
   } catch (err) {
@@ -191,41 +252,59 @@ function collectReferencedIds({ store }, logFn) {
   }
 }
 
-/** 当前在跑的 bot（用实例目录名表示：`instances/<safeKey>`） */
-function busyBotKeys({ store, runner }) {
+/**
+ * 当前在跑的实例目录名（`instances/<safeKey>`）。
+ *
+ * 两种 key 都要收：
+ *   · `bot.id` —— 按 bot 分的实例目录；
+ *   · `${room.id}-${bot.id}` —— `shells.js` 给后台命令建的目录（它的 home/tmp 就在这里）。
+ *
+ * 后台 shell 还在跑（`running === true`）也一并保护：进程活着的目录绝对不能删。
+ */
+function busyBotKeys({ store, runner, shellRegistry = null }) {
   const keys = new Set();
-  if (!runner?.isBusy) return keys;
-  const rooms = store.listRooms?.() ?? [];
-  for (const bot of store.listBots?.() ?? []) {
+  const add = (rawKey) => {
+    const dir = defaultInstanceDir('/instances', rawKey);
+    const name = path.basename(dir);
+    if (name) keys.add(name);
+  };
+  const rooms = store?.listRooms?.() ?? [];
+  for (const bot of store?.listBots?.() ?? []) {
+    if (!runner?.isBusy) continue;
+    let busyAnywhere = false;
     for (const room of rooms) {
       try {
+        // 不能 break：同一个 bot 可能在多个房间同时有活，
+        // 每个房间的 `${roomId}-${botId}` 目录都要单独保护
         if (runner.isBusy(room.id, bot.id)) {
-          const dir = defaultInstanceDir('/instances', bot.id);
-          keys.add(path.basename(dir));
-          break;
+          add(`${room.id}-${bot.id}`);
+          busyAnywhere = true;
         }
       } catch {
         // 判忙失败就当不忙（清理工具不该因此整个失败）
       }
     }
+    // 按 bot 分的目录只在它真的忙时才保护
+    if (busyAnywhere) add(bot.id);
   }
+  for (const key of shellRegistry?.runningKeys?.() ?? []) add(key);
   return keys;
 }
 
 // ---------------------------------------------------------------- 各 scope
 
-function sweepInstanceTmp({ store, runner, dataDir, now, ttlMs, dryRun, summary }) {
+function sweepInstanceTmp({ store, runner, shellRegistry, dataDir, now, ttlMs, dryRun, summary }) {
   const root = realDirOf(dataDir, 'instances');
   if (!root) return;
-  const busy = busyBotKeys({ store, runner });
+  const busy = busyBotKeys({ store, runner, shellRegistry });
   let entries = [];
   try {
     entries = fs.readdirSync(root, { withFileTypes: true })
       .filter((e) => e.isDirectory() && !e.isSymbolicLink())
       .map((e) => {
         const full = path.join(root, e.name);
-        const stat = statSafe(full);
-        return { name: e.name, mtimeMs: stat?.mtimeMs ?? 0, full };
+        // ★ 用整棵树里最新的 mtime：只看顶层目录会被 home/ tmp/ 的写入骗过去
+        return { name: e.name, mtimeMs: latestMtimeMs(full), full };
       });
   } catch {
     return;
@@ -233,12 +312,18 @@ function sweepInstanceTmp({ store, runner, dataDir, now, ttlMs, dryRun, summary 
   summary.skippedBusyBots = busy.size;
   const expired = selectExpiredTmpEntries(entries, { busyBotKeys: busy, now, ttlMs });
   for (const entry of expired) {
-    summary.removed.instanceTmp += 1;
     if (dryRun) {
+      summary.removed.instanceTmp += 1;
       summary.reclaimedBytes += dirSize(entry.full);
       continue;
     }
-    summary.reclaimedBytes += removeDirInside(root, entry.full);
+    const result = removeDirInside(root, entry.full);
+    if (result.ok) {
+      summary.removed.instanceTmp += 1;
+      summary.reclaimedBytes += result.bytes;
+    } else {
+      summary.problems.push(`instanceTmp/${entry.name}: ${result.reason ?? '删除失败'}`);
+    }
   }
 }
 
@@ -255,13 +340,19 @@ function sweepTaskRuns({ store, dataDir, now, opts, dryRun, summary }) {
   const picked = selectExpiredTaskRunTrees(runs, opts);
   for (const id of picked.taskRunIds) {
     if (!/^[A-Za-z0-9_-]+$/.test(id)) continue; // 文件名只允许安全字符
-    summary.removed.taskRuns += 1;
     const file = path.join(root, `${id}.json`);
     if (dryRun) {
+      summary.removed.taskRuns += 1;
       summary.reclaimedBytes += sizeOf(file);
       continue;
     }
-    summary.reclaimedBytes += removeFileInside(root, file);
+    const result = removeFileInside(root, file);
+    if (result.ok) {
+      summary.removed.taskRuns += 1;
+      summary.reclaimedBytes += result.bytes;
+    } else {
+      summary.problems.push(`taskRuns/${id}.json: ${result.reason ?? '删除失败'}`);
+    }
   }
 }
 
@@ -298,12 +389,18 @@ function sweepTaskRequests({ store, dataDir, now, ttlMs, dryRun, summary }) {
   }
   const expired = selectExpiredRequestReceipts(receipts, { activeTaskRunIds, now, ttlMs });
   for (const receipt of expired) {
-    summary.removed.taskRequests += 1;
     if (dryRun) {
+      summary.removed.taskRequests += 1;
       summary.reclaimedBytes += sizeOf(receipt.file);
       continue;
     }
-    summary.reclaimedBytes += removeFileInside(root, receipt.file);
+    const result = removeFileInside(root, receipt.file);
+    if (result.ok) {
+      summary.removed.taskRequests += 1;
+      summary.reclaimedBytes += result.bytes;
+    } else {
+      summary.problems.push(`taskRequests/${receipt.name ?? receipt.file}: ${result.reason ?? '删除失败'}`);
+    }
   }
 }
 
@@ -339,6 +436,15 @@ function sweepOrphanUploads({ store, dataDir, now, ttlMs, dryRun, summary, logFn
   // ★ 只有这一条删除路径：留墓碑 + 版本号 + 广播，绝不裸 unlink
   const result = deleteAttachments(orphans.map((item) => item.id));
   summary.removed.orphanUploads = result.deleted.length;
+  if (result.deleted.length) {
+    // 与 http.js 的 DELETE /api/attachments 保持同一形状：客户端靠 revision 刷新
+    const revision = attachmentDeletionRevision();
+    try {
+      store.bus?.emit?.('event', { t: 'attachments.deleted', ids: result.deleted, revision });
+    } catch (err) {
+      summary.problems.push(`广播附件删除事件失败: ${err?.message || err}`);
+    }
+  }
   if (result.failed.length) summary.problems.push(`附件删除失败 ${result.failed.length} 个`);
 }
 
@@ -363,6 +469,7 @@ export function runStorageHousekeeping({
   dryRun = false,
   now = Date.now(),
   limits = {},
+  shellRegistry = defaultShells,
   logFn = log,
 } = {}) {
   const summary = {
@@ -392,7 +499,7 @@ export function runStorageHousekeeping({
   if (wanted.has('instanceTmp')) {
     guard('instanceTmp', () =>
       sweepInstanceTmp({
-        store, runner, dataDir, now, ttlMs: cfg.instanceTmpTtlMs, dryRun, summary,
+        store, runner, shellRegistry, dataDir, now, ttlMs: cfg.instanceTmpTtlMs, dryRun, summary,
       }));
   }
   if (wanted.has('taskRequests')) {

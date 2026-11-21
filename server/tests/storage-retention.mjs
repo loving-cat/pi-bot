@@ -90,16 +90,27 @@ test('整棵根树免疫：树里只要有一个非终态节点，一个文件�
   assert.deepEqual(picked.rootIds, ['solo']);
 });
 
-test('终态树按 TTL 裁：只有最老时间戳超期才选（子树比根新也不影响整树）', () => {
+test('终态树按 TTL 裁：整棵树都静默超过 TTL 才选', () => {
   const runs = [
     run('old-root', 'completed', { finishedAt: NOW - 40 * DAY }),
-    run('old-child', 'cancelled', { rootTaskId: 'old-root', finishedAt: NOW - 1 * DAY }),
+    run('old-child', 'cancelled', { rootTaskId: 'old-root', finishedAt: NOW - 41 * DAY }),
     run('fresh-root', 'completed', { finishedAt: NOW - 1 * DAY }),
   ];
   const picked = selectExpiredTaskRunTrees(runs, { now: NOW });
   assert.deepEqual(picked.taskRunIds.sort(), ['old-child', 'old-root']);
   assert.equal(picked.expiredRoots, 1);
   assert.equal(picked.overflowRoots, 0);
+});
+
+test('★ 老根任务 + 刚交卷的子任务 → 整树保留（TTL 用最新时间，不是最老）', () => {
+  const runs = [
+    // 子任务 40 天前就完成了，根任务 1 小时前才收口：整棵树仍然"新鲜"
+    run('slow-root', 'completed', { finishedAt: NOW - 60 * 60 * 1000 }),
+    run('old-child', 'completed', { rootTaskId: 'slow-root', finishedAt: NOW - 40 * DAY }),
+  ];
+  const picked = selectExpiredTaskRunTrees(runs, { now: NOW });
+  assert.deepEqual(picked.taskRunIds, [], '只要树里最新的一次活动还在 TTL 内，整棵树都不许删');
+  assert.equal(picked.expiredRoots, 0);
 });
 
 test('数量上限按"最老"裁：超过 maxTerminal 时先删最老的终态树', () => {

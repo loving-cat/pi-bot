@@ -74,8 +74,9 @@ export function taskRunStamp(run) {
  *   1. 按 `rootTaskId ?? id` 分组；
  *   2. 树里只要有一个节点不是终态（queued / running / waiting_xxx / paused_xxx /
  *      blocked / 未知）→ 整棵树免疫；
- *   3. 终态树：最老的时间戳超过 `ttlMs` → 选；
- *   4. 剩下的终态树若超过 `maxTerminal` 棵 → 再按最老裁到上限。
+ *   3. 终态树：**整棵树最新的时间戳**都超过 `ttlMs` 才算过期（不是"最老"—— 根任务
+ *      刚交卷、子任务可能是一个月前的，用 min 会把刚完成的任务当场删掉）；
+ *   4. 剩下的终态树若超过 `maxTerminal` 棵 → 再按整树最新时间从旧到新裁。
  *
  * @param {Array<object>} runs
  * @param {{ now?: number, ttlMs?: number, maxTerminal?: number }} [opts]
@@ -96,26 +97,27 @@ export function selectExpiredTaskRunTrees(
     const rootId = taskRunRootId(run);
     let tree = trees.get(rootId);
     if (!tree) {
-      tree = { rootId, ids: [], live: 0, oldest: Number.POSITIVE_INFINITY };
+      tree = { rootId, ids: [], live: 0, latest: 0 };
       trees.set(rootId, tree);
     }
     tree.ids.push(id);
     if (!isTerminalTaskRun(run)) tree.live += 1;
+    // ★ 取**最新**而不是最老：整棵树都静默超过 TTL 才算过期。
+    //   用 min 的后果是"老子任务 + 刚交卷的根任务"一提交就被当成 30 天前的垃圾删掉。
     const stamp = taskRunStamp(run);
-    if (stamp > 0) tree.oldest = Math.min(tree.oldest, stamp);
+    if (stamp > 0) tree.latest = Math.max(tree.latest, stamp);
   }
 
   const terminal = [];
   for (const tree of trees.values()) {
     if (tree.live > 0) continue; // 红线 2：整棵免疫
     if (!tree.ids.length) continue;
-    const oldest = Number.isFinite(tree.oldest) ? tree.oldest : 0;
-    terminal.push({ ...tree, oldest });
+    terminal.push(tree);
   }
   // 时间戳缺失（0）的排最前 —— 它们最没有保留价值，但仍受 maxTerminal 保护
-  terminal.sort((a, b) => (a.oldest || 0) - (b.oldest || 0) || a.rootId.localeCompare(b.rootId));
+  terminal.sort((a, b) => a.latest - b.latest || a.rootId.localeCompare(b.rootId));
 
-  const expired = terminal.filter((tree) => now - tree.oldest > ttlMs);
+  const expired = terminal.filter((tree) => now - tree.latest > ttlMs);
   const rest = terminal.filter((tree) => !expired.includes(tree));
   const limit = Math.max(0, Math.floor(Number(maxTerminal) || 0));
   const overflow = rest.length > limit ? rest.slice(0, rest.length - limit) : [];

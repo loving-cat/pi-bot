@@ -23,8 +23,13 @@ storage-housekeeping.js  执行：读目录 / realpath 校验 / 真删 / 统计�
 cleanup_storage (工具)   主控入口：默认 dryRun，scope 白名单
 ```
 
-`server-main.js` 的 `housekeeping` 定时器只自动跑 **安全三项**：
-`instanceTmp` / `taskRequests` / `taskRuns`。截图与孤儿附件永远不进自动档。
+`server-main.js` 的 `housekeeping` 定时器只自动跑 **安全三项**（`STORAGE_AUTO_SCOPES`）：
+`instanceTmp` / `taskRequests` / `taskRuns`。
+
+- **孤儿附件永远不进自动档**（红线 4）。
+- **旧截图也不进**：它由既有的 `pruneScreenshots()` 在同一个 60s 节拍里独立清理
+  （`desktop-shots/*.png` 超过 24h）。清理工具里保留 `screenshots` scope 只是给
+  手动/显式调用用，避免两处重复扫同一个目录。
 
 ## 阈值（`STORAGE_RETENTION_DEFAULTS`，唯一真源）
 

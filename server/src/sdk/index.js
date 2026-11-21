@@ -417,6 +417,18 @@ async function buildRuntime(options, cleanup) {
     return failed.length ? { ok: false, already: false, failed } : { ok: true, already: false };
   }
 
+  // 服务门面也过 assertAlive：dispose 之后再调它们等于往已经拆掉的 store 上写。
+  // ★ 顶层与 `services.*` 必须**共用同一批包装对象** —— 否则宿主从
+  //   `rt.services.bots` 走还是能写，两条路的行为不一致。
+  const facades = {
+    bots: guarded(services.bots),
+    rooms: guarded(services.rooms),
+    models: guarded(services.models),
+    automations: guarded(services.automations),
+    capabilities: guarded(services.capabilities),
+    policy: guarded(services.policy),
+  };
+
   return {
     config: cfg,
     store,
@@ -424,14 +436,8 @@ async function buildRuntime(options, cleanup) {
     modelGroups,
     runner,
     generation,
-    services,
-    // 服务门面也过 assertAlive：dispose 之后再调它们等于往已经拆掉的 store 上写。
-    bots: guarded(services.bots),
-    rooms: guarded(services.rooms),
-    models: guarded(services.models),
-    automations: guarded(services.automations),
-    capabilities: guarded(services.capabilities),
-    policy: guarded(services.policy),
+    services: { ...services, ...facades },
+    ...facades,
     lessons,
     send,
     askMain,
