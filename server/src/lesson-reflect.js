@@ -287,9 +287,14 @@ export function createLessonReflector({ runner, logFn = log, config: scopedConfi
     );
     logFn?.(
       `【${room?.name ?? roomId}】经验评估：${r.applied} 条记账` +
-        (r.ignored.length ? `，${r.ignored.length} 条不记（confounded / 找不到）` : ''),
+        (r.ignored.length ? `，${r.ignored.length} 条不记（confounded / 找不到）` : '') +
+        (r.decayed?.length
+          ? `，${r.decayed.length} 条自动降级（同族连续失败：${r.decayed
+              .map((d) => `${d.family} ${d.streak} 连败`)
+              .join('、')}）`
+          : ''),
     );
-    return { applied: r.applied, ignored: r.ignored };
+    return { applied: r.applied, ignored: r.ignored, decayed: r.decayed ?? [] };
   }
 
   const schedule = (options = {}) => {

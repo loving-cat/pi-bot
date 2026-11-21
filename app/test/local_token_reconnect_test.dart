@@ -101,7 +101,7 @@ void main() {
       expect(state.token, 'tok-old');
     });
 
-    test('服务器模式（用户填了 PI_BOT_TOKEN）不许被 local-token 覆盖', () {
+    test('服务器模式（用户填了 ORBIS_TOKEN）不许被 local-token 覆盖', () {
       tokenFile().writeAsStringSync('from-file\n');
       final state = mkState()
         ..localNeedsToken = true

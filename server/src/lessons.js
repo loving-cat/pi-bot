@@ -181,6 +181,20 @@ export function normalizeLessonList(list = [], now = Date.now()) {
  *   · `generalizesHop`：一跳 `generalizes`（特化条命中任务）→ 泛化条 +1，**单条上限 +1**。
  * `contradicts` / 被 `supersedes` 取代都不是减分，是**直接排除**。
  */
+/**
+ * 族内衰减（路线图 §5.4）：同一个模型族上**连续**打输到这个次数 → 自动归档 + `system` 边。
+ *
+ * 为什么按族、按连续：同一句经验在 glm 上连输两次，只说明**它在 glm 上不好用**；
+ * 在 deepseek 上还是 1 胜 0 负，直接全库归档等于用一族的水土不服埋掉另一族的有效经验。
+ * 中间只要有一次 `helped` 就把连败清零 —— 「连续」不是「历史总失败数」。
+ *
+ * 这里只放阈值；**改状态写边是 `store.recordLessonOutcomes` 的事**（纯模块不碰 IO）。
+ */
+export const LESSON_DECAY = Object.freeze({
+  /** 同族连续失败几次触发自动归档（`system` 哨兵 contradicts 边） */
+  familyFailStreak: 2,
+});
+
 export const LESSON_SCORING = Object.freeze({
   cueHit: 3,
   lessonHit: 1,
@@ -502,16 +516,26 @@ export function normalizeFamilyStats(raw = {}) {
     // 打分查 `byFamily['deepseek']` 查不到，置信度的 coverage 还会被虚算成 2 个族。
     const family = normalizeModelFamily(name);
     if (family === UNKNOWN_MODEL_FAMILY) continue; // 没有归因的键不占位
-    const add = { hit: toCount(stats?.hit), win: toCount(stats?.win), fail: toCount(stats?.fail) };
+    const add = {
+      hit: toCount(stats?.hit),
+      win: toCount(stats?.win),
+      fail: toCount(stats?.fail),
+      // 连续失败数（老库没有这个字段 → 0，不需要迁移脚本）；0 不占位，形状与 1.x 一致
+      streak: toCount(stats?.streak),
+    };
     const cur = out[family];
     if (cur) {
       cur.hit += add.hit;
       cur.win += add.win;
       cur.fail += add.fail;
+      // 合并同一个族的重复键时取**较大**的连败数：连败是单调量，求和会把它算成 4
+      const merged = Math.max(cur.streak ?? 0, add.streak);
+      if (merged > 0) cur.streak = merged;
+      else delete cur.streak;
       continue;
     }
     if (Object.keys(out).length >= LESSON_LIMITS.byFamilyKeys) continue;
-    out[family] = add;
+    out[family] = add.streak > 0 ? add : { hit: add.hit, win: add.win, fail: add.fail };
   }
   return out;
 }
@@ -710,7 +734,12 @@ export function applyLessonOutcome(lesson = {}, { verdict = '', modelFamily = ''
   const family = normalizeModelFamily(modelFamily || lesson.modelFamily);
   if (family === UNKNOWN_MODEL_FAMILY) return lesson; // 没有归因就没地方记
   const stats = lesson.byFamily?.[family] ?? { hit: 0, win: 0, fail: 0 };
+  // 连败计数：赢一次就清零。`no_effect` / `confounded` 根本进不到这里（不记账），
+  // 所以它们既不打断连败、也不制造连败 —— 这比"算不算连续"的猜测更诚实。
+  // `streak: 0` 不落键，`byFamily` 的形状对没被降级过的经验与 1.x 逐字一致。
+  const streak = counted === 'fail' ? (Number(stats.streak) || 0) + 1 : 0;
   const next = { hit: stats.hit, win: stats.win, fail: stats.fail };
+  if (streak > 0) next.streak = streak;
   if (counted === 'win') next.win += 1;
   else next.fail += 1;
   return {
@@ -718,4 +747,22 @@ export function applyLessonOutcome(lesson = {}, { verdict = '', modelFamily = ''
     byFamily: { ...(lesson.byFamily ?? {}), [family]: next },
     updatedAt: now,
   };
+}
+
+/**
+ * 这条经验有没有在某个族上触发衰减（纯函数，只回答"该不该降级"，不改状态）。
+ *
+ * 返回 `{ family, streak }` 或 `null`。**状态与边的写入只在 `store` 里发生** ——
+ * 纯模块如果自己改 `status`，`applyLessonOutcome` 的"不可计数时返回同一引用"约定
+ * 就会被打破（调用方靠引用相等判断有没有记账）。
+ *
+ * `unknown` 族永远不衰减：老经验没有归因，不能拿"没人验证过"当失败证据。
+ */
+export function lessonFamilyDecay(lesson = {}, { modelFamily = '' } = {}) {
+  if (!lesson?.id) return null;
+  const family = normalizeModelFamily(modelFamily || lesson.modelFamily);
+  if (family === UNKNOWN_MODEL_FAMILY) return null;
+  const stats = normalizeFamilyStats(lesson.byFamily)[family];
+  if (!stats || (stats.streak ?? 0) < LESSON_DECAY.familyFailStreak) return null;
+  return { family, streak: stats.streak };
 }

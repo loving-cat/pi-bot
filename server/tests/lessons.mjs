@@ -212,14 +212,14 @@ test('store 记账：helped → win，hurt → fail，confounded / no_effect 不
 
   const hurt = store.recordLessonOutcomes([{ id: l.id, verdict: 'hurt', modelFamily: 'glm' }]);
   assert.equal(hurt.applied, 1);
-  assert.deepEqual(store.lessonLibrary().find((x) => x.id === l.id).byFamily.glm, { hit: 0, win: 1, fail: 1 });
+  assert.deepEqual(store.lessonLibrary().find((x) => x.id === l.id).byFamily.glm, { hit: 0, win: 1, fail: 1, streak: 1 });
 
   for (const verdict of ['confounded', 'no_effect']) {
     const r = store.recordLessonOutcomes([{ id: l.id, verdict, modelFamily: 'glm' }]);
     assert.equal(r.applied, 0, `${verdict} 不该记账`);
     assert.deepEqual(r.ignored, [l.id]);
   }
-  assert.deepEqual(store.lessonLibrary().find((x) => x.id === l.id).byFamily.glm, { hit: 0, win: 1, fail: 1 });
+  assert.deepEqual(store.lessonLibrary().find((x) => x.id === l.id).byFamily.glm, { hit: 0, win: 1, fail: 1, streak: 1 });
 });
 
 test('store 记账：不存在的 id 直接忽略，不报错也不建新条目', () => {
@@ -238,7 +238,7 @@ test('store 记账：换族记账互不影响（跨模型去偏的数据源）',
   ]);
   const after = store.lessonLibrary().find((x) => x.id === l.id);
   assert.deepEqual(after.byFamily.glm, { hit: 0, win: 1, fail: 0 });
-  assert.deepEqual(after.byFamily.deepseek, { hit: 0, win: 0, fail: 1 });
+  assert.deepEqual(after.byFamily.deepseek, { hit: 0, win: 0, fail: 1, streak: 1 });
 });
 
 // ---------------------------------------------------------------------------
@@ -317,6 +317,87 @@ test('store 边：lessons.updated 事件同时带 lessons 与 edges（界面不�
   assert.ok(Array.isArray(last.lessons));
   assert.ok(Array.isArray(last.edges), '事件必须带 edges');
   assert.ok(last.edges.some((e) => e.type === 'supersedes'));
+});
+
+// ---------------------------------------------------------------------------
+// store：族内衰减（路线图 §5.4）—— 连败到阈值自动归档 + system 边，人工可恢复
+// ---------------------------------------------------------------------------
+test('store 衰减：同族连续败两次 → 自动归档 + system contradicts 边，第三次不重复写边', () => {
+  const l = store.addLesson({
+    cue: '衰减案',
+    lesson: '做法',
+    evidence: EVIDENCE,
+    status: 'active',
+    modelFamily: 'glm',
+  }).lesson;
+  const first = store.recordLessonOutcomes([{ id: l.id, verdict: 'hurt', modelFamily: 'glm' }]);
+  assert.deepEqual(first.decayed, [], '败一次不该降级');
+  assert.equal(store.lessonLibrary().find((x) => x.id === l.id).status, 'active');
+
+  const second = store.recordLessonOutcomes([{ id: l.id, verdict: 'hurt', modelFamily: 'glm' }]);
+  assert.equal(second.decayed.length, 1);
+  assert.deepEqual(second.decayed[0], { id: l.id, family: 'glm', streak: 2 });
+  const after = store.lessonLibrary().find((x) => x.id === l.id);
+  assert.equal(after.status, 'archived', '降到归档档，不再出现在待启用里');
+  assert.ok(
+    store.lessonEdges().some((e) => e.from === 'system' && e.to === l.id && e.type === 'contradicts'),
+    '要写 system 哨兵边：即使被误切回 active，打分也会双向排除',
+  );
+
+  const third = store.recordLessonOutcomes([{ id: l.id, verdict: 'hurt', modelFamily: 'glm' }]);
+  assert.equal(third.decayed.length, 1, '还在连败，仍然报告降级');
+  assert.equal(
+    store.lessonEdges().filter((e) => e.from === 'system' && e.to === l.id).length,
+    1,
+    '边是幂等的，不能越写越多',
+  );
+});
+
+test('store 衰减：中间赢一次就重新计数（连续 ≠ 历史总数）', () => {
+  const l = store.addLesson({
+    cue: '衰减案二',
+    lesson: '做法',
+    evidence: EVIDENCE,
+    status: 'active',
+    modelFamily: 'glm',
+  }).lesson;
+  store.recordLessonOutcomes([{ id: l.id, verdict: 'hurt', modelFamily: 'glm' }]);
+  store.recordLessonOutcomes([{ id: l.id, verdict: 'helped', modelFamily: 'glm' }]);
+  const r = store.recordLessonOutcomes([{ id: l.id, verdict: 'hurt', modelFamily: 'glm' }]);
+  assert.deepEqual(r.decayed, [], '赢过就不能算连败');
+  assert.equal(store.lessonLibrary().find((x) => x.id === l.id).status, 'active');
+});
+
+test('store 衰减：被降级的条不能裸切 active（否则看起来启用了、实际注入不进去）', () => {
+  const l = store.addLesson({
+    cue: '衰减案三',
+    lesson: '做法',
+    evidence: EVIDENCE,
+    status: 'active',
+    modelFamily: 'glm',
+  }).lesson;
+  store.recordLessonOutcomes([
+    { id: l.id, verdict: 'hurt', modelFamily: 'glm' },
+    { id: l.id, verdict: 'hurt', modelFamily: 'glm' },
+  ]);
+  const bad = store.updateLesson(l.id, { status: 'active' });
+  assert.match(bad.error, /解除降级/);
+  assert.ok(
+    !pick(store.lessonLibrary(), '衰减案三 怎么做', { edges: store.lessonEdges() }).some((x) => x.id === l.id),
+    'system 边在的时候打分直接排除，手动改成 active 也没用',
+  );
+
+  // 解除降级：删 system 边（store 里连败计数同步清零）
+  const ok = store.removeLessonEdge({ from: 'system', to: l.id, type: 'contradicts' });
+  assert.ok(ok.ok, ok.error);
+  assert.equal(store.lessonLibrary().find((x) => x.id === l.id).byFamily.glm.streak, undefined, '人工恢复要清零连败');
+  assert.ok(!store.updateLesson(l.id, { status: 'active' }).error, '解除之后可以正常启用');
+  const after = pick(store.lessonLibrary(), '衰减案三 怎么做', { edges: store.lessonEdges() });
+  assert.ok(after.some((x) => x.id === l.id), '解除后真的能再次注入');
+
+  // 清零后只败一次不该立刻又被打回去
+  const r = store.recordLessonOutcomes([{ id: l.id, verdict: 'hurt', modelFamily: 'glm' }]);
+  assert.deepEqual(r.decayed, []);
 });
 
 try {

@@ -49,6 +49,8 @@ import {
   selectEvictions,
   countedLessonVerdict,
   applyLessonOutcome,
+  lessonFamilyDecay,
+  LESSON_DECAY,
 } from '../src/lessons.js';
 
 let pass = 0;
@@ -556,7 +558,7 @@ test('applyLessonOutcome：按当时执行的模型族记 win / fail', () => {
   const win = applyLessonOutcome(l, { verdict: 'helped', modelFamily: 'glm' });
   assert.deepEqual(win.byFamily.glm, { hit: 0, win: 1, fail: 0 });
   const fail = applyLessonOutcome(win, { verdict: 'hurt', modelFamily: 'glm' });
-  assert.deepEqual(fail.byFamily.glm, { hit: 0, win: 1, fail: 1 });
+  assert.deepEqual(fail.byFamily.glm, { hit: 0, win: 1, fail: 1, streak: 1 });
 });
 
 test('applyLessonOutcome：不可计数时原样返回同一个引用（调用方据此判"没记账"）', () => {
@@ -575,7 +577,54 @@ test('applyLessonOutcome：换族记账互不影响（这正是跨模型去偏�
   const a = applyLessonOutcome(l, { verdict: 'helped', modelFamily: 'glm' });
   const b = applyLessonOutcome(a, { verdict: 'hurt', modelFamily: 'deepseek' });
   assert.deepEqual(b.byFamily.glm, { hit: 0, win: 1, fail: 0 });
-  assert.deepEqual(b.byFamily.deepseek, { hit: 0, win: 0, fail: 1 });
+  assert.deepEqual(b.byFamily.deepseek, { hit: 0, win: 0, fail: 1, streak: 1 });
+});
+
+// ---------------------------------------------------------------------------
+// 9. 族内衰减（路线图 §5.4：同族连续 2 次 fail → 自动归档 + system 边）
+// ---------------------------------------------------------------------------
+test('applyLessonOutcome：连败计数只在 fail 时递增，赢一次就清零', () => {
+  const l = active({ id: 'les_d0', modelFamily: 'glm' });
+  const f1 = applyLessonOutcome(l, { verdict: 'hurt', modelFamily: 'glm' });
+  assert.equal(f1.byFamily.glm.streak, 1);
+  const f2 = applyLessonOutcome(f1, { verdict: 'hurt', modelFamily: 'glm' });
+  assert.equal(f2.byFamily.glm.streak, 2);
+  const win = applyLessonOutcome(f2, { verdict: 'helped', modelFamily: 'glm' });
+  assert.equal(win.byFamily.glm.streak, undefined, 'win 必须清零（0 不落键，形状与 1.x 一致）');
+  const f3 = applyLessonOutcome(win, { verdict: 'hurt', modelFamily: 'glm' });
+  assert.equal(f3.byFamily.glm.streak, 1, '清零后要重新数，不能接着之前的 2');
+});
+
+test('normalizeFamilyStats：streak 缺省不落键（老库形状不变），合并同族取最大值', () => {
+  assert.deepEqual(normalizeFamilyStats({ glm: { hit: 1, win: 1, fail: 0 } }), {
+    glm: { hit: 1, win: 1, fail: 0 },
+  });
+  const merged = normalizeFamilyStats({
+    'deepseek-v3': { hit: 0, win: 0, fail: 2, streak: 2 },
+    'deepseek-chat': { hit: 0, win: 0, fail: 1, streak: 1 },
+  });
+  assert.equal(merged.deepseek.streak, 2, '连败是单调量，求和会算成 3');
+  assert.equal(merged.deepseek.fail, 3, '普通计数仍然相加');
+});
+
+test('lessonFamilyDecay：1 次败不降，2 次连续败才降；别的族不受牵连', () => {
+  assert.equal(LESSON_DECAY.familyFailStreak, 2, '阈值是规格的一部分，改它要改文档');
+  const l = active({ id: 'les_d1', modelFamily: 'glm' });
+  const f1 = applyLessonOutcome(l, { verdict: 'hurt', modelFamily: 'glm' });
+  assert.equal(lessonFamilyDecay(f1, { modelFamily: 'glm' }), null, '败一次只是可疑，不是证据');
+  const f2 = applyLessonOutcome(f1, { verdict: 'hurt', modelFamily: 'glm' });
+  assert.deepEqual(lessonFamilyDecay(f2, { modelFamily: 'glm' }), { family: 'glm', streak: 2 });
+  assert.equal(lessonFamilyDecay(f2, { modelFamily: 'deepseek' }), null, 'deepseek 上一场没打，不该跟着降');
+});
+
+test('lessonFamilyDecay：没有归因（unknown）永远不衰减，纯函数不改状态', () => {
+  const legacy = normalizeLesson({ id: 'les_d2', cue: 'a', lesson: 'b', evidence: EVIDENCE, status: 'active' });
+  const hurt = applyLessonOutcome(legacy, { verdict: 'hurt' });
+  assert.equal(hurt, legacy, 'unknown 族连记账都没有，更不可能降级');
+  assert.equal(lessonFamilyDecay(legacy, {}), null);
+  const f2 = active({ id: 'les_d3', modelFamily: 'glm', byFamily: { glm: { hit: 0, win: 0, fail: 2, streak: 2 } } });
+  assert.equal(f2.status, 'active', '降级是 store 的事：纯函数只回答"该不该"');
+  assert.deepEqual(lessonFamilyDecay(f2, {}), { family: 'glm', streak: 2 }, '缺省用经验自己的族');
 });
 
 // ---------------------------------------------------------------------------

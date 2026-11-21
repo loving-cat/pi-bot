@@ -49,6 +49,7 @@ import {
   lessonEdgeRejectReason,
   normalizeModelFamily,
   applyLessonOutcome,
+  lessonFamilyDecay,
   countedLessonVerdict,
   LESSON_EDGE_SENTINELS,
   UNKNOWN_MODEL_FAMILY,
@@ -1299,6 +1300,26 @@ export class Store {
       list.find((l, i) => i !== idx && sameRoom(l) && l.contentHash === lesson.contentHash);
     if (clash) return { error: `已经有一条同样情境的经验：「${clash.cue}」` };
 
+    // 被否决 / 被自动降级的条不许裸切 active：
+    //   那条 contradicts 边还在的话，打分直接把它排除 —— 界面显示「已启用」，
+    //   实际下一次永远注入不进去。必须先"解除"（删边），这是唯一的启用路径。
+    if (lesson.status === 'active') {
+      const blocking = this.lessonEdges({ lessons: list }).find(
+        (e) =>
+          e.type === 'contradicts' &&
+          (e.to === id || e.from === id) &&
+          LESSON_EDGE_SENTINELS.includes(e.from),
+      );
+      if (blocking) {
+        return {
+          error:
+            blocking.from === 'user'
+              ? '这条经验已被否决，先「解除否决」才能启用'
+              : '这条经验已被自动降级（同模型族连续失败），先「解除降级」才能启用',
+        };
+      }
+    }
+
     list[idx] = lesson;
     this.state.lessons = list;
     this.scheduleSave();
@@ -1361,6 +1382,20 @@ export class Store {
     const next = edges.filter((e) => !(e.from === from && e.to === to && e.type === type));
     if (next.length === edges.length) return { error: '关系不存在' };
     this.state.lessonEdges = next;
+    // 「解除降级」必须把连败计数一起清零：
+    //   system 边一删、连败还在 2，用户刚启用下一次失败就又被打回归档 ——
+    //   等于"人工恢复"根本没有发生。按族全清是有意的：人已明确说"这条继续用"，
+    //   哪个族先失败就从哪个族重新数。
+    if (from === 'system' && type === 'contradicts') {
+      this.state.lessons = this.lessonLibrary().map((l) => {
+        if (l.id !== to) return l;
+        const byFamily = {};
+        for (const [family, stats] of Object.entries(l.byFamily ?? {})) {
+          byFamily[family] = { ...stats, streak: 0 };
+        }
+        return normalizeLesson({ ...l, byFamily });
+      });
+    }
     this.scheduleSave();
     this.emitLessons();
     return { ok: true };
@@ -1400,6 +1435,7 @@ export class Store {
     const list = this.lessonLibrary();
     const byId = new Map(list.map((l) => [l.id, l]));
     const ignored = [];
+    const decayed = [];
     let applied = 0;
     for (const item of Array.isArray(items) ? items : []) {
       const id = String(item?.id ?? '');
@@ -1419,12 +1455,34 @@ export class Store {
       }
       byId.set(id, next);
       applied += 1;
+
+      // 族内衰减：同一族连输到阈值 → 归档 + `system` 哨兵 contradicts 边。
+      // 边（不是单纯改状态）才是真正的刹车：即使之后被误切回 active，
+      // 打分也会双向排除它 —— 否则就是 §5.6 里那个"看似启用、实际注入不进去"的坑。
+      const signal = lessonFamilyDecay(next, { modelFamily: item?.modelFamily });
+      if (signal) {
+        byId.set(
+          id,
+          normalizeLesson({ ...next, status: 'archived' }),
+        );
+        decayed.push({ id, family: signal.family, streak: signal.streak });
+      }
     }
-    if (!applied) return { applied: 0, ignored };
+    if (!applied) return { applied: 0, ignored, decayed: [] };
     this.state.lessons = normalizeLessonList([...byId.values()]);
+    if (decayed.length) {
+      const ids = new Set(byId.keys());
+      const edges = this.lessonEdges({ lessons: [...byId.values()] });
+      const added = decayed
+        .map(({ id }) =>
+          normalizeLessonEdge({ from: 'system', to: id, type: 'contradicts', by: 'system' }, Date.now()),
+        )
+        .filter(Boolean);
+      this.state.lessonEdges = normalizeLessonEdgeList([...edges, ...added], { knownIds: ids });
+    }
     this.scheduleSave();
     this.emitLessons();
-    return { applied, ignored };
+    return { applied, ignored, decayed };
   }
 
   // ---------------------------------------------------------------- 主控总汇总

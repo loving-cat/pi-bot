@@ -1641,6 +1641,10 @@ class AppState extends ChangeNotifier {
   bool isLessonVetoed(String id) =>
       lessonEdges.any((e) => e.isUserVeto && e.to == id);
 
+  /// 这条经验是否被系统自动降级过（`system` 哨兵：同模型族连续失败达阈值）
+  bool isLessonDecayed(String id) =>
+      lessonEdges.any((e) => e.isSystemDecay && e.to == id);
+
   /// 「记错了」：写一条 user 哨兵的 contradicts 边 + 归档（服务端一次做完）
   Future<String?> rejectLesson(String id) async {
     if (api == null) return '未连接服务端';
@@ -1660,6 +1664,22 @@ class AppState extends ChangeNotifier {
     try {
       await api!.delete(
         '/api/lessons/edges?from=user&to=${Uri.encodeComponent(id)}&type=contradicts',
+      );
+      await loadLessons();
+      return null;
+    } catch (err) {
+      await loadLessons();
+      return lessonError(err);
+    }
+  }
+
+  /// 「解除降级」：删掉那条 system 边。服务端会顺手把连败计数清零，
+  /// 否则用户刚启用、再败一次就又被打回归档 —— 等于“人工恢复”没发生。
+  Future<String?> undecayLesson(String id) async {
+    if (api == null) return '未连接服务端';
+    try {
+      await api!.delete(
+        '/api/lessons/edges?from=system&to=${Uri.encodeComponent(id)}&type=contradicts',
       );
       await loadLessons();
       return null;
@@ -2694,7 +2714,7 @@ class AppState extends ChangeNotifier {
   ///   服务端一重启，后面每次重连都是 401：界面「离线 · 自动重连中」转圈到天荒，
   ///   服务端连一条「已连接」都不会记（握手就拒了），看起来像"服务端没开"。
   ///
-  /// 只在「本机信任模式」下重读：服务器模式（设了 PI_BOT_TOKEN）用的是
+  /// 只在「本机信任模式」下重读：服务器模式（设了 ORBIS_TOKEN）用的是
   /// 用户填的凭据，不能拿 local-token 覆盖掉。
   ///
   /// @returns 是否换了新 token（换了就连 Api 一起重建）

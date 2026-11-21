@@ -1015,6 +1015,9 @@ class LessonEdge {
   /// 用户在界面上的否决（`from` 用 `user` 哨兵 —— 单条经验不能自己指向自己）
   bool get isUserVeto => from == 'user' && type == 'contradicts';
 
+  /// 系统自动降级（同模型族连续失败达阈值）：人工恢复要先删这条边
+  bool get isSystemDecay => from == 'system' && type == 'contradicts';
+
   factory LessonEdge.fromJson(Map<String, dynamic> json) => LessonEdge(
     from: json['from'] as String? ?? '',
     to: json['to'] as String? ?? '',

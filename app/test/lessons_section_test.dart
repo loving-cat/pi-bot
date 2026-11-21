@@ -229,6 +229,36 @@ void main() {
     expect(find.text('启用'), findsNothing, reason: '裸切启用会变成"看似启用实则永不注入"');
   });
 
+  testWidgets('已降级：显示「已降级」并只给「解除降级」（同样不给裸切启用）', (tester) async {
+    final state = AppState()
+      ..lessons = [lesson(id: 'd1', cue: '被自动降级的这条', status: 'archived')]
+      ..lessonsLoaded = true;
+    state.applyLessonEdges([
+      {'from': 'system', 'to': 'd1', 'type': 'contradicts', 'by': 'system'},
+    ]);
+
+    await tester.pumpWidget(host(state));
+    await tester.pump();
+
+    // 降级一定会归档，所以人要在「全部」里才看得到它
+    await tester.tap(find.text('全部'));
+    await tester.pump();
+
+    expect(find.text('已降级'), findsOneWidget);
+    expect(find.text('解除降级'), findsOneWidget);
+    expect(find.text('已否决'), findsNothing, reason: '降级是 system 边，不是用户否决');
+    expect(find.text('启用'), findsNothing, reason: 'system 边在的话裸切启用永远注入不进去');
+  });
+
+  test('applyLessonEdges：system 降级边也能识别（和 user 否决分开）', () {
+    final state = AppState();
+    state.applyLessonEdges([
+      {'from': 'system', 'to': 'd2', 'type': 'contradicts', 'by': 'system'},
+    ]);
+    expect(state.isLessonDecayed('d2'), isTrue);
+    expect(state.isLessonVetoed('d2'), isFalse);
+  });
+
   testWidgets('长文案不溢出（情境/做法都按行收）', (tester) async {
     final state = AppState()
       ..lessons = [

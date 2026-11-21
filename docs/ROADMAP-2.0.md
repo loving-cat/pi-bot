@@ -223,7 +223,7 @@ Phase 3 ──► 依赖 Phase 1/2 全部合并（否则删完兼容层还要再
 | 同族加成 | 当前族 == `lesson.modelFamily` → **+2**（相对 cue 命中 +3 的量级，够用但不喧宾夺主） |
 | 异族未验证 | 该族在 `byFamily` 里无记录 → **−1** 且界面标「未在同模型验证」 |
 | 稳定经验 | **≥2 个模型族**都 `win:fail ≥ 3:1` 且 `confidence ≥ 0.8` → 「推荐启用」排在最前（标尺按这个门槛反推：两族 3:1 = **0.813** ✅ / 单族 3:1 = **0.737** ❌ / 全胜两族 = 0.925 / 上限 0.95） |
-| 族内衰减 | 同族连续 2 次 `fail` → 自动 `archived` 并写 `contradicts` 边（可人工恢复） |
+| 族内衰减 | ✅ **已落地**：同族连续 2 次 `fail` → 自动 `archived` 并写 `from: 'system'` 的 `contradicts` 边（可人工恢复）。阈值在 `LESSON_DECAY.familyFailStreak`；连败计数在 `byFamily[family].streak`（`win` 清零、`no_effect` / `confounded` 不记账也不打断），0 不落键所以老库形状不变。**状态与边只在 `store.recordLessonOutcomes` 里写**（纯模块只回答「该不该降」）；界面显示「已降级」且只给「解除降级」——裸切 `active` 会被服务端拒掉（否则就是下面的「看似启用、实际注入不进去」）；「解除降级」删 `system` 边时把连败计数一起清零 |
 | 人工否决 | 一律最高优先级，不可被后续蒸馏覆盖 |
 
 > 反面案例（这条规则必须挡住）：glm 上「先改测试再改实现」有效，deepseek 上「把测试改成永远通过」也 success —— 若不分族，第二条会污染第一条。
@@ -296,10 +296,10 @@ v1 草案把它改成「蒸馏即自动注入 + 事后点『记错了』」，�
 
 | 测试文件 | 新增断言要点 |
 |---|---|
-| `server/tests/lessons.mjs`（**扩**） | 族加成方向（同族 +2 / 异族未验证 −1）、`contradicts` 直接排除、`generalizes` 一跳、门槛仍是 3、预算仍是 3 条 / 600 字、老库缺字段能读 |
+| `server/tests/lessons.mjs`（**扩**） | 族加成方向（同族 +2 / 异族未验证 −1）、`contradicts` 直接排除、`generalizes` 一跳、门槛仍是 3、预算仍是 3 条 / 600 字、老库缺字段能读、**族内衰减**（连败 2 次归档 + `system` 边、中间赢一次重新计数、边幂等、裸切 `active` 被拒、解除后连败清零可再注入）|
 | `server/tests/lesson-reflect.mjs`（**扩**） | 蒸馏产出带 `modelFamily`；evidence 对不上仍丢；**产出仍是 candidate**；边候选不自动生效 |
-| `server/tests/lessons-sim-lite.mjs` ✅（24 条已落地） | 族解析 / `byFamily` 规整 / 置信度单调性 / 内容哈希归一化 / 4 种边的校验与索引 / 同族加成与未验证扣分 / `contradicts` 硬排除 / 老经验不背扣分 / 淘汰顺序 |
-| `app/test/lessons_section_test.dart`（**扩**） | 族标记、未验证提示、推荐启用排序、**三档操作仍在**、空态、6 秒空闲 0 Ticker |
+| `server/tests/lessons-sim-lite.mjs` ✅（52 条已落地） | 族解析 / `byFamily` 规整 / 置信度单调性 / 内容哈希归一化 / 4 种边的校验与索引 / 同族加成与未验证扣分 / `contradicts` 硬排除 / 老经验不背扣分 / 淘汰顺序 / **连败计数与 `lessonFamilyDecay()` 阈值** |
+| `app/test/lessons_section_test.dart`（**扩**） | 族标记、未验证提示、推荐启用排序、**三档操作仍在**、空态、6 秒空闲 0 Ticker、**「已降级」只给「解除降级」** |
 
 ---
 

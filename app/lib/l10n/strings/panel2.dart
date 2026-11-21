@@ -232,6 +232,9 @@ const areaPanel2 = StringArea(
     'lesson.rejected': '已否决',
     'lesson.veto': '记错了',
     'lesson.unveto': '解除否决',
+    'lesson.decayed': '已降级',
+    'lesson.decayedHint': '同一个模型族上连续失败，系统自动归档。确认它其实没毛病就点「解除降级」',
+    'lesson.undecay': '解除降级',
     'lesson.familyUnverified': '还没有在某个模型族上验证过（只被读过，没记过胜负）',
     'lesson.familyStats': '{family} · {win} 胜 {fail} 负',
 
@@ -650,6 +653,10 @@ const areaPanel2 = StringArea(
     'lesson.rejected': 'Vetoed',
     'lesson.veto': 'Wrong lesson',
     'lesson.unveto': 'Undo veto',
+    'lesson.decayed': 'Auto-archived',
+    'lesson.decayedHint':
+        'Failed on the same model family twice in a row, so it was archived automatically. If it is actually fine, tap "Undo".',
+    'lesson.undecay': 'Undo',
     'lesson.familyUnverified':
         'Never verified on any model family yet (only read, no win/loss recorded)',
     'lesson.familyStats': '{family} · {win}W/{fail}L',

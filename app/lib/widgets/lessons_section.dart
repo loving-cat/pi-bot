@@ -113,6 +113,7 @@ class _LessonsSectionState extends State<LessonsSection> {
                 key: ValueKey(lesson.id),
                 lesson: lesson,
                 vetoed: state.isLessonVetoed(lesson.id),
+                decayed: state.isLessonDecayed(lesson.id),
                 onToggle: (status) async {
                   final err = await state.setLessonStatus(lesson.id, status);
                   if (err != null && context.mounted) _showError(err);
@@ -123,6 +124,10 @@ class _LessonsSectionState extends State<LessonsSection> {
                 },
                 onUnveto: () async {
                   final err = await state.unrejectLesson(lesson.id);
+                  if (err != null && context.mounted) _showError(err);
+                },
+                onUndecay: () async {
+                  final err = await state.undecayLesson(lesson.id);
                   if (err != null && context.mounted) _showError(err);
                 },
                 onDelete: () => _confirmDelete(state, lesson),
@@ -259,9 +264,11 @@ class _LessonCard extends StatelessWidget {
     super.key,
     required this.lesson,
     required this.vetoed,
+    required this.decayed,
     required this.onToggle,
     required this.onVeto,
     required this.onUnveto,
+    required this.onUndecay,
     required this.onDelete,
   });
 
@@ -269,9 +276,13 @@ class _LessonCard extends StatelessWidget {
 
   /// 被用户否决过（`user` 哨兵的 contradicts 边还在）
   final bool vetoed;
+
+  /// 被系统自动降级过（`system` 哨兵的 contradicts 边：同模型族连续失败达阈值）
+  final bool decayed;
   final ValueChanged<String> onToggle;
   final VoidCallback onVeto;
   final VoidCallback onUnveto;
+  final VoidCallback onUndecay;
   final VoidCallback onDelete;
 
   @override
@@ -397,6 +408,22 @@ class _LessonCard extends StatelessWidget {
                     style: TextStyle(fontSize: 9, color: PB.warn),
                   ),
                 )
+              else if (decayed)
+                Container(
+                  margin: const EdgeInsets.only(right: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: PB.warn.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(PB.rFull),
+                  ),
+                  child: Tooltip(
+                    message: L10n.s(context).t('lesson.decayedHint'),
+                    child: Text(
+                      L10n.s(context).t('lesson.decayed'),
+                      style: TextStyle(fontSize: 9, color: PB.warn),
+                    ),
+                  ),
+                )
               else if (lesson.isStable)
                 Container(
                   margin: const EdgeInsets.only(right: 8),
@@ -449,6 +476,16 @@ class _LessonCard extends StatelessWidget {
                   onPressed: onUnveto,
                   child: Text(
                     L10n.s(context).t('lesson.unveto'),
+                    style: const TextStyle(fontSize: PB.fsXs),
+                  ),
+                )
+              else if (decayed)
+                // 被自动降级同理：`system` 边不清掉就不能启用，
+                // 解除时服务端会把连败计数一并清零（别让用户点了启用又被打回去）。
+                TextButton(
+                  onPressed: onUndecay,
+                  child: Text(
+                    L10n.s(context).t('lesson.undecay'),
                     style: const TextStyle(fontSize: PB.fsXs),
                   ),
                 )
