@@ -334,6 +334,14 @@ export const TOOL_SPECS = Object.freeze({
   manage_mcp_server: { action: ACTION.mcpAdd },
   manage_model_group: { action: null },
   set_policy: { action: null },
+
+  // ---------------- 运行数据清理（只给主控；默认 dryRun）
+  //
+  // ★ 为什么 action 是 null：它删的是**自己的运行产物**（实例临时目录 / 接单回执 /
+  //   已终结任务记录 / 孤儿附件），不是用户文件。硬撞 fileDelete 会要求一个
+  //   "目标路径"（needsTarget），而一次清理没有单一目标 —— 那只会让它 fail-closed。
+  //   但它是 `mutating: true`：`dangerous=ask` 下逐次弹批准，`deny` 下整类工具被只读门拦住。
+  cleanup_storage: { action: null, mutating: true, chiefOnly: true },
 });
 
 // ---------------------------------------------------------------------------

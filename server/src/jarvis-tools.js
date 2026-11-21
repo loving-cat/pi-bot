@@ -18,6 +18,11 @@ import { normalizePreference, STRENGTH, ORIGIN } from './preferences.js';
 import { publicMcpTarget } from './mcp-credentials.js';
 import { modelGroups as defaultModelGroups, API_TYPES } from './model-groups.js';
 import { createServices } from './services/index.js';
+import {
+  runStorageHousekeeping,
+  STORAGE_SCOPES,
+  STORAGE_SAFE_SCOPES,
+} from './storage-housekeeping.js';
 
 const ok = (text, details = {}) => ({ content: [{ type: 'text', text }], details });
 const fail = (text, details = {}) => ({ content: [{ type: 'text', text }], details, isError: true });
@@ -632,6 +637,76 @@ export function buildJarvisTools({
             `，桌面合成输入=${desktopRes.settings.trustPhantomInput ? '信任' : '拦截'}。`,
           { policy: policyRes.policy, desktop: desktopRes.settings, change: policyRes.policyChange },
         );
+      },
+    }),
+
+    // ---------------------------------------------------------------- 运行数据清理
+    defineTool({
+      name: 'cleanup_storage',
+      label: '清理运行垃圾',
+      description:
+        '清理 Orbis 自己的**运行产物**：实例临时目录 / 接单回执 / 已终结任务记录 / 旧截图 / 孤儿附件。\n' +
+        '默认 dryRun=true：只汇报能清多少，不动任何文件；要真的删必须显式传 dryRun=false。\n' +
+        '绝不触碰 workspace、聊天记录、state.json、房间与会话目录，也不碰任何还在跑的任务。',
+      parameters: Type.Object({
+        scope: Type.Optional(
+          Type.Union([
+            Type.Literal('safe'),
+            Type.Literal('tmp'),
+            Type.Literal('taskruns'),
+            Type.Literal('receipts'),
+            Type.Literal('screenshots'),
+            Type.Literal('orphan_uploads'),
+            Type.Literal('all'),
+          ]),
+        ),
+        dryRun: Type.Optional(
+          Type.Boolean({ description: '默认 true（只统计不删）；true 才安全' }),
+        ),
+      }),
+      execute: async (_toolCallId, params) => {
+        const scope = String(params?.scope ?? 'safe');
+        const dryRun = params?.dryRun !== false; // 默认预演
+        const byScope = {
+          safe: STORAGE_SAFE_SCOPES,
+          tmp: ['instanceTmp'],
+          taskruns: ['taskRuns'],
+          receipts: ['taskRequests'],
+          screenshots: ['screenshots'],
+          orphan_uploads: ['orphanUploads'],
+          all: STORAGE_SCOPES,
+        };
+        const scopes = byScope[scope] ?? STORAGE_SAFE_SCOPES;
+        const summary = runStorageHousekeeping({
+          store,
+          runner,
+          dataDir: store.dataDir,
+          scopes,
+          dryRun,
+        });
+        const r = summary.removed;
+        const bytes = summary.reclaimedBytes;
+        const human =
+          bytes >= 1024 * 1024
+            ? `${(bytes / 1024 / 1024).toFixed(1)} MB`
+            : `${Math.max(0, Math.round(bytes / 1024))} KB`;
+        const lines = [
+          dryRun ? `预演（未删任何文件）：scope=${scope}` : `已清理：scope=${scope}`,
+          `- 实例临时目录 ${r.instanceTmp} 个`,
+          `- 接单回执 ${r.taskRequests} 个`,
+          `- 已终结任务记录 ${r.taskRuns} 条`,
+          `- 旧截图 ${r.screenshots} 张`,
+          `- 孤儿附件 ${r.orphanUploads} 个`,
+          `- ${dryRun ? '预计可回收' : '已回收'} ${human}`,
+        ];
+        if (summary.problems.length) lines.push(`\n注意：${summary.problems.join('；')}`);
+        recordAudit(
+          'storage.cleanup',
+          `主控清理运行数据（${scope}${dryRun ? '，预演' : ''}）`,
+          '/storage',
+          'defense',
+        );
+        return ok(lines.join('\n'), summary);
       },
     }),
   ];

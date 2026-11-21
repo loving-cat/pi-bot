@@ -134,7 +134,7 @@ await test('★ 主 Bot 专属：工具级和动作级是两件事', () => {
   //   风险面没变宽 —— 岛碰不到用户的鼠标与焦点，而 T2 那两个工具仍然只有主 Bot 有。
   assert.deepEqual(
     [...C.CHIEF_ONLY_TOOLS].sort(),
-    ['desktop_input', 'desktop_lease', 'desktop_observe', 'desktop_screenshot'],
+    ['cleanup_storage', 'desktop_input', 'desktop_lease', 'desktop_observe', 'desktop_screenshot'],
   );
   for (const t of ['desktop_island_observe', 'desktop_island_launch', 'desktop_island_input']) {
     assert.ok(!C.CHIEF_ONLY_TOOLS.includes(t), `${t} 现在对每个 Bot 开放`);

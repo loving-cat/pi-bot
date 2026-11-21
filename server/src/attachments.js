@@ -278,9 +278,29 @@ export function isAttachmentDeleted(id) {
   return typeof id === 'string' && Boolean(index[id]?.deletedAt);
 }
 
+/**
+ * 全部附件元信息的快照（**包含墓碑**）。
+ *
+ * 只给清理工具用（算孤儿候选）；要删请走 `deleteAttachments()` ——
+ * 直接 `fs.unlink` 会绕掉墓碑、删除版本号和广播。
+ */
+export function listAttachmentMeta() {
+  return Object.entries(index).map(([id, meta]) => ({ id, ...meta }));
+}
+
+/** 附件的真实文件大小（不存在 / 已删 → 0），仅用于统计回收空间 */
+export function attachmentSize(id) {
+  const file = pathFor(id);
+  if (!file) return 0;
+  try {
+    return fs.statSync(file).size;
+  } catch {
+    return 0;
+  }
+}
+
 /** 有界删除版本包含墓碑数量与摘要，快照不传输墓碑 ID 列表。 */
-export function attachmentDeletionRevision() {
-  if (deletionRevision == null) {
+export function attachmentDeletionRevision() {  if (deletionRevision == null) {
     const ids = Object.keys(index).filter(isAttachmentDeleted).sort();
     const digest = crypto.createHash('sha256').update(JSON.stringify(ids)).digest('hex');
     deletionRevision = `${ids.length}:${digest}`;

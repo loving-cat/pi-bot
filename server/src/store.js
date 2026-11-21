@@ -27,6 +27,7 @@ import { TaskRunStore } from './tasks/task-run-store.js';
 import { channelSuffices, channelSufficesFor } from './confirm.js';
 import { normalizeOverride, checkOverrideBounds, resolve as resolveOverride } from './overrides.js';
 import { defaultWindowsInstanceDir, teardownWindowsInstance } from './sandbox-win.js';
+import { defaultInstanceDir } from './child-env-typed.js';
 
 const STATE_VERSION = 2;
 
@@ -833,6 +834,34 @@ export class Store {
       }
     } catch (err) {
       log('sandbox', `实例清理抛错 bot=${id}: ${err?.message || err}`);
+    }
+    // ★ 跨平台收尾：除了 Windows 的 ACE/AppContainer，**目录本身**也会留下来
+    //   （沙箱 cwd、临时下载、截图）。macOS / Linux 上从来没有这段逻辑，
+    //   删一个 bot 就留一个 `instances/<botId>` 永远不走。
+    //
+    //   安全边界：目录必须 realpath 严格落在 `<dataDir>/instances/` 下，
+    //   而且不能是符号链接（否则 rmSync 会跟着链删到外面去）。
+    //   失败只记日志 —— 删 bot 已经成功，不该因为收拾残渣而回滚。
+    try {
+      const instancesRoot = path.join(this.dataDir, 'instances');
+      const target = defaultInstanceDir(this.dataDir, id);
+      let rootReal = null;
+      let targetReal = null;
+      try {
+        rootReal = fs.realpathSync(instancesRoot);
+        targetReal = fs.realpathSync(target);
+      } catch {
+        // 目录本来就不存在 → 没什么可删的
+      }
+      if (rootReal && targetReal) {
+        const rel = path.relative(rootReal, targetReal);
+        const inside = Boolean(rel) && !rel.startsWith('..') && !path.isAbsolute(rel);
+        if (inside && !fs.lstatSync(targetReal).isSymbolicLink()) {
+          fs.rmSync(targetReal, { recursive: true, force: true });
+        }
+      }
+    } catch (err) {
+      log('sandbox', `实例目录清理失败 bot=${id}: ${err?.message || err}`);
     }
     return { id };
   }

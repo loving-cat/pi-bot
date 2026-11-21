@@ -45,6 +45,8 @@ const PURE_MODULES = [
   // 加进名单才算真的“零 IO”，否则路线图 §5.8 I1 只是口号。
   'lessons.js',
   'lesson-reflect-prompt.js',
+  // 运行数据保留策略：只回答“哪些能删”，不读盘也不删东西
+  'storage-retention.js',
 ];
 
 const TEST_OVERRIDES = new Map([

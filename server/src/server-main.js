@@ -18,6 +18,9 @@ import { createAutomationScheduler } from './automations.js';
 import { createTaskHost } from './bootstrap/task-host.js';
 import { desktopInputSession } from './desktop-input-session.js';
 import { pruneScreenshots } from './desktop-observe.js';
+import {
+  runStorageHousekeeping, STORAGE_AUTO_MIN_INTERVAL_MS, STORAGE_AUTO_SCOPES,
+} from './storage-housekeeping.js';
 import { sweepIdleIslands, isSupported as islandSupported } from './desktop-island-win.js';
 import { pruneLoginSnapshots } from './island-login.js';
 import { applyReconcile } from './grant-reconcile.js';
@@ -297,6 +300,13 @@ async function main() {
    *
    * 用 unref 让定时器**不阻止进程退出** —— 否则 SIGINT 之后还要等它一轮。
    */
+  // 运行数据清理：**低频**（15 分钟最多一次）+ 启动后先等 2 分钟。
+  // housekeeping 是 60s 节拍，如果每次都去 readFileSync 整个 taskruns/，
+  // 这个后台进程每分钟都要把几千个 JSON 读一遍 —— 那是噪音，不是清理。
+  const STORAGE_FIRST_RUN_DELAY_MS = 2 * 60 * 1000;
+  const storageBootAt = Date.now();
+  let lastStorageSweepAt = 0;
+
   const housekeeping = setInterval(() => {
     try {
       const swept = desktopInputSession().sweepLeases();
@@ -311,6 +321,31 @@ async function main() {
       if (pruned?.removed) log(`清理旧截图：${pruned.removed} 张`);
     } catch (err) {
       log('清理旧截图失败：' + (err?.message || err));
+    }
+    // 运行数据清理（实例临时目录 / 接单回执 / 已终结任务记录）：只清理"自己跑出来的东西"，
+    // 不碰 workspace / 聊天记录 / state.json / 活跃任务。
+    // 节流：启动后先等 2 分钟，之后 15 分钟最多一次；单次异常只记日志。
+    try {
+      const now = Date.now();
+      const ready = now - storageBootAt >= STORAGE_FIRST_RUN_DELAY_MS;
+      const due = now - lastStorageSweepAt >= STORAGE_AUTO_MIN_INTERVAL_MS;
+      if (ready && due) {
+        lastStorageSweepAt = now;
+        const swept = runStorageHousekeeping({
+          store,
+          runner,
+          dataDir: config.dataDir,
+          scopes: STORAGE_AUTO_SCOPES,
+        });
+        const r = swept?.removed ?? {};
+        const total = (r.instanceTmp ?? 0) + (r.taskRequests ?? 0) + (r.taskRuns ?? 0);
+        if (total) {
+          const kb = Math.round((swept.reclaimedBytes ?? 0) / 1024);
+          log(`运行数据清理：实例 ${r.instanceTmp ?? 0} / 回执 ${r.taskRequests ?? 0} / 终结任务 ${r.taskRuns ?? 0}，回收 ${kb} KB`);
+        }
+      }
+    } catch (err) {
+      log('运行数据清理失败：' + (err?.message || err));
     }
     // 登录态快照过期就清：那是**可用的登录凭据**，不能长期躺在数据目录里
     // （规格 §5.6 T1 的"共享登录态"必须配一条保留期，否则就是把凭据复制了一份永久留着）。
