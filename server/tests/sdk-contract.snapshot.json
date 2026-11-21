@@ -105,6 +105,7 @@
     "config": "object",
     "dispose": "function",
     "generation": "string",
+    "lessons": "object",
     "modelGroups": "object",
     "models": "object",
     "onEvent": "function",

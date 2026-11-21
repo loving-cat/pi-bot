@@ -30,6 +30,7 @@ import { createTaskHost } from '../bootstrap/task-host.js';
 import { createTaskCommands } from '../tasks/task-commands.js';
 import { ACTION } from '../grants.js';
 import { ACTIONS, TOOL_SPECS, auditCapabilities } from '../capabilities.js';
+import { selectLessonsFor, lessonsPromptLines } from '../lessons.js';
 import {
   OrbisClient,
   createOrbisClient,
@@ -188,6 +189,38 @@ export async function createOrbisRuntime(options = {}) {
     }
   }
 
+  /**
+   * 经验库门面（规格 `docs/ROADMAP-2.0.md` §5.7 的 `runtime.lessons`）。
+   *
+   * 只有一个实现：全部转发给 `store`（和 HTTP 那套用的是同一条路径），
+   * **不新建存储、不新建注入点** —— 红线 I0 管的就是这条。
+   *
+   * `propose` 永远只产 `candidate`：即使调用方传了 `status: 'active'` 也会被改回去。
+   * 审批门禁是“人点按钮”，SDK 不该有绕过去的口子；要生效必须走 `activate`
+   * （它自己会校验证据、以及有没有否否决/降级边）。
+   */
+  const lessons = {
+    list: ({ status = '' } = {}) =>
+      store.lessonLibrary().filter((l) => !status || l.status === status),
+    edges: () => store.lessonEdges(),
+    propose: (raw = {}) => store.addLesson({ ...raw, status: 'candidate' }),
+    activate: (id) => store.updateLesson(String(id ?? ''), { status: 'active' }),
+    archive: (id) => store.updateLesson(String(id ?? ''), { status: 'archived' }),
+    remove: (id) => store.removeLesson(String(id ?? '')),
+    /** 和界面上的「记错了」同一条路：写 `user` 否决边 + 归档 */
+    reject: (id) => store.rejectLesson(String(id ?? '')),
+    /** 按任务预览会被注入哪几条（与 `GET /api/lessons/preview` 同一套打分） */
+    preview: (task, { roomId = '', modelFamily = '' } = {}) => {
+      const picked = selectLessonsFor(store.lessonLibrary(), String(task ?? ''), {
+        roomId: String(roomId ?? ''),
+        modelFamily: String(modelFamily ?? ''),
+        edges: store.lessonEdges(),
+      });
+      const lines = lessonsPromptLines(picked);
+      return { picked, lines, chars: lines.join('\n').length };
+    },
+  };
+
   async function dispose() {
     if (disposed) return;
     disposed = true;
@@ -213,6 +246,7 @@ export async function createOrbisRuntime(options = {}) {
     automations: services.automations,
     capabilities: services.capabilities,
     policy: services.policy,
+    lessons,
     send: (roomId, text, opts = {}) => runner.send(roomId, text, { flushMerge: true, ...opts }),
     askMain,
     runBotOnce: (args) => runner.runBotOnce(args),

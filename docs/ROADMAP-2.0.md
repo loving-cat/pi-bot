@@ -277,7 +277,7 @@ v1 草案把它改成「蒸馏即自动注入 + 事后点『记错了』」，�
 |---|---|
 | HTTP | 现有 `/api/lessons`（GET/POST/PATCH/DELETE）+ `/api/lessons/preview` 增量返回 `modelFamily` / `edges` / `confidence` |
 | 事件 | 沿用 `lessons.updated`；新增边变化时也在同一事件里带 `edges` |
-| SDK | 单一门面 `runtime.lessons`（`list / propose / activate / archive / remove / preview`）。若将来要 `experience` 这个名字，**只做别名转发**，不新增实现 |
+| SDK | ✅ **已落地**：单一门面 `runtime.lessons`（`list / propose / activate / archive / remove / preview`，另加 `edges()` 与 `reject()`）—— 全部转发给 `store`，和 HTTP / 界面同一条路，不新建存储也不新建注入点（I0）。`propose` **强制** `candidate`（即使传 `status: 'active'` 也改回去），要生效只能走 `activate`（自己校验证据与否决/降级边）；契约快照锁住 `runtime.lessons`。若将来要 `experience` 这个名字，**只做别名转发**，不新增实现 |
 | 能力 | 沿用 `manage_knowledge`（删经验/删边要二次确认这条不动） |
 | 开关 | 沿用 `config.lessonReflect`（`lessonReflect=false` 时全链路 no-op）；自动晋升单独一个默认关闭的开关 |
 
