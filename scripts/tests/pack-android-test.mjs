@@ -28,6 +28,11 @@ function test(name, fn) {
 test('pubspec 版本 + 构建号都能读出来', () => {
   assert.deepEqual(parsePubspecVersion('name: pi_bot\nversion: 1.4.1+19\n'), { version: '1.4.1', build: 19 });
   assert.deepEqual(parsePubspecVersion('version: 2.0.0\n'), { version: '2.0.0', build: 0 });
+  // 预发布：versionName 原样保留（Android 不要求纯数字），构建号照要点
+  assert.deepEqual(parsePubspecVersion('version: 2.0.0-alpha.1+24\n'), {
+    version: '2.0.0-alpha.1',
+    build: 24,
+  });
 });
 
 test('pubspec 没写版本号要报错', () => {

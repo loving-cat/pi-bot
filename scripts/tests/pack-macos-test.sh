@@ -42,12 +42,12 @@ printf 'fixture tool\n' > "$FIXTURE/server/tools/check.mjs"
 printf 'FIXTURE=1\n' > "$FIXTURE/server/.env.example"
 BUILD="$FIXTURE/app/build/macos/Build/Products/Release"
 mkdir -p "$BUILD/Orbis.app/Contents/MacOS"
-printf '<plist><dict/></plist>\n' > "$BUILD/Orbis.app/Contents/Info.plist"
+printf '<plist><dict><key>CFBundleShortVersionString</key><string>0.1.0</string></dict></plist>\n' > "$BUILD/Orbis.app/Contents/Info.plist"
 printf 'fixture executable\n' > "$BUILD/Orbis.app/Contents/MacOS/Orbis"
 printf 'fallback product\n' > "$BUILD/Orbis.app/Contents/product.txt"
 mkdir -p "$FIXTURE/dist"
 printf 'preserve this file\n' > "$FIXTURE/dist/user-note.txt"
-printf 'preserve another version\n' > "$FIXTURE/dist/orbis-other.dmg"
+printf 'preserve another version\n' > "$FIXTURE/dist/orbis-macos-v0.0.9.dmg"
 
 cat > "$STUBS/dispatch" <<'STUB'
 #!/usr/bin/env bash
@@ -144,7 +144,7 @@ case "$tool" in
     [[ "${PACK_FAIL:-}" != build ]] || exit 39
     product="$PWD/build/macos/Build/Products/Release/Orbis.app"
     mkdir -p "$product/Contents/MacOS"
-    printf '<plist><dict/></plist>\n' > "$product/Contents/Info.plist"
+    printf '<plist><dict><key>CFBundleShortVersionString</key><string>0.1.0</string></dict></plist>\n' > "$product/Contents/Info.plist"
     printf 'fixture built executable\n' > "$product/Contents/MacOS/Orbis"
     printf 'neutral build product\n' > "$product/Contents/product.txt"
     debug=''
@@ -156,8 +156,8 @@ case "$tool" in
   mv)
     if [[ "${PACK_FAIL:-}" == build-publish && "$1" == */.pack-build.*/next.app ]]; then exit 45; fi
     if [[ "${PACK_FAIL:-}" == publish-app && "$1" == */payload/Orbis.app ]]; then exit 40; fi
-    if [[ "${PACK_FAIL:-}" == publish-dmg && "$1" == */.pack-macos.*/orbis-0.1.0.dmg ]]; then exit 41; fi
-    if [[ "${PACK_FAIL:-}" == backup-dmg && "$1" == "$FIXTURE/dist/orbis-0.1.0.dmg" ]]; then exit 42; fi
+    if [[ "${PACK_FAIL:-}" == publish-dmg && "$1" == */.pack-macos.*/orbis-macos-v0.1.0.dmg ]]; then exit 41; fi
+    if [[ "${PACK_FAIL:-}" == backup-dmg && "$1" == "$FIXTURE/dist/orbis-macos-v0.1.0.dmg" ]]; then exit 42; fi
     exec "$REAL_MV" "$@"
     ;;
   *) exit 99 ;;
@@ -214,9 +214,9 @@ no_stage() {
 preserved() {
   cmp "$TEST_ROOT/expected-app" "$FIXTURE/dist/Orbis.app/Contents/Resources/server/src/index.js" \
     || die '旧 App 被破坏'
-  cmp "$TEST_ROOT/expected-dmg" "$FIXTURE/dist/orbis-0.1.0.dmg" || die '旧 DMG 被破坏'
+  cmp "$TEST_ROOT/expected-dmg" "$FIXTURE/dist/orbis-macos-v0.1.0.dmg" || die '旧 DMG 被破坏'
   [[ "$(cat "$FIXTURE/dist/user-note.txt")" == 'preserve this file' ]] || die '其他文件被破坏'
-  [[ "$(cat "$FIXTURE/dist/orbis-other.dmg")" == 'preserve another version' ]] || die '其他版本被破坏'
+  [[ "$(cat "$FIXTURE/dist/orbis-macos-v0.0.9.dmg")" == 'preserve another version' ]] || die '其他版本被破坏'
   no_stage
 }
 
@@ -240,7 +240,7 @@ cmp "$FIXTURE/server/package-lock.json" "$FIXTURE/dist/Orbis.app/Contents/Resour
   || die '已有锁文件未正确复制到安装目录'
 ok '已有锁文件正确复制后供生产依赖安装使用'
 cp "$FIXTURE/dist/Orbis.app/Contents/Resources/server/src/index.js" "$TEST_ROOT/expected-app"
-cp "$FIXTURE/dist/orbis-0.1.0.dmg" "$TEST_ROOT/expected-dmg"
+cp "$FIXTURE/dist/orbis-macos-v0.1.0.dmg" "$TEST_ROOT/expected-dmg"
 run_ok --no-build
 preserved
 ok '重复执行且保留 dist 中其他文件与版本'
@@ -282,7 +282,7 @@ cmp "$FIXTURE/server/src/index.js" "$FIXTURE/dist/Orbis.app/Contents/Resources/s
 no_stage
 mv "$FIXTURE/server/missing-lock" "$FIXTURE/server/package-lock.json"
 cp "$FIXTURE/dist/Orbis.app/Contents/Resources/server/src/index.js" "$TEST_ROOT/expected-app"
-cp "$FIXTURE/dist/orbis-0.1.0.dmg" "$TEST_ROOT/expected-dmg"
+cp "$FIXTURE/dist/orbis-macos-v0.1.0.dmg" "$TEST_ROOT/expected-dmg"
 ok '无仓库锁文件正常安装并打包，生成的锁仅留在 App 内'
 
 cp "$FIXTURE/server/package.json" "$TEST_ROOT/package.json"
@@ -302,7 +302,8 @@ run_ok
 grep -q '^xcodebuild ' "$TRACE" || die '正常构建未检查 Xcode'
 grep -q '^xcrun ' "$TRACE" || die '正常构建未检查 SDK'
 grep -q '^flutter pub get --enforce-lockfile --no-example' "$TRACE" || die '构建未严格解析锁文件'
-grep -q '^flutter build macos --release --no-pub --split-debug-info=' "$TRACE" || die '正常构建未禁用依赖重解或未分离调试信息'
+grep -q '^flutter build macos --release --no-pub --build-name=0\.1\.0 --build-number=1 --split-debug-info=' "$TRACE" \
+  || die 'macOS 构建未传纯数字 build-name / build-number，或未禁用依赖重解、未分离调试信息'
 [[ "$(cat "$BUILD/Orbis.app/Contents/product.txt")" == 'neutral build product' ]] || die '中性构建产物未回填'
 [[ -f "$FIXTURE/app/build/debug-info/macos/app.symbols" ]] || die '调试信息未保留在本地build目录'
 [[ -f "$FIXTURE/app/.dart_tool/fixture-cache" ]] || die '原生成缓存被改动'
@@ -310,4 +311,17 @@ cmp "$FIXTURE/server/src/index.js" "$FIXTURE/dist/Orbis.app/Contents/Resources/s
   || die '未发布本轮服务端内容'
 no_stage
 ok '中性构建不改HOME或源码，忽略缓存，回填完整App及调试信息并清理临时目录'
+
+# 预发布版（2.0.0-alpha.1）：
+#   · 产物名保留完整版本（更新检查按 tag 名推资产，不能丢 -alpha.1）；
+#   · Info.plist 的 CFBundleShortVersionString 只能是纯数字 X.Y.Z，
+#     否则 macOS 版本比较 / 公证链路会报非法值。
+printf '{"version":"2.0.0-alpha.1","dependencies":{}}\n' > "$FIXTURE/server/package.json"
+: > "$TRACE"
+run_ok
+[[ -f "$FIXTURE/dist/orbis-macos-v2.0.0-alpha.1.dmg" ]] || die '预发布版产物名没带 -alpha.1'
+grep -q -- '--build-name=2.0.0 --build-number=1' "$TRACE" \
+  || die '预发布版没把 --build-name 降成纯数字 X.Y.Z'
+cp "$TEST_ROOT/package.json" "$FIXTURE/server/package.json"
+ok '预发布版本：产物名带 -alpha.1，CFBundle 版本降到纯数字'
 printf '%s 项命令桩测试通过（真实 macOS 构建需另行验证）。\n' "$PASS"

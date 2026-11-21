@@ -116,6 +116,18 @@ function validateNativeAssets(app, files, run) {
 export function prepareMacosBundle(appPath, { home = os.homedir(), run = command, checkOnly = false } = {}) {
   const app = fs.realpathSync(appPath);
   if (!fs.statSync(app).isDirectory() || !fs.existsSync(path.join(app, 'Contents/Info.plist'))) throw new Error('不是完整应用包');
+  // CFBundleShortVersionString 必须是纯数字 X.Y.Z（Apple 规范）。
+  // `pack-macos.sh` 已经把 `2.0.0-alpha.1` 降成 `2.0.0` 再传给 `flutter build`，
+  // 这里当最后一道闸：以后有人删了 `--build-name`，会在这里红，而不是等到用户
+  // 装上后系统版本比较/公证链路报非法值。
+  const shortVersion = /CFBundleShortVersionString<\/key>\s*<string>([^<]*)<\/string>/.exec(
+    fs.readFileSync(path.join(app, 'Contents/Info.plist'), 'utf8'),
+  )?.[1];
+  if (!shortVersion || !/^\d+\.\d+\.\d+$/.test(shortVersion.trim())) {
+    throw new Error(
+      `CFBundleShortVersionString 必须是纯数字 X.Y.Z，实际是 ${JSON.stringify(shortVersion ?? null)}`,
+    );
+  }
   const files = listTreeFiles(app);
   const server = path.join(app, 'Contents/Resources/server');
   const frontendMachO = files.filter((file) => !isWithin(server, file) && isMachO(magic(file)));

@@ -20,9 +20,12 @@ const macho = Buffer.from('cffaedfe00000000', 'hex');
 function fixture(name = `fixture-${passed}`) {
   const app = path.join(root, `${name}.app`);
   fs.mkdirSync(path.join(app, 'Contents/MacOS'), { recursive: true });
-  fs.writeFileSync(path.join(app, 'Contents/Info.plist'), '<plist/>');
+  fs.writeFileSync(path.join(app, 'Contents/Info.plist'), plistWithVersion('0.1.0'));
   fs.writeFileSync(path.join(app, 'Contents/MacOS/fixture'), macho);
   return app;
+}
+function plistWithVersion(version) {
+  return '<plist><dict><key>CFBundleShortVersionString</key><string>' + version + '</string></dict></plist>';
 }
 function writeManifest(app, manifest) {
   const file = path.join(app, 'Contents/Frameworks/App.framework/Resources/flutter_assets/NativeAssetsManifest.json');
@@ -176,6 +179,16 @@ try {
     const original = Buffer.concat([macho, Buffer.from(home)]); fs.writeFileSync(executable, original);
     assert.throws(() => prepareMacosBundle(app, { home, run: stub }), /包含本机目录/);
     assert.deepEqual(fs.readFileSync(executable), original);
+  });
+  test('CFBundleShortVersionString 必须是纯数字 X.Y.Z（预发布号不能用）', () => {
+    for (const bad of ['2.0.0-alpha.1', '2.0', '2.0.0.1', '', 'v2.0.0']) {
+      const app = fixture(`version-${bad || 'empty'}`);
+      fs.writeFileSync(path.join(app, 'Contents/Info.plist'), plistWithVersion(bad));
+      assert.throws(() => prepareMacosBundle(app, { home, run: stub }), /CFBundleShortVersionString/, String(bad));
+    }
+    const ok = fixture('version-ok');
+    fs.writeFileSync(path.join(ok, 'Contents/Info.plist'), plistWithVersion('2.0.0'));
+    assert.equal(prepareMacosBundle(ok, { home, run: stub }).frontendMachO, 1);
   });
   console.log(`\n${passed}/${passed} 通过`);
 } finally { fs.rmSync(root, { recursive: true, force: true }); }

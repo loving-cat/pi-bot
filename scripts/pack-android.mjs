@@ -55,10 +55,17 @@ export const EXPECTED_SIGNER_SHA256 = '03cddcf5c4deea5f1abfe9327b6f552452d707532
 /** Gradle / AGP 要求的最低 JDK 大版本。 */
 export const MIN_JDK = 17;
 
-/** 从 pubspec 的 `version: 1.4.1+19` 里取出应用版本与构建号。 */
+/**
+ * 从 pubspec 的 `version: 1.4.1+19` 里取出应用版本与构建号。
+ *
+ * 允许 semver 预发布（`2.0.0-alpha.1+24`）：Android 的 `versionName` 是自由字符串，
+ * 预发布段会原样进 APK 元数据，`verifyMetadata()` 也是逐字比对的，不能在这里截掉。
+ */
 export function parsePubspecVersion(text) {
-  const match = /^version:\s*(\d+\.\d+\.\d+)(?:\+(\d+))?\s*$/m.exec(String(text ?? ''));
-  if (!match) throw new Error('pubspec.yaml 里没有 `version: x.y.z+N` 这一行');
+  const match = /^version:\s*(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?:\+(\d+))?\s*$/m.exec(
+    String(text ?? ''),
+  );
+  if (!match) throw new Error('pubspec.yaml 里没有 `version: x.y.z[-pre]+N` 这一行');
   return { version: match[1], build: match[2] ? Number(match[2]) : 0 };
 }
 

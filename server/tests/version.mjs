@@ -15,16 +15,37 @@ async function test(name, fn) {
 const pkg = JSON.parse(
   fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8'),
 );
-const { VERSION } = await import('../src/version.js');
+const { VERSION, isReleaseVersion } = await import('../src/version.js');
 
 await test('版本来自 package.json（唯一来源）', () => {
   assert.equal(VERSION, pkg.version);
 });
 
-await test('是 semver 形态（不能带平台后缀）', () => {
-  // 更新检查按 semver 解析 tag，`-win.20261022` 这类后缀会被判成预发布，
+await test('是 semver 形态（允许 alpha/beta/rc 预发布，禁止平台后缀）', () => {
+  // 更新检查按 semver 解析 tag：`-win.20261022` 这类后缀会被判成预发布，
   // 于是"远端比当前旧"，用户永远收不到更新提示。见 docs/RELEASE.md。
-  assert.match(VERSION, /^\d+\.\d+\.\d+$/);
+  // 2.0.0-alpha.1 这类**标准预发布**必须放行：alpha 版要靠它和 1.7.1 区分。
+  assert.ok(isReleaseVersion(VERSION), `VERSION=${VERSION} 不是合法的发布版本号`);
+
+  for (const ok of ['1.7.1', '2.0.0', '2.0.0-alpha.1', '2.0.0-beta.12', '2.0.0-rc.0', '10.20.30']) {
+    assert.ok(isReleaseVersion(ok), `${ok} 应该合法`);
+  }
+  for (const bad of [
+    '2.0.0-win.20261022',
+    '2.0.0-macos',
+    '2.0.0-alpha',
+    '2.0.0-alpha.01',
+    '2.0.0-alpha.1-win',
+    '2.0.0-alpha.1+build',
+    'v2.0.0',
+    '2.0',
+    '2.0.0.1',
+    '2026-11-21',
+    '',
+    null,
+  ]) {
+    assert.ok(!isReleaseVersion(bad), `${String(bad)} 不该被当成发布版本号`);
+  }
 });
 
 await test('app/pubspec.yaml 的版本与服务端一致', () => {

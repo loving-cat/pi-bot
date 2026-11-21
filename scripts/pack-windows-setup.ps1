@@ -102,6 +102,17 @@ if ($LASTEXITCODE -ne 0) { Fail "reading server version failed ($LASTEXITCODE)" 
 
 $setupName = "orbis-windows-v$version-setup.exe"
 $setupPath = Join-Path $outRoot $setupName
+
+# Windows PE only accepts a numeric A.B.C.D file version. Pre-release versions
+# (2.0.0-alpha.1) must stay in AppVersion / artifact name / uninstall entry, but
+# passing them to VersionInfoVersion makes ISCC fail, so derive a numeric one:
+# 2.0.0-alpha.1 -> 2.0.0.0.
+$numeric = ($version -split '[-+]')[0]
+$parts = @($numeric.Split('.'))
+if ($parts.Count -ne 3 -or @($parts | Where-Object { $_ -notmatch '^\d+$' }).Count -gt 0) {
+  Fail "cannot derive a numeric Windows file version from '$version' (expected X.Y.Z[+build])"
+}
+$appFileVersion = "$numeric.0"
 New-Item -ItemType Directory -Path $outRoot -Force | Out-Null
 
 # Build into a neutral temp dir, then move into place: a failed compile must not
@@ -116,6 +127,7 @@ try {
   # path handed over here is absolute. Values with spaces are quoted by ISCC.
   & $isccPath `
     "/DAppVersion=$version" `
+    "/DAppFileVersion=$appFileVersion" `
     "/DStageDir=$bundleDir" `
     "/DOutDir=$stageOut" `
     "/DIconFile=$iconPath" `

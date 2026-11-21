@@ -4,9 +4,15 @@
 ; and calls ISCC on this file.
 ;
 ;   /DAppVersion=1.3.11
+;   /DAppFileVersion=1.3.11.0
 ;   /DStageDir=<absolute path to dist/orbis-windows>
 ;   /DOutDir=<absolute path to dist>
 ;   /DIconFile=<absolute path to app_icon.ico>
+;
+; ★ /DAppVersion 可以是预发布版（2.0.0-alpha.1），它只用于展示与产物名；
+;   Windows PE 的版本资源（VersionInfoVersion）**只认 A.B.C.D 纯数字**，
+;   直接塞 2.0.0-alpha.1 会让 ISCC 报错，所以 pack-windows-setup.ps1
+;   另外传一个纯数字的 /DAppFileVersion。
 ;
 ; 2026-11-19 品牌统一：安装目录改到 Programs\Orbis（AppId 不变，升级会替换旧安装）。
 ; 用户数据目录仍是 %LOCALAPPDATA%\pi-bot（服务端优先用 orbis，老目录存在就继续沿用），
@@ -28,6 +34,11 @@
 
 #ifndef AppVersion
   #error AppVersion define is required
+#endif
+; Windows 版本资源只能是 A.B.C.D。兼容预发布版：调用方不传时退回全零，
+; 绝不要把（可能带 -alpha.1 的）AppVersion 直接塞进 VersionInfo。
+#ifndef AppFileVersion
+  #define AppFileVersion "0.0.0.0"
 #endif
 #ifndef StageDir
   #error StageDir define is required
@@ -59,11 +70,11 @@ WizardStyle=modern
 UninstallDisplayName={#MyAppName} {#AppVersion}
 UninstallDisplayIcon={app}\{#MyAppExeName}
 SetupIconFile={#IconFile}
-VersionInfoVersion={#AppVersion}
+VersionInfoVersion={#AppFileVersion}
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription={#MyAppName} {#AppVersion} Setup
 VersionInfoProductName={#MyAppName}
-VersionInfoProductVersion={#AppVersion}
+VersionInfoProductVersion={#AppFileVersion}
 ; The client holds orbis.exe and the bundled node.exe; both are locked while
 ; running, and the server child process outlives the window. CloseApplications
 ; asks the user to close the GUI, and the [Code] hook below stops the server.

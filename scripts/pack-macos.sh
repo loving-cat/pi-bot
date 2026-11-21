@@ -21,7 +21,7 @@ usage() {
   --clear-quarantine  清除本轮 App 与 DMG 的隔离属性，默认关闭
   --help              显示帮助
 
-产物：dist/Orbis.app、dist/orbis-<服务端版本>.dmg
+产物：dist/Orbis.app、dist/orbis-macos-v<服务端版本>.dmg
 构建需要完整 Xcode、Flutter macOS desktop；打包需要 Node 22+ 与 npm。
 App 使用本机 ad-hoc 签名；目标机器仍需安装 Node 22+。
 USAGE
@@ -63,7 +63,18 @@ done
 [[ -f "$ENTITLEMENTS" ]] || fail "缺少 macOS Runner 的 Release.entitlements"
 VERSION="$(node -e 'const fs = require("node:fs"); const p = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); if (typeof p.version !== "string") process.exit(1); process.stdout.write(p.version)' "$ROOT/server/package.json")"
 [[ "$VERSION" =~ ^[0-9A-Za-z][0-9A-Za-z._+-]*$ ]] || fail "服务端版本不能用作产物文件名：$VERSION"
-DMG="$OUT/${ARTIFACT_PREFIX}-${VERSION}.dmg"
+# ★ Apple 的 CFBundleShortVersionString 只接受**纯数字 X.Y.Z**（三段）。
+#   2.0.0-alpha.1 直接写进 Info.plist，在公证 / App Store 链路上会被拒，
+#   系统版本比较也容易把它当成非法值。所以：
+#     · 产物名与界面展示用完整版本（含 -alpha.1，界面读的是服务端 version）；
+#     · Info.plist 用去掉预发布段的数字版 + pubspec 里的 build number。
+APPLE_VERSION="${VERSION%%-*}"
+APPLE_VERSION="${APPLE_VERSION%%+*}"
+[[ "$APPLE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+  || fail "无法从 $VERSION 推出纯数字的 macOS 版本号（CFBundleShortVersionString 需要 X.Y.Z）"
+APPLE_BUILD="$(node -e 'const fs = require("node:fs"); const m = fs.readFileSync(process.argv[1], "utf8").match(/^version:[^\n]*?\+(\d+)\s*$/m); process.stdout.write(m ? m[1] : "1")' "$ROOT/app/pubspec.yaml")"
+[[ "$APPLE_BUILD" =~ ^[0-9]+$ ]] || APPLE_BUILD=1
+DMG="$OUT/${ARTIFACT_PREFIX}-macos-v${VERSION}.dmg"
 STAGE=''
 BUILD_WORK=''
 BUILD_COPY=''
@@ -137,7 +148,9 @@ if [[ $SKIP_BUILD -eq 0 ]]; then
   cmp -s "$ROOT/app/pubspec.lock" "$BUILD_WORK/app/pubspec.lock" \
     || fail "依赖解析改动了 pubspec.lock，已停止打包"
   echo "== flutter build macos --release =="
-  (cd "$BUILD_WORK/app" && PUB_HOSTED_URL=https://pub.dev flutter build macos --release --no-pub --split-debug-info="$BUILD_WORK/debug-info")
+  # --build-name 必须是纯数字（理由见上方 APPLE_VERSION）：完整版本 2.0.0-alpha.1
+  # 仍留在 server/package.json，界面显示的也是服务端版本，不受影响。
+  (cd "$BUILD_WORK/app" && PUB_HOSTED_URL=https://pub.dev flutter build macos --release --no-pub --build-name="$APPLE_VERSION" --build-number="$APPLE_BUILD" --split-debug-info="$BUILD_WORK/debug-info")
   cmp -s "$ROOT/app/pubspec.lock" "$BUILD_WORK/app/pubspec.lock" \
     || fail "构建改动了 pubspec.lock，已停止打包"
   NEUTRAL_APP="$BUILD_WORK/app/build/macos/Build/Products/Release/${APP_NAME}.app"
