@@ -135,14 +135,35 @@ await test('run.settled：去抖窗口内房间又忙起来 → 不发（不会�
   });
 });
 
-await test('留意：空转时 isRoomQuiet 为真，排队中的轮次让它是假', () => {
+await test('留意：空转时 isRoomQuiet 为真；排队轮次 / 合并窗 / 待排汇总都让它变假', () => {
   assert.equal(isRoomQuiet(rt.runner, dm.id), true);
+
   rt.runner.roundQueue.set(dm.id, { marker: true });
   try {
     assert.equal(isRoomQuiet(rt.runner, dm.id), false, 'roundQueue 有东西就不算安静');
   } finally {
     rt.runner.roundQueue.delete(dm.id);
   }
+
+  // 用户在合并窗里刚发消息（合并窗可能 > 150ms 去抖）
+  const originalPending = rt.runner.mergeQueue.hasPending.bind(rt.runner.mergeQueue);
+  rt.runner.mergeQueue.hasPending = (roomId) => roomId === dm.id;
+  try {
+    assert.equal(isRoomQuiet(rt.runner, dm.id), false, '合并窗里还有消息就不算安静');
+  } finally {
+    rt.runner.mergeQueue.hasPending = originalPending;
+  }
+
+  // 主控私聊还有待排空的汇总
+  const originalQueued = rt.store.queuedChiefSummaries.bind(rt.store);
+  rt.store.queuedChiefSummaries = () => [{ originRoomId: dm.id }];
+  try {
+    assert.equal(isRoomQuiet(rt.runner, dm.id), false, '有待排空汇总就不算安静');
+  } finally {
+    rt.store.queuedChiefSummaries = originalQueued;
+  }
+
+  assert.equal(isRoomQuiet(rt.runner, dm.id), true, '恢复之后又要算安静');
 });
 
 await test('dispose：幂等（第二次 {already:true}）、不抛、并且清掉待发的 settled 定时器', async () => {

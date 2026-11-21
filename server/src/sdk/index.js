@@ -119,6 +119,8 @@ async function buildRuntime(options, cleanup) {
     taskIntake,
   });
   cleanup.push(() => runner.disposeAll());
+  // 逆序执行时这条在 disposeAll 之前跑：先清待发的 run.settled 定时器
+  cleanup.push(() => clearSettleTimers(runner));
 
   if (options.installGrantGate !== false) {
     const syncGrants = ({ botIds }) => ensureLegacyGrant({
@@ -222,10 +224,22 @@ async function buildRuntime(options, cleanup) {
   function guarded(table) {
     const out = {};
     for (const [name, fn] of Object.entries(table)) {
-      out[name] = (...args) => {
-        assertAlive();
-        return fn(...args);
-      };
+      if (typeof fn !== 'function') {
+        out[name] = fn;
+        continue;
+      }
+      // 异步方法返回 rejected promise，同步方法直接抛 —— 两种都带同一个 code，
+      // 但不能把 `await bots.create()` 变成同步击穿。
+      const asyncFn = fn.constructor?.name === 'AsyncFunction';
+      out[name] = asyncFn
+        ? async (...args) => {
+            assertAlive();
+            return fn(...args);
+          }
+        : (...args) => {
+            assertAlive();
+            return fn(...args);
+          };
     }
     return out;
   }
@@ -411,12 +425,13 @@ async function buildRuntime(options, cleanup) {
     runner,
     generation,
     services,
-    bots: services.bots,
-    rooms: services.rooms,
-    models: services.models,
-    automations: services.automations,
-    capabilities: services.capabilities,
-    policy: services.policy,
+    // 服务门面也过 assertAlive：dispose 之后再调它们等于往已经拆掉的 store 上写。
+    bots: guarded(services.bots),
+    rooms: guarded(services.rooms),
+    models: guarded(services.models),
+    automations: guarded(services.automations),
+    capabilities: guarded(services.capabilities),
+    policy: guarded(services.policy),
     lessons,
     send,
     askMain,
@@ -440,7 +455,7 @@ async function buildRuntime(options, cleanup) {
       assertAlive();
       return runner.resetRoomSessions(roomId);
     },
-    onEvent,
+    onEvent: guarded({ onEvent }).onEvent,
     dispose,
   };
 }

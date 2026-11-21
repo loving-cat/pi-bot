@@ -425,6 +425,13 @@ await test('E_DISPOSED：dispose 之后的入口全部拒绝；dispose 自己幂
     ['abort', () => rt.abort(dm.id)],
     ['reset', () => rt.reset(dm.id)],
     ['lessons.list', () => rt.lessons.list()],
+    ['onEvent', () => rt.onEvent(() => {})],
+    ['bots.list', () => rt.bots.list()],
+    ['rooms.list', () => rt.rooms.list()],
+    ['models.list', () => rt.models.list()],
+    ['automations.list', () => rt.automations.list()],
+    ['capabilities.listLessons', () => rt.capabilities.listLessons()],
+    ['policy.get', () => rt.policy.get()],
   ]) {
     await rejectsWith(
       call,

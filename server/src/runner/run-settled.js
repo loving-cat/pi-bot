@@ -42,8 +42,14 @@ function timersOf(runner) {
  */
 export function isRoomQuiet(runner, roomId) {
   if (runner?.roundQueue?.has?.(roomId)) return false;
+  // 用户在合并窗里刚发了新消息：合并窗 > 150ms 时不能提前报"安静"
+  if (runner?.mergeQueue?.hasPending?.(roomId)) return false;
   for (const bot of runner?.store?.listBots?.() ?? []) {
     if (runner.isBusy(roomId, bot.id)) return false;
+  }
+  // 主控私聊还有待排空的汇总：房间不算安静（下一秒就会再开一轮）
+  for (const batch of runner?.store?.queuedChiefSummaries?.() ?? []) {
+    if (batch?.originRoomId === roomId) return false;
   }
   return true;
 }
