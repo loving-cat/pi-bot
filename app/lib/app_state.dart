@@ -1333,6 +1333,10 @@ class AppState extends ChangeNotifier {
     serverFingerprint = '';
     installPinnedFingerprint(null);
     localMode = false;
+    // 切服 / 登出后本机凭据也作废：不清的话下次回到本机模式会拿旧 token 重连，
+    // 而且 `_fileLocalToken` 还会声称“手里这串是文件给的”，把新 token 挡在外面。
+    localToken = '';
+    _fileLocalToken = null;
     devices = const [];
     pairing = null;
     api = null;
