@@ -35,7 +35,7 @@ import { config as defaultConfig } from './config.js';
 import { readBrandEnv } from './brand.js';
 import { store as defaultStore } from './store.js';
 import { log } from './util.js';
-import { resolveModelFamilyForModel, LESSON_LIMITS } from './lessons.js';
+import { resolveModelFamilyForModel, selectLessonCatalog } from './lessons.js';
 import {
   REFLECT_SYSTEM,
   REFLECT_MAX_CHARS,
@@ -62,12 +62,16 @@ export const REFLECT_MIN_INTERVAL_MS = 10 * 60 * 1000;
  *
  * 抽成函数是因为 build 与 parse 必须用**同一份**目录：模型看到什么，就只许引用什么。
  * 两处各算一次的话，中间删了条经验就会出现“模型看得到、校验不认”的假拒绝。
+ *
+ * 选谁进目录不是无关小事：栈里常有几十条 active，而目录只有 15 条。
+ * **按入库顺序硬截**会让新经验永远进不去 —— 而“这次要取代的是哪一条”恰恰
+ * 最可能发生在**刚写的**、以及**同一个房间里**的经验上。所以按：
+ *   1. 同房间优先（复盘就是在这个房间收口的）；
+ *   2. 最近更新优先（`updatedAt`，没有就退到 `createdAt`）；
+ *   3. id 倒序兜底（保证顺序确定，测试不会因为排序不稳定而飘）。
  */
-export function edgeCatalogFor(store, { limit = LESSON_LIMITS.reflectCatalog } = {}) {
-  return (store?.lessonLibrary?.() ?? [])
-    .filter((l) => l.status === 'active')
-    .slice(0, limit)
-    .map((l) => ({ id: l.id, cue: l.cue }));
+export function edgeCatalogFor(store, options = {}) {
+  return selectLessonCatalog(store?.lessonLibrary?.() ?? [], options);
 }
 
 /** 复盘调用超时：超了就 abort，别让一个后台任务挂半小时 */
@@ -114,7 +118,7 @@ export function createLessonReflector({ runner, logFn = log, config: scopedConfi
     // 先占坑：即使后面失败，也别在 10 分钟内反复重试烧钱
     lastAt.set(roomId, now);
 
-    const edgeCatalog = edgeCatalogFor(store);
+    const edgeCatalog = edgeCatalogFor(store, { roomId });
     const { text, ids } = buildReflectInput(round, {
       dept: room.name,
       edgeCatalog,

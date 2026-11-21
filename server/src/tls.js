@@ -47,15 +47,37 @@ function tlv(tag, content = Buffer.alloc(0)) {
 const seq = (...items) => tlv(0x30, Buffer.concat(items));
 const set = (...items) => tlv(0x31, Buffer.concat(items));
 const explicit = (n, inner) => tlv(0xa0 | n, inner);
-const int = (value) => {
-  const buf = Buffer.isBuffer(value) ? value : null;
-  if (buf) return tlv(0x02, buf);
-  let hex = BigInt(value).toString(16);
-  if (hex.length % 2) hex = `0${hex}`;
-  let bytes = Buffer.from(hex, 'hex');
-  if (bytes[0] & 0x80) bytes = Buffer.concat([Buffer.from([0]), bytes]);
-  return tlv(0x02, bytes);
-};
+/**
+ * 正整数 → DER INTEGER 的内容字节（纯函数，导出是为了能单测）。
+ *
+ * ★ X.690 §8.3.2：多字节整数的最小编码里，前导 `0x00` 只有在**次字节最高位为 1**
+ *   （否则会被读成负数、所以才补那个 0）时才允许出现。多写一个无条件前导零就是
+ *   非法 DER —— OpenSSL 3 的 `new X509Certificate()` 会直接抛
+ *   `ERR_OSSL_ASN1_ILLEGAL_PADDING`。
+ *
+ *   以前 `int(buf)` 对 Buffer 原样输出，而序列号是 `randomBytes(16)` 后只做了
+ *   `serial[0] &= 0x7f`：只要首字节正好是 `0x00` 且次字节 < 0x80（1/256），
+ *   签出来的证书就是非法 DER —— 表现为"证书文件在、客户端却连不上"，
+ *   而且是概率性的，只在重签那天才炸。
+ */
+export function derIntegerBytes(value) {
+  let bytes = Buffer.isBuffer(value) ? Buffer.from(value) : null;
+  if (!bytes) {
+    let hex = BigInt(value).toString(16);
+    if (hex.length % 2) hex = `0${hex}`;
+    bytes = Buffer.from(hex, 'hex');
+  }
+  if (!bytes.length) return Buffer.from([0x00]);
+  // 剥掉多余的前导 0x00（保留"次字节最高位为 1"时必须补的那一个）
+  while (bytes.length > 1 && bytes[0] === 0x00 && bytes[1] < 0x80) {
+    bytes = bytes.subarray(1);
+  }
+  // 最高位为 1 会被解析成负数 → 补单个 0x00
+  if (bytes[0] & 0x80) bytes = Buffer.concat([Buffer.from([0x00]), bytes]);
+  return bytes;
+}
+
+const int = (value) => tlv(0x02, derIntegerBytes(value));
 const bool = (v) => tlv(0x01, Buffer.from([v ? 0xff : 0x00]));
 const bitString = (buf, unused = 0) => tlv(0x03, Buffer.concat([Buffer.from([unused]), buf]));
 const octetString = (buf) => tlv(0x04, buf);
@@ -128,9 +150,18 @@ function subjectAltName({ hostnames, ips }) {
 /**
  * 签一张自签证书。
  * @param {string|null} [opts.keyPem] 复用已有私钥 PEM，失败时回退重新生成 RSA 2048 密钥对
+ * @param {Buffer|null} [opts.serial] 固定序列号（**仅测试用**，用于回归 DER 边界）
  * @returns {{certPem:string, keyPem:string, certDer:Buffer, fingerprint:string}}
  */
-export function createSelfSignedCertificate({ commonName = 'pi-bot', ips = [], days = VALID_DAYS, keyPem = null } = {}) {
+export function createSelfSignedCertificate({
+  commonName = 'pi-bot',
+  ips = [],
+  days = VALID_DAYS,
+  keyPem = null,
+  // 只给测试用：固定序列号才能稳定回归"前导零"那一类 DER 边界。
+  // 生产路径永远随机，调用方不需要（也不应该）关心它。
+  serial: serialOverride = null,
+} = {}) {
   let privateKey = null;
   let publicKey = null;
   if (keyPem) {
@@ -154,7 +185,11 @@ export function createSelfSignedCertificate({ commonName = 'pi-bot', ips = [], d
   const notAfter = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
 
   const serial = crypto.randomBytes(16);
-  serial[0] &= 0x7f; // 正整数
+  // 最高位清 0（正整数），并**强制第 6 位为 1**：首字节落在 0x40–0x7f，
+  // 既不会是 0x00（非法前导零的源头），也不会因最高位为 1 被当成负数。
+  // `int()` 里还有一层"按 DER 规则归一"的兜底，两道一起才不怕以后有人改回来。
+  serial[0] = (serial[0] & 0x7f) | 0x40;
+  const serialBytes = serialOverride ? derIntegerBytes(serialOverride) : serial;
 
   const signatureAlg = seq(oid(OID.sha256WithRsa), nullValue());
   const subject = name(
@@ -172,7 +207,7 @@ export function createSelfSignedCertificate({ commonName = 'pi-bot', ips = [], d
 
   const tbs = seq(
     explicit(0, int(2)), // v3
-    int(serial),
+    int(serialBytes),
     signatureAlg,
     subject, // issuer == subject（自签）
     seq(asn1Time(notBefore), asn1Time(notAfter)),

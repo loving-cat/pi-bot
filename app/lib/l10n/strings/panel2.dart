@@ -237,7 +237,7 @@ const areaPanel2 = StringArea(
     'lesson.undecay': '解除降级',
     'lesson.pendingSupersedes': '启用后将取代《{cue}》',
     'lesson.pendingContradicts': '启用后将标记与《{cue}》的冲突',
-    'lesson.pendingGone': '蒸馏器建议关联的经验已经不在，启用时会跳过这条建议',
+    'lesson.pendingGone': '蒸馏器建议关联的经验已经不在了或已归档，启用时会跳过这条建议',
     'lesson.familyUnverified': '还没有在某个模型族上验证过（只被读过，没记过胜负）',
     'lesson.familyStats': '{family} · {win} 胜 {fail} 负',
 
@@ -662,7 +662,8 @@ const areaPanel2 = StringArea(
     'lesson.undecay': 'Undo',
     'lesson.pendingSupersedes': 'Enabling will replace "{cue}"',
     'lesson.pendingContradicts': 'Enabling will flag a conflict with "{cue}"',
-    'lesson.pendingGone': 'The lesson this suggestion points to is gone; it will be skipped on enable.',
+    'lesson.pendingGone':
+        'The lesson this suggestion points to is gone or archived; it will be skipped on enable.',
     'lesson.familyUnverified':
         'Never verified on any model family yet (only read, no win/loss recorded)',
     'lesson.familyStats': '{family} · {win}W/{fail}L',

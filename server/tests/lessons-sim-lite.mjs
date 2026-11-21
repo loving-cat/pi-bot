@@ -51,6 +51,7 @@ import {
   applyLessonOutcome,
   lessonFamilyDecay,
   LESSON_DECAY,
+  selectLessonCatalog,
 } from '../src/lessons.js';
 
 let pass = 0;
@@ -630,8 +631,47 @@ test('lessonFamilyDecay：没有归因（unknown）永远不衰减，纯函数�
 // ---------------------------------------------------------------------------
 // 8. 词面相关性单测（闸门输入）
 // ---------------------------------------------------------------------------
-test('lessonLexicalScore：cue 命中 3 分/词，lesson 命中 1 分/词，无交集为 0', () => {
-  const l = active();
+// ---------------------------------------------------------------------------
+// 10. 复盘目录（给蒸馏器的「现有 active 经验」）：同房间 + 最近更新优先
+// ---------------------------------------------------------------------------
+const catalogCase = (extra = {}) =>
+  normalizeLesson({ cue: '情境', lesson: '做法', evidence: EVIDENCE, status: 'active', ...extra });
+
+test('selectLessonCatalog：只收 active，同房间优先，其次最近更新', () => {
+  const list = [
+    catalogCase({ id: 'les_a_old', roomId: 'r1', createdAt: 100, updatedAt: 100 }),
+    catalogCase({ id: 'les_a_new', roomId: 'r1', createdAt: 300, updatedAt: 300 }),
+    catalogCase({ id: 'les_b_new', roomId: 'r2', createdAt: 900, updatedAt: 900 }),
+    catalogCase({ id: 'les_cand', roomId: 'r1', status: 'candidate', createdAt: 999 }),
+    catalogCase({ id: 'les_arch', roomId: 'r1', status: 'archived', createdAt: 998 }),
+  ];
+  const picked = selectLessonCatalog(list, { roomId: 'r1' });
+  assert.deepEqual(
+    picked.map((e) => e.id),
+    ['les_a_new', 'les_a_old', 'les_b_new'],
+    '同房间的先来，再按新到旧；候选/归档不许出现',
+  );
+  assert.deepEqual(Object.keys(picked[0]).sort(), ['cue', 'id'], '只给 id + 情境，别把正文塞进目录');
+});
+
+test('selectLessonCatalog：上限默认 15；时间戳全相同时用 id 倒序兜底（顺序稳定）', () => {
+  const many = Array.from({ length: 30 }, (_, i) =>
+    catalogCase({ id: `les_${String(i).padStart(2, '0')}`, roomId: 'r1', createdAt: i, updatedAt: i }),
+  );
+  const top = selectLessonCatalog(many, { roomId: 'r1' });
+  assert.equal(top.length, 15);
+  assert.equal(top[0].id, 'les_29', '最近更新的排第一');
+  assert.equal(selectLessonCatalog(many, { roomId: 'r1', limit: 3 }).length, 3);
+  assert.deepEqual(selectLessonCatalog([], {}), []);
+
+  const tied = [
+    catalogCase({ id: 'les_x', createdAt: 5, updatedAt: 5 }),
+    catalogCase({ id: 'les_y', createdAt: 5, updatedAt: 5 }),
+  ];
+  assert.deepEqual(selectLessonCatalog(tied, {}).map((e) => e.id), ['les_y', 'les_x']);
+});
+
+test('lessonLexicalScore：cue 命中 3 分/词，lesson 命中 1 分/词，无交集为 0', () => {  const l = active();
   assert.ok(lessonLexicalScore(l, '配班子') >= LESSON_SCORING.cueHit);
   assert.equal(lessonLexicalScore(l, '今天天气怎么样'), 0);
   assert.equal(lessonLexicalScore(l, ''), 0);

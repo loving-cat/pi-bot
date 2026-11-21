@@ -261,11 +261,12 @@ void main() {
     expect(state.isLessonVetoed('d2'), isFalse);
   });
 
-  testWidgets('蒸馏器建议的边：候选卡上写明启用后会动到谁（取代 / 冲突 / 目标已没）', (tester) async {
+  testWidgets('蒸馏器建议的边：候选卡上写明启用后会动到谁（取代 / 冲突 / 目标已没用）', (tester) async {
     final state = AppState()
       ..lessons = [
         lesson(id: 'old1', cue: '老的配班子做法', status: 'active'),
         lesson(id: 'old2', cue: '老的发布检查单', status: 'active'),
+        lesson(id: 'old3', cue: '已归档的老做法', status: 'archived'),
         lesson(
           id: 'cand1',
           cue: '新的配班子做法',
@@ -276,8 +277,11 @@ void main() {
         ),
         lesson(
           id: 'cand2',
-          cue: '指向已删的',
-          pendingEdges: [LessonPendingEdge(to: 'gone', type: 'supersedes')],
+          cue: '指向已删 / 已归档的',
+          pendingEdges: [
+            LessonPendingEdge(to: 'gone', type: 'supersedes'),
+            LessonPendingEdge(to: 'old3', type: 'contradicts'),
+          ],
         ),
       ]
       ..lessonsLoaded = true;
@@ -287,7 +291,8 @@ void main() {
 
     expect(find.text('启用后将取代《老的配班子做法》'), findsOneWidget);
     expect(find.text('启用后将标记与《老的发布检查单》的冲突'), findsOneWidget);
-    expect(find.textContaining('已经不在'), findsOneWidget, reason: '目标没了要说清楚会被跳过，而不是吓人');
+    // 目标已删 / 已归档：服务端物化时都会跳过 —— 界面不能先说会动到它
+    expect(find.textContaining('已经不在'), findsNWidgets(2));
     expect(tester.takeException(), isNull);
   });
 

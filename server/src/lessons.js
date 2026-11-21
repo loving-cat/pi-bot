@@ -240,6 +240,36 @@ export function lessonLexicalScore(item, task) {
 }
 
 /**
+ * 复盘目录：给蒸馏器看的「现有 active 经验」（只要 `id` + `cue`）。
+ *
+ * 选谁进目录不是无关小事：库里常有几十条 active，而目录只有 15 条。
+ * **按入库顺序硬截**会让新经验永远进不去 —— 而“这次要取代的是哪一条”
+ * 恰恰最可能发生在**刚写的**、以及**同一个房间里**的经验上。所以按：
+ *   1. 同房间优先（复盘就是在这个房间收口的）；
+ *   2. 最近更新优先（`updatedAt`，没有就退到 `createdAt`）；
+ *   3. id 倒序兜底（保证顺序确定，测试不会因为排序不稳定而飘）。
+ *
+ * 纯函数：`lesson-reflect.js` 的 `edgeCatalogFor(store)` 只是把 store 读出来交给它，
+ * 这样“选目录”这件事能直接在 `lessons-sim-lite.mjs` 里测。
+ */
+export function selectLessonCatalog(
+  lessons = [],
+  { roomId = '', limit = LESSON_LIMITS.reflectCatalog } = {},
+) {
+  const active = (Array.isArray(lessons) ? lessons : []).filter((l) => l?.status === 'active');
+  const sameRoom = (l) => (roomId && l.roomId === roomId ? 1 : 0);
+  const stamp = (l) => Number(l.updatedAt) || Number(l.createdAt) || 0;
+  const sorted = active.slice().sort((a, b) => {
+    const room = sameRoom(b) - sameRoom(a);
+    if (room !== 0) return room;
+    const fresh = stamp(b) - stamp(a);
+    if (fresh !== 0) return fresh;
+    return String(b.id).localeCompare(String(a.id));
+  });
+  return sorted.slice(0, Math.max(0, limit)).map((l) => ({ id: l.id, cue: l.cue }));
+}
+
+/**
  * 这条经验是否被关系边排除（`contradicts` 双向 / 被 `supersedes` 取代）。
  *
  * 抽出来是因为两处都要用：打分时排除它自己，以及算 `relatedIds` 时**不许**

@@ -260,13 +260,18 @@ class _LessonsSectionState extends State<LessonsSection> {
   }
 
   /// 候选卡上“启用后会动到谁”的提示（蒸馏器建议的边还没生效，只做透明化）
+  ///
+  /// 判定必须和 `server/src/store.js` 的物化条件**一致**：目标已删、已不是 active、
+  /// 或大不了 cue 的，启用时会被静默跳过 —— 那这里就不能给一个会真的发生的样子。
   List<String> pendingEdgeNotes(AppState state, LibraryLesson lesson) {
     if (lesson.pendingEdges.isEmpty) return const [];
     final byId = {for (final l in state.lessons) l.id: l};
     final strings = L10n.s(context);
     return lesson.pendingEdges.map((edge) {
       final target = byId[edge.to];
-      if (target == null || target.cue.isEmpty) return strings.t('lesson.pendingGone');
+      if (target == null || !target.isActive || target.cue.isEmpty) {
+        return strings.t('lesson.pendingGone');
+      }
       return strings.tf(
         edge.isSupersedes ? 'lesson.pendingSupersedes' : 'lesson.pendingContradicts',
         {'cue': target.cue},

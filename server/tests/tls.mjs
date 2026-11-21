@@ -23,6 +23,7 @@ const {
   fingerprintOf,
   ensureTlsMaterial,
   tlsOptions,
+  derIntegerBytes,
 } = await import('../src/tls.js');
 
 let pass = 0;
@@ -63,6 +64,54 @@ await test('指纹 = 证书 DER 的 sha256；两张不同证书指纹不同', ()
   assert.equal(fingerprintOf(made.certPem), crypto.createHash('sha256').update(parsed.raw).digest('hex'));
   const other = createSelfSignedCertificate({ commonName: 'pi-bot', ips: [] });
   assert.notEqual(other.fingerprint, made.fingerprint);
+});
+
+// ---------------------------------------------------------------------------
+// DER INTEGER 最小编码（X.690 §8.3.2）
+//
+// ★ 这里以前有个 1/256 概率的真 bug：序列号 `randomBytes(16)` 只做了
+//   `serial[0] &= 0x7f`，首字节正好是 0x00 且次字节 < 0x80 时，签出来的证书
+//   带非法前导零 —— OpenSSL 3 解析直接抛 ERR_OSSL_ASN1_ILLEGAL_PADDING，
+//   表现是“证书文件在、客户端就是连不上”。而且只在重签那一刻才炸，平时完全看不出。
+// ---------------------------------------------------------------------------
+await test('★ DER 正整数：剥掉多余前导零，必要时才补一个 0x00', () => {
+  assert.deepEqual([...derIntegerBytes(Buffer.from([0x00, 0x01, 0x02]))], [0x01, 0x02], '多写的前导零必须剥掉');
+  assert.deepEqual([...derIntegerBytes(Buffer.from([0x00, 0x00, 0x7f]))], [0x7f]);
+  assert.deepEqual([...derIntegerBytes(Buffer.from([0x00, 0x80]))], [0x00, 0x80], '次字节最高位为 1 时那个 0 是必须的，不能剥');
+  assert.deepEqual([...derIntegerBytes(Buffer.from([0x80]))], [0x00, 0x80], '最高位为 1 会被当负数 → 补 0x00');
+  assert.deepEqual([...derIntegerBytes(Buffer.from([0x00]))], [0x00], '零就是单个 0x00');
+  assert.deepEqual([...derIntegerBytes(Buffer.alloc(0))], [0x00]);
+  assert.deepEqual([...derIntegerBytes(2n)], [0x02]);
+  assert.deepEqual([...derIntegerBytes(0n)], [0x00]);
+  assert.deepEqual([...derIntegerBytes(0x80n)], [0x00, 0x80]);
+});
+
+await test('★ 序列号首字节 0x00：签出来的证书必须是合法 DER（以前 1/256 概率炸）', () => {
+  const { keyPem } = createSelfSignedCertificate({ ips: ['10.0.0.1'] });
+  for (let second = 0; second < 0x40; second += 1) {
+    const serial = Buffer.alloc(16, 0);
+    serial[1] = second;
+    const cert = createSelfSignedCertificate({ ips: ['10.0.0.1'], keyPem, serial });
+    const parsed = new crypto.X509Certificate(cert.certPem); // 非法 DER 会在这里抛
+    const expected = second === 0 ? '0' : serial.subarray(1).toString('hex');
+    assert.equal(
+      parsed.serialNumber.toLowerCase(),
+      expected,
+      `序列号 ${serial.toString('hex')} 的前导零没按 DER 规则处理`,
+    );
+  }
+});
+
+await test('★ 默认随机序列号：判到 64 张都合法（首字节强制 0x40–0x7f）', () => {
+  const { keyPem } = createSelfSignedCertificate({ ips: ['10.0.0.1'] });
+  for (let i = 0; i < 64; i += 1) {
+    const cert = createSelfSignedCertificate({ ips: ['10.0.0.1'], keyPem });
+    const parsed = new crypto.X509Certificate(cert.certPem);
+    const hex = parsed.serialNumber.toLowerCase();
+    assert.ok(hex.length <= 34, `序列号长度异常：${hex}`);
+    assert.ok(!hex.startsWith('0000'), `出现了非法前导零：${hex}`);
+    assert.ok(/^[4-7][0-9a-f]/.test(hex), `默认序列号首字节应落在 0x40–0x7f，实际 ${hex.slice(0, 2)}`);
+  }
 });
 
 await test('真握手：https 服务能起来，客户端拿到的是同一个指纹', async () => {
