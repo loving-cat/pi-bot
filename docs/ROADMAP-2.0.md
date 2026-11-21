@@ -159,7 +159,7 @@ Phase 3 ──► 依赖 Phase 1/2 全部合并（否则删完兼容层还要再
 | 缝 | 现状 | v2 增量 | 不能破坏什么 |
 |---|---|---|---|
 | `server/src/lessons.js` ✅ **契约已定稿** | 校验 / 打分 / 渲染（纯模块） | 字段 `modelFamily` / `byFamily` / `edges` 的**纯函数**读法；打分加族与边权重；`LESSON_LIMITS` 只调 `total`（200 → 500，仍要淘汰） | 仍是 `PURE_MODULES`；`selectLessonsFor` / `lessonsPromptLines` **签名兼容** |
-| `server/src/lesson-reflect.js` ✅ **归因 + 胜率评估已接线**（边候选待做） | 收尾复盘 → candidate（evidence 校验） | 输出带 `modelFamily`（实际干活的模型，不是复盘会话自己的模型）；新增 `evaluateInjected()`：对本轮注入过的经验做**独立评估**（helped/hurt/no_effect/confounded），只有 helped/hurt 记 `win`/`fail`，`confounded` 不记 | 仍然**只产 candidate**；evidence 校验不放宽；**不拿本轮 ok/fail 记账** |
+| `server/src/lesson-reflect.js` ✅ **归因 + 胜率评估 + 边候选已接线** | 收尾复盘 → candidate（evidence 校验） | 输出带 `modelFamily`（实际干活的模型，不是复盘会话自己的模型）；新增 `evaluateInjected()`：对本轮注入过的经验做**独立评估**（helped/hurt/no_effect/confounded），只有 helped/hurt 记 `win`/`fail`，`confounded` 不记；**边候选**按 §5.3 的 `pendingEdges` 形状产出（目录校验） | 仍然**只产 candidate**；evidence 校验不放宽；**不拿本轮 ok/fail 记账**；边候选**不提前生效** |
 | `server/src/runner/turn-executor.js` ✅ **注入 + 评估触发已接线** | `withLessons` 注入 | 传 `modelFamily` + `edges`；命中只 `touchLessons(..., {modelFamily})` 记 `hit`；`finally` 里把 `lessonsInjected` **同步摘成快照**再交给后台评估（清得快，防下一轮覆盖导致重复计分） | 注入点仍唯一；成员层仍不注入；**win/fail 不在这里产生** |
 | `server/src/store.js` ✅ **边已落库** | `state.lessons` + `/api/lessons` + `lessons.updated` | `state.lessonEdges`（级联删、`lessons.updated` 同时带 `edges`、`POST /api/lessons/edges`、`POST /api/lessons/:id/reject`）；`/api/lessons/preview` 已传边 | 老库无新字段也能读（`normalizeLesson` 给默认值） |
 | `app/lib/widgets/lessons_section.dart` ✅ **已接线** | 启用 / 归档 / 删除 | 族标记 + 胜负（`glm · 5W/0L`）、「推荐启用」角标与置顶排序、被否决时显示「已否决」并只给「解除否决」 | **不能退化成只读**；「记错了」= 写 user 边 + 归档；裸切 active 的假启用路径已封死 |
@@ -208,6 +208,11 @@ Phase 3 ──► 依赖 Phase 1/2 全部合并（否则删完兼容层还要再
 没有哨兵的话，单条「记错了」根本写不出合法边 —— 它不能自己指向自己。
 
 - 边由两处产生：**蒸馏器**（`supersedes` / `contradicts` 候选，需人工确认）与**用户显式操作**（否决 → `contradicts`，立即生效）
+- ✅ **蒸馏器边候选已按这个形状落地**（2026-11-21）：候选边**挂在经验本身上**（`lesson.pendingEdges: [{to, type}]`，最多 2 条），**不进 `state.lessonEdges`** —— 边表只有"生效的边"一种含义，打分/排除/淘汰/界面都不用加过滤，删候选也不会留孤儿边（守住 I0）。
+  - 类型只允许 `supersedes` / `contradicts`；`to` 必须是复盘输入里给出的**现有 active 经验目录**（`LESSON_LIMITS.reflectCatalog = 15` 条）里的 id，编的 id / 哨兵 / 指向自己的在解析层就丢；
+  - **只在人工 `activate` 这一次物化**成 `{ from, to, type, by: 'distiller' }`，目标已删 / 已不是 active / 边重复 → 静默跳过；无论成不成，建议消费完即清空；
+  - 归档 / 删除**不物化**（没启用过的东西，不该动到别人的经验）；
+  - 界面上候选卡直接写「启用后将取代《目标 cue》」/「启用后将标记与《目标 cue》的冲突」，目标没了就提示会被跳过。
 - 只做**一阶**扩散；2 跳留到 2.1（Lite 就是 Lite）
 - 删经验时级联删边；删边走 `manage_knowledge` 同一条二次确认路径
 
@@ -277,11 +282,17 @@ v1 草案把它改成「蒸馏即自动注入 + 事后点『记错了』」，�
 |---|---|
 | HTTP | 现有 `/api/lessons`（GET/POST/PATCH/DELETE）+ `/api/lessons/preview` 增量返回 `modelFamily` / `edges` / `confidence` |
 | 事件 | 沿用 `lessons.updated`；新增边变化时也在同一事件里带 `edges` |
-| SDK | ✅ **已落地**：单一门面 `runtime.lessons`（`list / propose / activate / archive / remove / preview`，另加 `edges()` 与 `reject()`）—— 全部转发给 `store`，和 HTTP / 界面同一条路，不新建存储也不新建注入点（I0）。`propose` **强制** `candidate`（即使传 `status: 'active'` 也改回去），要生效只能走 `activate`（自己校验证据与否决/降级边）；契约快照锁住 `runtime.lessons`。若将来要 `experience` 这个名字，**只做别名转发**，不新增实现 |
+| SDK | ✅ **已落地**：单一门面 `runtime.lessons`（`list / propose / activate / archive / remove / preview`，另加 `edges / reject / unreject / undecay / addEdge / removeEdge`）—— 全部转发给 `services.capabilities`，和 HTTP / 界面同一条路，不新建存储也不新建注入点（I0）；读返回数组，写一律 `{ ok, status?, code?, error? }`（和 `runtime.bots` 一致）。`propose` **强制** `candidate`（即使传 `status: 'active'` 也改回去），要生效只能走 `activate`（自己校验证据与否决/降级边）。`unreject` / `undecay` 是**必备的恢复闭环**：没有它们，宿主调过 `reject` 或遇到自动降级后在门面内就再也恢复不了。契约快照锁住 `runtime.lessons` 的**方法名集合**。若将来要 `experience` 这个名字，**只做别名转发**，不新增实现 |
 | 能力 | 沿用 `manage_knowledge`（删经验/删边要二次确认这条不动） |
 | 开关 | 沿用 `config.lessonReflect`（`lessonReflect=false` 时全链路 no-op）；自动晋升单独一个默认关闭的开关 |
 
 ### 5.8 反向不变量（防“第二套系统”复活，必须写成测试）
+
+> ✅ **已落地**（2026-11-21）：`server/tests/lessons-invariants.mjs`（10 条，已进 `server/tests/all.mjs`）。
+> 静态扫描 + 运行期断言；I0-2 的口径在此澄清一次：**注入点唯一**（`turn-executor` 的 `withLessons`），
+> `Http / SDK` 的那两处只允许是 `/api/lessons/preview` 与 `runtime.lessons.preview`（只给人看，不注入），
+> 多一个调用点就红。I1 同时要求 `lessons.js` / `lesson-reflect-prompt.js` **真的在 `PURE_MODULES` 名单里**
+> （之前只在文档里声称，名单里没有，等于没管）。
 
 | # | 红线 | 测试方式 |
 |---|---|---|
@@ -299,7 +310,9 @@ v1 草案把它改成「蒸馏即自动注入 + 事后点『记错了』」，�
 | `server/tests/lessons.mjs`（**扩**） | 族加成方向（同族 +2 / 异族未验证 −1）、`contradicts` 直接排除、`generalizes` 一跳、门槛仍是 3、预算仍是 3 条 / 600 字、老库缺字段能读、**族内衰减**（连败 2 次归档 + `system` 边、中间赢一次重新计数、边幂等、裸切 `active` 被拒、解除后连败清零可再注入）|
 | `server/tests/lesson-reflect.mjs`（**扩**） | 蒸馏产出带 `modelFamily`；evidence 对不上仍丢；**产出仍是 candidate**；边候选不自动生效 |
 | `server/tests/lessons-sim-lite.mjs` ✅（52 条已落地） | 族解析 / `byFamily` 规整 / 置信度单调性 / 内容哈希归一化 / 4 种边的校验与索引 / 同族加成与未验证扣分 / `contradicts` 硬排除 / 老经验不背扣分 / 淘汰顺序 / **连败计数与 `lessonFamilyDecay()` 阈值** |
-| `app/test/lessons_section_test.dart`（**扩**） | 族标记、未验证提示、推荐启用排序、**三档操作仍在**、空态、6 秒空闲 0 Ticker、**「已降级」只给「解除降级」** |
+| `app/test/lessons_section_test.dart`（**扩**） | 族标记、未验证提示、推荐启用排序、**三档操作仍在**、空态、6 秒空闲 0 Ticker、**「已降级」只给「解除降级」**、**待确认的边在候选卡上明示** |
+| `server/tests/lessons-invariants.mjs`（新） | §5.8 的 I0–I5：单处存储 / 唯一注入点 / 无 `experience` 命名空间 / 四个模块零 IO 且在名单里 / 只在一轮收口写 / 渲染是文本参考 / 权限层互不依赖 / 可关可清 |
+| `server/tests/lesson-reflect.mjs`（**扩**） | 边候选：目录只喂 15 条、只认 `supersedes`/`contradicts`、目录外 id 与哨兵丢掉、最多 2 条去重、空不落键 |
 
 ---
 

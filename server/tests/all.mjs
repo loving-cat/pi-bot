@@ -22,6 +22,7 @@ const TESTS = [
   'lessons-sim-lite',
   'lesson-injection',
   'lesson-reflect',
+  'lessons-invariants',
   'site-draft',
   'merge-messages',
   'local-capabilities',

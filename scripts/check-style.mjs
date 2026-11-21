@@ -41,12 +41,18 @@ const PURE_MODULES = [
   'pass-marker.js',
   'task-title.js',
   'tasks/legacy-task-migration.js',
+  // SIM-Lite（2.0）：打分 / 淘汰 / 关系边都是纯函数，蒸馏输出解析同理 ——
+  // 加进名单才算真的“零 IO”，否则路线图 §5.8 I1 只是口号。
+  'lessons.js',
+  'lesson-reflect-prompt.js',
 ];
 
 const TEST_OVERRIDES = new Map([
   ['group-round.js', 'closing-turn.mjs'],
   ['brand.js', 'sdk-runtime.mjs'],
   ['chat-redact.js', 'jarvis-mode.mjs'],
+  // 复盘提示词/解析的回归测试在 lesson-reflect.mjs（同一个文件覆盖 build + parse）
+  ['lesson-reflect-prompt.js', 'lesson-reflect.mjs'],
 ]);
 
 const FORBIDDEN_IMPORT =
