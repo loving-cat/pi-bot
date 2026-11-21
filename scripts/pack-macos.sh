@@ -206,7 +206,7 @@ fi
 # 缺它的话 App 能起来，但 desktop_input 会一路返回 not_platform ——
 # 发版包里少一个能力却没人发现，比构建失败更糟，所以这里直接挡。
 DESKTOP_HELPER="$ROOT/server/resources/orbis-desktop-mac"
-[[ -f "$DESKTOP_HELPER" ]] || fail "缺少桌面输入助手：$DESKTOP_HELPER（先跑 ./scripts/build-desktop-mac.sh）"
+[[ -f "$DESKTOP_HELPER" ]] || fail "缺少桌面输入助手：${DESKTOP_HELPER} —— 先跑 ./scripts/build-desktop-mac.sh"
 DESKTOP_RES="$SERVER_DST/resources"
 mkdir -p "$DESKTOP_RES"
 ditto "$DESKTOP_HELPER" "$DESKTOP_RES/orbis-desktop-mac"
