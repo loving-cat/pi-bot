@@ -40,6 +40,11 @@ printf '{"lockfileVersion":3}\n' > "$FIXTURE/server/package-lock.json"
 printf 'fixture server version one\n' > "$FIXTURE/server/src/index.js"
 printf 'fixture tool\n' > "$FIXTURE/server/tools/check.mjs"
 printf 'FIXTURE=1\n' > "$FIXTURE/server/.env.example"
+# 桌面输入原生助手：pack-macos.sh 缺它会直接 fail（发版包里少一个能力却没人发现，
+# 比构建失败更糟）。夹具里放一个假文件即可 —— 这里验的是"打包时会不会带上它"。
+mkdir -p "$FIXTURE/server/resources"
+printf 'fixture desktop helper\n' > "$FIXTURE/server/resources/orbis-desktop-mac"
+chmod 755 "$FIXTURE/server/resources/orbis-desktop-mac"
 BUILD="$FIXTURE/app/build/macos/Build/Products/Release"
 mkdir -p "$BUILD/Orbis.app/Contents/MacOS"
 printf '<plist><dict><key>CFBundleShortVersionString</key><string>0.1.0</string></dict></plist>\n' > "$BUILD/Orbis.app/Contents/Info.plist"
@@ -236,6 +241,14 @@ PACK_PLATFORM=Linux run_fail --no-build
 ok '非 macOS 被拒绝'
 PACK_NODE_OLD=1 run_fail --no-build
 ok 'Node 22 以下被拒绝'
+
+# 缺桌面输入助手必须失败：发版包里少一个能力却没人发现，比构建失败更糟。
+# 这条守着 pack-macos.sh 里的那处检查，别让人「顺手删掉」。
+mv "$FIXTURE/server/resources/orbis-desktop-mac" "$TEST_ROOT/helper.bak"
+run_fail --no-build
+grep -q 'orbis-desktop-mac' "$TEST_ROOT/run.log" || die '缺少助手时的报错没点名'
+ok '缺桌面输入助手时拒绝打包并点名'
+mv "$TEST_ROOT/helper.bak" "$FIXTURE/server/resources/orbis-desktop-mac"
 
 PACK_FAIL=xcode run_ok --no-build
 [[ "$(cat "$FIXTURE/dist/Orbis.app/Contents/product.txt")" == 'fallback product' ]] || die '未采用兼容产品名'
