@@ -13,10 +13,10 @@ const http = require('node:http');
 const server = http.createServer((req, res) => {
   res.setHeader('content-type', 'application/json');
   res.end(JSON.stringify({ok: true, serverName: 'pi-bot fixture', version: '1.0.0',
-    port: process.env.PI_BOT_PORT,
-    data: process.env.PI_BOT_HOME, entry: __filename}));
+    port: process.env.ORBIS_PORT,
+    data: process.env.ORBIS_HOME, entry: __filename}));
 });
-server.listen(Number(process.env.PI_BOT_PORT), '127.0.0.1');
+server.listen(Number(process.env.ORBIS_PORT), '127.0.0.1');
 process.on('SIGTERM', () => {
   if (process.env.IGNORE_TERM) return;
   setTimeout(() => server.close(() => process.exit(0)),
@@ -102,8 +102,8 @@ void main() {
       serverDir: temp.path,
       logPath: '${temp.path}/server.log',
       extraEnv: {
-        'PI_BOT_PORT': '$port',
-        'PI_BOT_HOME': '${temp.path}/data',
+        'ORBIS_PORT': '$port',
+        'ORBIS_HOME': '${temp.path}/data',
         ...extra,
       },
     );

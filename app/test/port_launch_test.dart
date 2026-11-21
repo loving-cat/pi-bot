@@ -45,25 +45,25 @@ void main() {
       expect(o.port, 8787);
       // 换端口只影响环境变量，不改偏好
       final env = o.envForPort(8788);
-      expect(env['PI_BOT_PORT'], '8788');
+      expect(env['ORBIS_PORT'], '8788');
       expect(o.port, 8787, reason: '偏好端口必须保持不变');
     });
 
     test('env 用的是偏好端口', () {
       const o = ServerLaunchOptions(port: 9000);
-      expect(o.env['PI_BOT_PORT'], '9000');
+      expect(o.env['ORBIS_PORT'], '9000');
     });
 
     test('数据目录在换端口时保持不变', () {
       const o = ServerLaunchOptions(port: 8787, dataDir: '/tmp/pb-data');
       final env = o.envForPort(8788);
-      expect(env['PI_BOT_PORT'], '8788');
-      expect(env['PI_BOT_HOME'], '/tmp/pb-data');
+      expect(env['ORBIS_PORT'], '8788');
+      expect(env['ORBIS_HOME'], '/tmp/pb-data');
     });
 
-    test('没设数据目录时不写 PI_BOT_HOME', () {
+    test('没设数据目录时不写 ORBIS_HOME', () {
       const o = ServerLaunchOptions(port: 8787);
-      expect(o.envForPort(8788).containsKey('PI_BOT_HOME'), false);
+      expect(o.envForPort(8788).containsKey('ORBIS_HOME'), false);
     });
 
     test('两个不同端口的 options 不相等（设置变化能被识别）', () {

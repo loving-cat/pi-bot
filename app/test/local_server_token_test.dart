@@ -38,7 +38,7 @@ const { attachWs } = await import('./src/ws.js');
 const { Pairing } = await import('./src/pairing.js');
 // 真实 server-main.js 会签发本机 token；这里直接起 HTTP 所以补上。
 const { issueLocalToken } = await import('./src/local-token.js');
-issueLocalToken(process.env.PI_BOT_HOME);
+issueLocalToken(process.env.ORBIS_HOME);
 const runner = { availableModels: [], modelLabel: () => null, initNote: null, contextUsage: () => ({}) };
 const server = createHttpServer({ runner, pairing: new Pairing() });
 attachWs(server, { runner });
@@ -48,7 +48,7 @@ server.listen(0, '127.0.0.1', () => process.stdout.write('PORT ' + server.addres
     node,
     [script.path],
     workingDirectory: serverDir,
-    environment: {...env, 'PI_BOT_HOME': home.path},
+    environment: {...env, 'ORBIS_HOME': home.path},
   );
   final port = Completer<int>();
   final err = StringBuffer();

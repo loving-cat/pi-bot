@@ -642,7 +642,7 @@ class AppState extends ChangeNotifier {
   /// 本机模式：桌面端直连 127.0.0.1，服务端信任 loopback，不需要 token
   bool localMode = false;
 
-  /// 本机服务端开了服务器模式（设了 PI_BOT_TOKEN），本机也要带 token。
+  /// 本机服务端开了服务器模式（设了 ORBIS_TOKEN），本机也要带 token。
   /// 连接页据此显示「填 token」，而不是拿着空 token 一直重连。
   bool localNeedsToken = false;
 
@@ -921,7 +921,7 @@ class AppState extends ChangeNotifier {
 
   /// 桌面端：直连本机服务端
   ///
-  /// 服务端一般信任本机（不带 token）；开了服务器模式（设了 PI_BOT_TOKEN）时本机也要带，
+  /// 服务端一般信任本机（不带 token）；开了服务器模式（设了 ORBIS_TOKEN）时本机也要带，
   /// 这时用用户在连接页填的 [localToken]。
   Future<void> connectLocal({String? url}) async {
     localMode = true;
@@ -1041,12 +1041,12 @@ class AppState extends ChangeNotifier {
 
   /// 连接页上的提示：为什么连不上、去哪里填
   static const localTokenHint =
-      '本机服务端开了服务器模式（设了 PI_BOT_TOKEN），本机连接也要带 token。\n'
-      '把服务端的 PI_BOT_TOKEN 填在下面。只是自己电脑上用的话，去掉 PI_BOT_TOKEN 重启服务端即可。';
+      '本机服务端开了服务器模式（设了 ORBIS_TOKEN），本机连接也要带 token。\n'
+      '把服务端的 ORBIS_TOKEN 填在下面。只是自己电脑上用的话，去掉 ORBIS_TOKEN 重启服务端即可。';
 
   /// 填的 token 被服务端拒了
   static const localTokenRejected =
-      'token 不对：服务端拒绝了这个 token。请核对服务端的 PI_BOT_TOKEN 后重新填写。';
+      'token 不对：服务端拒绝了这个 token。请核对服务端的 ORBIS_TOKEN 后重新填写。';
 
   /// 连接页填了本机 token：保存并重连
   Future<void> setLocalToken(String value) async {

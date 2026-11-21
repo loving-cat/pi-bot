@@ -33,7 +33,7 @@ bool isPiBotHealthResponse(String body) {
 
 /// 服务端要不要本机请求也带 token（`/health` 的 `auth` 字段）。
 ///
-/// 服务器模式（服务端设了 `PI_BOT_TOKEN`）回 `token`；本机部署回 `local`。
+/// 服务器模式（服务端设了 `ORBIS_TOKEN`，旧名 `PI_BOT_TOKEN` 也认）回 `token`；本机部署回 `local`。
 /// 旧版服务端没有这个字段，按 `local` 处理。
 bool healthRequiresToken(String body) {
   try {

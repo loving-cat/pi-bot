@@ -34,13 +34,24 @@ class ServerLaunchOptions {
   /// 偏好端口被占用时桌面端会换一个空闲端口启动，
   /// 环境变量必须传实际端口，否则服务端会去抢那个被占的端口然后退出。
   /// 注意：[port] 字段始终是用户的偏好值，不会被这次换端口改掉。
+  ///
+  /// ★ 2.0 起一律传**正式名** `ORBIS_*`。
+  ///
+  ///   服务端从 1.7.0 就双读（`readBrandEnv`：`ORBIS_*` 优先、`PI_BOT_*` 回退），
+  ///   所以只传新名对 1.7+ 完全兼容。反过来继续传旧名的话，2.0 服务端会在每次
+  ///   启动时打一行弃用提醒（`[Orbis] 弃用提醒：PI_BOT_PORT 将在 2.0 移除`）——
+  ///   而这条提醒的出路（改传 ORBIS_*）恰恰只有桌面端自己能做。
+  ///
+  ///   代价：把 App 指向 **1.4.x 及更早**的服务端时，那个版本只读 `PI_BOT_*`，
+  ///   端口会落到它自己的默认值。这种组合只在高级用户手动指定
+  ///   `PI_BOT_SERVER` 时才可能出现，且 App 与服务端本来配套发布。
   Map<String, String> envForPort(int actualPort, {int? tlsPort}) => {
-        'PI_BOT_PORT': '$actualPort',
+        'ORBIS_PORT': '$actualPort',
         // ★ 加密监听是独立的一条腿（手机走它）。和 HTTP 端口一样，
         //   由桌面端先探好再告诉服务端 —— 否则 8443 被占时服务端只会
         //   打个警告退回明文，用户不会知道手机那条链路没加密。
-        if (tlsPort != null && tlsPort > 0) 'PI_BOT_TLS_PORT': '$tlsPort',
-        if (data.isNotEmpty) 'PI_BOT_HOME': data,
+        if (tlsPort != null && tlsPort > 0) 'ORBIS_TLS_PORT': '$tlsPort',
+        if (data.isNotEmpty) 'ORBIS_HOME': data,
       };
 
   @override

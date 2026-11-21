@@ -162,10 +162,12 @@ class _PairScreenState extends State<PairScreen> {
   /// 想重新打开：把这里改成 true（代码都留着，没删）。
   static const _scanEnabled = false;
 
-  /// PI_BOT_FAKE_SCAN 是给桌面端截图预览用的（桌面没有 mobile_scanner 实现）
+  /// ORBIS_FAKE_SCAN 是给桌面端截图预览用的（桌面没有 mobile_scanner 实现）。
+  /// 旧名 PI_BOT_FAKE_SCAN 仍然认（2.0 品牌改名）。
   bool get _canScan =>
       _scanEnabled &&
-      (const bool.fromEnvironment('PI_BOT_FAKE_SCAN') ||
+      (const bool.fromEnvironment('ORBIS_FAKE_SCAN') ||
+          const bool.fromEnvironment('PI_BOT_FAKE_SCAN') ||
           (!kIsWeb && (Platform.isAndroid || Platform.isIOS)));
 
   /// 扫码 → 自动填地址和配对码 → 直接连

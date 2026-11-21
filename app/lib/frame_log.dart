@@ -3,7 +3,8 @@ import 'dart:io';
 
 import 'package:flutter/scheduler.dart';
 
-/// 帧耗时采样 —— 只在启动时带了环境变量 `PI_BOT_FRAME_LOG=<文件路径>` 才工作。
+/// 帧耗时采样 —— 只在启动时带了环境变量 `ORBIS_FRAME_LOG=<文件路径>` 才工作
+/// （旧名 `PI_BOT_FRAME_LOG` 仍然认，2.0 品牌改名后新名优先）。
 ///
 /// 为什么要有这个东西：桌面端"拉伸窗口很卡、帧数很低"这种问题，光看代码猜
 /// 十次九次猜错 —— 是布局重排太贵、是光栅太贵、还是某个持续动画在抢帧，
@@ -13,11 +14,18 @@ import 'package:flutter/scheduler.dart';
 ///   `帧数 平均ms P90ms 最慢ms 超16ms帧数 平均buildms 平均rasterms`
 ///
 /// 用环境变量而不是 dart-define：不用重新编译就能开关。
-///   PowerShell: `$env:PI_BOT_FRAME_LOG="$env:TEMP\pi-bot-frame.log"; .\pi_bot.exe`
+///   PowerShell: `$env:ORBIS_FRAME_LOG="$env:TEMP\orbis-frame.log"; .\orbis.exe`
 class FrameLog {
-  static const _pathEnv = 'PI_BOT_FRAME_LOG';
+  static const pathEnvNew = 'ORBIS_FRAME_LOG';
+  static const pathEnvLegacy = 'PI_BOT_FRAME_LOG';
 
-  static String get _path => Platform.environment[_pathEnv] ?? '';
+  /// 新名优先，回退旧名（与服务端 `readBrandEnv` 同一套规则）。
+  static String get _path {
+    final env = Platform.environment;
+    final modern = env[pathEnvNew];
+    if (modern != null && modern.trim().isNotEmpty) return modern.trim();
+    return env[pathEnvLegacy] ?? '';
+  }
 
   static bool get enabled => _path.isNotEmpty;
 

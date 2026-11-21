@@ -3,10 +3,10 @@ import 'package:pi_bot/server/options.dart';
 
 void main() {
   test('端口始终传给服务端，空数据目录保留服务端的平台默认值', () {
-    expect(const ServerLaunchOptions().env, {'PI_BOT_PORT': '8787'});
+    expect(const ServerLaunchOptions().env, {'ORBIS_PORT': '8787'});
     expect(
       const ServerLaunchOptions(port: 9876, dataDir: '  data folder  ').env,
-      {'PI_BOT_PORT': '9876', 'PI_BOT_HOME': 'data folder'},
+      {'ORBIS_PORT': '9876', 'ORBIS_HOME': 'data folder'},
     );
   });
 
@@ -15,22 +15,22 @@ void main() {
     // 不传的话服务端用默认 8443，被占时只打警告、手机就退回明文了。
     expect(
       const ServerLaunchOptions(port: 8787).envForPort(8787, tlsPort: 8443),
-      {'PI_BOT_PORT': '8787', 'PI_BOT_TLS_PORT': '8443'},
+      {'ORBIS_PORT': '8787', 'ORBIS_TLS_PORT': '8443'},
     );
     // 换了端口也要如实传
     expect(
       const ServerLaunchOptions(port: 8787, dataDir: 'd')
           .envForPort(8787, tlsPort: 8445),
-      {'PI_BOT_PORT': '8787', 'PI_BOT_TLS_PORT': '8445', 'PI_BOT_HOME': 'd'},
+      {'ORBIS_PORT': '8787', 'ORBIS_TLS_PORT': '8445', 'ORBIS_HOME': 'd'},
     );
     // 挑不到空闲口（或调用方没给）时不传 —— 服务端用默认值并按自己的降级逻辑走
     expect(
       const ServerLaunchOptions(port: 8787).envForPort(8787),
-      {'PI_BOT_PORT': '8787'},
+      {'ORBIS_PORT': '8787'},
     );
     expect(
       const ServerLaunchOptions(port: 8787).envForPort(8787, tlsPort: 0),
-      {'PI_BOT_PORT': '8787'},
+      {'ORBIS_PORT': '8787'},
     );
   });
 

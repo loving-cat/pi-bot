@@ -5,9 +5,26 @@ library;
 
 import 'dart:io';
 
+/// 按品牌规则读环境变量：`ORBIS_<后缀>` 优先，未设置或空串时回退 `PI_BOT_<后缀>`。
+///
+/// 与 `server/src/brand.js` 的 `readBrandEnv` 同一套语义。2.0 起服务端只保证
+/// 认 `ORBIS_*`（旧名是回退，命中会打弃用提醒），所以桌面端读的时候两个都认、
+/// 写的时候只写新名。
+///
+/// 注意 `<后缀>` 是**去掉前缀后**的名字：`readBrandEnv(env, 'SERVER')` 读的是
+/// `ORBIS_SERVER` / `PI_BOT_SERVER`。
+String? readBrandEnv(Map<String, String> env, String suffix) {
+  final modern = env['ORBIS_$suffix']?.trim();
+  if (modern != null && modern.isNotEmpty) return modern;
+  final legacy = env['PI_BOT_$suffix']?.trim();
+  if (legacy != null && legacy.isNotEmpty) return legacy;
+  return null;
+}
+
 /// 从 `exeDir` 起向父目录查找 `server/src/index.js` 的所有候选路径。
 ///
-/// 顺序：`PI_BOT_SERVER` → App Resources → exe 同级 → 逐层向上（最多 8 层）→ 当前目录。
+/// 顺序：`ORBIS_SERVER`（旧名 `PI_BOT_SERVER`）→ App Resources → exe 同级 →
+/// 逐层向上（最多 8 层）→ 当前目录。
 /// 开发时 exe 位于 `app/build/windows/x64/runner/Release/`；
 /// 发行包则把 `server/` 与 exe 放在同一目录。
 ///
@@ -24,8 +41,8 @@ List<String> serverEntryCandidates(
   const entry = ['server', 'src', 'index.js'];
   final out = <String>[];
 
-  final env = (environment ?? Platform.environment)['PI_BOT_SERVER']?.trim();
-  if (env != null && env.isNotEmpty) out.add(env);
+  final explicitServer = readBrandEnv(environment ?? Platform.environment, 'SERVER');
+  if (explicitServer != null) out.add(explicitServer);
 
   // .app 包的布局是 `X.app/Contents/MacOS/`，server 在 `Contents/Resources/`。
   // 判断时两种分隔符都认：用例里的临时目录在 Windows 主机上是反斜杠开头的绝对路径，
@@ -139,8 +156,8 @@ List<String> nodeCandidates(
   /// 不能直接写 `'$x\Volta'` —— Dart 里 `\V` 不是转义序列，反斜杠会丢。
   String win(List<String> parts) => parts.join(r'\');
 
-  final explicit = env['PI_BOT_NODE']?.trim();
-  if (explicit != null && explicit.isNotEmpty) out.add(explicit);
+  final explicitNode = readBrandEnv(env, 'NODE');
+  if (explicitNode != null) out.add(explicitNode);
   addDirectory(exeDir);
   addDirectory('$exeDir${sep}node');
   if (os == 'macos' && Directory(exeDir).parent.path.endsWith('/Contents')) {

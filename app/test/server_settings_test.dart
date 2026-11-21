@@ -73,7 +73,7 @@ void main() {
     expect(launcher.options.data, 'data folder');
     expect(launcher.options.node, 'node');
     expect(launcher.options.entry, 'server.js');
-    expect(launcher.options.env['PI_BOT_PORT'], '9876');
+    expect(launcher.options.env['ORBIS_PORT'], '9876');
     expect(state.localUrl, 'http://127.0.0.1:9876');
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getInt('server_port'), 9876);
