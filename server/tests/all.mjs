@@ -158,6 +158,7 @@ const TESTS = [
   'full-duplex',
   'jarvis-mode',
   'sdk-runtime',
+  'sdk-errors',
   'sdk-contract',
   'brand',
   'brand-deprecation',

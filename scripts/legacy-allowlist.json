@@ -45,7 +45,7 @@
     },
     {
       "path": "app/lib/app_state.dart",
-      "count": 15
+      "count": 9
     },
     {
       "path": "app/lib/browser_platform_policy.dart",
@@ -65,14 +65,10 @@
     },
     {
       "path": "app/lib/frame_log.dart",
-      "count": 5
-    },
-    {
-      "path": "app/lib/html_preview_document.dart",
       "count": 2
     },
     {
-      "path": "app/lib/l10n/strings/chat.dart",
+      "path": "app/lib/html_preview_document.dart",
       "count": 2
     },
     {
@@ -81,7 +77,7 @@
     },
     {
       "path": "app/lib/main.dart",
-      "count": 22
+      "count": 20
     },
     {
       "path": "app/lib/models.dart",
@@ -110,14 +106,6 @@
     {
       "path": "app/lib/server/launcher.dart",
       "count": 10
-    },
-    {
-      "path": "app/lib/server/locate.dart",
-      "count": 3
-    },
-    {
-      "path": "app/lib/server/options.dart",
-      "count": 3
     },
     {
       "path": "app/lib/server/port_picker.dart",
@@ -161,7 +149,7 @@
     },
     {
       "path": "app/test/local_server_token_test.dart",
-      "count": 8
+      "count": 6
     },
     {
       "path": "app/test/pair_request_test.dart",
@@ -169,7 +157,7 @@
     },
     {
       "path": "app/test/port_launch_test.dart",
-      "count": 8
+      "count": 2
     },
     {
       "path": "app/test/port_picker_test.dart",
@@ -184,16 +172,12 @@
       "count": 15
     },
     {
-      "path": "app/test/server_options_test.dart",
-      "count": 10
-    },
-    {
       "path": "app/test/server_settings_test.dart",
-      "count": 2
+      "count": 1
     },
     {
       "path": "app/test/server_supervisor_test.dart",
-      "count": 8
+      "count": 3
     },
     {
       "path": "app/test/state_dir_test.dart",
@@ -334,10 +318,6 @@
     {
       "path": "server/src/data-migration.js",
       "count": 2
-    },
-    {
-      "path": "server/src/desktop-input-mac.js",
-      "count": 1
     },
     {
       "path": "server/src/discovery.js",
@@ -542,10 +522,6 @@
     {
       "path": "server/tests/decision-settings.mjs",
       "count": 2
-    },
-    {
-      "path": "server/tests/desktop-input-mac.mjs",
-      "count": 6
     },
     {
       "path": "server/tests/desktop-input.mjs",

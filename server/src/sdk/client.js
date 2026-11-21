@@ -7,6 +7,7 @@
  */
 import { WebSocket as WsClient } from 'ws';
 import { readLocalToken } from '../local-token.js';
+import { ORBIS_ERROR_CODES as CODE, OrbisError, asOrbisError } from './errors.js';
 
 function joinUrl(base, pathname) {
   return `${String(base).replace(/\/+$/, '')}${pathname.startsWith('/') ? pathname : `/${pathname}`}`;
@@ -60,18 +61,28 @@ export class OrbisClient {
       init.body = JSON.stringify(body);
     }
 
-    const res = await this.fetch(joinUrl(this.baseUrl, pathname), init);
+    let res;
+    try {
+      res = await this.fetch(joinUrl(this.baseUrl, pathname), init);
+    } catch (err) {
+      // 网络层失败（DNS / 连接被拒 / TLS 握手）：也是 HTTP 失败的一种
+      throw asOrbisError(err, CODE.E_HTTP, { method, path: pathname });
+    }
     const text = await res.text();
     let json = {};
     if (text) {
       try { json = JSON.parse(text); } catch { json = { raw: text }; }
     }
     if (!res.ok) {
-      const err = new Error(json?.error || `HTTP ${res.status}`);
-      err.status = res.status;
-      err.code = json?.code || `HTTP_${res.status}`;
-      err.payload = json;
-      throw err;
+      // 服务端的 `code` 放在 `details.serverCode`（不覆盖 SDK 契约码）：
+      // 宿主先按 E_HTTP 分支，再看 serverCode 细分。
+      throw new OrbisError(CODE.E_HTTP, json?.error || `HTTP ${res.status}`, {
+        status: res.status,
+        method,
+        path: pathname,
+        serverCode: json?.code || null,
+        payload: json,
+      });
     }
     return json;
   }
@@ -188,9 +199,16 @@ export class OrbisClient {
           if (!settled && ev?.t === 'hello') finish(null);
         } catch {}
       });
-      socket.on('error', (err) => finish(err));
+      socket.on('error', (err) => finish(asOrbisError(err, CODE.E_HTTP, { url })));
       socket.on('close', (code, reason) => {
-        if (!settled) finish(new Error(`WS closed before ready (${code}: ${reason || ''})`));
+        if (!settled) {
+          finish(
+            new OrbisError(CODE.E_HTTP, `WS closed before ready (${code}: ${reason || ''})`, {
+              closeCode: code,
+              reason: String(reason ?? ''),
+            }),
+          );
+        }
       });
     });
   }

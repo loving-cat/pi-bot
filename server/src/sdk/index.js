@@ -32,6 +32,13 @@ import { ACTION } from '../grants.js';
 import { ACTIONS, TOOL_SPECS, auditCapabilities } from '../capabilities.js';
 import { selectLessonsFor, lessonsPromptLines } from '../lessons.js';
 import {
+  ORBIS_ERROR_CODES as ORBIS_CODE,
+  OrbisError,
+  orbisError,
+  isOrbisError,
+  asOrbisError,
+} from './errors.js';
+import {
   OrbisClient,
   createOrbisClient,
   PiBotClient,
@@ -59,7 +66,11 @@ export async function createOrbisRuntime(options = {}) {
   if (Array.isArray(options.modelGroups)) {
     for (const group of options.modelGroups) {
       const r = modelGroups.upsert(group);
-      if (r.error) throw new Error(`模型组配置不合法：${r.error}`);
+      if (r.error) {
+        throw orbisError(ORBIS_CODE.E_CONFIG_INVALID, `模型组配置不合法：${r.error}`, {
+          groupId: String(group?.id ?? ''),
+        });
+      }
     }
   }
   if (options.policy && typeof options.policy === 'object') {
@@ -107,7 +118,13 @@ export async function createOrbisRuntime(options = {}) {
 
   if (options.defaultModel) {
     const res = await services.models.setDefaultModel(options.defaultModel);
-    if (!res.ok) throw new Error(res.error || `无法设置默认模型：${options.defaultModel}`);
+    if (!res.ok) {
+      throw orbisError(
+        ORBIS_CODE.E_MODEL_UNAVAILABLE,
+        res.error || `无法设置默认模型：${options.defaultModel}`,
+        { requested: String(options.defaultModel) },
+      );
+    }
   }
 
   let taskHost = null;
@@ -127,6 +144,59 @@ export async function createOrbisRuntime(options = {}) {
 
   let disposed = false;
 
+  /** 任何对外入口都先过这一道：已 dispose 的 runtime 不再接受新活 */
+  function assertAlive() {
+    if (disposed) {
+      throw orbisError(ORBIS_CODE.E_DISPOSED, 'runtime 已经 dispose，不能再调用（要再用就重建一个）');
+    }
+  }
+
+  /** 忙时三路分流可以显式指定的意图（与 `DUPLEX_KIND` 同值） */
+  const ROUTE_INTENTS = Object.freeze(['side_reply', 'amend', 'abort_replace']);
+
+  /**
+   * 调用方给的**显式**分流意图；没给就返回 null。
+   *
+   * `duplexMode: 'auto'` 是界面用的"你帮我判"，在 SDK 里**不算给了意图** ——
+   * SDK 不能替宿主猜（猜错就是把一整轮正在干活的活覆盖掉）。
+   */
+  function routeIntentOf(opts = {}) {
+    const raw = String(opts?.duplexMode ?? '').trim();
+    if (ROUTE_INTENTS.includes(raw)) return raw;
+    if (raw === 'side') return 'side_reply';
+    if (opts?.mode === 'followUp') return 'amend';
+    return null;
+  }
+
+  /**
+   * 忙时没有分流意图 → 直接拒绝（T2.5 的"不猜"）。
+   * 只对私聊生效：群聊走的是"排队等这轮结束"，本来就不需要三路分流。
+   */
+  function assertRouteIfBusy(roomId, opts = {}) {
+    const room = store.getRoom(roomId);
+    if (!room || room.kind === 'group') return;
+    const botId = runner.targetBotFor(room);
+    if (!botId || !runner.isBusy(roomId, botId)) return;
+    if (routeIntentOf(opts)) return;
+    throw orbisError(
+      ORBIS_CODE.E_BUSY_NEEDS_ROUTE,
+      `bot 正在处理上一条消息：请明确分流意图（duplexMode=${ROUTE_INTENTS.join(' | ')}）`,
+      { roomId, botId, options: [...ROUTE_INTENTS] },
+    );
+  }
+
+  /** 给门面方法统一加"已 dispose"守卫（不想每个方法手写 assertAlive） */
+  function guarded(table) {
+    const out = {};
+    for (const [name, fn] of Object.entries(table)) {
+      out[name] = (...args) => {
+        assertAlive();
+        return fn(...args);
+      };
+    }
+    return out;
+  }
+
   function onEvent(handler) {
     if (typeof handler !== 'function') return () => {};
     bus.on('event', handler);
@@ -134,9 +204,12 @@ export async function createOrbisRuntime(options = {}) {
   }
 
   async function askMain(text, opts = {}) {
+    assertAlive();
     const main = store.mainBot();
-    if (!main) throw new Error('找不到 mainBot');
+    if (!main) throw orbisError(ORBIS_CODE.E_NO_MAIN_BOT, '库里没有主控 bot（mainBot），初始化可能不完整');
     const dm = store.ensureDm(main.id);
+    // 这里也是 prompt：主控正忙时必须让人明确说"插话 / 追加 / 推翻重来"
+    assertRouteIfBusy(dm.id, opts);
     const timeoutMs = Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : 120_000;
     const { timeoutMs: _drop, ...sendOpts } = opts;
 
@@ -160,7 +233,12 @@ export async function createOrbisRuntime(options = {}) {
         resolveTurn(ev.msg);
       } else if (ev.t === 'msg.error') {
         settled = true;
-        const err = new Error(ev.error || 'mainBot 执行失败');
+        // 运行层把错误以事件带过来：统一翻译成契约码，别把内部 Error 形状漏给宿主
+        const raw = ev.error;
+        const err = asOrbisError(
+          typeof raw === 'object' && raw ? raw : new Error(String(raw ?? 'mainBot 执行失败')),
+          ORBIS_CODE.E_TURN_FAILED,
+        );
         err.msg = ev.msg ?? null;
         rejectTurn(err);
       }
@@ -170,12 +248,19 @@ export async function createOrbisRuntime(options = {}) {
       timer = setTimeout(() => {
         if (settled) return;
         settled = true;
-        rejectTurn(new Error(`askMain 超时（>${timeoutMs}ms）`));
+        rejectTurn(
+          orbisError(ORBIS_CODE.E_TIMEOUT, `askMain 超时（>${timeoutMs}ms）`, { timeoutMs, roomId: dm.id }),
+        );
       }, timeoutMs);
     }
 
     try {
-      const sendResult = await runner.send(dm.id, text, { flushMerge: true, ...sendOpts });
+      let sendResult;
+      try {
+        sendResult = await runner.send(dm.id, text, { flushMerge: true, ...sendOpts });
+      } catch (err) {
+        throw asOrbisError(err);
+      }
       const reply = doneMsg ?? await donePromise;
       return {
         roomId: dm.id,
@@ -204,7 +289,7 @@ export async function createOrbisRuntime(options = {}) {
    * `unreject` / `undecay` 是必备的：没有它们，宿主调了 `reject`、或遇到自动降级之后，
    * 在门面内就**再也恢复不了**（`activate` 会被守卫拦住）。
    */
-  const lessons = {
+  const lessons = guarded({
     list: ({ status = '' } = {}) =>
       services.capabilities.listLessons().filter((l) => !status || l.status === status),
     edges: () => services.capabilities.listLessonEdges(),
@@ -240,7 +325,18 @@ export async function createOrbisRuntime(options = {}) {
       const lines = lessonsPromptLines(picked);
       return { ok: true, picked, lines, chars: lines.join('\n').length };
     },
-  };
+  });
+
+  /** 已 dispose 的 runtime 不接受新的一轮（dispose 本身幂等，见下） */
+  async function send(roomId, text, opts = {}) {
+    assertAlive();
+    assertRouteIfBusy(roomId, opts);
+    try {
+      return await runner.send(roomId, text, { flushMerge: true, ...opts });
+    } catch (err) {
+      throw asOrbisError(err);
+    }
+  }
 
   async function dispose() {
     if (disposed) return;
@@ -268,11 +364,28 @@ export async function createOrbisRuntime(options = {}) {
     capabilities: services.capabilities,
     policy: services.policy,
     lessons,
-    send: (roomId, text, opts = {}) => runner.send(roomId, text, { flushMerge: true, ...opts }),
+    send,
     askMain,
-    runBotOnce: (args) => runner.runBotOnce(args),
-    abort: (roomId, opts = {}) => runner.abort(roomId, opts),
-    reset: (roomId) => runner.resetRoomSessions(roomId),
+    runBotOnce: async (args) => {
+      assertAlive();
+      try {
+        return await runner.runBotOnce(args);
+      } catch (err) {
+        throw asOrbisError(err);
+      }
+    },
+    abort: async (roomId, opts = {}) => {
+      assertAlive();
+      try {
+        return await runner.abort(roomId, opts);
+      } catch (err) {
+        throw asOrbisError(err);
+      }
+    },
+    reset: async (roomId) => {
+      assertAlive();
+      return runner.resetRoomSessions(roomId);
+    },
     onEvent,
     dispose,
   };
@@ -280,6 +393,14 @@ export async function createOrbisRuntime(options = {}) {
 
 /** 向后兼容旧称 */
 export const createPiBotRuntime = createOrbisRuntime;
+
+export {
+  ORBIS_ERROR_CODES,
+  OrbisError,
+  orbisError,
+  isOrbisError,
+  asOrbisError,
+} from './errors.js';
 
 export {
   defineTool,

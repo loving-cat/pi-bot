@@ -24,9 +24,12 @@
       "ACTIONS": "object",
       "BRAND_NAME": "string",
       "BRAND_SLUG": "string",
+      "ORBIS_ERROR_CODES": "object",
       "OrbisClient": "function",
+      "OrbisError": "function",
       "PiBotClient": "function",
       "TOOL_SPECS": "object",
+      "asOrbisError": "function",
       "auditCapabilities": "function",
       "createBus": "function",
       "createConfig": "function",
@@ -37,16 +40,21 @@
       "createPiBotRuntime": "function",
       "createServices": "function",
       "createStore": "function",
-      "defineTool": "function"
+      "defineTool": "function",
+      "isOrbisError": "function",
+      "orbisError": "function"
     },
     "orbis-agent/sdk": {
       "ACTION": "object",
       "ACTIONS": "object",
       "BRAND_NAME": "string",
       "BRAND_SLUG": "string",
+      "ORBIS_ERROR_CODES": "object",
       "OrbisClient": "function",
+      "OrbisError": "function",
       "PiBotClient": "function",
       "TOOL_SPECS": "object",
+      "asOrbisError": "function",
       "auditCapabilities": "function",
       "createBus": "function",
       "createConfig": "function",
@@ -57,7 +65,9 @@
       "createPiBotRuntime": "function",
       "createServices": "function",
       "createStore": "function",
-      "defineTool": "function"
+      "defineTool": "function",
+      "isOrbisError": "function",
+      "orbisError": "function"
     },
     "orbis-agent/client": {
       "OrbisClient": "function",
