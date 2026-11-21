@@ -1286,19 +1286,22 @@ export class Store {
   updateLesson(id, patch = {}) {
     const list = this.lessonLibrary();
     const idx = list.findIndex((l) => l.id === id);
-    if (idx < 0) return { error: '经验不存在' };
+    // `code` 让上层能区分「不存在」与「存在但被守卫拒绝」——
+    // 全当 404 会让界面说「这条经验已经不存在了」，把人误导到去重启/刷新。
+    if (idx < 0) return { error: '经验不存在', code: 'not-found' };
+    const before = list[idx];
 
-    const merged = { ...list[idx], ...patch, id, updatedAt: Date.now() };
+    const merged = { ...before, ...patch, id, updatedAt: Date.now() };
     const reason = lessonRejectReason(merged);
-    if (reason) return { error: reason };
-    const lesson = normalizeLesson(merged);
-    if (!lesson) return { error: '经验内容不合法' };
+    if (reason) return { error: reason, code: 'invalid' };
+    let lesson = normalizeLesson(merged);
+    if (!lesson) return { error: '经验内容不合法', code: 'invalid' };
 
     const sameRoom = (l) => (l.roomId || '') === (lesson.roomId || '');
     const clash =
       list.find((l, i) => i !== idx && sameRoom(l) && l.cue.toLowerCase() === lesson.cue.toLowerCase()) ??
       list.find((l, i) => i !== idx && sameRoom(l) && l.contentHash === lesson.contentHash);
-    if (clash) return { error: `已经有一条同样情境的经验：「${clash.cue}」` };
+    if (clash) return { error: `已经有一条同样情境的经验：「${clash.cue}」`, code: 'conflict' };
 
     // 被否决 / 被自动降级的条不许裸切 active：
     //   那条 contradicts 边还在的话，打分直接把它排除 —— 界面显示「已启用」，
@@ -1316,15 +1319,39 @@ export class Store {
             blocking.from === 'user'
               ? '这条经验已被否决，先「解除否决」才能启用'
               : '这条经验已被自动降级（同模型族连续失败），先「解除降级」才能启用',
+          code: 'conflict',
         };
       }
+    }
+
+    // 蒸馏器留下的「待确认的边」：**只在人工启用这一次物化**（归档/删除不动边表）。
+    // 目标已删 / 已不是 active / 边已存在 → 静默跳过；无论成不成，建议消费完就清掉。
+    let materialized = 0;
+    if (lesson.status === 'active' && lesson.pendingEdges?.length) {
+      const others = new Map(list.filter((_, i) => i !== idx).map((l) => [l.id, l]));
+      const edges = this.lessonEdges({ lessons: list });
+      const added = [];
+      for (const pe of lesson.pendingEdges) {
+        const target = others.get(pe.to);
+        if (!target || target.status !== 'active') continue;
+        if (edges.some((e) => e.from === id && e.to === pe.to && e.type === pe.type)) continue;
+        const edge = normalizeLessonEdge({ from: id, to: pe.to, type: pe.type, by: 'distiller' }, Date.now());
+        if (edge) added.push(edge);
+      }
+      if (added.length) {
+        this.state.lessonEdges = normalizeLessonEdgeList([...edges, ...added], {
+          knownIds: new Set(list.map((l) => l.id)),
+        });
+        materialized = added.length;
+      }
+      lesson = normalizeLesson({ ...lesson, pendingEdges: [] });
     }
 
     list[idx] = lesson;
     this.state.lessons = list;
     this.scheduleSave();
     this.emitLessons();
-    return { lesson };
+    return { lesson, materialized };
   }
 
   /** 删一条经验（**级联删掉它挂的边**，不留下悬空关系） */
@@ -1459,8 +1486,10 @@ export class Store {
       // 族内衰减：同一族连输到阈值 → 归档 + `system` 哨兵 contradicts 边。
       // 边（不是单纯改状态）才是真正的刹车：即使之后被误切回 active，
       // 打分也会双向排除它 —— 否则就是 §5.6 里那个"看似启用、实际注入不进去"的坑。
+      // 只对 `active` 的条刹车：人已经手动归档/停用的，不要因为一次晚到的异步评估
+      // 又给它塞一条 `system` 边（那是人的决定，不是系统该覆写的）。
       const signal = lessonFamilyDecay(next, { modelFamily: item?.modelFamily });
-      if (signal) {
+      if (signal && next.status === 'active') {
         byId.set(
           id,
           normalizeLesson({ ...next, status: 'archived' }),

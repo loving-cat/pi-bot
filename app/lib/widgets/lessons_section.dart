@@ -114,6 +114,7 @@ class _LessonsSectionState extends State<LessonsSection> {
                 lesson: lesson,
                 vetoed: state.isLessonVetoed(lesson.id),
                 decayed: state.isLessonDecayed(lesson.id),
+                pendingNotes: pendingEdgeNotes(state, lesson),
                 onToggle: (status) async {
                   final err = await state.setLessonStatus(lesson.id, status);
                   if (err != null && context.mounted) _showError(err);
@@ -257,6 +258,21 @@ class _LessonsSectionState extends State<LessonsSection> {
     // 按错误码判断，不靠中文子串：服务端语言可能与界面语言不同。
     toast(context, isGoneError(err) ? L10n.s(context).t('lesson.gone') : err);
   }
+
+  /// 候选卡上“启用后会动到谁”的提示（蒸馏器建议的边还没生效，只做透明化）
+  List<String> pendingEdgeNotes(AppState state, LibraryLesson lesson) {
+    if (lesson.pendingEdges.isEmpty) return const [];
+    final byId = {for (final l in state.lessons) l.id: l};
+    final strings = L10n.s(context);
+    return lesson.pendingEdges.map((edge) {
+      final target = byId[edge.to];
+      if (target == null || target.cue.isEmpty) return strings.t('lesson.pendingGone');
+      return strings.tf(
+        edge.isSupersedes ? 'lesson.pendingSupersedes' : 'lesson.pendingContradicts',
+        {'cue': target.cue},
+      );
+    }).toList();
+  }
 }
 
 class _LessonCard extends StatelessWidget {
@@ -265,6 +281,7 @@ class _LessonCard extends StatelessWidget {
     required this.lesson,
     required this.vetoed,
     required this.decayed,
+    required this.pendingNotes,
     required this.onToggle,
     required this.onVeto,
     required this.onUnveto,
@@ -279,6 +296,9 @@ class _LessonCard extends StatelessWidget {
 
   /// 被系统自动降级过（`system` 哨兵的 contradicts 边：同模型族连续失败达阈值）
   final bool decayed;
+
+  /// 蒸馏器建议的边（启用后会取代 / 标记冲突，还没生效）
+  final List<String> pendingNotes;
   final ValueChanged<String> onToggle;
   final VoidCallback onVeto;
   final VoidCallback onUnveto;
@@ -358,6 +378,33 @@ class _LessonCard extends StatelessWidget {
               height: 1.6,
             ),
           ),
+          if (pendingNotes.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            ...pendingNotes.map(
+              (note) => Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2, right: 4),
+                      child: Icon(LucideIcons.arrowLeftRight, size: 11, color: PB.textQuaternary),
+                    ),
+                    Expanded(
+                      child: Text(
+                        note,
+                        style: TextStyle(
+                          fontSize: PB.fsXxs,
+                          color: PB.textQuaternary,
+                          height: 1.5,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
           if (lesson.evidence.isNotEmpty) ...[
             const SizedBox(height: 6),
             Container(

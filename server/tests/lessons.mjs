@@ -345,7 +345,8 @@ test('store 衰减：同族连续败两次 → 自动归档 + system contradicts
   );
 
   const third = store.recordLessonOutcomes([{ id: l.id, verdict: 'hurt', modelFamily: 'glm' }]);
-  assert.equal(third.decayed.length, 1, '还在连败，仍然报告降级');
+  assert.equal(third.applied, 1, '记账照常（连败继续累加）');
+  assert.deepEqual(third.decayed, [], '已经归档的条不再重复降级（也不给人重复弹提示）');
   assert.equal(
     store.lessonEdges().filter((e) => e.from === 'system' && e.to === l.id).length,
     1,
@@ -400,11 +401,139 @@ test('store 衰减：被降级的条不能裸切 active（否则看起来启用�
   assert.deepEqual(r.decayed, []);
 });
 
+// ---------------------------------------------------------------------------
+// store：蒸馏器的「待确认的边」（挂在候选经验自己身上，启用时才物化）
+// ---------------------------------------------------------------------------
+test('store 边候选：形状先校（类型 / 去重 / 上限），只留 supersedes 与 contradicts', () => {
+  const old = store.addLesson({ cue: '边候选目标', lesson: '老做法', evidence: EVIDENCE, status: 'active' }).lesson;
+  const cand = store.addLesson({
+    cue: '边候选自身',
+    lesson: '新做法',
+    evidence: EVIDENCE,
+    pendingEdges: [
+      { to: old.id, type: 'supersedes' },
+      { to: old.id, type: 'supersedes' },
+      { to: 'les_nope', type: 'contradicts' },
+      { to: old.id, type: 'requires' },
+      { to: old.id, type: 'generalizes' },
+    ],
+  }).lesson;
+  assert.deepEqual(
+    cand.pendingEdges,
+    [
+      { to: old.id, type: 'supersedes' },
+      { to: 'les_nope', type: 'contradicts' },
+    ],
+    '去重 + 上限 2；requires / generalizes 不是蒸馏器该建议的类型',
+  );
+});
+
+test('store 边候选：归档不物化、启用才物化（目标已归档/不存在 → 静默跳过），用完清空', () => {
+  const old = store.addLesson({ cue: '边候选目标二', lesson: '老做法', evidence: EVIDENCE, status: 'active' }).lesson;
+  const cand = store.addLesson({
+    cue: '边候选自身二',
+    lesson: '新做法',
+    evidence: EVIDENCE,
+    pendingEdges: [
+      { to: old.id, type: 'supersedes' },
+      { to: 'les_ghost', type: 'contradicts' },
+    ],
+  }).lesson;
+
+  store.updateLesson(cand.id, { status: 'archived' });
+  assert.equal(store.lessonEdges().filter((e) => e.from === cand.id).length, 0, '归档不物化');
+
+  const act = store.updateLesson(cand.id, { status: 'active' });
+  assert.equal(act.materialized, 1, '编出来的目标 id 静默跳过，不整条失败');
+  assert.ok(
+    store.lessonEdges().some(
+      (e) => e.from === cand.id && e.to === old.id && e.type === 'supersedes' && e.by === 'distiller',
+    ),
+  );
+  assert.equal(
+    store.lessonLibrary().find((x) => x.id === cand.id).pendingEdges,
+    undefined,
+    '建议消费完就清掉（空不落键）',
+  );
+  // supersedes 生效后：老条不再注入，但仍在库里供审计
+  const picked = pick(store.lessonLibrary(), '边候选目标二 老做法', { edges: store.lessonEdges() });
+  assert.ok(!picked.some((x) => x.id === old.id), '被取代的老经验不该再进提示词');
+  assert.ok(store.lessonLibrary().some((x) => x.id === old.id), '但保留在库里');
+});
+
+test('store 边候选：目标是候选（非 active）时不物化 —— 不替人把未审批的条拖下水', () => {
+  const target = store.addLesson({ cue: '边候选目标三', lesson: '候选做法', evidence: EVIDENCE }).lesson;
+  const cand = store.addLesson({
+    cue: '边候选自身三',
+    lesson: '新做法',
+    evidence: EVIDENCE,
+    pendingEdges: [{ to: target.id, type: 'contradicts' }],
+  }).lesson;
+  const act = store.updateLesson(cand.id, { status: 'active' });
+  assert.equal(act.materialized, 0);
+  assert.equal(store.lessonEdges().filter((e) => e.from === cand.id).length, 0);
+  assert.equal(store.lessonLibrary().find((x) => x.id === cand.id).pendingEdges, undefined, '仍然清空');
+});
+
+// ---------------------------------------------------------------------------
+// store：updateLesson 的错误分层（让 HTTP 能区分 404 / 409 / 400）
+// ---------------------------------------------------------------------------
+test('store 更新：code 三档 not-found / invalid / conflict', () => {
+  assert.equal(store.updateLesson('les_ghost', { status: 'active' }).code, 'not-found');
+
+  const noEvidence = store.addLesson({ cue: 'code 案无证据', lesson: '做法' }).lesson;
+  const invalid = store.updateLesson(noEvidence.id, { status: 'active' });
+  assert.equal(invalid.code, 'invalid', '没证据不是"不存在"，是内容不合法');
+  assert.match(String(invalid.error), /证据/);
+
+  const vetoed = store.addLesson({
+    cue: 'code 案被否决',
+    lesson: '做法',
+    evidence: EVIDENCE,
+    status: 'active',
+  }).lesson;
+  store.rejectLesson(vetoed.id);
+  const conflict = store.updateLesson(vetoed.id, { status: 'active' });
+  assert.equal(conflict.code, 'conflict');
+  assert.match(String(conflict.error), /解除否决/);
+});
+
+test('服务层：updateLesson 把 not-found / invalid / conflict 映射成 404 / 400 / 409', async () => {
+  const { createCapabilityService } = await import('../src/services/capability-service.js');
+  const caps = createCapabilityService({ store });
+
+  const ghost = caps.updateLesson('les_ghost', { status: 'active' });
+  assert.equal(ghost.ok, false);
+  assert.equal(ghost.status, 404);
+  assert.equal(ghost.code, 'LESSON_NOT_FOUND');
+
+  const plain = caps.addLesson({ cue: '服务层案例一', lesson: '做法' });
+  assert.equal(plain.ok, true, plain.error);
+  const invalid = caps.updateLesson(plain.lesson.id, { status: 'active' });
+  assert.equal(invalid.status, 400, '没证据 → 400（不是 404：界面不能谎称"这条不在了"）');
+  assert.equal(invalid.code, 'LESSON_INVALID');
+
+  const good = caps.addLesson({
+    cue: '服务层案例二',
+    lesson: '做法',
+    evidence: [{ msgId: 'm1', quote: '这样就行' }],
+    status: 'active',
+  });
+  caps.rejectLesson(good.lesson.id);
+  const blocked = caps.updateLesson(good.lesson.id, { status: 'active' });
+  assert.equal(blocked.status, 409);
+  assert.equal(blocked.code, 'LESSON_CONFLICT');
+
+  caps.removeLessonEdge({ from: 'user', to: good.lesson.id, type: 'contradicts' });
+  const reactivated = caps.updateLesson(good.lesson.id, { status: 'active' });
+  assert.equal(reactivated.ok, true, reactivated.error);
+  assert.equal(reactivated.materialized, 0, '没有待物化的边就报 0');
+});
+
 try {
   fs.rmSync(root, { recursive: true, force: true });
 } catch {
   // Windows 上可能还有句柄，忽略
 }
-
 console.log(`\n${fail ? '✗' : '✓'} ${pass} 通过，${fail} 失败`);
 process.exit(fail ? 1 : 0);

@@ -1468,8 +1468,15 @@ export function createRequestHandler({ runner, pairing, sites = createSiteRuntim
       if (lessonMatch && req.method === 'PATCH') {
         const body = await readBody(req);
         const r = services.capabilities.updateLesson(decodeURIComponent(lessonMatch[1]), body);
-        if (!r.ok) return send(res, 404, { error: r.error });
-        return send(res, 200, { lesson: r.lesson });
+        // 用服务层给的状态码：404 = 真的不存在，409 = 被守卫拒绝（否决 / 降级 / 重名），
+        // 一律当 404 的话，界面会把"先解除否决才能启用"显示成"这条已经不存在了"。
+        if (!r.ok) {
+          return send(res, r.status ?? 400, {
+            error: r.error,
+            ...(r.code ? { code: r.code } : {}),
+          });
+        }
+        return send(res, 200, { lesson: r.lesson, materialized: r.materialized ?? 0 });
       }
       if (lessonMatch && req.method === 'DELETE') {
         const r = services.capabilities.removeLesson(decodeURIComponent(lessonMatch[1]));

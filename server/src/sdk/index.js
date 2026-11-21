@@ -192,32 +192,53 @@ export async function createOrbisRuntime(options = {}) {
   /**
    * 经验库门面（规格 `docs/ROADMAP-2.0.md` §5.7 的 `runtime.lessons`）。
    *
-   * 只有一个实现：全部转发给 `store`（和 HTTP 那套用的是同一条路径），
+   * 全部转发给 `services.capabilities`：它和 HTTP / 界面用的是同一条路，
    * **不新建存储、不新建注入点** —— 红线 I0 管的就是这条。
+   * 返回形状与 `runtime.bots` / `runtime.capabilities` 一致：读返回数组，
+   * 写一律 `{ ok, ... }`（失败带 `status` / `code` / `error`）。
    *
    * `propose` 永远只产 `candidate`：即使调用方传了 `status: 'active'` 也会被改回去。
    * 审批门禁是“人点按钮”，SDK 不该有绕过去的口子；要生效必须走 `activate`
-   * （它自己会校验证据、以及有没有否否决/降级边）。
+   * （它自己会校验证据、以及有没有否决 / 降级边）。
+   *
+   * `unreject` / `undecay` 是必备的：没有它们，宿主调了 `reject`、或遇到自动降级之后，
+   * 在门面内就**再也恢复不了**（`activate` 会被守卫拦住）。
    */
   const lessons = {
     list: ({ status = '' } = {}) =>
-      store.lessonLibrary().filter((l) => !status || l.status === status),
-    edges: () => store.lessonEdges(),
-    propose: (raw = {}) => store.addLesson({ ...raw, status: 'candidate' }),
-    activate: (id) => store.updateLesson(String(id ?? ''), { status: 'active' }),
-    archive: (id) => store.updateLesson(String(id ?? ''), { status: 'archived' }),
-    remove: (id) => store.removeLesson(String(id ?? '')),
-    /** 和界面上的「记错了」同一条路：写 `user` 否决边 + 归档 */
-    reject: (id) => store.rejectLesson(String(id ?? '')),
+      services.capabilities.listLessons().filter((l) => !status || l.status === status),
+    edges: () => services.capabilities.listLessonEdges(),
+    propose: (raw = {}) => services.capabilities.addLesson({ ...raw, status: 'candidate' }),
+    activate: (id) => services.capabilities.updateLesson(String(id ?? ''), { status: 'active' }),
+    archive: (id) => services.capabilities.updateLesson(String(id ?? ''), { status: 'archived' }),
+    remove: (id) => services.capabilities.removeLesson(String(id ?? '')),
+    /** 与界面上的「记错了」同一条路：写 `user` 否决边 + 归档 */
+    reject: (id) => services.capabilities.rejectLesson(String(id ?? '')),
+    /** 「解除否决」：删 user 边（否则 activate 永远被守卫拦住） */
+    unreject: (id) =>
+      services.capabilities.removeLessonEdge({
+        from: 'user',
+        to: String(id ?? ''),
+        type: 'contradicts',
+      }),
+    /** 「解除降级」：删 system 边（store 会顺手把连败计数清零） */
+    undecay: (id) =>
+      services.capabilities.removeLessonEdge({
+        from: 'system',
+        to: String(id ?? ''),
+        type: 'contradicts',
+      }),
+    addEdge: (raw = {}) => services.capabilities.addLessonEdge(raw),
+    removeEdge: (raw = {}) => services.capabilities.removeLessonEdge(raw),
     /** 按任务预览会被注入哪几条（与 `GET /api/lessons/preview` 同一套打分） */
     preview: (task, { roomId = '', modelFamily = '' } = {}) => {
-      const picked = selectLessonsFor(store.lessonLibrary(), String(task ?? ''), {
+      const picked = selectLessonsFor(services.capabilities.listLessons(), String(task ?? ''), {
         roomId: String(roomId ?? ''),
         modelFamily: String(modelFamily ?? ''),
-        edges: store.lessonEdges(),
+        edges: services.capabilities.listLessonEdges(),
       });
       const lines = lessonsPromptLines(picked);
-      return { picked, lines, chars: lines.join('\n').length };
+      return { ok: true, picked, lines, chars: lines.join('\n').length };
     },
   };
 

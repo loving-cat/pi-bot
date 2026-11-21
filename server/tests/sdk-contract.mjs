@@ -105,7 +105,7 @@ async function collectContract() {
     }
     contract.runtime = surface;
     contract.services = {};
-    for (const name of ['bots', 'rooms', 'models', 'automations', 'capabilities', 'policy']) {
+    for (const name of ['bots', 'rooms', 'models', 'automations', 'capabilities', 'policy', 'lessons']) {
       contract.services[name] = methodNames(runtime[name]);
     }
   } finally {

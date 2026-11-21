@@ -65,8 +65,19 @@ export function createCapabilityService({ store, runner = null }) {
 
     updateLesson(id, patch = {}) {
       const r = store.updateLesson(id, patch);
-      if (r.error) return { ok: false, status: 404, code: 'LESSON_NOT_FOUND', error: r.error };
-      return { ok: true, lesson: r.lesson };
+      if (r.error) {
+        // 三档分开：不存在 404 / 被守卫拒绝 409 / 内容不合法 400。
+        // 全当 404 会让界面把「先解除否决才能启用」说成「这条经验已经不存在了」。
+        const notFound = r.code === 'not-found';
+        const conflict = r.code === 'conflict';
+        return {
+          ok: false,
+          status: notFound ? 404 : conflict ? 409 : 400,
+          code: notFound ? 'LESSON_NOT_FOUND' : conflict ? 'LESSON_CONFLICT' : 'LESSON_INVALID',
+          error: r.error,
+        };
+      }
+      return { ok: true, lesson: r.lesson, materialized: r.materialized ?? 0 };
     },
 
     removeLesson(id) {

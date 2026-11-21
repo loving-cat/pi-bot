@@ -354,17 +354,20 @@ await test('SDK-3 统一领域服务复用、policyChange 活跃任务通知回�
   assert.ok(rawDisk.includes('enc:v1:'), '磁盘 model-groups.json 应使用 enc:v1 密文存储');
 });
 
-await test('SDK-3b runtime.lessons 门面：propose 只产 candidate、activate 走证据门禁、preview 与否决同一条路', async () => {
+await test('SDK-3b runtime.lessons 门面：形状统一 / propose 只产 candidate / 否决与降级能自己解开', async () => {
   const lf = rtA.lessons;
   assert.deepEqual(lf.list(), [], '新库是空的');
 
   // 1) 即使调用方传 active，也只会落 candidate（审批门禁是"人点按钮"）
   const weak = lf.propose({ cue: '评审前先跑一遍单测', lesson: '先跑再发', status: 'active' });
-  assert.equal(weak.error, undefined, weak.error);
+  assert.equal(weak.ok, true, weak.error);
   assert.equal(weak.lesson.status, 'candidate', 'SDK 不得有绕过审批的口子');
 
-  // 2) 没证据的启用被拒（与 HTTP / 界面同一条门禁）
+  // 2) 没证据的启用被拒：错误里带 status / code（和 rt.bots 一样，不是裸 {error}）
   const nope = lf.activate(weak.lesson.id);
+  assert.equal(nope.ok, false);
+  assert.equal(nope.status, 400);
+  assert.equal(nope.code, 'LESSON_INVALID');
   assert.match(String(nope.error), /证据/);
 
   // 3) 带证据的能启用，preview 用同一套打分挑得到
@@ -373,9 +376,10 @@ await test('SDK-3b runtime.lessons 门面：propose 只产 candidate、activate 
     lesson: '服务端 / App / 启动器三处版本必须一致',
     evidence: [{ msgId: 'm1', quote: '三处版本必须一致' }],
   });
-  assert.equal(good.error, undefined, good.error);
+  assert.equal(good.ok, true, good.error);
   assert.equal(lf.activate(good.lesson.id).lesson.status, 'active');
   const pv = lf.preview('发布前核对版本号', {});
+  assert.equal(pv.ok, true);
   assert.ok(pv.picked.some((l) => l.id === good.lesson.id), 'active 且词面命中就该被挑中');
   assert.ok(pv.chars <= 600, `注入预算仍是 600 字，实际 ${pv.chars}`);
 
@@ -384,7 +388,22 @@ await test('SDK-3b runtime.lessons 门面：propose 只产 candidate、activate 
   assert.ok(!lf.preview('发布前核对版本号', {}).picked.some((l) => l.id === good.lesson.id));
   assert.ok(lf.edges().some((e) => e.from === 'user' && e.to === good.lesson.id && e.type === 'contradicts'));
 
-  // 5) remove 真的删掉（不留下悬空边）
+  // 5) 门面内能恢复：unreject 删 user 边 → 可以重新启用（否则宿主无路可走）
+  assert.equal(lf.activate(good.lesson.id).ok, false, '边在时启用必须被守卫拦住');
+  assert.equal(lf.activate(good.lesson.id).status, 409);
+  assert.equal(lf.unreject(good.lesson.id).ok, true);
+  assert.equal(lf.activate(good.lesson.id).ok, true);
+  assert.ok(lf.preview('发布前核对版本号', {}).picked.some((l) => l.id === good.lesson.id));
+
+  // 6) 降级恢复同理：system 边删掉后才能启用（store 会顺手把连败清零）
+  lf.reject(good.lesson.id);
+  lf.addEdge({ from: 'system', to: good.lesson.id, type: 'contradicts', by: 'system' });
+  assert.equal(lf.activate(good.lesson.id).status, 409);
+  assert.equal(lf.undecay(good.lesson.id).ok, true);
+  assert.equal(lf.removeEdge({ from: 'user', to: good.lesson.id, type: 'contradicts' }).ok, true);
+  assert.equal(lf.activate(good.lesson.id).ok, true);
+
+  // 7) remove 真的删掉（不留下悬空边）
   assert.equal(lf.remove(weak.lesson.id).ok, true);
   assert.ok(!lf.list().some((l) => l.id === weak.lesson.id));
 });

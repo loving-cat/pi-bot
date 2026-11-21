@@ -50,6 +50,10 @@ export const LESSON_LIMITS = {
   edgesPerLesson: 50,
   /** 模型族名字最大长度 */
   family: 24,
+  /** 一条候选经验最多带几条「待确认的边」（蒸馏器给的建议，人工启用后才生效） */
+  pendingEdges: 2,
+  /** 复盘时喂给模型的「现有经验目录」最多几条（多了反而记不住 id） */
+  reflectCatalog: 15,
 };
 
 /** 结论四档：和 Harness² 的用词一致，`confounded` 是"说不清"的诚实档 */
@@ -145,6 +149,10 @@ export function normalizeLesson(raw = {}, now = Date.now()) {
     modelFamily: normalizeModelFamily(raw.modelFamily),
     byFamily: normalizeFamilyStats(raw.byFamily),
   };
+  // 蒸馏器给的「待确认的边」：**不是边，不参与打分**，启用时才物化。
+  // 空数组不落键 —— 老库形状与 1.x 逐字一致。
+  const pendingEdges = normalizePendingEdges(raw.pendingEdges, { selfId: out.id });
+  if (pendingEdges.length) out.pendingEdges = pendingEdges;
   // contentHash 是**纯派生值**：每次规范化都现算。信任传入值会让改完文案的哈希永远停在旧值。
   out.contentHash = lessonContentHash(out);
   return out;
@@ -185,8 +193,12 @@ export function normalizeLessonList(list = [], now = Date.now()) {
  * 族内衰减（路线图 §5.4）：同一个模型族上**连续**打输到这个次数 → 自动归档 + `system` 边。
  *
  * 为什么按族、按连续：同一句经验在 glm 上连输两次，只说明**它在 glm 上不好用**；
- * 在 deepseek 上还是 1 胜 0 负，直接全库归档等于用一族的水土不服埋掉另一族的有效经验。
  * 中间只要有一次 `helped` 就把连败清零 —— 「连续」不是「历史总失败数」。
+ *
+ * ⚠️ Lite 的取舍（写在这里防后来人以为是 bug）：**判定按族，处置是全条归档**。
+ *   归档是「先刹车、等人工裁决」，不是判决 —— 人看到「已降级」可以点「解除降级」
+ *   把它重新放回去；真正的按族分别启用/停用留到 2.1（每族一份 scope 版本）。
+ *   所以这里绝不能在注释里把「按族」写成「只降那个族」，否则下一个人会去改错的东西。
  *
  * 这里只放阈值；**改状态写边是 `store.recordLessonOutcomes` 的事**（纯模块不碰 IO）。
  */
@@ -598,6 +610,55 @@ export const LESSON_EDGE_TYPES = Object.freeze([
 
 /** 允许出现在 `from` 的哨兵：用户否决 / 系统降级（它们不是经验条目） */
 export const LESSON_EDGE_SENTINELS = Object.freeze(['user', 'system']);
+
+/**
+ * 蒸馏器可以建议的边类型（只有这两种 —— 其余三种人工都画得出来，不需要模型代劳）。
+ *
+ * `supersedes`：这条新的比老的那条更准确，启用后旧的不再注入；
+ * `contradicts`：两条互相打架，需要人裁决。
+ * `requires` / `generalizes` 不在这里：前者只是上下文，后者判断成本高、错了影响排序，
+ * 交给界面手动或后续版本。
+ */
+export const LESSON_PENDING_EDGE_TYPES = Object.freeze(['supersedes', 'contradicts']);
+
+/**
+ * 规范化一条候选经验身上的「待确认的边」（纯函数）。
+ *
+ * 为什么挂在经验自己身上、而不是先在 `state.lessonEdges` 里存一份 `status: candidate`：
+ *   · 边表只有“生效的边”一种含义，打分/排除/淘汰/界面都不用加过滤；
+ *   · 候选被删/被拒时天然不留孤儿边；
+ *   · 不新增顶层存储（红线 I0）。
+ *
+ * 这里只做**形状**校验（类型 / 指向自己 / 哨兵 / 重复 / 上限）；
+ * 「目标必须是这次复盘目录里真实存在的 id」由解析层（`parseReflectOutput`）负责，
+ * 物化时再校一次目标是否还活着（`store.updateLesson`）。
+ *
+ * @param {Array} list 模型给的 `[{to, type}]`
+ * @param {object} [opts]
+ * @param {string} [opts.selfId] 这条经验自己的 id（不能自己指向自己）
+ * @param {Set<string>|Array<string>} [opts.allowedIds] 只允许指向这些 id（给了解析层用）
+ */
+export function normalizePendingEdges(list = [], { selfId = '', allowedIds = null } = {}) {
+  const known =
+    allowedIds instanceof Set ? allowedIds : Array.isArray(allowedIds) ? new Set(allowedIds) : null;
+  const self = str(selfId, 64);
+  const out = [];
+  const seen = new Set();
+  for (const item of Array.isArray(list) ? list : []) {
+    const type = LESSON_PENDING_EDGE_TYPES.includes(item?.type) ? item.type : '';
+    const to = str(item?.to, 64);
+    if (!type || !to) continue;
+    if (self && to === self) continue; // 自己取代自己没意义
+    if (LESSON_EDGE_SENTINELS.includes(to)) continue; // 哨兵不是经验
+    if (known && !known.has(to)) continue; // 目录外的 id = 编的
+    const key = `${type}\u0000${to}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ to, type });
+    if (out.length >= LESSON_LIMITS.pendingEdges) break;
+  }
+  return out;
+}
 
 /** 校验一条边能不能入库，返回人话原因（能入库返回 null） */
 export function lessonEdgeRejectReason(raw = {}) {

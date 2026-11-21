@@ -21,6 +21,7 @@ void main() {
     String dept = '内容运营二组',
     String modelFamily = 'unknown',
     Map<String, LessonFamilyStats> byFamily = const {},
+    List<LessonPendingEdge> pendingEdges = const [],
   }) => LibraryLesson(
     id: id,
     cue: cue,
@@ -30,6 +31,7 @@ void main() {
     dept: dept,
     modelFamily: modelFamily,
     byFamily: byFamily,
+    pendingEdges: pendingEdges,
     evidence: [LessonEvidence(msgId: 'm1', quote: quote)],
   );
 
@@ -257,6 +259,36 @@ void main() {
     ]);
     expect(state.isLessonDecayed('d2'), isTrue);
     expect(state.isLessonVetoed('d2'), isFalse);
+  });
+
+  testWidgets('蒸馏器建议的边：候选卡上写明启用后会动到谁（取代 / 冲突 / 目标已没）', (tester) async {
+    final state = AppState()
+      ..lessons = [
+        lesson(id: 'old1', cue: '老的配班子做法', status: 'active'),
+        lesson(id: 'old2', cue: '老的发布检查单', status: 'active'),
+        lesson(
+          id: 'cand1',
+          cue: '新的配班子做法',
+          pendingEdges: [
+            LessonPendingEdge(to: 'old1', type: 'supersedes'),
+            LessonPendingEdge(to: 'old2', type: 'contradicts'),
+          ],
+        ),
+        lesson(
+          id: 'cand2',
+          cue: '指向已删的',
+          pendingEdges: [LessonPendingEdge(to: 'gone', type: 'supersedes')],
+        ),
+      ]
+      ..lessonsLoaded = true;
+
+    await tester.pumpWidget(host(state));
+    await tester.pump();
+
+    expect(find.text('启用后将取代《老的配班子做法》'), findsOneWidget);
+    expect(find.text('启用后将标记与《老的发布检查单》的冲突'), findsOneWidget);
+    expect(find.textContaining('已经不在'), findsOneWidget, reason: '目标没了要说清楚会被跳过，而不是吓人');
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('长文案不溢出（情境/做法都按行收）', (tester) async {

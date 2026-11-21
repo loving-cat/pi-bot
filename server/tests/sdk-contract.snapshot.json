@@ -184,6 +184,20 @@
       "getDesktopSettings",
       "updateDesktopSettings",
       "updatePolicy"
+    ],
+    "lessons": [
+      "activate",
+      "addEdge",
+      "archive",
+      "edges",
+      "list",
+      "preview",
+      "propose",
+      "reject",
+      "remove",
+      "removeEdge",
+      "undecay",
+      "unreject"
     ]
   }
 }

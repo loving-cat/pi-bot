@@ -35,7 +35,7 @@ import { config as defaultConfig } from './config.js';
 import { readBrandEnv } from './brand.js';
 import { store as defaultStore } from './store.js';
 import { log } from './util.js';
-import { resolveModelFamilyForModel } from './lessons.js';
+import { resolveModelFamilyForModel, LESSON_LIMITS } from './lessons.js';
 import {
   REFLECT_SYSTEM,
   REFLECT_MAX_CHARS,
@@ -56,6 +56,20 @@ export {
 
 /** 同房间两次复盘的最小间隔：防止用户连着发几句就触发一串调用 */
 export const REFLECT_MIN_INTERVAL_MS = 10 * 60 * 1000;
+
+/**
+ * 给蒸馏器的「现有经验目录」：只列 **active** 的 id + 情境（截到 `reflectCatalog` 条）。
+ *
+ * 抽成函数是因为 build 与 parse 必须用**同一份**目录：模型看到什么，就只许引用什么。
+ * 两处各算一次的话，中间删了条经验就会出现“模型看得到、校验不认”的假拒绝。
+ */
+export function edgeCatalogFor(store, { limit = LESSON_LIMITS.reflectCatalog } = {}) {
+  return (store?.lessonLibrary?.() ?? [])
+    .filter((l) => l.status === 'active')
+    .slice(0, limit)
+    .map((l) => ({ id: l.id, cue: l.cue }));
+}
+
 /** 复盘调用超时：超了就 abort，别让一个后台任务挂半小时 */
 export const REFLECT_TIMEOUT_MS = 60_000;
 
@@ -100,7 +114,11 @@ export function createLessonReflector({ runner, logFn = log, config: scopedConfi
     // 先占坑：即使后面失败，也别在 10 分钟内反复重试烧钱
     lastAt.set(roomId, now);
 
-    const { text, ids } = buildReflectInput(round, { dept: room.name });
+    const edgeCatalog = edgeCatalogFor(store);
+    const { text, ids } = buildReflectInput(round, {
+      dept: room.name,
+      edgeCatalog,
+    });
     if (!text.trim()) return { skipped: 'empty' };
 
     const byId = new Map(round.map((m) => [m.id, String(m.text ?? '')]));
@@ -116,7 +134,7 @@ export function createLessonReflector({ runner, logFn = log, config: scopedConfi
       logFn?.(`复盘原文（${reply.length} 字）：${JSON.stringify(reply).slice(0, 1600)}`);
     }
 
-    const candidates = parseReflectOutput(reply, { ids, byId });
+    const candidates = parseReflectOutput(reply, { ids, byId, edgeCatalog });
     if (!candidates.length) {
       logFn?.(`【${room.name}】复盘完成：没有可迁移的经验（NO_ENTRY）`);
       return { added: 0 };

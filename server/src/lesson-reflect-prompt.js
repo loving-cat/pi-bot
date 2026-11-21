@@ -5,7 +5,7 @@
  * 也避免"解析规则"和"怎么调模型"混在一个文件里。
  */
 
-import { LESSON_LIMITS, lessonRejectReason } from './lessons.js';
+import { LESSON_LIMITS, lessonRejectReason, normalizePendingEdges } from './lessons.js';
 import { preferencesFromReflect } from './preferences.js';
 
 /** 这一轮最多喂多少字（按尾部截断，最近的话最要紧） */
@@ -46,8 +46,19 @@ quote 必须是那条消息里真实出现过的文字。最多 2 条。
 
 没有合格的经验时，只输出一行：NO_ENTRY
 
+可选：如果这条新经验会**取代**库里已有的一条，或与它**相冲**，可以在同一条里加
+"edges":[{"to":"les_xxx","type":"supersedes|contradicts"}]。规则：
+- to 必须**原样抄**下面【现有经验】里出现的 id，不能编、不能指向自己；
+- supersedes：这条新的更准确，启用后旧的不再注入；
+- contradicts：两条做法互相打架，需要人来裁决；
+- 每一条最多 2 个；目录里没有合适的就不写 edges（宁可不写）。
+没有给【现有经验】目录时，一律不写 edges。
+
 只输出 JSON，不要解释、不要 markdown 代码块。示例（只示意格式，不要照抄内容）：
 {"lessons":[{"cue":"给部门配班子、加人时","lesson":"先按功能模块拆 owner，不要让一个人兼两个模块","verdict":"helped","evidence":[{"msgId":"m1","quote":"每个功能模块都有专人负责"}]}]}
+
+带边建议的示例（只有确实要取代/冲突时才这样写）：
+{"lessons":[{"cue":"……","lesson":"……","verdict":"helped","evidence":[{"msgId":"m1","quote":"……"}],"edges":[{"to":"les_ab12cd34","type":"supersedes"}]}]}
 
 格式（preferences 可以为空数组）：
 {"lessons":[{"cue":"什么情况下用得上（情境的形状，不是这次的事实）","lesson":"下次具体怎么做（一句能执行、能检查的话）","verdict":"helped|hurt|no_effect|confounded","evidence":[{"msgId":"m_xxx","quote":"原话"}]}],
@@ -59,10 +70,14 @@ quote 必须是那条消息里真实出现过的文字。最多 2 条。
  * @param {Array} messages 这一轮的消息
  * @param {object} [opts]
  * @param {string} [opts.dept] 团队名（写进提示，让 cue 更贴场景）
+ * @param {Array<{id: string, cue: string}>} [opts.edgeCatalog] 现有 active 经验目录（模型只能引用它里面的 id）
  * @param {number} [opts.maxChars]
  * @returns {{text: string, ids: Set<string>}}
  */
-export function buildReflectInput(messages = [], { dept = '', maxChars = REFLECT_MAX_CHARS } = {}) {
+export function buildReflectInput(
+  messages = [],
+  { dept = '', edgeCatalog = [], maxChars = REFLECT_MAX_CHARS } = {},
+) {
   const lines = [];
   const ids = new Set();
   for (const m of Array.isArray(messages) ? messages : []) {
@@ -84,10 +99,24 @@ export function buildReflectInput(messages = [], { dept = '', maxChars = REFLECT
     used += line.length + 1;
   }
 
+  // 只把 **active** 经验的 id + 情境给模型（截断到 15 条）：
+  //   · 给全文太贵，也给不了判断力；cue 足以让它判断“是不是同一件事”；
+  //   · 目标必须是这里出现过的 id，编出来的 id 在解析层直接被丢。
+  const catalog = (Array.isArray(edgeCatalog) ? edgeCatalog : [])
+    .map((e) => ({ id: String(e?.id ?? '').trim(), cue: String(e?.cue ?? '').trim() }))
+    .filter((e) => e.id && e.cue)
+    .slice(0, LESSON_LIMITS.reflectCatalog);
+  const catalogBlock = catalog.length
+    ? '\n【现有经验（只在要取代 / 冲突时引用，id 必须原样抄）】\n' +
+      catalog.map((e) => `- ${e.id}｜情境：${e.cue}`).join('\n') +
+      '\n'
+    : '';
+
   return {
     text:
-      `【对话记录开始${dept ? `（${dept}）` : ''}】\n${picked.join('\n')}\n【对话记录结束】\n\n` +
-      '现在复盘。你的回复必须以 {"lessons" 开头（不要用 entries / data / result 这些字段名），' +
+      `【对话记录开始${dept ? `（${dept}）` : ''}】\n${picked.join('\n')}\n【对话记录结束】\n` +
+      catalogBlock +
+      '\n现在复盘。你的回复必须以 {"lessons" 开头（不要用 entries / data / result 这些字段名），' +
       '结构只能是：{"lessons":[{"cue":"...","lesson":"...","verdict":"helped|hurt|no_effect|confounded",' +
       '"evidence":[{"msgId":"...","quote":"..."}]}]}。最多 2 条；没有合格的就只输出 NO_ENTRY。',
     ids,
@@ -105,9 +134,18 @@ export function buildReflectInput(messages = [], { dept = '', maxChars = REFLECT
  * @param {object} [opts]
  * @param {Set<string>} [opts.ids] 这一轮真实存在的 msgId
  * @param {Map<string,string>} [opts.byId] msgId -> 原文（用来核验 quote）
+ * @param {Array<{id: string, cue: string}>} [opts.edgeCatalog] 现有 active 经验目录（给了就只认里面的 id）
  * @returns {Array} 候选经验（未入库）
  */
-export function parseReflectOutput(text = '', { ids = new Set(), byId = new Map() } = {}) {
+export function parseReflectOutput(
+  text = '',
+  { ids = new Set(), byId = new Map(), edgeCatalog = null } = {},
+) {
+  // 只认 **active** 经验：指向候选 / 已归档 / 已删的边一律丢掉（那是编的或过期的）。
+  // `null` = 调用方没给目录（老测试路径），此时只做形状校验。
+  const catalogIds = Array.isArray(edgeCatalog)
+    ? new Set(edgeCatalog.map((e) => String(e?.id ?? '').trim()).filter(Boolean))
+    : null;
   const raw = String(text ?? '').trim();
   if (!raw || /^NO_ENTRY\b/i.test(raw)) return [];
 
@@ -153,6 +191,10 @@ export function parseReflectOutput(text = '', { ids = new Set(), byId = new Map(
     if (!evidence.length) continue; // 没证据的经验不收
 
     const candidate = { cue, lesson, verdict, evidence };
+    // 边建议同样要过校验：类型只有 supersedes / contradicts，目标必须在目录里。
+    // 形状校验是纯函数（`normalizePendingEdges`），这里只负责把“目录”递进去。
+    const pendingEdges = normalizePendingEdges(item.edges, { allowedIds: catalogIds });
+    if (pendingEdges.length) candidate.pendingEdges = pendingEdges;
     if (lessonRejectReason(candidate)) continue;
     out.push(candidate);
     if (out.length >= REFLECT_MAX_LESSONS) break;

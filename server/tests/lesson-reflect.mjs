@@ -120,6 +120,73 @@ test('最多 2 条', () => {
   assert.equal(out.length, 2);
 });
 
+// ---------------------------------------------------------------------------
+// 蒸馏器的「待确认的边」（§5.1 最后一刀）：只能引用目录里真实存在的 active 经验
+// ---------------------------------------------------------------------------
+const CATALOG = [
+  { id: 'les_old1', cue: '配班子要先按模块拆' },
+  { id: 'les_old2', cue: '发布前核对版本号' },
+];
+const EVIDENCE_JSON = '"evidence":[{"msgId":"m1","quote":"每个功能模块都有专人负责"}]';
+const CATALOG_OPTS = {
+  ids: new Set(['m1']),
+  byId: new Map([['m1', '他们团队应该每个功能模块都有专人负责给我汇报才对']]),
+  edgeCatalog: CATALOG,
+};
+const parseWithCatalog = (edgesJson) =>
+  parseReflectOutput(
+    `{"lessons":[{"cue":"a","lesson":"b",${EVIDENCE_JSON},${edgesJson}}]}`,
+    CATALOG_OPTS,
+  );
+
+test('边建议：目录带进输入，只给 id + 情境，最多 15 条', () => {
+  const many = Array.from({ length: 30 }, (_, i) => ({ id: `les_${i}`, cue: `情境 ${i}` }));
+  const { text } = buildReflectInput(round, { dept: '二组', edgeCatalog: many });
+  assert.match(text, /【现有经验/);
+  assert.match(text, /- les_0｜情境：情境 0/);
+  assert.ok(!text.includes('les_15｜'), '超 15 条不喂，否则模型记不住 id');
+  // 没给目录时不该出现目录块（老路径逐字不变）
+  assert.ok(!buildReflectInput(round, { dept: '二组' }).text.includes('【现有经验'));
+});
+
+test('边建议：只留 supersedes / contradicts，目录外的 id 与哨兵一律丢', () => {
+  assert.deepEqual(
+    parseWithCatalog(
+      '"edges":[' +
+        '{"to":"les_old1","type":"supersedes"},' +
+        '{"to":"les_fake","type":"contradicts"},' +
+        '{"to":"les_old2","type":"requires"},' +
+        '{"to":"user","type":"contradicts"}' +
+        ']',
+    )[0].pendingEdges,
+    [{ to: 'les_old1', type: 'supersedes' }],
+    '编的 id / 不允许的类型 / 哨兵都得丢掉',
+  );
+  // 不给目录（老调用路径）时只做形状校验：编的 id 会留下来，但物化时会静默跳过
+  const shapeOnly = parseReflectOutput(
+    `{"lessons":[{"cue":"a","lesson":"b",${EVIDENCE_JSON},"edges":[{"to":"les_fake","type":"contradicts"}]}]}`,
+    { ids: new Set(['m1']), byId: new Map([['m1', '他们团队应该每个功能模块都有专人负责给我汇报才对']]) },
+  );
+  assert.deepEqual(shapeOnly[0].pendingEdges, [{ to: 'les_fake', type: 'contradicts' }]);
+});
+
+test('边建议：最多 2 个、去重；没有 edges 时不落键', () => {
+  const out = parseWithCatalog(
+    '"edges":[' +
+      '{"to":"les_old1","type":"supersedes"},' +
+      '{"to":"les_old1","type":"supersedes"},' +
+      '{"to":"les_old2","type":"contradicts"},' +
+      '{"to":"les_old2","type":"supersedes"}' +
+      ']',
+  );
+  assert.equal(out[0].pendingEdges.length, 2);
+  assert.deepEqual(out[0].pendingEdges[0], { to: 'les_old1', type: 'supersedes' });
+  assert.equal(out[0].pendingEdges[1].to, 'les_old2');
+
+  const plain = parseReflectOutput(`{"lessons":[{"cue":"a","lesson":"b",${EVIDENCE_JSON}}]}`, CATALOG_OPTS);
+  assert.equal('pendingEdges' in plain[0], false, '空不落键（老库形状不变）');
+});
+
 test('乱填的 verdict 退回 confounded', () => {
   const out = parseReflectOutput(
     '{"lessons":[{"cue":"a","lesson":"b","verdict":"感觉不错","evidence":[{"msgId":"m1","quote":"每个功能模块"}]}]}',

@@ -1118,8 +1118,10 @@ class LibraryLesson {
     this.modelFamily = 'unknown',
     Map<String, LessonFamilyStats>? byFamily,
     this.contentHash = '',
+    List<LessonPendingEdge>? pendingEdges,
   }) : evidence = evidence ?? [],
-       byFamily = byFamily ?? const {};
+       byFamily = byFamily ?? const {},
+       pendingEdges = pendingEdges ?? const [];
 
   final String id;
   final String roomId;
@@ -1152,6 +1154,9 @@ class LibraryLesson {
 
   /// 去重键（内容没变就不会重复入库）
   final String contentHash;
+
+  /// 蒸馏器给的「待确认的边」：启用时才物化成真边（没启用前不参与打分/排除）
+  final List<LessonPendingEdge> pendingEdges;
 
   bool get isActive => status == 'active';
   bool get isCandidate => status == 'candidate';
@@ -1219,6 +1224,28 @@ class LibraryLesson {
       ),
     ),
     contentHash: json['contentHash'] as String? ?? '',
+    pendingEdges: ((json['pendingEdges'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => LessonPendingEdge.fromJson(e.cast<String, dynamic>()))
+        .toList(),
+  );
+}
+
+/// 蒸馏器给的「待确认的边」（`supersedes` / `contradicts`）
+///
+/// 它不是真边：没启用前**不参与打分、也不做任何排除**，只在候选卡上提示人
+/// “点了启用会顺手把哪条老经验取代 / 标记为冲突”。
+class LessonPendingEdge {
+  LessonPendingEdge({this.to = '', this.type = ''});
+
+  final String to;
+  final String type;
+
+  bool get isSupersedes => type == 'supersedes';
+
+  factory LessonPendingEdge.fromJson(Map<String, dynamic> json) => LessonPendingEdge(
+    to: json['to'] as String? ?? '',
+    type: json['type'] as String? ?? '',
   );
 }
 
