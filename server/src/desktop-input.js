@@ -62,6 +62,8 @@ export const INPUT_FAIL = Object.freeze({
   callFailed: 'call_failed',
   /** 探针不可用（拿不到最后输入时间） */
   probeUnavailable: 'probe_unavailable',
+  /** 系统授权不够（macOS 辅助功能 / 屏幕录制未开）—— 不是故障，是用户要去开 */
+  notAuthorized: 'not_authorized',
   /** 这一轮被用户接管了 */
   yielded: 'yielded',
 });
@@ -191,6 +193,9 @@ export const BUTTONS = Object.freeze(['left', 'right', 'middle']);
  */
 const VK = Object.freeze({
   ctrl: 0x11, control: 0x11, shift: 0x10, alt: 0x12, win: 0x5b, meta: 0x5b,
+  // macOS 的 Command 键：Win32 侧借用 Win 键的码（0x5b）。它只影响 codes
+  // 里的值；macOS 实现按 keys 自己映射 CGKeyCode，不会用到这个数。
+  cmd: 0x5b, command: 0x5b,
   enter: 0x0d, return: 0x0d, tab: 0x09, esc: 0x1b, escape: 0x1b,
   space: 0x20, backspace: 0x08, delete: 0x2e, del: 0x2e, insert: 0x2d,
   left: 0x25, up: 0x26, right: 0x27, down: 0x28,
@@ -488,17 +493,17 @@ export function describePlatform(platform) {
     };
   }
   if (platform === 'darwin') {
-    // ★ 照实标 false。macOS 实现现在是空壳（desktop-input-mac.js），
-    //   每个入口返回 not_platform。改成 true 的唯一时机是：
-    //   docs/MACOS-DESKTOP-INPUT.md 的验收清单全部实机跑过。
+    // 与 desktop-input-mac.js 的 describePlatform() 必须说同一件事 ——
+    // 一处说支持、另一处说空壳，上层会按各自看到的版本做不同的事。
+    // 实机验收记录见 docs/MACOS.md「桌面输入」。
     return {
       platform,
-      supported: false,
-      verified: null,
-      actions: [],
-      unsupported: ['全部（空壳实现已就位，待填）'],
-      probe: 'CGEventSourceSecondsSinceLastEventType（未实现）',
-      todo: 'docs/MACOS-DESKTOP-INPUT.md',
+      supported: true,
+      verified: 'macOS 15.5 / Apple Silicon (arm64) / 2560x1440 / 1x 缩放（docs/MACOS.md「桌面输入」）',
+      actions: [...INPUT_ACTIONS].filter((a) => a !== 'drag'),
+      unsupported: ['drag'],
+      probe: 'CGEventSourceSecondsSinceLastEventType（实机：返回真实秒数，不看辅助功能授权）',
+      authorization: '辅助功能（AXIsProcessTrusted）；未授权时 CGEventPost 静默丢弃，所以发之前就判',
     };
   }
   return { platform, supported: false, verified: null, actions: [], unsupported: ['全部'], probe: null };

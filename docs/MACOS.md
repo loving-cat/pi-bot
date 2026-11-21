@@ -249,6 +249,108 @@ ls -d ~/Library/Application\ Support/pi-bot ~/Library/Application\ Support/orbis
 # 老用户：只有 pi-bot；新装用户：只有 orbis
 ```
 
+## 桌面输入（v2.0 实机验收）
+
+macOS 的桌面自动操作**已实现并实机验收**。实现方式：Swift 原生助手
+`native/orbis-desktop-mac/` + 薄 JS 包装 `server/src/desktop-input-mac.js`。
+
+### 实测环境
+
+| 项 | 值 |
+|---|---|
+| 机型 / 芯片 | Apple Silicon（arm64），助手为 universal（arm64 + x86_64） |
+| 系统 | macOS 15.5（24F74） |
+| 屏幕 | 2560×1440，UI 也是 2560×1440 → **1x 缩放，1 点 = 1 像素** |
+| 显示器数 | 1（多屏的负坐标路径只做了单元测试，没接外接屏实测） |
+| 授权 | 辅助功能已授予运行助手的宿主 |
+
+> ★ 本机不是 Retina。Retina 上「点 ≠ 像素」这条只按设计推导（全程用点、
+> 绝不乘 2），**没有在 Retina 真机上验过** —— 换机器时要重跑一次第 3、4 项。
+
+### 三个前提的实测结论
+
+**1. 探针**：`CGEventSourceSecondsSinceLastEventType` 返回真实秒数（实测 25.1s、
+94.9s、175.5s 等），不是 0 也不是 -1。助手对负数 / 非有限值返回
+`probe_unavailable`，上层走「保守交还用户」。
+
+**2. 授权**：`AXIsProcessTrusted()` 在本机为 `true`。TCC 归属是**发起进程链的
+宿主 App**（本机实测：从深度求索宿主里 spawn 的二进制一律继承它的授权，
+换个路径复制二进制也一样）—— 所以助手永远跟着「谁启动 Orbis」走。
+未授权时的表现为 `CGEventPost` 静默丢弃，因此助手在 `perform` 第一步就判授权，
+不给直接返回 `not_authorized` 并说明去「系统设置 → 隐私与安全性 → 辅助功能」。
+
+**3. 坐标系**：`CGDisplayBounds` = `CGDisplayPixelsWide` = 2560×1440（1x 下相等），
+`CGEventGetLocation` 返回的点与之同一套。全程用点，**不用** `NSEvent.mouseLocation`。
+
+### 实测得到的数字（全部写进了代码注释）
+
+| 项 | 实测值 | 用途 |
+|---|---|---|
+| `CGWarpMouseCursorPosition` 落位误差 | **0.0 点**（5 个目标点 5/5 精确） | 复核容差定 0.5，只吸收浮点抖动；**不抄 Windows 的 24px** |
+| 点击落点 | 与目标完全一致（靶子实测 `mouseDown screen=750.00,650.00`） | 先移到位、复核、再点击 |
+| 单击 / 双击 / 三击 | `clickState` = 1 / 1,2 / 1,2,3 | 靶子逐条记录确认 |
+| 右键 | `rightMouseDown` 落点精确 | — |
+| 滚动 | `deltaY` = +5 / −5，与传入同号 | 正 = 上，与 Windows 一致 |
+| 中文输入 | `中文 ✅ $HOME `tick`` 逐字相符 | 走剪贴板 + ⌘V |
+| 剪贴板还原 | 原内容 6469 字符 → 注入 → 还原后逐字节相同 | `type_text` 结束必须还原 |
+
+### 踩到的三个坑（都写进了实现）
+
+**① 组合键必须「真的按下修饰键」**
+
+只给主键 `CGEvent` 设 `flags = maskCommand`、修饰键自己带空 flags，系统会把它
+当成打了一个单独的字母 —— 实测 `⌘V` 打出了字符 `v`。正确做法是修饰键按下时
+flag **逐步累加**，然后按主键、再倒序松开修饰键。
+
+**② `⌘V` 走的是菜单 keyEquivalent，目标窗口没有 Edit 菜单就不粘贴**
+
+实测：靶子窗口没有菜单栏时，`⌘V` 完全无效；加了一个含 `Paste`（v）的 Edit
+菜单后立刻正常。这是 macOS 的固有行为，不是我们的事件没发出去 ——
+所以 `type_text` 对纯画布类应用可能无效，文档里照实写了。
+
+**③ 不要用 `pbcopy` 传非 ASCII**
+
+本机 C/POSIX locale 下 `pbcopy < 中文文件` 之后 `pbpaste` 是**空串**（纯 ASCII 正常）。
+助手内部用 `NSPasteboard`，不受 locale 影响。
+
+另外：`AXUIElementCreateSystemWide()` + `kAXFocusedApplicationAttribute` 在这里
+返回 **-25204**（kAXErrorCannotComplete）—— 系统级焦点查询要求进程是交互式 GUI
+客户端。改用 `NSWorkspace.frontmostApplication` + 按 pid 的 AX 查询，实测能读到
+`Orbis — Orbis`、`orbis_target3 — Orbis Input Target`。
+
+### 12 项验收清单
+
+| # | 场景 | 结果 | 证据 |
+|---|---|---|---|
+| 1 | 探针可用性 | ✅ | 返回真实秒数（25.1 / 94.9 / 175.5s），非 0 非 -1 |
+| 2 | 授权被拒时返回 `not_authorized` | ✅（桩测） | `tests/desktop-input-mac.mjs` 的「not_authorized 原样上抛」；本机宿主已有授权，**真·未授权路径没跑到** |
+| 3 | 移动精确 | ✅ | 5 个目标点误差 0.0；JS 层 `perform move` 复核通过 |
+| 4 | 点击命中靶子 | ✅ | 靶子记录 `mouseDown screen=600.00,700.00 clicks=1` |
+| 5 | 中文 + 特殊字符输入 | ✅ | `[中文 ✅ $HOME `tick`]` 逐字相符 |
+| 6 | ⌘V 生效、Ctrl+V 不误触发 | ✅ | Ctrl+V 后文本框无变化，⌘V 后追加 `CTRL-V-TEST` |
+| 7 | 屏幕外坐标拒收 | ✅ | `planInput` 返回 `out_of_screen`（不夹到边缘） |
+| 8 | `drag` 明确拒绝 | ✅ | 返回 `invalid` + 「拖拽还没有完整实现…本轮不支持」 |
+| 9 | 锁屏 `no_session` | ✅（桩测） | 装配层测试；**真锁屏没跑**（不做会中断会话的操作） |
+| 10 | 人工接管不报错 | ⬜ 未跑 | 需要人工在长动作中碰鼠标，本轮没有长动作 |
+| 11 | 多屏负坐标 | ⬜ 未跑 | 本机只有一块屏；负坐标只过了单元测试（`probeEnvironment` 透传 -100） |
+| 12 | 撤权降级 | ⬜ 未跑 | 需要撤销宿主的辅助功能授权，会影响当前会话，未做 |
+
+**没跑的三项（10 / 11 / 12）都写进了 `describePlatform()` 以外的说明里，
+没有在代码里假装验过。**
+
+### 与 `desktop_observe` 的闭环
+
+`desktop-observe.js` 的 macOS 路径本来就用 `screencapture`（**像素**），
+而 `desktop_input` 用**点**。本机 1x 缩放下两者数值相同，所以「截图看到的坐标」
+可以直接喂给 `desktop_input`。**但 Retina 上不行**：截图返回的是像素尺寸，
+要除以缩放比才是点。这一点没在 Retina 真机上验证过，用之前请先 `probeEnvironment()`
+对比截图尺寸与 `screen` 宽高。
+
+屏幕录制权限未开时，`screencapture` 截出来只有壁纸 —— `listWindows` 拿到的窗口
+列表来自 `CGWindowListCopyWindowInfo`，那个不需要屏幕录制权限，所以**不会**把
+空画面当有效窗口返回；但截图本身会是黑的。这时应当报 `not_authorized` 而不是
+把黑图交上去。
+
 ## 已知限制
 
 - 目标机器需自行安装 Node 22+；安装包不包含 Node。

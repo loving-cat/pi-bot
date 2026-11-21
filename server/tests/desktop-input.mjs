@@ -274,13 +274,19 @@ test('动作摘要进审计，不含输入文字原文', () => {
   assert.equal(d.includes('abc123'), false);
 });
 
-test('平台状态表不吹牛：macOS 明确标"未实现"', () => {
+test('平台状态表不吹牛：两个平台都照实报，drag 两边都不支持', () => {
   const win = describePlatform('win32');
   assert.equal(win.supported, true);
   assert.ok(win.unsupported.includes('drag'));
   const mac = describePlatform('darwin');
-  assert.equal(mac.supported, false, 'macOS 还没实现，不许写成 supported');
-  assert.ok(mac.probe.includes('未实现'));
+  // macOS 已在真机验过（docs/MACOS.md「桌面输入」）；没做完的 drag 必须留在
+  // unsupported 里 —— 这张表是上层决定「能不能动用户桌面」的依据，不许美化。
+  assert.equal(mac.supported, true, 'macOS 已实现并实机验收过');
+  assert.ok(mac.verified && mac.verified.length > 8, '要写清在什么环境验的');
+  assert.ok(mac.unsupported.includes('drag'), '没做完的 drag 必须照实标着');
+  assert.ok(!mac.actions.includes('drag'), '没做完的动作不许出现在支持列表里');
+  assert.match(mac.probe, /CGEventSourceSecondsSinceLastEventType/);
+  assert.match(mac.probe, /实机/, '探针要标明是实测结论，不是推测');
 });
 
 // ============================================================ 纯逻辑：输入噪声

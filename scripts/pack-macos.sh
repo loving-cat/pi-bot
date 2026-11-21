@@ -201,6 +201,20 @@ if [[ -f "$ROOT/server/package-lock.json" ]]; then
   ditto "$ROOT/server/package-lock.json" "$SERVER_DST/package-lock.json"
 fi
 
+# 桌面输入原生助手（macOS）。事先构建好再打包：
+#   ./scripts/build-desktop-mac.sh
+# 缺它的话 App 能起来，但 desktop_input 会一路返回 not_platform ——
+# 发版包里少一个能力却没人发现，比构建失败更糟，所以这里直接挡。
+DESKTOP_HELPER="$ROOT/server/resources/orbis-desktop-mac"
+[[ -f "$DESKTOP_HELPER" ]] || fail "缺少桌面输入助手：$DESKTOP_HELPER（先跑 ./scripts/build-desktop-mac.sh）"
+DESKTOP_RES="$SERVER_DST/resources"
+mkdir -p "$DESKTOP_RES"
+ditto "$DESKTOP_HELPER" "$DESKTOP_RES/orbis-desktop-mac"
+chmod 755 "$DESKTOP_RES/orbis-desktop-mac"
+if [[ -f "$ROOT/server/resources/orbis-desktop-mac.sha256" ]]; then
+  ditto "$ROOT/server/resources/orbis-desktop-mac.sha256" "$DESKTOP_RES/orbis-desktop-mac.sha256"
+fi
+
 echo "== 安装服务端依赖 =="
 (cd "$SERVER_DST" && npm install --omit=dev --no-audit --no-fund)
 (cd "$SERVER_DST" && node --input-type=module -e '

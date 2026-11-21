@@ -1,10 +1,16 @@
-# macOS 桌面输入：待办与可改动区间
+# macOS 桌面输入：设计、实现与实机验收
 
-> **状态：未实现。** `server/src/desktop-input-mac.js` 现在是**空壳**，
-> 每个入口都明确返回 `not_platform`。`describePlatform('darwin').supported === false`。
+> **状态：已实现并实机验收（2026-11-21）。**
+> `server/src/desktop-input-mac.js` 是薄包装，平台调用在 Swift 原生助手
+> `native/orbis-desktop-mac/` 里。`describePlatform('darwin').supported === true`，
+> `drag` 明确不支持（见下方验收表第 8 项）。
 >
-> 这份文档的作用只有一个：**让接手的人在 Mac 上照着填，不用重读一遍整个权限层。**
-> 填完之后，把本文档改成验收记录（`docs/WINDOWS.md`「桌面输入」那一节是模板）。
+> **本文档现在一半是设计（为什么这么做），一半是验收记录（实测到了什么）。**
+> 实测环境、数字、踩的坑在 `docs/MACOS.md` 的「桌面输入（v2.0 实机验收）」一节，
+> 这里保留设计与契约部分，把已被实测推翻/确认的地方就地标注。
+>
+> 构建助手：`./scripts/build-desktop-mac.sh`（产物不进 git）。
+> 测试：`cd server && node tests/desktop-input-mac.mjs`。
 
 ---
 
@@ -153,6 +159,13 @@ server/tools/check-launcher-version.mjs → 抄一份 check-cginput-version.mjs
 这三件事决定了整个实现怎么写。**先验，再写代码**，否则会写完再推倒。
 
 ### 4.1 没有辅助功能授权时，探针返回什么？
+
+> **实测结论（2026-11-21）：返回真实秒数，探针不看辅助功能授权。**
+> 本机宿主已有授权，测到的值 25.1 / 94.9 / 175.5 秒都是合理值，不是 0 也不是 -1。
+> 反证：把同一个二进制复制到另一个路径再跑，`AXIsProcessTrusted()` 仍是 true
+> —— 说明 TCC 归属是**发起进程链的宿主 App**，不是二进制自身路径。
+> 因此「探针是否可用」与「有没有授权」是两件事：探针可用但发不出输入，
+> 正是必须在 `perform` 里单独判授权的理由。
 
 ```bash
 # 故意不开授权，跑这条

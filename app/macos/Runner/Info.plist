@@ -32,5 +32,11 @@
 	<string>扫描配对二维码以连接服务端。</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>连接本机服务端和局域网中的配对设备。</string>
+	<!-- 桌面输入：读前台窗口标题（审计用）。窗口的移动/点击/按键不需要这条，
+	     它们由「辅助功能」授权控制；这里说明的是 AppleEvents 那一侧。 -->
+	<key>NSAppleEventsUsageDescription</key>
+	<string>用于读取当前前台窗口的标题，让「桌面操作」的审计记录能说明动的是哪个窗口（不读取窗口内容）。</string>
+	<key>NSAccessibilityUsageDescription</key>
+	<string>用于在你明确要求时操作桌面：移动鼠标、点击、输入文字。每次操作都会记录审计，并可在界面上随时收回。</string>
 </dict>
 </plist>

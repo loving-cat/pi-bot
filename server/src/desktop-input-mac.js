@@ -1,264 +1,403 @@
 /**
- * macOS 桌面输入 —— **实现槽位**（当前是空壳，所有入口都明确返回"没实现"）。
+ * macOS 桌面输入实现 —— 薄包装，真正的平台调用在原生助手 `orbis-desktop-mac` 里。
  *
- * 这个文件存在的唯一目的：把 macOS 的改动区间**隔离**出来。
- * 判定逻辑一行都不用重写 —— 租约、接管检测、动作规划、坐标校验全部是
- * 平台无关的纯逻辑，已经在 `desktop-lease.js` / `desktop-takeover.js` /
- * `desktop-input.js` 里了，而且有 38 项测试守着。
+ * ## 为什么是原生二进制而不是 osascript
  *
- * ## 要做什么（按这个顺序）
+ * macOS 没有 `powershell` 那种"一条命令办完事"的通道。osascript（JXA）能调 ObjC，
+ * 但每次启动 ~200ms、发不了高频 CGEvent、对 CoreGraphics 的支持也不全。
+ * 桌面输入要"先移到位、复核、再点击"，这是高频且要求精确的活，只能走原生。
  *
- * 见 `docs/MACOS-DESKTOP-INPUT.md`。一句话：**只实现下面这六个函数**，
- * 签名与返回形状必须和 `desktop-input-win.js` 完全一致，否则装配层接不上。
+ * 助手源码在 `native/orbis-desktop-mac/`（Swift，零第三方依赖，只链接系统框架）。
+ * 构建：`./scripts/build-desktop-mac.sh`。
  *
- * ```
- * probeEnvironment()   → {ok:true, screen:{x,y,width,height}, dpi, session} | {ok:false, code, text}
- * lastInputAt()        → {ok:true, lastInputAt, idleMs} | {ok:false, code, text}
- * perform({plan})      → {ok:true, at, foreground} | {ok:false, code, text}
- * cursorPosition()     → {ok:true, x, y} | {ok:false, code, text}
- * sampleInputNoise()   → {ok:true, kind, noisy, cursorStill, samples, cursor} | {ok:false, ...}
- * foregroundTitle()    → {ok:true, title} | {ok:false, code, text}
- * ```
+ * ## 坐标单位：点（points），左上角原点
  *
- * ## 为什么现在是空壳而不是"能跑就行"的半截实现
+ *   `CGDisplayBounds` / `CGEventGetLocation` / `CGEventCreateMouseEvent` 是同一套坐标。
+ *   Retina 上 1 点 = 2 像素，**但全程只用点**，不乘 2。
+ *   `dpi` 字段填 `scale × 96`（Retina = 192）只为与 Windows 的返回形状对齐，
+ *   任何逻辑都不拿它换算。
  *
- * 桌面输入点错了就是点了：删文件、付款、发消息都收不回来。一个"在大部分
- * 情况下能跑"的 macOS 实现比没有更危险 —— 它会让上层以为这条路通了。
+ * ## 实机结论（macOS 15.5 / 2560x1440 / 1x 缩放 / Apple Silicon）
  *
- * 所以这里的每个函数都返回 `not_platform`（而不是抛异常、也不是返回成功），
- * 装配层拿到它会走"交还用户"那条路，用户看到的是清楚的"macOS 还没做"。
+ *   · `CGWarpMouseCursorPosition` 落位误差 **0.0 点**（5 个目标点 5/5 精确）——
+ *     所以容差用 0.5，只吸收浮点抖动。Windows 那边的 24px 在 macOS 上不成立，
+ *     照抄只会掩盖真问题。
+ *   · `CGEventSourceSecondsSinceLastEventType` 返回**真实秒数**（不是 0 / -1）。
+ *   · 组合键必须"真的按下修饰键再按主键"：只给主键设 flags 会被当成打了一个字母。
+ *   · `type_text` 走剪贴板 + **cmd+V**；目标窗口必须有 Edit 菜单，否则 cmd+V
+ *     不会变成 paste: 动作（实机复现：加菜单前文本框收不到，加完立刻正常）。
+ *   · **不要用 `pbcopy` 传非 ASCII**：本机 C/POSIX locale 下它会静默写成空串，
+ *     必须用 NSPasteboard（助手内部就是这么做的）。
+ *   · `AXUIElementCreateSystemWide()` + `kAXFocusedApplicationAttribute` 在这里
+ *     返回 -25204（kAXErrorCannotComplete），拿不到前台应用；改用
+ *     `NSWorkspace.frontmostApplication` + 按 pid 的 AX 查询。
  *
- * ## 六个函数里，三个必须先在真机上验清楚
+ * ## 授权
  *
- * | 函数 | 为什么必须先验 |
- * |---|---|
- * | `probeEnvironment` | Retina 上 `CGDisplayBounds` 与 `NSScreen.frame` 差 2 倍，用错一个就整屏偏移 |
- * | `lastInputAt` | 没有辅助功能授权时 `CGEventSourceSecondsSinceLastEventType` 返回什么？会不会安静地返回 0？ |
- * | `perform` | 辅助功能授权被拒时 `CGEventPost` 是静默丢弃还是报错？这决定我们能不能"明确交还用户" |
- *
- * 其余三个（`cursorPosition` / `sampleInputNoise` / `foregroundTitle`）
- * 是诊断用的，实现难度低、出错后果也轻。
+ * 辅助功能没开时 `CGEventPost` **静默丢弃**，我们会以为发出去了。
+ * 所以 `perform` 在助手侧第一件事就是 `AXIsProcessTrusted()`，不给就返回
+ * `not_authorized` 并说清去哪个设置页开。**不自动弹授权窗、不重试** ——
+ * 规格要求「不请求绕过系统保护，明确交还用户」。
  */
-import { INPUT_FAIL } from './desktop-input.js';
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-/** 统一返回：这个平台还没有实现。 */
-function notImplemented(what) {
+import { INPUT_FAIL, classifyInputNoise } from './desktop-input.js';
+import { normalizeProbe } from './desktop-takeover.js';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+
+/** 助手协议版本。助手 `version` 子命令会回这个数。 */
+export const HELPER_PROTOCOL = 1;
+
+/** 助手可能的位置，按优先级。 */
+export function helperCandidates() {
+  const out = [];
+  const env = (process.env.ORBIS_DESKTOP_MAC_BIN || '').trim();
+  if (env) out.push(env);
+  // 发行包：server/resources/orbis-desktop-mac（打包脚本拷进来）
+  out.push(path.join(HERE, '..', 'resources', 'orbis-desktop-mac'));
+  // 开发仓库：native/orbis-desktop-mac/build/orbis-desktop-mac
+  out.push(path.join(HERE, '..', '..', 'native', 'orbis-desktop-mac', 'build', 'orbis-desktop-mac'));
+  return out;
+}
+
+/** 找到可执行的助手；找不到返回 null。 */
+export function resolveHelper() {
+  for (const candidate of helperCandidates()) {
+    try {
+      const st = fs.statSync(candidate);
+      if (!st.isFile()) continue;
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch { /* 继续找下一个 */ }
+  }
+  return null;
+}
+
+/** 这个模块在当前平台能不能用：必须是 darwin，且助手二进制在。 */
+export function isSupported() {
+  if (process.platform !== 'darwin') return false;
+  return resolveHelper() !== null;
+}
+
+function notPlatform(what) {
   return {
     ok: false,
     code: INPUT_FAIL.notPlatform,
-    text: `macOS 的${what}还没实现（见 docs/MACOS-DESKTOP-INPUT.md）`,
+    text: `当前平台（${process.platform}）没有 ${what} 的 macOS 实现`,
   };
 }
 
-/** 这个模块在当前平台能不能用。**实现之后改成真正的探测**。 */
-export function isSupported() {
-  return false;
+/**
+ * 调一次助手：把请求 JSON 从 stdin 送进去，读 stdout 的 JSON。
+ *
+ * [run] 可注入，方便在 Windows / Linux CI 上覆盖参数拼装与错误码映射 ——
+ * 那两个平台没有助手二进制，但**参数怎么拼、返回值怎么翻译**是可以测的。
+ */
+function callHelper(command, payload = {}, { run = defaultRun, timeoutMs = 15000 } = {}) {
+  const helper = resolveHelper();
+  if (!helper) {
+    return { ok: false, code: INPUT_FAIL.notPlatform, text: '找不到 orbis-desktop-mac（先跑 npm run build:desktop-mac）' };
+  }
+  let raw;
+  try {
+    raw = run(helper, [command], JSON.stringify(payload ?? {}), { timeoutMs });
+  } catch (err) {
+    return { ok: false, code: INPUT_FAIL.callFailed, text: `助手调用失败：${String(err?.message || err).slice(0, 300)}` };
+  }
+  return parseHelperOutput(raw);
 }
 
+/** 默认 runner：同步执行，stdin 写 JSON，stdout 收 JSON。 */
+function defaultRun(helper, args, input, { timeoutMs }) {
+  return execFileSync(helper, args, {
+    input,
+    encoding: 'utf8',
+    timeout: timeoutMs,
+    maxBuffer: 4 * 1024 * 1024,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+}
+
+/** 把助手的 stdout 解析成统一返回；解析不出来就是 call_failed，绝不猜。 */
+export function parseHelperOutput(raw) {
+  const text = String(raw ?? '').trim();
+  if (!text) {
+    return { ok: false, code: INPUT_FAIL.callFailed, text: '助手没有输出（可能被系统杀掉或崩溃）' };
+  }
+  const lastLine = text.split('\n').filter(Boolean).pop() || '';
+  let value;
+  try {
+    value = JSON.parse(lastLine);
+  } catch {
+    return { ok: false, code: INPUT_FAIL.callFailed, text: `助手输出不是 JSON：${lastLine.slice(0, 200)}` };
+  }
+  if (!value || typeof value !== 'object') {
+    return { ok: false, code: INPUT_FAIL.callFailed, text: '助手返回的不是对象' };
+  }
+  if (value.ok === true) return value;
+  return {
+    ok: false,
+    code: typeof value.code === 'string' ? value.code : INPUT_FAIL.callFailed,
+    text: typeof value.text === 'string' ? value.text : '助手返回了失败但没有说明原因',
+  };
+}
+
+// ---------------------------------------------------------------- 六个入口
+
 /**
- * 探一次环境：屏幕矩形、缩放、有没有可操作会话。
+ * 探一次环境：虚拟桌面矩形（**点**）、缩放、有没有可操作会话、授权状态。
  *
- * ## 实现要点（踩过的地方都写在 `docs/MACOS-DESKTOP-INPUT.md`）
- *
- * ```objc
- * // ✅ 全用"点"（points）：CGDisplayBounds 与 CGEvent 位置**同一套坐标**
- * CGDirectDisplayID d = CGMainDisplayID();
- * CGRect r = CGDisplayBounds(d);          // 全局显示坐标，单位是**点**
- * size_t px = CGDisplayPixelsWide(d);     // 这个才是物理像素（Retina 上 = 2 × 点）
- *
- * // ❌ 千万不要把 pixels 当成坐标用：拿 CGDisplayPixelsWide 去算位置再发 CGEvent，
- * //    Retina 上会偏移一倍，而且不报错。
- * ```
- *
- * ## ★ 与 Windows 最大的不同：坐标系单位不一样
- *
- * | | Windows | macOS |
- * |---|---|---|
- * | `probeEnvironment().screen` | 物理像素 | **点**（points） |
- * | `perform` 接受的坐标 | 物理像素 | **点** |
- * | 缩放因子 | 125% / 150% 这类百分比 | 1x / 2x（Retina） |
- *
- * 这不是矛盾：**每个平台内部自洽就行**。`planInput()` 的屏幕内校验只要求
- * "坐标与 screen 同一套单位"，它不关心是像素还是点。所以 macOS 全程用点、
- * Windows 全程用像素，各自对得上就对。
- * **千万不要**在 macOS 里再把点乘 2 转成像素 —— 那会两倍偏移。
+ * 每次注入前都要重新调（不缓存）—— 外接屏拔了、分辨率改了、用户锁屏了
+ * 都要立刻反映出来。规格 §5.4「布局变化使旧坐标失效」。
  *
  * @returns {{ok:true, screen:{x:number,y:number,width:number,height:number}, dpi:number, session:boolean}
  *   | {ok:false, code:string, text:string}}
- *
- * **`screen` 用点（points），不是像素** —— 与 `CGEvent` 位置同一套单位。
- * `dpi` 在 macOS 上填 `scale × 96`（Retina = 192），只为与 Windows 对齐形状；
- * 任何逻辑都不靠它做换算。
  */
-export function probeEnvironment() {
-  return notImplemented('屏幕环境探测');
+export function probeEnvironment({ run } = {}) {
+  if (process.platform !== 'darwin') return notPlatform('屏幕环境探测');
+  const r = callHelper('probe', {}, { run });
+  if (!r.ok) return r;
+  const screen = r.screen;
+  if (!screen || !(Number(screen.width) > 0) || !(Number(screen.height) > 0)) {
+    return { ok: false, code: INPUT_FAIL.callFailed, text: '屏幕尺寸为 0 —— 可能没有登录会话' };
+  }
+  return {
+    ok: true,
+    screen: {
+      x: Number(screen.x) || 0,
+      y: Number(screen.y) || 0,
+      width: Number(screen.width),
+      height: Number(screen.height),
+    },
+    dpi: Number(r.dpi) || 96,
+    session: r.session === true,
+    locked: r.locked === true,
+    authorized: r.authorized !== false,
+  };
 }
 
 /**
- * 读「最后一次输入的时刻」（epoch 毫秒），喂给 `desktop-takeover.js`。
+ * 读「最后一次输入的时刻」（epoch 毫秒），喂给 `desktop-takeover.js` 的 `classify`。
  *
- * ## 实现要点
+ * 助手给的是**距最后一次输入多少秒**（`CGEventSourceSecondsSinceLastEventType`），
+ * 与 Windows 的"开机 tick"不同 —— 反推 epoch 的换算交给纯逻辑
+ * `normalizeProbe({ value, unit: 'agoSeconds' })`，这里不另写一套。
  *
- * ```objc
- * // 返回的是"多少秒前"，与 Windows 的"开机 tick"不同 —— 直接反推 epoch
- * CFTimeInterval ago = CGEventSourceSecondsSinceLastEventType(
- *     kCGEventSourceStateCombinedSessionState, kCGAnyInputEventType);
- * double lastInputAt = nowMs - ago * 1000;
- * ```
+ * ★ 实机结论：macOS 上这个探针**不看辅助功能授权**，返回真实秒数。
+ *   但它仍可能返回不可用的值（助手会先挡掉负数/非有限值），那种情况
+ *   必须原样上抛 `probe_unavailable` —— 上层要走"保守交还用户"，
+ *   绝不能把"探针坏了"当成"用户刚动过"（那样这台机器上永远发不出输入）。
  *
- * ## ★ 必须先验一件事：没有辅助功能授权时它返回什么
- *
- * 如果返回 `0`（"刚刚有输入"），接管检测会**永远判定用户在动**，
- * 于是这台 Mac 上永远发不出输入 —— 而错误文案会说"用户在动"，
- * 用户完全不知道该去开权限。本机 Windows 上踩过一模一样的坑
- * （远程控制工具持续合成输入），见 `docs/WINDOWS.md`。
- *
- * 所以实现时要做的第一件事是：**故意不开权限，看返回值**。
- * 如果是 0 或者明显不对，就改成返回 `{ok:false, code:probe_unavailable}`
- * —— 装配层拿到它会走"保守交还用户"那条路，文案才说得对。
+ * @returns {{ok:true, lastInputAt:number, idleMs:number} | {ok:false, code:string, text:string}}
  */
-export function lastInputAt() {
-  return notImplemented('输入探针');
+export function lastInputAt({ run, now = Date.now() } = {}) {
+  if (process.platform !== 'darwin') return notPlatform('输入探针');
+  const r = callHelper('last-input', {}, { run });
+  if (!r.ok) return r;
+  const ago = Number(r.agoSeconds);
+  if (!Number.isFinite(ago) || ago < 0) {
+    return { ok: false, code: INPUT_FAIL.probeUnavailable, text: `输入探针返回了不可用的值（${r.agoSeconds}）` };
+  }
+  const lastInputAtValue = normalizeProbe({ value: ago, unit: 'agoSeconds', now });
+  if (lastInputAtValue === null) {
+    return { ok: false, code: INPUT_FAIL.probeUnavailable, text: '输入探针的时间换算失败' };
+  }
+  return { ok: true, lastInputAt: lastInputAtValue, idleMs: Math.max(0, Math.round(ago * 1000)) };
+}
+
+/**
+ * 把 `planInput()` 给出的计划翻译成助手的请求。
+ *
+ * ★ 用 `plan.keys`（原始键名），**不用** `plan.codes`（Win32 虚拟键码）。
+ *   两者完全不是一回事：Win32 里 v=0x56，macOS 的 CGKeyCode 里 v=0x09。
+ *   助手自己有一张全量 CGKeyCode 表，认不出的键直接拒，不猜。
+ */
+export function toHelperRequest(plan) {
+  if (!plan || !plan.action) return null;
+  switch (plan.action) {
+    case 'move':
+      return plan.point ? { action: 'move', point: { x: plan.point.x, y: plan.point.y } } : null;
+    case 'click':
+      if (!plan.point) return null;
+      return {
+        action: 'click',
+        point: { x: plan.point.x, y: plan.point.y },
+        button: plan.button || 'left',
+        clicks: Number(plan.clicks) || 1,
+      };
+    case 'scroll':
+      return { action: 'scroll', delta: Number(plan.delta) || 0 };
+    case 'key':
+      if (!Array.isArray(plan.keys) || !plan.keys.length) return null;
+      return { action: 'key', key: String(plan.keys[0]) };
+    case 'keyCombo':
+      if (!Array.isArray(plan.keys) || !plan.keys.length) return null;
+      return { action: 'keyCombo', keys: plan.keys.map(String) };
+    case 'type_text':
+      return { action: 'type_text', text: String(plan.text ?? '') };
+    case 'drag':
+      // 拖拽要按下—分步移动—每步检测接管—中断必松键，本轮没做完实机验证，
+      // 所以整条链路一起拒 —— 绝不留半截按着鼠标不放的拖拽。
+      return { action: 'drag' };
+    default:
+      return null;
+  }
 }
 
 /**
  * 发一个已经规划好的输入。
  *
- * `plan` 的形状由 `planInput()` 给出（纯逻辑，已测），不要在这里重新解析参数：
+ * 调用方（工具层）必须先过租约、接管检测、`planInput`。这里**不做判定**，
+ * 只负责：翻成助手请求 → 执行 → 把结果翻译回来。
  *
- * ```js
- * plan = { action: 'move'|'click'|'scroll'|'key'|'keyCombo'|'type_text',
- *          point: {x,y}|null,   // **点**（不是像素）
- *          button, clicks,      // click
- *          delta,               // scroll，正=上
- *          keys: ['ctrl','v'],  // ★ macOS 用这个（原始键名）
- *          codes: [vkCode...],  // ⚠ 这是 Windows 虚拟键码，macOS 不要用
- *          text,                // type_text
- *          screen }
- * ```
+ * [verifyCursor] 由助手实现：移动类动作由助手自己复核光标位置，
+ * 没到位就不点击（它返回 `call_failed` 并说明"可能有别的程序在动光标"）。
  *
- * ## ★ `plan.codes` 是 Windows 虚拟键码 —— macOS 必须自己映射
- *
- * `desktop-input.js` 的 `vkCode()` 返回的是 Win32 VK 码（ctrl=0x11、v=0x56）。
- * macOS 用 `CGKeyCode`（一种硬件扫描码），**两者完全不是一回事**。
- *
- * 现在的做法（在 `desktop-input.js` 里已留好位置）：`plan` 同时带
- * `keys: ['ctrl','v']`（原始键名），macOS 侧按 `keys` 自己映射。
- * **不要**去改 `vkCode()` 让它平台化 —— 那会让 Windows 侧跟着变。
- *
- * ## 实现要点
- *
- * ```objc
- * // 鼠标：CGWarpMouseCursorPosition 移动（先移动、复核、再点击，和 Windows 一样）
- * CGWarpMouseCursorPosition(CGPointMake(x, y));
- * CGAssociateMouseAndMouseCursorPosition(true);  // ★ 移动后必须重新关联，
- *                                                //   否则光标会和物理鼠标"脱钩"
- *
- * // 点击：CGEventCreateMouseEvent + CGEventPost(kCGHIDEventTap, e)
- * // 键盘：CGEventCreateKeyboardEvent(src, keyCode, down)
- * // 文字：NSPasteboard（存原内容 → 设新内容 → ⌘V → 还原），和 Windows 一样走剪贴板
- * ```
- *
- * ## ★ 辅助功能授权被拒时怎么办
- *
- * ```objc
- * if (!AXIsProcessTrusted()) {
- *   return { ok: false, code: 'not_authorized',
- *            text: '需要在「系统设置 → 隐私与安全性 → 辅助功能」里授权 pi-bot' };
- * }
- * ```
- *
- * **不要**尝试 `AXIsProcessTrustedWithOptions` 自动弹窗然后静默重试 ——
- * 规格 §5.4 原话是「不请求绕过系统保护；明确交还用户」。
- *
- * ## 复核光标（和 Windows 一致，别省）
- *
- * 本机 Windows 上实测：`SetCursorPos` 之后光标会落在目标附近 3~26 px，
- * 所以 Windows 版做了「容差 24px + 最多重试 3 次 + 没到位绝不点击」。
- * macOS 上 `CGWarpMouseCursorPosition` 通常更精确，但**这个保护不能省** ——
- * 有些辅助工具（BetterTouchTool、远程控制）同样会碰光标。
- *
- * @param {object} p
- * @param {object} p.plan 来自 `planInput()` 的计划
- * @param {boolean} [p.verifyCursor]
  * @returns {{ok:true, at:object|null, foreground:string} | {ok:false, code:string, text:string}}
  */
-export function perform({ plan, verifyCursor = true } = {}) {
-  void plan;
-  void verifyCursor;
-  return notImplemented('桌面输入');
+export function perform({ plan, verifyCursor = true, run } = {}) {
+  if (process.platform !== 'darwin') return notPlatform('桌面输入');
+  const req = toHelperRequest(plan);
+  if (!req) return { ok: false, code: INPUT_FAIL.invalid, text: '没有可执行的输入计划' };
+  if (req.action === 'scroll' && !req.delta) {
+    return { ok: false, code: INPUT_FAIL.invalid, text: '滚动量不能是 0' };
+  }
+  if (req.action === 'drag') {
+    return {
+      ok: false,
+      code: INPUT_FAIL.invalid,
+      text: 'macOS 的拖拽还没有完整实现（按下—移动—抬起的中断恢复未验证），本轮明确不支持',
+    };
+  }
+  const r = callHelper('perform', req, { run });
+  if (!r.ok) return r;
+  return {
+    ok: true,
+    at: r.at ?? null,
+    foreground: typeof r.foreground === 'string' ? r.foreground : '',
+  };
 }
 
 /**
  * 读当前光标位置（**点**，左上角原点）。
  *
- * ```objc
- * // CGEvent 的鼠标位置：全局显示坐标，左上角原点，单位是点
- * CGEventRef e = CGEventCreate(NULL);
- * CGPoint p = CGEventGetLocation(e);
- * CFRelease(e);
- * ```
- *
- * ### ★ 三个坐标原点，用错哪个都会镜像
- *
- * | API | 原点 | 单位 |
- * |---|---|---|
- * | `CGEventGetLocation` / `CGEventCreateMouseEvent` | **左上角** | 点 |
- * | `NSEvent.mouseLocation` | **左下角** | 点 |
- * | `CGDisplayPixelsWide` 等 | — | **像素** |
- *
- * 混用 `NSEvent.mouseLocation` 和 CGEvent 会让 y 轴镜像 ——
- * 点窗口顶部会点到同一位置的底部，而且不报错。
- * 直接用 `CGEventGetLocation`，不要绕 AppKit。
+ * 助手里用 `CGEventGetLocation(CGEventCreate(nil))` —— 与
+ * `CGEventCreateMouseEvent` 同一套坐标。**不用** `NSEvent.mouseLocation`
+ * （左下原点，y 轴镜像：点窗口顶部会点到同一位置的底部）。
  */
-export function cursorPosition() {
-  return notImplemented('光标位置读取');
+export function cursorPosition({ run } = {}) {
+  if (process.platform !== 'darwin') return notPlatform('光标位置读取');
+  const r = callHelper('cursor', {}, { run });
+  if (!r.ok) return r;
+  const x = Number(r.x);
+  const y = Number(r.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return { ok: false, code: INPUT_FAIL.callFailed, text: '助手返回的光标位置不是数字' };
+  }
+  return { ok: true, x, y };
 }
 
 /**
  * 采样一次「输入噪声」：这台 Mac 是不是一直在产生输入。
  *
- * 判据本身是纯逻辑（`classifyInputNoise`，在 `desktop-input.js` 里，已测），
- * 这里只负责采样：
+ * 判据是纯逻辑 `classifyInputNoise()`（平台无关、已测），这里只负责把
+ * 「每次采样的 idleMs + 光标位置」凑齐。两个平台共用同一套判断，
+ * 不会出现"Windows 判 phantom、macOS 判 moving"这种漂移。
  *
- * ```
- * 连续采 samples 次 → 每次拿到 {idleMs, cursor:{x,y}}
- * 交给 classifyInputNoise({ gaps, cursors, quietMs })
- * ```
- *
- * 为什么需要：Windows 上踩过 —— 装着远程控制工具时 `GetLastInputInfo`
- * 永远报"刚刚有人动"，接管检测于是永远让开，而错误文案说的是"用户在动"。
- * macOS 上同类程序（TeamViewer、AnyDesk、Jump Desktop）一样可能这样。
+ * 为什么需要：装着远程控制 / 虚拟显示驱动时，探针会一直报"刚刚有人动"，
+ * 接管检测于是永远让开 —— macOS 上同类程序（TeamViewer、AnyDesk）一样可能这样。
  */
-export function sampleInputNoise({ samples = 5, intervalMs = 120, quietMs = 250 } = {}) {
-  void samples;
-  void intervalMs;
-  void quietMs;
-  return notImplemented('输入噪声采样');
+export function sampleInputNoise({ samples = 5, intervalMs = 120, quietMs = 250, run } = {}) {
+  if (process.platform !== 'darwin') return notPlatform('输入噪声采样');
+  const n = Math.max(2, Math.min(20, Math.trunc(Number(samples) || 5)));
+  const gap = Math.max(20, Math.min(2000, Math.trunc(Number(intervalMs) || 120)));
+  const r = callHelper('noise', { samples: n, intervalMs: gap }, { run, timeoutMs: 15000 });
+  if (!r.ok) return r;
+  const list = Array.isArray(r.samples) ? r.samples : [];
+  if (!list.length) {
+    return { ok: false, code: INPUT_FAIL.callFailed, text: '助手没有采到样本' };
+  }
+  const gaps = list.map((s) => Math.max(0, Math.round(Number(s?.idleMs) || 0)));
+  const cursors = list.map((s) => ({
+    x: Number(s?.cursor?.x) || 0,
+    y: Number(s?.cursor?.y) || 0,
+  }));
+  const cls = classifyInputNoise({ gaps, cursors, quietMs });
+  return {
+    ok: true,
+    kind: cls.kind,
+    phantom: cls.kind === 'phantom',
+    noisy: cls.noisy,
+    cursorStill: cls.cursorStill,
+    samples: gaps,
+    cursor: cursors[0],
+    min: Math.min(...gaps),
+    max: Math.max(...gaps),
+  };
 }
 
 /**
  * 当前前台窗口标题（审计用：记下"动的是哪个窗口"，不记窗口内容）。
  *
- * ```objc
- * // 需要「辅助功能」授权；没有授权时返回空标题（不是报错 —— 审计可以没有标题）
- * AXUIElementRef app = AXUIElementCreateSystemWide();
- * // 读 kAXFocusedApplicationAttribute → kAXTitleAttribute
- * ```
+ * 没有辅助功能授权时助手只报应用名、不报错 —— 审计允许没有窗口标题。
  */
-export function foregroundTitle() {
-  return notImplemented('前台窗口标题读取');
+export function foregroundTitle({ run } = {}) {
+  if (process.platform !== 'darwin') return notPlatform('前台窗口标题读取');
+  const r = callHelper('foreground', {}, { run });
+  if (!r.ok) return r;
+  const title = typeof r.title === 'string' ? r.title : '';
+  return { ok: true, title: title.slice(0, 200) };
 }
 
-/** 平台状态表（写文档时用它，别手写"应该可以"）。 */
+/**
+ * 一次完整动作的便捷入口：探环境 → 规划 → 发送。
+ *
+ * 工具层要的通常是这个（它已经把租约和接管检查做完了）。
+ *
+ * @returns {{ok:true, at:object|null, foreground:string, plan:object, screen:object}
+ *   | {ok:false, code:string, text:string}}
+ */
+export function performAction({ action, point = null, button = 'left', clicks = 1, delta = 0, key = null, keyCombo = null, text = '' } = {}) {
+  if (process.platform !== 'darwin') return notPlatform('桌面输入');
+  const env = probeEnvironment();
+  if (!env.ok) return env;
+  if (!env.session) {
+    return { ok: false, code: INPUT_FAIL.noSession, text: '当前没有可操作会话（可能锁屏或已断开），交还用户' };
+  }
+  const planned = planInput({
+    action, point, screen: env.screen, button, clicks, delta, key, keyCombo, text,
+  });
+  if (!planned.ok) return planned;
+  const sent = perform({ plan: planned.plan });
+  if (!sent.ok) return sent;
+  return { ok: true, at: sent.at, foreground: sent.foreground, plan: planned.plan, screen: env.screen };
+}
+
+/**
+ * 平台状态表（写文档时用它，别手写"应该可以"）。
+ *
+ * 本机的实测环境写在 `verified` 里；没做的事写进 `unsupported`。
+ * 这份表必须和 `desktop-input.js` 的 `describePlatform('darwin')` 说的一致：
+ * 一处说"支持"、另一处说"空壳"，上层会按各自看到的版本做不同的事。
+ */
 export function describePlatform() {
   return {
     platform: 'darwin',
-    supported: false,
-    verified: null,
-    actions: [],
-    unsupported: ['全部（未实现）'],
-    probe: 'CGEventSourceSecondsSinceLastEventType（未实现）',
-    todo: 'docs/MACOS-DESKTOP-INPUT.md',
+    supported: true,
+    verified: 'macOS 15.5 / Apple Silicon (arm64) / 2560x1440 / 1x 缩放（docs/MACOS.md「桌面输入」）',
+    actions: ['move', 'click', 'scroll', 'key', 'keyCombo', 'type_text'],
+    unsupported: ['drag' ],
+    probe: 'CGEventSourceSecondsSinceLastEventType（实机：返回真实秒数，不看辅助功能授权）',
+    move: 'CGWarpMouseCursorPosition + CGAssociateMouseAndMouseCursorPosition，改完立即复核；实机落位误差 0.0 点',
+    buttons: 'CGEventCreateMouseEvent（left / right / middle，单击 / 双击 / 三击）',
+    text: 'NSPasteboard 写入 + cmd+V，等待后还原原剪贴板（目标窗口需有 Edit 菜单）',
+    authorization: '辅助功能（AXIsProcessTrusted）；未授权时 CGEventPost 静默丢弃，所以发之前就判',
+    knownIssue: '远程控制 / 虚拟显示驱动会让探针一直报"刚刚有人动"，用 sampleInputNoise() 区分' +
+      '这种环境与真人操作；type_text 依赖目标窗口的 Edit 菜单，纯画布类应用可能收不到粘贴',
   };
 }
+

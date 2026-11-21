@@ -79,3 +79,8 @@ native/*/target/
 # Windows 沙箱启动器产物（scripts/build-sandbox-win.ps1 生成，随发版编译）
 server/resources/pibot-sandbox.exe
 server/resources/pibot-sandbox.sha256
+
+# macOS 桌面输入原生助手（scripts/build-desktop-mac.sh 产出，随发版编译）
+native/*/build/
+server/resources/orbis-desktop-mac
+server/resources/orbis-desktop-mac.sha256

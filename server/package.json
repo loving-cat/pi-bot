@@ -23,7 +23,8 @@
     "test:integration": "node tests/smoke.mjs",
     "relay": "node src/relay-server.js",
     "relay-agent": "node src/relay-agent.js",
-    "test:relay": "node tests/relay.mjs && node tests/relay-limits.mjs"
+    "test:relay": "node tests/relay.mjs && node tests/relay-limits.mjs",
+    "build:desktop-mac": "bash ../scripts/build-desktop-mac.sh"
   },
   "engines": {
     "node": ">=22"
