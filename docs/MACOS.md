@@ -32,7 +32,7 @@ App 复制回下述构建路径，并将调试信息保存到 `app/build/debug-i
 - 构建来源：`app/build/macos/Build/Products/Release/Orbis.app`，兼容旧的
   `pi-bot.app` / `pi_bot.app`（v1.7 品牌改名前的产物名）。
 - 发行 App：`dist/Orbis.app`；服务端位于其 `Contents/Resources/server`。
-- DMG：`dist/orbis-<服务端版本>.dmg`，版本取自 `server/package.json`。
+- DMG：`dist/orbis-macos-v<服务端版本>.dmg`，版本取自 `server/package.json`。
   App 名用品牌名（`Orbis`），产物前缀用小写 slug（`orbis`）—— 与
   `orbis-windows-*` / `orbis-android-*` 一致。
 - 服务端目录内执行 `npm install --omit=dev` 并检查声明依赖可解析；包内不附带 Node。

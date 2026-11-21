@@ -191,7 +191,6 @@ gh release create v2.0.0-alpha.1 --prerelease --title "Orbis v2.0.0-alpha.1" \
 | Windows PE 版本资源（`VersionInfoVersion`） | `A.B.C.D` | `pack-windows-setup.ps1` 传 `/DAppFileVersion=<X.Y.Z>.0` |
 | macOS `CFBundleShortVersionString` | `X.Y.Z` | `pack-macos.sh` 传 `flutter build macos --build-name=<X.Y.Z> --build-number=<N>` |
 | Android `versionCode` | 整数 | `pubspec.yaml` 的 `+N` |
-```
 
 ## 平台差异不要写进版本号
 
