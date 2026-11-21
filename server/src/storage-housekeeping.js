@@ -17,7 +17,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { log } from './util.js';
-import { deleteAttachments, listAttachmentMeta, attachmentSize } from './attachments.js';
+import {
+  deleteAttachments, listAttachmentMeta, attachmentSize, attachmentsRoot,
+} from './attachments.js';
 import { pruneScreenshots } from './desktop-observe.js';
 import { defaultInstanceDir } from './child-env-typed.js';
 import {
@@ -306,9 +308,20 @@ function sweepTaskRequests({ store, dataDir, now, ttlMs, dryRun, summary }) {
 }
 
 function sweepOrphanUploads({ store, dataDir, now, ttlMs, dryRun, summary, logFn }) {
-  // 只在"uploads 目录属于本次 dataDir"时才跑：attachments.js 是进程级单例
+  // ★ attachments.js 是**进程级单例**（绑定 config.dataDir）：只有在要清的 dataDir
+  //   就是本进程正在用的那个时才敢动，否则会删到别的实例的附件索引里去。
   const root = realDirOf(dataDir, 'uploads');
   if (!root) return;
+  let singletonRoot = null;
+  try {
+    singletonRoot = fs.realpathSync(attachmentsRoot());
+  } catch {
+    singletonRoot = null;
+  }
+  if (!singletonRoot || singletonRoot !== root) {
+    summary.problems.push('上传目录与附件索引不在同一个数据目录，跳过孤儿附件清理');
+    return;
+  }
   const referenced = collectReferencedIds({ store }, logFn);
   if (!referenced) {
     summary.problems.push('无法完整收集附件引用，跳过孤儿附件清理');

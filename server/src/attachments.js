@@ -278,6 +278,11 @@ export function isAttachmentDeleted(id) {
   return typeof id === 'string' && Boolean(index[id]?.deletedAt);
 }
 
+/** 附件目录（绝对路径）。清理工具用它确认"要清的上传目录就是本进程正在用的那个"。 */
+export function attachmentsRoot() {
+  return DIR;
+}
+
 /**
  * 全部附件元信息的快照（**包含墓碑**）。
  *

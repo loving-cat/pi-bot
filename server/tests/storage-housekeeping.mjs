@@ -246,6 +246,18 @@ await test('孤儿附件：默认 scope 不含；显式请求才清，且留墓�
   assert.ok(fs.existsSync(attachments.pathFor(referenced.id)));
 });
 
+await test('孤儿附件：dataDir 与附件索引不是同一个目录时跳过（不删别的实例）', () => {
+  const otherData = mkdirp(path.join(root, 'other-instance', 'uploads'));
+  writeFile(path.join(otherData, 'stray.txt'), 'stray');
+  const summary = runStorageHousekeeping({
+    store, runner, dataDir: path.dirname(otherData), scopes: ['orphanUploads'], dryRun: false,
+    now: FUTURE, limits: { orphanUploadTtlMs: 0 },
+  });
+  assert.equal(summary.removed.orphanUploads, 0);
+  assert.ok(summary.problems.some((p) => p.includes('上传目录')), JSON.stringify(summary.problems));
+  assert.ok(fs.existsSync(path.join(otherData, 'stray.txt')), '别的实例的文件一个都不许动');
+});
+
 await test('孤儿附件：引用扫不全时整项跳过（宁可不删）', () => {
   // 不能 ：导出的 store 是 Proxy，写属性会穿透到真实例上。
   const broken = {
