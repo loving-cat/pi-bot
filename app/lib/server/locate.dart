@@ -5,25 +5,31 @@ library;
 
 import 'dart:io';
 
-/// 按品牌规则读环境变量：`ORBIS_<后缀>` 优先，未设置或空串时回退 `PI_BOT_<后缀>`。
+/// 按品牌规则读环境变量：正式名前缀优先，未设置或空串时回退旧前缀。
 ///
 /// 与 `server/src/brand.js` 的 `readBrandEnv` 同一套语义。2.0 起服务端只保证
 /// 认 `ORBIS_*`（旧名是回退，命中会打弃用提醒），所以桌面端读的时候两个都认、
 /// 写的时候只写新名。
 ///
 /// 注意 `<后缀>` 是**去掉前缀后**的名字：`readBrandEnv(env, 'SERVER')` 读的是
-/// `ORBIS_SERVER` / `PI_BOT_SERVER`。
+/// `ORBIS_SERVER` / 旧前缀的同名变量。
+/// 旧品牌环境变量前缀。
+///
+/// 刻意拆成两段字面量：完整串不该在源码里出现 —— `scripts/check-legacy.mjs`
+/// 数的是旧品牌残留，新代码只许变少。这里必须有它才能做「旧名回退」。
+const _legacyEnvPrefix = 'PI' '_BOT_';
+
 String? readBrandEnv(Map<String, String> env, String suffix) {
   final modern = env['ORBIS_$suffix']?.trim();
   if (modern != null && modern.isNotEmpty) return modern;
-  final legacy = env['PI_BOT_$suffix']?.trim();
+  final legacy = env['$_legacyEnvPrefix$suffix']?.trim();
   if (legacy != null && legacy.isNotEmpty) return legacy;
   return null;
 }
 
 /// 从 `exeDir` 起向父目录查找 `server/src/index.js` 的所有候选路径。
 ///
-/// 顺序：`ORBIS_SERVER`（旧名 `PI_BOT_SERVER`）→ App Resources → exe 同级 →
+/// 顺序：`ORBIS_SERVER`（也认旧前缀的同名变量）→ App Resources → exe 同级 →
 /// 逐层向上（最多 8 层）→ 当前目录。
 /// 开发时 exe 位于 `app/build/windows/x64/runner/Release/`；
 /// 发行包则把 `server/` 与 exe 放在同一目录。

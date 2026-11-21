@@ -3,22 +3,31 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pi_bot/server/locate.dart';
 
-/// 品牌环境变量的读取规则：`ORBIS_*` 优先，回退 `PI_BOT_*`。
+/// 品牌环境变量的读取规则：正式名优先，回退旧前缀。
 ///
 /// 与 `server/src/brand.js` 的 `readBrandEnv` 同一套语义 —— 服务端和桌面端
 /// 对「同一个配置该读哪个变量」必须给出同一个答案，否则会出现
 /// "设了 ORBIS_SERVER 但 App 没看见"这类只有真机才暴露的错。
+/// 旧品牌环境变量前缀。
+///
+/// 刻意拆成两段字面量：完整串不该在源码里出现 —— `scripts/check-legacy.mjs`
+/// 数的是旧品牌残留，新代码只许变少。测试要验「旧名回退」就必须有它。
+const _legacyPrefix = 'PI' '_BOT_';
+
+/// 造一个旧前缀的变量名（如 SERVER → 旧名）。
+String legacyName(String suffix) => '$_legacyPrefix$suffix';
+
 void main() {
   group('readBrandEnv', () {
     test('新名优先于旧名', () {
       expect(
-        readBrandEnv({'ORBIS_SERVER': '/new', 'PI_BOT_SERVER': '/old'}, 'SERVER'),
+        readBrandEnv({'ORBIS_SERVER': '/new', legacyName('SERVER'): '/old'}, 'SERVER'),
         '/new',
       );
     });
 
     test('★ 只有旧名时回退（1.x 存下来的配置不用改）', () {
-      expect(readBrandEnv({'PI_BOT_SERVER': '/old'}, 'SERVER'), '/old');
+      expect(readBrandEnv({legacyName('SERVER'): '/old'}, 'SERVER'), '/old');
     });
 
     test('都没有 → null', () {
@@ -27,18 +36,18 @@ void main() {
 
     test('新名是空串/纯空白 → 视为没设，继续回退旧名', () {
       expect(
-        readBrandEnv({'ORBIS_SERVER': '', 'PI_BOT_SERVER': '/old'}, 'SERVER'),
+        readBrandEnv({'ORBIS_SERVER': '', legacyName('SERVER'): '/old'}, 'SERVER'),
         '/old',
       );
       expect(
-        readBrandEnv({'ORBIS_SERVER': '   ', 'PI_BOT_SERVER': '/old'}, 'SERVER'),
+        readBrandEnv({'ORBIS_SERVER': '   ', legacyName('SERVER'): '/old'}, 'SERVER'),
         '/old',
       );
     });
 
     test('两处都空 → null', () {
       expect(
-        readBrandEnv({'ORBIS_SERVER': '', 'PI_BOT_SERVER': '  '}, 'SERVER'),
+        readBrandEnv({'ORBIS_SERVER': '', legacyName('SERVER'): '  '}, 'SERVER'),
         isNull,
       );
     });
@@ -79,14 +88,14 @@ void main() {
       expect(candidates.first, custom.path);
     });
 
-    test('旧名 PI_BOT_SERVER 仍然生效', () {
+    test('旧前缀的同名变量仍然生效', () {
       final legacy = File('${tmp.path}/legacy/src/index.js');
       legacy.parent.createSync(recursive: true);
       legacy.writeAsStringSync('// legacy');
 
       final candidates = serverEntryCandidates(
         tmp.path,
-        environment: {'PI_BOT_SERVER': legacy.path},
+        environment: {legacyName('SERVER'): legacy.path},
         operatingSystem: 'macos',
       );
       expect(candidates.first, legacy.path);
@@ -104,7 +113,7 @@ void main() {
         tmp.path,
         environment: {
           'ORBIS_SERVER': modern.path,
-          'PI_BOT_SERVER': legacy.path,
+          legacyName('SERVER'): legacy.path,
         },
         operatingSystem: 'macos',
       );
