@@ -98,7 +98,12 @@ function notPlatform(what) {
  * 那两个平台没有助手二进制，但**参数怎么拼、返回值怎么翻译**是可以测的。
  */
 function callHelper(command, payload = {}, { run = defaultRun, timeoutMs = 15000 } = {}) {
-  const helper = resolveHelper();
+  // ★ 注入了 runner 就**不要求真实二进制存在**：那是在测"参数怎么拼、
+  //   返回值怎么翻译"，不是测助手本身。CI（ubuntu / windows / macos 的干净
+  //   clone）上没有构建产物，若这里硬要文件，所有注入用例都会退化成
+  //   not_platform，看起来像"平台守卫生效"，实际什么都没验到。
+  const injected = run !== defaultRun;
+  const helper = resolveHelper() ?? (injected ? 'orbis-desktop-mac' : null);
   if (!helper) {
     return { ok: false, code: INPUT_FAIL.notPlatform, text: '找不到 orbis-desktop-mac（先跑 npm run build:desktop-mac）' };
   }
