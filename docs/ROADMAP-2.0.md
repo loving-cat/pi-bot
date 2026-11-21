@@ -55,7 +55,7 @@
 | 类型 | 完整 `.d.ts` + 例子被 typecheck | **0 个 `.d.ts`**，宿主只能读文档猜字段 | ❌ 硬缺口 |
 | 导出面 | 一组稳定的具名导出 | 5 个 `exports`（`.` / `./sdk` / `./client` / `./capabilities` / `./server`），`./package.json` 不可达，正式名与 `PiBot*` 别名混在同一入口 | 🟡 待收口 |
 | 可注入边界 | 6 类：`modelRuntime` / `sessionManager` / `settingsManager` / `resourceLoader` / `tools` / `customTools` | 只有 `createOrbisRuntime(options)` 的「给个目录 + 模型组 + 策略」 | ❌ 硬缺口 |
-| 生命周期 | `dispose()` 幂等、`agent_settled`（“不会再自动继续”） | 有 `dispose()`；无 settled 类终态事件（双轨下更需要） | 🟡 待补 |
+| 生命周期 | ✅ **已落地**：`run.settled`（房间真的安静后 150ms 去抖发一次，`ok` / `reason` / `generation`）、`dispose()` 幂等且不抛、构造失败逆序回收 | ~~有 `dispose()`；无 settled 类终态事件（双轨下更需要）~~ | ✅ 已补 |
 | 错误 | ✅ **已落地**：`OrbisError` + `ORBIS_ERROR_CODES`（11 个码）；忙时 `prompt` 不给分流意图就 `E_BUSY_NEEDS_ROUTE`（不猜） | ~~抛字符串；忙时语义靠 `duplex-router` 内部约定~~ | ✅ 已补 |
 | 会话可移植 | `session-format.md` 定义 JSONL 契约 | `store.sessionFileFor` 有 JSONL 事实，但没有对外格式文档 | 🟡 待补 |
 | 示例 | 14 个 `examples/sdk/*.ts`，CI 跑类型检查 | 无 `examples/`；`server/tests/sdk-runtime.mjs`（495 行 / 5 个用例）是对内测试，不是对外示例 | ❌ 硬缺口 |
@@ -134,7 +134,7 @@ Phase 3 ──► 依赖 Phase 1/2 全部合并（否则删完兼容层还要再
 | **T2.1**（Phase 0） | ✅ **已落地**：`server/tests/sdk-contract.mjs` + 快照 `server/tests/sdk-contract.snapshot.json`（包元数据 / 四个入口导出名单与类型 / 运行时字段 / 六个服务方法）；改契约必须 `UPDATE_SDK_CONTRACT=1` 显式重写快照，diff 会打印增删项；已进 `server/tests/all.mjs` | 随手加一个导出 → 必红并打印 `+ entries.xxx` |
 | **T2.2** | 类型：JSDoc + `tsc --emitDeclarationOnly` 生成 `server/types/`（待新增），`exports` 每项加 `types` | `tsc --noEmit` 对 `examples/sdk/` 全绿 |
 | **T2.3** | 6 类注入点对齐 pi：`config` / `store` / `bus` / `modelRuntime` / `resourceLoader` / `tools`。默认值 = 现有行为（零破坏） | 传 `store: 内存实现` 时零磁盘写入；不传时既有 157 测试全绿 |
-| **T2.4** | 生命周期：`run.settled` 终态事件（对齐 `agent_settled`）、`dispose()` 幂等、初始化中途失败要回收定时器/总线 | 中途抛错的构造不残留 handles |
+| **T2.4** | ✅ **已落地**：`run.settled`（对齐 `agent_settled`）：turn-executor 的 finally 里排程，**房间真的安静**（无 bot 在跑、`roundQueue` 空）再去抖 `RUN_SETTLED_DEBOUNCE_MS = 150ms` 发一次（因为 finally 还会 `setTimeout(0)` 去 drain 排队请求），带 `roomId / botId / ok / reason / generation`；`dispose()` 幂等（第二次 `{already:true}`）、**不抛**（逐步 try/catch，失败明细进返回值）、并先清掉待发的 settled 定时器；`createOrbisRuntime` 拆成「建 / 收」两层，构造中途失败按逆序回收 bus / store / modelGroups / runner / grantGate / taskHost / scheduler | `server/tests/sdk-lifecycle.mjs` 5 条：settled 只发一次且带 generation、去抖窗口内又忙起来不发、`isRoomQuiet` 看 roundQueue、dispose 幂等且清定时器、**子进程构造失败后必须自己退出**（不残留 handles） |
 | **T2.5** | ✅ **已落地**（`server/src/sdk/errors.js`）：`OrbisError`（`instanceof Error`，`name` / `code` / `details` / `toJSON`）+ `ORBIS_ERROR_CODES`（`E_INVALID_ARGUMENT` / `E_NOT_FOUND` / `E_DISPOSED` / `E_CONFIG_INVALID` / `E_MODEL_UNAVAILABLE` / `E_NO_MAIN_BOT` / `E_BUSY_NEEDS_ROUTE` / `E_TIMEOUT` / `E_TURN_FAILED` / `E_GRANT_DENIED` / `E_HTTP` / `E_INTERNAL`）；词表外的 code 降级成 `E_INTERNAL` 并把原值留在 `requestedCode`；`asOrbisError()` 把老内部码（`NO_ROOM` / `EMPTY` / `no_grant` …）翻译成契约码；忙时 `prompt` 不给分流意图→拒绝（私聊；群聊走排队不需要分流），`dispose` 后的入口全部 `E_DISPOSED` | `server/tests/sdk-errors.mjs` 15 条：每个 code 都有断言（静态自检把枚举与本文对一遍）+ `src/sdk/` 裸抛静态扫描归零 |
 | **T2.6** | 发布：`private: false`（或私有 registry）、`files` 白名单、`npm pack` 体积上限、`./package.json` 可达、`scripts/check-licenses.mjs` 接入发布流程（收 #37 的许可证清单） | `npm pack` → 干净容器 `npm i <tgz>` → examples 01 能跑 |
 | **T2.7** | 会话可移植：`docs/SDK-SESSION-FORMAT.md`（待新增）定义 JSONL 条目契约，与 `store.sessionFileFor` 事实一致 | 按文档手搓会话文件 → 能被 runtime 正确加载 |

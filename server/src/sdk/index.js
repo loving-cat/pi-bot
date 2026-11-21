@@ -44,8 +44,34 @@ import {
   PiBotClient,
   createPiBotClient,
 } from './client.js';
+import { clearSettleTimers } from '../runner/run-settled.js';
 
+/**
+ * 构造一个运行中的 runtime。
+ *
+ * ★ 初始化中途失败必须把已经起来的东西收回去（T2.4）：`grantGate.start()` 起的
+ *   定时器、`store` 的落盘节流、`bus` 的监听……不回收的话，调用方 catch 掉异常后
+ *   进程里还留着定时器（宿主的服务看起来"跑完了但退不出去"）。
+ *   所以这里只负责"建"，失败清理统一在手这个包装里做（逆序）。
+ */
 export async function createOrbisRuntime(options = {}) {
+  /** @type {Array<() => void>} */
+  const cleanup = [];
+  try {
+    return await buildRuntime(options, cleanup);
+  } catch (err) {
+    for (const step of cleanup.reverse()) {
+      try {
+        step();
+      } catch {
+        // 回收失败不能盖住原始错误
+      }
+    }
+    throw isOrbisError(err) ? err : asOrbisError(err);
+  }
+}
+
+async function buildRuntime(options, cleanup) {
   const cfg = createConfig({
     ...(options.config ?? {}),
     ...(options.dataDir !== undefined ? { dataDir: options.dataDir } : {}),
@@ -56,9 +82,12 @@ export async function createOrbisRuntime(options = {}) {
   });
 
   const bus = createBus();
+  cleanup.push(() => bus.removeAllListeners());
   const secretsKey = options.secretsKey ?? loadOrCreateKey(cfg.dataDir);
   const store = createStore({ config: cfg, bus, dataDir: cfg.dataDir, secretsKey });
+  cleanup.push(() => store.dispose());
   const modelGroups = createModelGroupStore({ dataDir: cfg.dataDir });
+  cleanup.push(() => modelGroups.dispose?.());
 
   if (options.userName) {
     store.updateUserName(options.userName);
@@ -89,6 +118,7 @@ export async function createOrbisRuntime(options = {}) {
     inheritHostProviders: options.inheritHostProviders ?? false,
     taskIntake,
   });
+  cleanup.push(() => runner.disposeAll());
 
   if (options.installGrantGate !== false) {
     const syncGrants = ({ botIds }) => ensureLegacyGrant({
@@ -108,6 +138,7 @@ export async function createOrbisRuntime(options = {}) {
       bus,
     });
     runner.grantGate.start();
+    cleanup.push(() => runner.grantGate?.stop?.());
     runner.grantGeneration = () => generation;
   }
 
@@ -130,6 +161,7 @@ export async function createOrbisRuntime(options = {}) {
   let taskHost = null;
   if (taskIntake) {
     taskHost = createTaskHost({ store, runner });
+    cleanup.push(() => taskHost?.dispose?.());
     runner.taskCommands = createTaskCommands({ store, runner, taskRuns: store.taskRuns });
   }
 
@@ -140,6 +172,7 @@ export async function createOrbisRuntime(options = {}) {
       run: (automation) => runner.runAutomation(automation),
     });
     scheduler.start();
+    cleanup.push(() => scheduler?.stop?.());
   }
 
   let disposed = false;
@@ -338,15 +371,36 @@ export async function createOrbisRuntime(options = {}) {
     }
   }
 
+  /**
+   * 拆掉这个 runtime。
+   *
+   * 约定（T2.4）：
+   *   · **幂等**：第二次直接返回 `{ ok: true, already: true }`，不抛；
+   *   · **不抛异常**：某一步拆失败也要把剩下的拆完（否则一个抛错的 dispose 会留下
+   *     半个 runtime），失败明细放在返回值里；
+   *   · 定时器（含待发的 `run.settled`）必须先停，否则宿主进程退不出去。
+   */
   async function dispose() {
-    if (disposed) return;
+    if (disposed) return { ok: true, already: true };
     disposed = true;
-    scheduler?.stop?.();
-    taskHost?.dispose?.();
-    runner.grantGate?.stop?.();
-    runner.disposeAll();
-    store.dispose();
-    bus.removeAllListeners();
+    const failed = [];
+    const step = (label, fn) => {
+      try {
+        fn();
+      } catch (err) {
+        failed.push({ step: label, message: String(err?.message ?? err) });
+      }
+    };
+    step('scheduler', () => scheduler?.stop?.());
+    step('taskHost', () => taskHost?.dispose?.());
+    step('grantGate', () => runner.grantGate?.stop?.());
+    // run.settled 的待发定时器由 SDK 层清（run-settled.js 用 WeakMap 按 runner 归组）
+    step('runSettled', () => clearSettleTimers(runner));
+    step('runner', () => runner.disposeAll());
+    step('store', () => store.dispose());
+    step('modelGroups', () => modelGroups.dispose?.());
+    step('bus', () => bus.removeAllListeners());
+    return failed.length ? { ok: false, already: false, failed } : { ok: true, already: false };
   }
 
   return {

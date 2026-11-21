@@ -473,6 +473,6 @@ await test('静态：ORBIS_ERROR_CODES 的每个 code 在本文件里都有断�
 });
 
 console.log(`\nsdk-errors: ${pass} 通过 / ${fail} 失败`);
-// E_MODEL_UNAVAILABLE 这类"初始化到一半抛错"的 runtime 目前还会留下定时器
-// （T2.4 要收口的事），这里显式退出，避免测试进程被残留句柄拖住。
-process.exit(fail ? 1 : 0);
+// T2.4 之后构造失败会回收句柄（见 sdk-lifecycle.mjs 的子进程用例），
+// 这里不再强制 process.exit：进程能不能自己退出也是一条回归信号。
+process.exitCode = fail ? 1 : 0;

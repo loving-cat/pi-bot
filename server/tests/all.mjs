@@ -159,6 +159,7 @@ const TESTS = [
   'jarvis-mode',
   'sdk-runtime',
   'sdk-errors',
+  'sdk-lifecycle',
   'sdk-contract',
   'brand',
   'brand-deprecation',

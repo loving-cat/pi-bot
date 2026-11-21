@@ -89,11 +89,18 @@ const EXPECTED_SUBMODULES = {
   'turn-executor.js': [
     'executeTurn',
   ],
+  'run-settled.js': [
+    'RUN_SETTLED_DEBOUNCE_MS',
+    'isRoomQuiet',
+    'scheduleRunSettled',
+    'clearSettleTimers',
+    'pendingSettleTimerCount',
+  ],
 };
 
 console.log('PiRunner 模块化结构与兼容钩子测试：');
 
-await check('1. pi-runner.js 外观层行数 <= 850 且 6 个子模块各 <= 1350 行', () => {
+await check('1. pi-runner.js 外观层行数 <= 850 且 7 个子模块各 <= 1350 行', () => {
   const facadeLines = fs.readFileSync(path.join(srcRoot, 'pi-runner.js'), 'utf8').split(/\r?\n/).length;
   assert.ok(facadeLines <= 850, `pi-runner.js 行数应 <= 850，实际 ${facadeLines}`);
 
@@ -117,7 +124,7 @@ await check('2. 单向依赖 DAG：runner/*.js 不得反向导入 pi-runner.js',
   }
 });
 
-await check('3. 6 个子模块动态导入无误且导出齐全', async () => {
+await check('3. 7 个子模块动态导入无误且导出齐全', async () => {
   for (const [file, names] of Object.entries(EXPECTED_SUBMODULES)) {
     const mod = await import(`../src/runner/${file}`);
     for (const name of names) {

@@ -9,6 +9,7 @@
  */
 import { log, newId } from '../util.js';
 import { isMainChatBusy } from './chief-summary-runner.js';
+import { scheduleRunSettled } from './run-settled.js';
 import { readBrandEnv } from '../brand.js';
 import { readForModel, saveFromPath } from '../attachments.js';
 import { RunUsage } from '../run-stats.js';
@@ -950,6 +951,14 @@ async function runWithLease(
       try { runner.store.redactRoomSecrets(roomId, [], { limit: 8 }); } catch {}
     }
     runner.maybeAutoSummarize(roomId, bot.id);
+    // 生命周期（T2.4）：这一轮结束 → 房间真的安静下来时发 `run.settled`。
+    // 去抖与"安静"判定都在 PiRunner.scheduleRunSettled 里：finally 里还会
+    // setTimeout(0) 去 drain 排队请求 / 主控汇总，同步发会误报。
+    scheduleRunSettled(runner, roomId, {
+      botId: bot.id,
+      ok: turnSucceeded,
+      reason: turnSucceeded ? 'turn_done' : 'turn_failed',
+    });
   }
 }
 
