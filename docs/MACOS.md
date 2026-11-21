@@ -274,7 +274,7 @@ macOS 的桌面自动操作**已实现并实机验收**。实现方式：Swift �
 `probe_unavailable`，上层走「保守交还用户」。
 
 **2. 授权**：`AXIsProcessTrusted()` 在本机为 `true`。TCC 归属是**发起进程链的
-宿主 App**（本机实测：从深度求索宿主里 spawn 的二进制一律继承它的授权，
+宿主 App**（本机实测：从宿主应用 / 终端里 spawn 的二进制一律继承它的授权，
 换个路径复制二进制也一样）—— 所以助手永远跟着「谁启动 Orbis」走。
 未授权时的表现为 `CGEventPost` 静默丢弃，因此助手在 `perform` 第一步就判授权，
 不给直接返回 `not_authorized` 并说明去「系统设置 → 隐私与安全性 → 辅助功能」。
@@ -331,12 +331,28 @@ flag **逐步累加**，然后按主键、再倒序松开修饰键。
 | 7 | 屏幕外坐标拒收 | ✅ | `planInput` 返回 `out_of_screen`（不夹到边缘） |
 | 8 | `drag` 明确拒绝 | ✅ | 返回 `invalid` + 「拖拽还没有完整实现…本轮不支持」 |
 | 9 | 锁屏 `no_session` | ✅（桩测） | 装配层测试；**真锁屏没跑**（不做会中断会话的操作） |
-| 10 | 人工接管不报错 | ⬜ 未跑 | 需要人工在长动作中碰鼠标，本轮没有长动作 |
+| 10 | 人工接管不报错 | ✅ | 探针实测：用户离开 110s → 发一个真实 `mouseMoved` 后 idleMs=325 → `act` 返回 `user_active_pending`、租约仍 `held`、审计记 `wait`
 | 11 | 多屏负坐标 | ⬜ 未跑 | 本机只有一块屏；负坐标只过了单元测试（`probeEnvironment` 透传 -100） |
 | 12 | 撤权降级 | ⬜ 未跑 | 需要撤销宿主的辅助功能授权，会影响当前会话，未做 |
 
 **没跑的三项（10 / 11 / 12）都写进了 `describePlatform()` 以外的说明里，
 没有在代码里假装验过。**
+
+### 一个反直觉的实测（值得单独记）
+
+**`CGWarpMouseCursorPosition` 不产生输入事件。**
+
+第一次做第 10 项时，我用助手的 `move`（内部是 warp）把光标挪走当作"用户接管"，
+结果探针完全没反应、`act` 照常成功。换成 `CGEventPost(mouseMoved)` 之后
+探针立刻看到（`idleMs` 从 110907 掉到 325）。
+
+这条对实现有好处也有坏处：
+
+- **好处**：我们自己的 `move`/`click` 不会把自己判成"用户在动"。
+  click 那条用的是 `CGEventPost`（会产生事件），所以 `click` 之后紧接着再
+  `act` 会不会误判成接管 —— 由装配层的 `noteInjection` 排除（已由
+  `desktop-input-session` 的既有测试守着）。
+- **坏处**：不能用 warp 去"假装用户还在"，测试接管必须用 `CGEventPost`。
 
 ### 与 `desktop_observe` 的闭环
 
@@ -346,10 +362,19 @@ flag **逐步累加**，然后按主键、再倒序松开修饰键。
 要除以缩放比才是点。这一点没在 Retina 真机上验证过，用之前请先 `probeEnvironment()`
 对比截图尺寸与 `screen` 宽高。
 
-屏幕录制权限未开时，`screencapture` 截出来只有壁纸 —— `listWindows` 拿到的窗口
-列表来自 `CGWindowListCopyWindowInfo`，那个不需要屏幕录制权限，所以**不会**把
-空画面当有效窗口返回；但截图本身会是黑的。这时应当报 `not_authorized` 而不是
-把黑图交上去。
+两种权限在观察层是分开的，别混：
+
+| 能力 | 用的 API | 要哪个权限 | 不给会怎样 |
+|---|---|---|---|
+| `listWindows` | **System Events**（AppleScript） | 辅助功能 | 拿不到窗口列表 |
+| `screenshot_*` | `screencapture` | 屏幕录制 | 截出来只有壁纸 |
+
+`listWindows` **不是**用 `CGWindowListCopyWindowInfo`（那条路还没接，
+见 `server/src/desktop-observe.js` 文件头：System Events 拿不到 CGWindowID，
+所以现在只能拿到「应用 + 标题 + 位置尺寸」）。
+
+所以可能出现「列得出窗口、但截出来是黑图」的组合：辅助功能给了、屏幕录制没给。
+这时截图会是纯壁纸，**应当报 `not_authorized` 而不是把黑图当有效画面交上去**。
 
 ## 已知限制
 

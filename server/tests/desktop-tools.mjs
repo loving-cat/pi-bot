@@ -157,6 +157,27 @@ await test('★ 用户在动 / 锁屏 → 不是 error（模型该停下而不�
   assert.match(r2.content[0].text, /交还|锁屏|会话/);
 });
 
+
+await test('★★ 辅助功能未授权 → 不是 error（模型该停下引导用户，而不是反复重试）', async () => {
+  // 收权之后 CGEventPost 会静默丢弃，平台层报 not_authorized。
+  // 这不是故障，是「用户得去系统设置开一下」—— 用 isError 返回会让模型
+  // 以为工具坏了然后一直重试，而它重试一百次也变不出授权。
+  const plat = installFakePlatform({
+    perform: () => ({
+      ok: false,
+      code: 'not_authorized',
+      text: '需要「辅助功能」授权：系统设置 → 隐私与安全性 → 辅助功能',
+    }),
+  });
+  const { lease, input } = freshTools();
+  const a = await lease.execute('c1', { action: 'acquire' });
+  const r = await input.execute('c2', { epoch: a.details.epoch, action: 'move', x: 400, y: 300 });
+  assert.notEqual(r.isError, true, '授权不足不是工具故障，是用户要去开');
+  assert.equal(r.details.stopped, true, '要标成「正常停下」，否则模型会重试');
+  assert.equal(r.details.code, 'not_authorized');
+  assert.match(r.content[0].text, /辅助功能/, '文案要说清去哪开');
+  assert.equal(plat.calls.perform.length, 1, '只发一次，不自动重试');
+});
 await test('屏幕外坐标是 error（那是调用方算错了，不是"正常停下"）', async () => {
   installFakePlatform();
   const { lease, input } = freshTools();

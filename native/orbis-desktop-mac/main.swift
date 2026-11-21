@@ -334,24 +334,48 @@ func doScroll(_ delta: Int) -> [String: Any] {
 ///      这是宿主应用的事，我们在失败时如实报告即可。
 func doTypeText(_ text: String) -> [String: Any] {
     let pb = NSPasteboard.general
-    let original = pb.string(forType: .string)
+    // ★ 备份要按 NSPasteboardItem 全量备份，不能只存纯文本。
+    //
+    //   用户剪贴板里可能是一张截图、一个文件、或者带富文本的段落 ——
+    //   `string(forType: .string)` 对它们返回 nil，粘完再清空剪贴板，
+    //   用户原本复制的东西就没了。逐 item 备份每种 (type, Data)，粘完原样写回。
+    let backup: [[(NSPasteboard.PasteboardType, Data)]] = (pb.pasteboardItems ?? []).map { item in
+        item.types.compactMap { type in
+            guard let data = item.data(forType: type) else { return nil }
+            return (type, data)
+        }
+    }
+
     pb.clearContents()
     let set = pb.setString(text, forType: .string)
     if !set {
+        restorePasteboard(backup)
         return fail("call_failed", "写剪贴板失败")
     }
     usleep(60_000)
     let comboResult = postCombo(modifiers: ["cmd"], key: "v")
     // 等目标应用把内容取走，再还原 —— 用户剪贴板里可能是他正在搬的东西
     usleep(350_000)
-    pb.clearContents()
-    if let original = original {
-        pb.setString(original, forType: .string)
-    }
+    restorePasteboard(backup)
     if comboResult["code"] != nil {
         return comboResult
     }
     return ["ok": true]
+}
+
+/// 把之前备份的剪贴板逐 item 写回去（备份为空就只清空）。
+func restorePasteboard(_ backup: [[(NSPasteboard.PasteboardType, Data)]]) {
+    let pb = NSPasteboard.general
+    pb.clearContents()
+    if backup.isEmpty { return }
+    let items: [NSPasteboardItem] = backup.map { pairs in
+        let item = NSPasteboardItem()
+        for (type, data) in pairs {
+            item.setData(data, forType: type)
+        }
+        return item
+    }
+    pb.writeObjects(items)
 }
 
 // MARK: - 命令分发
@@ -409,7 +433,20 @@ func doPerform(_ req: [String: Any]) -> [String: Any] {
     case "scroll":
         let delta = Int(num(req["delta"]) ?? 0)
         if delta == 0 { return fail("invalid", "scroll 的 delta 不能是 0") }
-        result = doScroll(delta)
+        // 可选坐标：先移到位再滚。
+        //
+        // macOS 的滚轮事件发给「鼠标指针下那个窗口」—— 不先移动就会滚到
+        // 光标上次停留的无关窗口。JS 侧 planInput 允许 scroll 带 point，
+        // 这里收到就照样做，并像 move/click 一样复核落点。
+        if let scrollPoint = readPoint(req["point"]) {
+            let moved = warpAndVerify(scrollPoint)
+            if moved["ok"] as? Bool != true { return moved }
+            let scrolled = doScroll(delta)
+            if scrolled["ok"] as? Bool != true { return scrolled }
+            result = ["ok": true, "at": moved["at"] ?? ["x": scrollPoint.x, "y": scrollPoint.y]]
+        } else {
+            result = doScroll(delta)
+        }
     case "key":
         guard let key = (req["key"] as? String)?.trimmingCharacters(in: .whitespaces), !key.isEmpty else {
             return fail("invalid", "key 需要键名")

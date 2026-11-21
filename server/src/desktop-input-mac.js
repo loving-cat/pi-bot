@@ -234,8 +234,16 @@ export function toHelperRequest(plan) {
         button: plan.button || 'left',
         clicks: Number(plan.clicks) || 1,
       };
-    case 'scroll':
-      return { action: 'scroll', delta: Number(plan.delta) || 0 };
+    case 'scroll': {
+      const req = { action: 'scroll', delta: Number(plan.delta) || 0 };
+      // 可选坐标：先把光标移过去再滚。
+      //
+      // ★ macOS 的滚轮事件发给「鼠标指针下那个窗口」，不先移动就会滚到
+      //   光标上次停留的无关窗口 —— 用户在 A 窗口让 bot 看着，bot 滚了 B。
+      //   `planInput` 对 scroll 本来就允许带 point（叫 at），这里原样透传。
+      if (plan.point) req.point = { x: plan.point.x, y: plan.point.y };
+      return req;
+    }
     case 'key':
       if (!Array.isArray(plan.keys) || !plan.keys.length) return null;
       return { action: 'key', key: String(plan.keys[0]) };

@@ -785,6 +785,10 @@ export function buildCommonTools({
               REFUSE.noSession, REFUSE.noLease, REFUSE.notHolder,
               // 目标窗口变了不是故障：世界变了，重新观察再决定
               REFUSE.targetChanged,
+              // 辅助功能没开不是故障：要用户去「系统设置 → 隐私与安全性 → 辅助功能」
+              // 授权。当成 isError 会让模型一直重试同一条命令，而它重试一百次
+              // 也变不出授权 —— 只能停下来把去路指给用户。
+              REFUSE.notAuthorized,
             ];
             // ★ 这几种是"正常停下"（用户在动 / 锁屏 / 没租约 / 目标变了），不是故障：
             //   用 isError 会让模型以为工具坏了然后重试，而这几种最不该重试。

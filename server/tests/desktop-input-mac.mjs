@@ -116,6 +116,19 @@ test('toHelperRequest：六个动作都翻成助手能懂的请求', () => {
   assert.deepEqual(M.toHelperRequest({ action: 'type_text', text: 'hi' }), { action: 'type_text', text: 'hi' });
 });
 
+test('★ scroll 带坐标时透传 point（macOS 滚轮事件发给鼠标下那个窗口）', () => {
+  // 不先移动就滚 → 会滚到光标上次停留的无关窗口。用户在 A 窗口让 bot 看着，
+  // bot 滚了 B —— 而且不会报错。planInput 对 scroll 本来就允许带 point（叫 at）。
+  const withPoint = M.toHelperRequest({ action: 'scroll', delta: -3, point: { x: 500, y: 400 } });
+  assert.deepEqual(withPoint, { action: 'scroll', delta: -3, point: { x: 500, y: 400 } });
+  // 不带坐标就保持原样：在当前位置滚
+  const plain = M.toHelperRequest({ action: 'scroll', delta: 2 });
+  assert.deepEqual(plain, { action: 'scroll', delta: 2 });
+  assert.equal('point' in plain, false, '没有坐标就不该带一个 null 下去');
+  // point 为 null（planInput 在未给坐标时就是这么摆的）也不该出现
+  const nullPoint = M.toHelperRequest({ action: 'scroll', delta: 1, point: null });
+  assert.equal('point' in nullPoint, false);
+});
 test('★ toHelperRequest：用 keys 不用 codes（Win32 键码在 macOS 上是错的）', () => {
   // Win32 里 v = 0x56，macOS 的 CGKeyCode 里 v = 0x09 —— 完全不是一回事。
   // 如果哪天有人「顺手」把 codes 传下去，cmd+V 会变成别的键。
